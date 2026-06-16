@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { derivedStatusLabel, type DashboardViewModel } from "../../dashboard/index.js";
 import { deriveSessionSemantics } from "../../session-semantics.js";
+import { stripAnsi } from "../render/text.js";
 import { renderDashboardFrame } from "./dashboard-renderers.js";
 
 function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): DashboardViewModel {
@@ -90,6 +91,17 @@ describe("renderDashboardFrame worktree progress", () => {
               activity: "running",
             }),
           },
+          {
+            index: 2,
+            id: "codex-ready",
+            command: "codex",
+            status: "running",
+            active: false,
+            role: "coder",
+            semantic: deriveSessionSemantics({
+              status: "running",
+            }),
+          },
         ],
         worktreeGroups: [
           {
@@ -105,9 +117,13 @@ describe("renderDashboardFrame worktree progress", () => {
       40,
     );
 
-    expect(frame).toContain("\x1b[1;33mNeeds input");
-    expect(frame).toContain("\x1b[36m1 unread\x1b[0m");
-    expect(frame).toContain("\x1b[36mWorking");
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("NEEDS INPUT");
+    expect(plain).toContain("WORKING");
+    expect(plain).toContain("Ready");
+    expect(plain).toContain("1 unread");
+    expect(frame).toContain("\x1b[1;33;7m NEEDS INPUT \x1b[0m");
+    expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
   });
 
   it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
@@ -231,7 +247,7 @@ describe("renderDashboardFrame worktree progress", () => {
         40,
       );
 
-      expect(frame).toContain("\x1b[36mWorking");
+      expect(stripAnsi(frame)).toContain("WORKING");
       expect(frame).not.toContain("output 30s ago");
     } finally {
       now.mockRestore();
@@ -291,21 +307,24 @@ describe("renderDashboardFrame worktree progress", () => {
         40,
       );
 
-      expect(frame).toContain("claude \x1b[33mStarting");
-      expect(frame).toContain("starting 30s ago");
-      expect(frame).toContain("1 starting");
-      expect(frame).toContain("codex \x1b[33mRemoving");
-      expect(frame).toContain("removing 30s ago");
-      expect(frame).toContain("1 removing");
-      expect(frame).toContain("State: Starting");
-      expect(frame).toContain("Started: 30s ago");
-      expect(frame).not.toContain("State: needs input");
-      expect(frame).not.toContain("Attention: needs_input");
-      expect(frame).not.toContain("prompted");
-      expect(frame).not.toContain("idle now");
-      expect(frame).not.toContain("1 needs input");
-      expect(frame).not.toContain("graveyarding");
-      expect(frame).not.toContain("1h ago");
+      const plain = stripAnsi(frame);
+      expect(plain).toContain("claude");
+      expect(plain).toContain("Starting");
+      expect(plain).toContain("starting 30s ago");
+      expect(plain).toContain("1 starting");
+      expect(plain).toContain("codex");
+      expect(plain).toContain("Removing");
+      expect(plain).toContain("removing 30s ago");
+      expect(plain).toContain("1 removing");
+      expect(plain).toContain("State: Starting");
+      expect(plain).toContain("Started: 30s ago");
+      expect(plain).not.toContain("State: needs input");
+      expect(plain).not.toContain("Attention: needs_input");
+      expect(plain).not.toContain("prompted");
+      expect(plain).not.toContain("idle now");
+      expect(plain).not.toContain("1 needs input");
+      expect(plain).not.toContain("graveyarding");
+      expect(plain).not.toContain("1h ago");
     } finally {
       now.mockRestore();
     }
@@ -361,7 +380,7 @@ describe("renderDashboardFrame worktree progress", () => {
     );
 
     expect(frame).toContain("Team");
-    expect(frame).toContain("[e] team");
+    expect(stripAnsi(frame)).toContain("team");
     expect(frame).toContain("review(reviewer)");
     expect(frame).toContain("working");
     expect(frame).toContain("scan(explorer)");
@@ -387,8 +406,8 @@ describe("renderDashboardFrame worktree progress", () => {
       120,
       40,
     );
-    expect(withOverseer.frame).toContain("\x1b[1;35mOverseer\x1b[0m");
-    expect(withOverseer.frame).toContain("(overseer)");
+    expect(withOverseer.frame).toContain("\x1b[35mOverseer\x1b[0m");
+    expect(stripAnsi(withOverseer.frame)).toContain("overseer");
 
     const withoutOverseer = renderDashboardFrame(
       baseDashboardViewModel({
@@ -409,6 +428,142 @@ describe("renderDashboardFrame worktree progress", () => {
     const dev = renderDashboardFrame(baseDashboardViewModel({ isDevRuntime: true }), 120, 40);
     expect(dev.frame).toContain("\x1b[1;30;43m DEV \x1b[0m");
     expect(dev.frame).toContain("\x1b[33m───");
+  });
+
+  it("renders the version next to the title when provided", () => {
+    const { frame } = renderDashboardFrame(baseDashboardViewModel({ version: "1.2.3" }), 120, 40);
+    expect(stripAnsi(frame)).toContain("aimux v1.2.3 — agent multiplexer");
+
+    const without = renderDashboardFrame(baseDashboardViewModel({ version: undefined }), 120, 40);
+    expect(stripAnsi(without.frame)).not.toContain("v1.2.3");
+  });
+
+  it("numbers agents within a worktree group for quick jump", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions: [
+          {
+            index: 0,
+            id: "claude-0",
+            command: "claude",
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            worktreeName: "wt",
+            status: "offline",
+            active: false,
+            semantic: deriveSessionSemantics({ status: "offline" }),
+          },
+          {
+            index: 1,
+            id: "codex-1",
+            command: "codex",
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            worktreeName: "wt",
+            status: "offline",
+            active: false,
+            semantic: deriveSessionSemantics({ status: "offline" }),
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "wt",
+            branch: "feat/x",
+            path: "/repo/.aimux/worktrees/wt",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      120,
+      40,
+    );
+    const plain = stripAnsi(frame);
+    expect(plain).toMatch(/\[1\]\s+(claude|codex)/);
+    expect(plain).toMatch(/\[2\]\s+(claude|codex)/);
+  });
+
+  it("scrolls to reveal the whole focused last card, not just its title", () => {
+    const groups = [];
+    const sessions = [];
+    for (let i = 0; i < 12; i++) {
+      const path = `/repo/.aimux/worktrees/wt${i}`;
+      groups.push({ name: `wt${i}`, branch: `b${i}`, path, status: "offline" as const, sessions: [], services: [] });
+      const agents = i === 11 ? 3 : 1;
+      for (let a = 0; a < agents; a++) {
+        sessions.push({
+          index: i * 10 + a,
+          id: `s${i}_${a}`,
+          command: "claude",
+          worktreePath: path,
+          worktreeName: `wt${i}`,
+          status: "offline" as const,
+          active: false,
+          semantic: deriveSessionSemantics({ status: "offline" }),
+        });
+      }
+    }
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions,
+        worktreeGroups: groups,
+        focusedWorktreePath: "/repo/.aimux/worktrees/wt11",
+        navLevel: "worktrees",
+        detailsPaneVisible: false,
+      }),
+      120,
+      40,
+    );
+    const left = stripAnsi(frame)
+      .split("\n")
+      .map((l) => l.trimEnd());
+    const titleIdx = left.findIndex((l) => l.includes("wt11"));
+    expect(titleIdx).toBeGreaterThanOrEqual(0);
+    // The focused card's third agent and bottom border must both be visible.
+    const after = left.slice(titleIdx).join("\n");
+    expect(after).toMatch(/\[3\]\s+claude/);
+    expect(after).toContain("╰");
+  });
+
+  it("mutes activity chips for offline agents but keeps them colored for live ones", () => {
+    const mk = (id: string, status: "offline" | "running") => ({
+      index: 0,
+      id,
+      command: "codex",
+      worktreePath: `/repo/.aimux/worktrees/${id}`,
+      worktreeName: id,
+      status,
+      active: status === "running",
+      unseenCount: 9,
+      threadPendingCount: 1,
+      semantic: deriveSessionSemantics(
+        status === "running" ? { status: "running", activity: "running" } : { status: "offline" },
+      ),
+    });
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions: [mk("off", "offline"), mk("on", "running")],
+        worktreeGroups: [
+          {
+            name: "off",
+            branch: "x",
+            path: "/repo/.aimux/worktrees/off",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+          { name: "on", branch: "y", path: "/repo/.aimux/worktrees/on", status: "active", sessions: [], services: [] },
+        ],
+        detailsPaneVisible: false,
+      }),
+      140,
+      30,
+    );
+    const offlineRow = frame.split("\r\n").find((l) => l.includes("1 pending") && l.includes("Offline"))!;
+    const liveRow = frame.split("\r\n").find((l) => l.includes("1 pending") && l.includes("WORKING"))!;
+    // Offline chips use the muted 256-color fg (245); live chips keep accent fg.
+    expect(offlineRow).toContain("38;5;245");
+    expect(offlineRow).not.toContain("38;5;174"); // not the danger "pending" accent
+    expect(liveRow).toContain("38;5;174"); // danger "pending" accent retained
   });
 
   it("renders pending teammate labels even when semantic state is stale", () => {

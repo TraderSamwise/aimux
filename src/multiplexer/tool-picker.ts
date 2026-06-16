@@ -2,7 +2,10 @@ import { loadConfig, type ToolConfig } from "../config.js";
 import { parseKeys } from "../key-parser.js";
 import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../shell-args.js";
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
-import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
+import { truncateAnsi } from "../tui/render/text.js";
+import { renderOverlayBox } from "../tui/render/box.js";
+import { hints } from "../tui/screens/overlay-renderers.js";
+import { style } from "../tui/render/theme.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 import { findMainRepo } from "../worktree.js";
 import { setSessionOverseer } from "../metadata-store.js";
@@ -81,73 +84,71 @@ function envPrefix(env: Record<string, string>): string {
   return `env ${keys.map((k) => `${k}=${quoteShellArg(env[k])}`).join(" ")} `;
 }
 
-function fieldWidth(): number {
-  return Math.max(12, (process.stdout.columns ?? 80) - 28);
+function fieldWidth(cols: number): number {
+  return Math.max(12, cols - 28);
 }
 
-function renderBox(lines: string[], color = "44;97"): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
-  const width = Math.max(1, Math.min(cols - 4, Math.max(...lines.map((l) => stripAnsi(l).length)) + 4));
-  const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
-  const startCol = Math.max(1, Math.floor((cols - width) / 2));
-
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[${color}m${"─".repeat(width)}\x1b[0m`;
-    } else {
-      const line = truncateAnsi(lines[i - 1], width - 4);
-      const pad = " ".repeat(Math.max(0, width - 2 - stripAnsi(line).length));
-      // truncateAnsi may append \x1b[0m when the line contains ANSI (e.g. the
-      // active field's reverse-video cursor); re-assert color so the reset
-      // can't bleed the terminal's default background into the padding.
-      output += `\x1b[${color}m  ${line}\x1b[${color}m${pad}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
-}
-
-function redrawOverlay(host: ToolPickerHost, build: (host: ToolPickerHost) => string): void {
+function redrawOverlay(
+  host: ToolPickerHost,
+  build: (host: ToolPickerHost, cols: number, rows: number) => string,
+): void {
   if (typeof host.redrawDashboardWithOverlay === "function") {
     host.redrawDashboardWithOverlay();
   } else {
-    process.stdout.write(build(host));
+    const { cols, rows } = host.getViewportSize();
+    process.stdout.write(build(host, cols, rows));
   }
 }
 
-export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
+export function buildToolPickerOverlayOutput(host: ToolPickerHost, cols: number, rows: number): string {
   const tools = enabledTools();
   const selectedIndex = clampPickerIndex(host, tools);
 
-  const lines = [
-    host.pickerMode === "fork" && host.forkSourceSessionId
-      ? `Fork from ${host.forkSourceSessionId}: select tool`
-      : "Select tool:",
-  ];
-  for (let i = 0; i < tools.length; i++) {
-    const cursor = i === selectedIndex ? "▸" : " ";
-    lines.push(`${cursor} [${i + 1}] ${tools[i][0]}`);
-  }
-  lines.push("");
-  lines.push("  [Enter/1-9] start   [o] options   [Esc] cancel");
+  const title =
+    host.pickerMode === "fork" && host.forkSourceSessionId ? `Fork from ${host.forkSourceSessionId}` : "Select tool";
 
-  return renderBox(lines);
+  const body: string[] = [];
+  if (tools.length === 0) {
+    body.push(`  ${style("No enabled tools", "muted")}`);
+    body.push("");
+    body.push(hints([["Esc", "cancel"]]));
+    return renderOverlayBox({ title, body, cols, rows, variant: "red" });
+  }
+  for (let i = 0; i < tools.length; i++) {
+    const selected = i === selectedIndex;
+    const marker = selected ? style("▸", "accent") : " ";
+    const number = style(`[${i + 1}]`, selected ? "accent" : "muted");
+    const name = selected ? style(tools[i][0], "strong") : tools[i][0];
+    body.push(`  ${marker} ${number} ${name}`);
+  }
+  body.push("");
+  body.push(
+    hints([
+      ["⏎/1-9", "start"],
+      ["o", "options"],
+      ["Esc", "cancel"],
+    ]),
+  );
+
+  return renderOverlayBox({ title, body, cols, rows });
 }
 
-export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
+export function buildToolOptionsOverlayOutput(host: ToolPickerHost, cols: number, rows: number): string {
   const tools = enabledTools();
   const state: LaunchOptionsState | null = host.launchOptionsState;
   const selected = state ? tools.find(([key]) => key === state.toolKey) : undefined;
   if (!state || !selected) {
-    return renderBox(["No enabled tools", "", "  [Esc] back"], "41;97");
+    return renderOverlayBox({
+      title: "Launch options",
+      body: [`  ${style("No enabled tools", "muted")}`, "", hints([["Esc", "back"]])],
+      cols,
+      rows,
+      variant: "red",
+    });
   }
 
   const [toolKey, tool] = selected;
-  const width = fieldWidth();
+  const width = fieldWidth(cols);
 
   let extraArgs: string[] = [];
   let env: Record<string, string> = {};
@@ -169,29 +170,35 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
     state.activeField === "args" ? renderLineWindow(state.args, width) : truncateAnsi(state.args.text, width);
   const envValue =
     state.activeField === "env" ? renderLineWindow(state.env, width) : truncateAnsi(state.env.text, width);
-  const argMarker = state.activeField === "args" ? "▸" : " ";
-  const envMarker = state.activeField === "env" ? "▸" : " ";
+  const argMarker = state.activeField === "args" ? style("▸", "accent") : " ";
+  const envMarker = state.activeField === "env" ? style("▸", "accent") : " ";
 
-  const lines = [
+  const title =
     host.pickerMode === "fork" && host.forkSourceSessionId
       ? `Fork ${toolKey}: launch options`
-      : `${toolKey}: launch options`,
+      : `${toolKey}: launch options`;
+  const body = [
+    `  ${style("Defaults:", "muted")} ${commandPreview(tool.command, tool.args)}`,
     "",
-    `  Defaults: ${commandPreview(tool.command, tool.args)}`,
+    `${argMarker} ${style("Extra args:".padEnd(11), "muted")} ${argsValue}`,
+    `${envMarker} ${style("Env vars:".padEnd(11), "muted")} ${envValue}`,
     "",
-    `${argMarker} ${"Extra args:".padEnd(11)} ${argsValue}`,
-    `${envMarker} ${"Env vars:".padEnd(11)} ${envValue}`,
-    "",
-    `  Launch: ${envPrefix(parseError ? {} : env)}${commandPreview(tool.command, [...tool.args, ...extraArgs])}`,
+    `  ${style("Launch:", "muted")} ${envPrefix(parseError ? {} : env)}${commandPreview(tool.command, [...tool.args, ...extraArgs])}`,
   ];
   if (parseError) {
-    lines.push("");
-    lines.push(`  Error: ${parseError}`);
+    body.push("");
+    body.push(`  ${style("Error:", "danger")} ${style(parseError, "danger")}`);
   }
-  lines.push("");
-  lines.push("  [Tab] switch field   [Enter] start   [Esc] back");
+  body.push("");
+  body.push(
+    hints([
+      ["Tab", "switch field"],
+      ["Enter", "start"],
+      ["Esc", "back"],
+    ]),
+  );
 
-  return renderBox(lines, parseError ? "41;97" : "44;97");
+  return renderOverlayBox({ title, body, cols, rows, variant: parseError ? "red" : "blue" });
 }
 
 export function renderToolPicker(host: ToolPickerHost): void {

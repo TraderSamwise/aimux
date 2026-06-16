@@ -399,6 +399,7 @@ export function buildTmuxWindowMetadata(
     attention: sessionMetadata?.derived?.attention,
     unseenCount: sessionMetadata?.derived?.unseenCount,
     statusText: sessionMetadata?.status?.text,
+    lastActivityAt: sessionMetadata?.derived?.lastEvent?.ts ?? sessionMetadata?.updatedAt,
   };
 }
 

@@ -1,16 +1,35 @@
+import type { GraveyardViewRow } from "../../multiplexer/graveyard-view-model.js";
 import { formatRelativeRecency } from "../../recency.js";
+import { renderOverlayBox } from "../render/box.js";
+import { twoPaneLeftWidth } from "../render/text.js";
+import { card, chip, keycapHint, keycapHints, statusDot, style, type Tone } from "../render/theme.js";
+
+// Shared subscreen chrome built from the design-language tokens.
+function screenHeader(ctx: any, cols: number, title: string, suffix = ""): string[] {
+  const heading = `${style("aimux", "strong")} ${style(`— ${title}`, "muted")}${suffix}`;
+  return [
+    "",
+    ctx.centerInWidth(heading, cols),
+    ctx.centerInWidth(style("─".repeat(Math.min(50, cols - 4)), "muted"), cols),
+    "",
+  ];
+}
+
+function rule(ctx: any, cols: number, max: number): string {
+  return ctx.centerInWidth(style("─".repeat(Math.min(cols - 4, max)), "muted"), cols);
+}
+
+const marker = (selected: boolean): string => (selected ? `${style("▸", "accent")} ` : "  ");
+const trailingMark = (selected: boolean): string => (selected ? ` ${style("◀", "accent")}` : "");
+const itemNumber = (index: number): string => style(`[${index + 1}]`, "muted");
 
 export function renderWorkflowScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
-  const header: string[] = [];
-  header.push("");
-  header.push(
-    ctx.centerInWidth(`\x1b[1maimux\x1b[0m — workflow \x1b[2m[${ctx.describeWorkflowFilter()}]\x1b[0m`, cols),
-  );
-  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-  header.push("");
+  const header = screenHeader(ctx, cols, "workflow", ` ${style(`[${ctx.describeWorkflowFilter()}]`, "muted")}`);
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [f] filter  [Tab] details  [d/a/n/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
+    keycapHints(
+      "[↑↓] select  [f] filter  [Tab] details  [d/a/n/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
+    ),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -18,22 +37,22 @@ export function renderWorkflowScreen(ctx: any): void {
   const listLines: string[] = [];
 
   if (ctx.workflowEntries.length === 0) {
-    listLines.push("  Workflow");
-    listLines.push("    No open task/review/handoff workflow items.");
+    listLines.push(`  ${style("Workflow", "strong")}`);
+    listLines.push(`    ${style("No open task/review/handoff workflow items.", "muted")}`);
   } else {
-    listLines.push("  Workflow");
+    listLines.push(`  ${style("Workflow", "strong")}`);
     for (let i = 0; i < ctx.workflowEntries.length; i++) {
       const entry = ctx.workflowEntries[i]!;
       const selected = i === ctx.workflowIndex;
-      const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-      const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
-      const unread = (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
-      const family = entry.familyTaskIds.length > 1 ? ` \x1b[35m⤳${entry.familyTaskIds.length}\x1b[0m` : "";
+      const pending = entry.pendingDeliveries > 0 ? ` ${style(`⇢ ${entry.pendingDeliveries}`, "danger")}` : "";
+      const unread =
+        (entry.thread.unreadBy?.length ?? 0) > 0 ? ` ${style(String(entry.thread.unreadBy!.length), "work")}` : "";
+      const family = entry.familyTaskIds.length > 1 ? ` ${style(`⤳${entry.familyTaskIds.length}`, "blocked")}` : "";
       const latest = entry.latestMessage?.body
-        ? ` \x1b[2m· ${ctx.truncatePlain(entry.latestMessage.body, 28)}\x1b[0m`
+        ? ` ${style(`· ${ctx.truncatePlain(entry.latestMessage.body, 28)}`, "muted")}`
         : "";
       listLines.push(
-        `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.stateLabel}${family}${unread}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        `${marker(selected)}${itemNumber(i)} ${entry.displayTitle} ${style(`(${entry.thread.kind})`, "muted")} ${style("—", "muted")} ${entry.stateLabel}${family}${unread}${pending}${latest}${trailingMark(selected)}`,
       );
     }
   }
@@ -47,17 +66,14 @@ export function renderWorkflowScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  ctx.writeFrame(
-    "\x1b[2J\x1b[H" +
-      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderWorkflowDetails(ctx: any, width: number, height: number): string[] {
   const entry = ctx.workflowEntries[ctx.workflowIndex];
   if (!entry) return new Array(height).fill("");
   const lines: string[] = [];
-  lines.push("\x1b[1mWorkflow\x1b[0m");
+  lines.push(style("Workflow", "strong"));
   lines.push(...ctx.wrapKeyValue("Title", entry.displayTitle, width));
   lines.push(...ctx.wrapKeyValue("Kind", entry.thread.kind, width));
   lines.push(...ctx.wrapKeyValue("State", entry.stateLabel, width));
@@ -84,7 +100,7 @@ export function renderWorkflowDetails(ctx: any, width: number, height: number): 
   }
   if (entry.thread.taskId) lines.push(...ctx.wrapKeyValue("Task", entry.thread.taskId, width));
   lines.push("");
-  lines.push("\x1b[1mLatest\x1b[0m");
+  lines.push(style("Latest", "strong"));
   if (entry.latestMessage) {
     lines.push(
       ...ctx.wrapKeyValue(`${entry.latestMessage.from} [${entry.latestMessage.kind}]`, entry.latestMessage.body, width),
@@ -96,13 +112,11 @@ export function renderWorkflowDetails(ctx: any, width: number, height: number): 
 
 export function renderActivityScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
-  const header: string[] = [];
-  header.push("");
-  header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — activity", cols));
-  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-  header.push("");
+  const header = screenHeader(ctx, cols, "activity");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+    keycapHints(
+      "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+    ),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -110,29 +124,28 @@ export function renderActivityScreen(ctx: any): void {
   const listLines: string[] = [];
 
   if (ctx.activityEntries.length === 0) {
-    listLines.push("  Activity");
-    listLines.push("    No sessions currently need attention.");
+    listLines.push(`  ${style("Activity", "strong")}`);
+    listLines.push(`    ${style("No sessions currently need attention.", "muted")}`);
   } else {
-    listLines.push("  Activity");
+    listLines.push(`  ${style("Activity", "strong")}`);
     for (let i = 0; i < ctx.activityEntries.length; i++) {
       const entry = ctx.activityEntries[i]!;
       const selected = i === ctx.activityIndex;
-      const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
       const identity = entry.label ?? entry.command;
-      const roleTag = entry.role ? ` \x1b[36m(${entry.role})\x1b[0m` : "";
+      const roleTag = entry.role ? ` ${style(`(${entry.role})`, "work")}` : "";
       const wt = entry.worktreeName
-        ? ` \x1b[2m· ${ctx.truncatePlain(entry.worktreeName, 18)}${entry.worktreeBranch ? `@${ctx.truncatePlain(entry.worktreeBranch, 18)}` : ""}\x1b[0m`
+        ? ` ${style(`· ${ctx.truncatePlain(entry.worktreeName, 18)}${entry.worktreeBranch ? `@${ctx.truncatePlain(entry.worktreeBranch, 18)}` : ""}`, "muted")}`
         : "";
       const state = entry.semantic?.presentation?.statusLabel ?? entry.status;
       const unread =
         (entry.semantic?.notifications?.unreadCount ?? 0) > 0
-          ? ` \x1b[36m${Math.min(entry.semantic.notifications.unreadCount, 99)}\x1b[0m`
+          ? ` ${style(String(Math.min(entry.semantic.notifications.unreadCount, 99)), "work")}`
           : "";
       const service = entry.services?.[0]
-        ? ` \x1b[2m· ${entry.services[0].port ? `:${entry.services[0].port}` : ctx.truncatePlain(entry.services[0].url ?? "", 16)}\x1b[0m`
+        ? ` ${style(`· ${entry.services[0].port ? `:${entry.services[0].port}` : ctx.truncatePlain(entry.services[0].url ?? "", 16)}`, "muted")}`
         : "";
       listLines.push(
-        `${marker}[${i + 1}] ${identity}${roleTag} — ${state}${unread}${wt}${service}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        `${marker(selected)}${itemNumber(i)} ${identity}${roleTag} ${style("—", "muted")} ${state}${unread}${wt}${service}${trailingMark(selected)}`,
       );
     }
   }
@@ -150,21 +163,16 @@ export function renderActivityScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  ctx.writeFrame(
-    "\x1b[2J\x1b[H" +
-      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderThreadsScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
-  const header: string[] = [];
-  header.push("");
-  header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — threads", cols));
-  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-  header.push("");
+  const header = screenHeader(ctx, cols, "threads");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
+    keycapHints(
+      "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
+    ),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -172,23 +180,25 @@ export function renderThreadsScreen(ctx: any): void {
   const listLines: string[] = [];
 
   if (ctx.threadEntries.length === 0) {
-    listLines.push("  Threads");
-    listLines.push("    No orchestration threads yet.");
+    listLines.push(`  ${style("Threads", "strong")}`);
+    listLines.push(`    ${style("No orchestration threads yet.", "muted")}`);
   } else {
-    listLines.push("  Threads");
+    listLines.push(`  ${style("Threads", "strong")}`);
     for (let i = 0; i < ctx.threadEntries.length; i++) {
       const entry = ctx.threadEntries[i]!;
       const selected = i === ctx.threadIndex;
-      const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-      const unread = (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
+      const unread =
+        (entry.thread.unreadBy?.length ?? 0) > 0 ? ` ${style(String(entry.thread.unreadBy!.length), "work")}` : "";
       const waiting =
-        (entry.thread.waitingOn?.length ?? 0) > 0 ? ` \x1b[35m→ ${entry.thread.waitingOn!.join(",")}\x1b[0m` : "";
-      const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
+        (entry.thread.waitingOn?.length ?? 0) > 0
+          ? ` ${style(`→ ${entry.thread.waitingOn!.join(",")}`, "blocked")}`
+          : "";
+      const pending = entry.pendingDeliveries > 0 ? ` ${style(`⇢ ${entry.pendingDeliveries}`, "danger")}` : "";
       const latest = entry.latestMessage?.body
-        ? ` \x1b[2m· ${ctx.truncatePlain(entry.latestMessage.body, 34)}\x1b[0m`
+        ? ` ${style(`· ${ctx.truncatePlain(entry.latestMessage.body, 34)}`, "muted")}`
         : "";
       listLines.push(
-        `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.thread.status}${unread}${waiting}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        `${marker(selected)}${itemNumber(i)} ${entry.displayTitle} ${style(`(${entry.thread.kind})`, "muted")} ${style("—", "muted")} ${entry.thread.status}${unread}${waiting}${pending}${latest}${trailingMark(selected)}`,
       );
     }
   }
@@ -202,17 +212,14 @@ export function renderThreadsScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  ctx.writeFrame(
-    "\x1b[2J\x1b[H" +
-      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderThreadDetails(ctx: any, width: number, height: number): string[] {
   const entry = ctx.threadEntries[ctx.threadIndex];
   if (!entry) return new Array(height).fill("");
   const lines: string[] = [];
-  lines.push("\x1b[1mDetails\x1b[0m");
+  lines.push(style("Details", "strong"));
   lines.push(...ctx.wrapKeyValue("Title", entry.displayTitle, width));
   lines.push(...ctx.wrapKeyValue("Kind", entry.thread.kind, width));
   lines.push(...ctx.wrapKeyValue("Status", entry.thread.status, width));
@@ -234,7 +241,7 @@ export function renderThreadDetails(ctx: any, width: number, height: number): st
   if (entry.thread.taskId) lines.push(...ctx.wrapKeyValue("Task", entry.thread.taskId, width));
   if (entry.thread.worktreePath) lines.push(...ctx.wrapKeyValue("Worktree", entry.thread.worktreePath, width));
   lines.push("");
-  lines.push("\x1b[1mMessages\x1b[0m");
+  lines.push(style("Messages", "strong"));
   const messages = (entry.messages ?? []).slice(-Math.max(3, height - lines.length));
   for (const message of messages) {
     const prefix = `${message.from}${message.to?.length ? ` → ${message.to.join(", ")}` : ""} [${message.kind}]`;
@@ -258,13 +265,11 @@ export function renderThreadDetails(ctx: any, width: number, height: number): st
 
 export function renderNotificationsScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
-  const header: string[] = [];
-  header.push("");
-  header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — inbox", cols));
-  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-  header.push("");
+  const header = screenHeader(ctx, cols, "inbox");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/i/y/t/p/g] screens  [Enter] jump  [r] read  [R] read all  [c] clear  [C] clear all  [Esc] dashboard  [q] quit",
+    keycapHints(
+      "[↑↓] select  [Tab] details  [d/a/i/y/t/p/g] screens  [Enter] jump  [r] read  [R] read all  [c] clear  [C] clear all  [Esc] dashboard  [q] quit",
+    ),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -272,30 +277,30 @@ export function renderNotificationsScreen(ctx: any): void {
   const listLines: string[] = [];
 
   if (ctx.notificationEntries.length === 0) {
-    listLines.push("  Inbox");
-    listLines.push("    No unread or recent inbox items.");
+    listLines.push(`  ${style("Inbox", "strong")}`);
+    listLines.push(`    ${style("No unread or recent inbox items.", "muted")}`);
   } else {
-    listLines.push("  Inbox");
+    listLines.push(`  ${style("Inbox", "strong")}`);
     for (let i = 0; i < ctx.notificationEntries.length; i++) {
       const entry = ctx.notificationEntries[i]!;
       const selected = i === ctx.notificationIndex;
-      const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-      const state = entry.unread ? "\x1b[36munread\x1b[0m" : "\x1b[2mread\x1b[0m";
+      const dot = entry.unread ? statusDot("needs") : statusDot("offline");
       const target = entry.sessionId ? ctx.notificationTargetLabel(entry.sessionId) : null;
       const targetState = entry.sessionId ? ctx.notificationTargetState(entry.sessionId) : "none";
       const targetStateLabel =
         targetState === "live"
-          ? "\x1b[32mlive\x1b[0m"
+          ? style("live", "done")
           : targetState === "offline"
-            ? "\x1b[33moffline\x1b[0m"
+            ? style("offline", "attn")
             : targetState === "missing"
-              ? "\x1b[31mmissing\x1b[0m"
+              ? style("missing", "danger")
               : "";
-      const targetHint = target ? ` \x1b[2m· ${ctx.truncatePlain(target, 24)}\x1b[0m` : "";
-      const kind = entry.kind ? ` \x1b[2m(${entry.kind})\x1b[0m` : "";
-      const when = ` \x1b[2m· ${formatRelativeRecency(entry.createdAt)}\x1b[0m`;
+      const targetHint = target ? ` ${style(`· ${ctx.truncatePlain(target, 24)}`, "muted")}` : "";
+      const kind = entry.kind ? ` ${style(`(${entry.kind})`, "muted")}` : "";
+      const when = ` ${style(`· ${formatRelativeRecency(entry.createdAt)}`, "muted")}`;
+      const titleTone = entry.unread ? "strong" : "muted";
       listLines.push(
-        `${marker}[${i + 1}] ${ctx.truncatePlain(entry.title, 44)}${kind} — ${state}${targetStateLabel ? ` · ${targetStateLabel}` : ""}${targetHint}${when}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        `${marker(selected)}${itemNumber(i)} ${dot} ${style(ctx.truncatePlain(entry.title, 44), titleTone)}${kind}${targetStateLabel ? ` ${style("·", "muted")} ${targetStateLabel}` : ""}${targetHint}${when}${trailingMark(selected)}`,
       );
     }
   }
@@ -309,17 +314,14 @@ export function renderNotificationsScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  ctx.writeFrame(
-    "\x1b[2J\x1b[H" +
-      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderNotificationDetails(ctx: any, width: number, height: number): string[] {
   const entry = ctx.notificationEntries[ctx.notificationIndex];
   if (!entry) return new Array(height).fill("");
   const lines: string[] = [];
-  lines.push("\x1b[1mDetails\x1b[0m");
+  lines.push(style("Details", "strong"));
   lines.push(...ctx.wrapKeyValue("Title", entry.title, width));
   if (entry.subtitle) lines.push(...ctx.wrapKeyValue("Subtitle", entry.subtitle, width));
   lines.push(...ctx.wrapKeyValue("State", entry.unread ? "unread" : "read", width));
@@ -332,90 +334,189 @@ export function renderNotificationDetails(ctx: any, width: number, height: numbe
     if (targetLabel) lines.push(...ctx.wrapKeyValue("Target", targetLabel, width));
   }
   lines.push("");
-  lines.push("\x1b[1mBody\x1b[0m");
+  lines.push(style("Body", "strong"));
   lines.push(...ctx.wrapKeyValue("", entry.body, width));
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
 }
 
-export function renderGraveyardScreen(ctx: any): void {
-  const { cols, rows } = ctx.getViewportSize();
-  const header: string[] = [];
-  header.push("");
-  header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
-  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-  header.push("");
-  const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
-  const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
-  const listLines: string[] = [];
-  const lineByItemIndex = new Map<number, number>();
-  const view = ctx.graveyardViewModel ?? { rows: [], selectableRows: [] };
-  if (view.rows.length === 0) {
-    listLines.push("  Worktrees");
-    listLines.push("    (empty)");
-    listLines.push("");
-    listLines.push("  Agents");
-    listLines.push("    (empty)");
-  } else {
-    for (const row of view.rows) {
-      if (row.kind === "section") {
-        if (listLines.length > 0) listLines.push("");
-        listLines.push(`  ${row.label}`);
-      } else if (row.kind === "worktree") {
-        const marker = row.actionIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-        const branch = row.entry.branch ? ` \x1b[2m${row.entry.branch}\x1b[0m` : "";
-        const agentCount = row.attachedAgents.length;
+interface GraveyardCardRow {
+  text: string;
+  actionIndex?: number;
+}
+interface GraveyardCardBlock {
+  kind: "card";
+  title: string;
+  summary?: string;
+  titleActionIndex?: number;
+  rows: GraveyardCardRow[];
+}
+type GraveyardLooseBlock = { kind: "loose"; rows: GraveyardCardRow[] };
+type GraveyardBlock = GraveyardCardBlock | GraveyardLooseBlock | { kind: "header"; label: string };
+
+// Group the flat graveyard view-model rows into design-language blocks: a card per
+// graveyarded worktree (dead agents/services as body rows) and per standalone-agent
+// worktree group; loose selectable rows for orphan agents/teammates that have no
+// group. Everything is dead, so cards render in the muted tone.
+function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock[] {
+  const blocks: GraveyardBlock[] = [];
+  let current: GraveyardCardBlock | GraveyardLooseBlock | null = null;
+
+  const flush = (): void => {
+    if (current) {
+      blocks.push(current);
+      current = null;
+    }
+  };
+  const ensureCard = (): GraveyardCardBlock => {
+    if (!current || current.kind !== "card") {
+      flush();
+      current = { kind: "card", title: "", rows: [] };
+    }
+    return current;
+  };
+  const ensureLoose = (): GraveyardLooseBlock => {
+    if (!current || current.kind !== "loose") {
+      flush();
+      current = { kind: "loose", rows: [] };
+    }
+    return current;
+  };
+  const recencyChip = (at?: string): string => {
+    const rel = at ? formatRelativeRecency(at) : undefined;
+    return rel ? chip(rel, "muted") : "";
+  };
+  const withChip = (text: string, chipStr: string): string => (chipStr ? `${text} ${chipStr}` : text);
+
+  for (const row of rows) {
+    switch (row.kind) {
+      case "section":
+        flush();
+        blocks.push({ kind: "header", label: row.label });
+        break;
+      case "worktree": {
+        flush();
+        const selected = row.actionIndex === ctx.graveyardIndex;
+        const branch = row.entry.branch ? ` ${style(`· ${row.entry.branch}`, "muted")}` : "";
+        const nameTone: Tone = selected ? "accent" : "strong";
+        const title = `${marker(selected)}${keycapHint(String(row.actionNumber))} ${style(row.entry.name, nameTone)}${branch}`;
         const serviceCount = row.attachedServices.length;
         const serviceText = serviceCount > 0 ? ` · ${serviceCount} svc${serviceCount === 1 ? "" : "s"}` : "";
-        const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
-        listLines.push(
-          `    ${marker}[${row.actionNumber}] ${row.entry.name}${branch} · ${agentCount} agent${agentCount === 1 ? "" : "s"}${serviceText}${recency}`,
-        );
-        lineByItemIndex.set(row.actionIndex, listLines.length - 1);
-      } else if (row.kind === "attached-agent-display") {
+        const agentCount = row.attachedAgents.length;
+        const countText = style(`${agentCount} agent${agentCount === 1 ? "" : "s"}${serviceText}`, "muted");
+        current = {
+          kind: "card",
+          title,
+          summary: withChip(countText, recencyChip(row.lastUsedAt)),
+          titleActionIndex: row.actionIndex,
+          rows: [],
+        };
+        break;
+      }
+      case "attached-agent-display": {
         const agent = row.agent.entry;
         const bsid = agent.backendSessionId ? ` (${agent.backendSessionId.slice(0, 8)}…)` : "";
         const identity = agent.label ? ` — ${agent.label}` : "";
         const headline = agent.headline ? ` · ${agent.headline}` : "";
-        const recency = row.agent.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.agent.lastUsedAt)}\x1b[0m` : "";
-        listLines.push(`        ○ ${agent.command}:${agent.id}${bsid}${identity}${headline}${recency}`);
-      } else if (row.kind === "attached-more-display") {
-        listLines.push(
-          `        \x1b[2m… ${row.hiddenAgentCount} more agent${row.hiddenAgentCount === 1 ? "" : "s"}\x1b[0m`,
-        );
-      } else if (row.kind === "attached-service-display") {
+        const text = `  ${statusDot("offline")} ${style(`${agent.command}:${agent.id}${bsid}${identity}${headline}`, "muted")}`;
+        ensureCard().rows.push({ text: withChip(text, recencyChip(row.agent.lastUsedAt)) });
+        break;
+      }
+      case "attached-more-display":
+        ensureCard().rows.push({
+          text: `  ${style(`… ${row.hiddenAgentCount} more agent${row.hiddenAgentCount === 1 ? "" : "s"}`, "muted")}`,
+        });
+        break;
+      case "attached-service-display": {
         const service = row.service.entry;
         const identity = service.label ?? service.launchCommandLine ?? "shell";
-        const recency = row.service.lastUsedAt
-          ? ` \x1b[2m· ${formatRelativeRecency(row.service.lastUsedAt)}\x1b[0m`
-          : "";
-        listLines.push(`        ◇ ${identity} [service]${recency}`);
-      } else if (row.kind === "orphan-teammate") {
+        const text = `  ${statusDot("serviceOff")} ${style(`${identity} [service]`, "muted")}`;
+        ensureCard().rows.push({ text: withChip(text, recencyChip(row.service.lastUsedAt)) });
+        break;
+      }
+      case "agent-worktree":
+        flush();
+        current = { kind: "card", title: style(row.name, "strong"), rows: [] };
+        break;
+      case "orphan-teammate": {
         const teammate = row.entry;
         const identity = teammate.label ? ` — ${teammate.label}` : "";
         const headline = teammate.headline ? ` · ${ctx.truncatePlain(teammate.headline, 36)}` : "";
-        const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
-        listLines.push(
-          `    ◦ \x1b[2m${teammate.command}:${teammate.id}${identity} · missing parent ${row.parentSessionId}${headline}${recency}\x1b[0m`,
-        );
-      } else if (row.kind === "agent-worktree") {
-        listLines.push(`    ${row.name}`);
-      } else {
-        const s = row.entry;
-        const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
-        const identity = s.label ? ` — ${s.label}` : "";
-        const headline = s.headline ? ` · ${s.headline}` : "";
-        const unrecoverable = s.graveyardReason ? ` \x1b[31m· unrecoverable\x1b[0m` : "";
-        const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
-        const marker = row.actionIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-        listLines.push(
-          `    ${marker}[${row.actionNumber}] ${s.command}:${s.id}${bsid}${identity}${headline}${unrecoverable}${recency}`,
-        );
-        lineByItemIndex.set(row.actionIndex, listLines.length - 1);
+        const text = `  ${statusDot("offline")} ${style(`${teammate.command}:${teammate.id}${identity} · missing parent ${row.parentSessionId}${headline}`, "muted")}`;
+        ensureLoose().rows.push({ text: withChip(text, recencyChip(row.lastUsedAt)) });
+        break;
+      }
+      default: {
+        const agent = row.entry;
+        const selected = row.actionIndex === ctx.graveyardIndex;
+        const bsid = agent.backendSessionId ? ` (${agent.backendSessionId.slice(0, 8)}…)` : "";
+        const identity = agent.label ? ` — ${agent.label}` : "";
+        const headline = agent.headline ? ` · ${agent.headline}` : "";
+        const unrecoverable = agent.graveyardReason ? ` ${style("· unrecoverable", "danger")}` : "";
+        const text = `${marker(selected)}${keycapHint(String(row.actionNumber))} ${statusDot("offline")} ${style(`${agent.command}:${agent.id}${bsid}${identity}${headline}`, "muted")}${unrecoverable}`;
+        // Standalone agents under an "agent-worktree" land in its card; orphan agents
+        // with no group render as loose selectable rows beneath the section header.
+        const target = current && current.kind === "card" ? current : ensureLoose();
+        target.rows.push({ text: withChip(text, recencyChip(row.lastUsedAt)), actionIndex: row.actionIndex });
+        break;
+      }
+    }
+  }
+  flush();
+  return blocks;
+}
+
+export function renderGraveyardScreen(ctx: any): void {
+  const { cols, rows } = ctx.getViewportSize();
+  const header = screenHeader(ctx, cols, "graveyard");
+  const footer = ctx.centerInWidth(
+    keycapHints(
+      "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+    ),
+    cols,
+  );
+  const viewportHeight = rows - header.length - 2;
+  const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
+  const cardWidth = twoPane ? twoPaneLeftWidth(cols) : Math.max(40, cols - 2);
+  const listLines: string[] = [];
+  const lineByItemIndex = new Map<number, number>();
+  const view = ctx.graveyardViewModel ?? { rows: [], selectableRows: [] };
+  if (view.rows.length === 0) {
+    listLines.push(`  ${style("Worktrees", "strong")}`);
+    listLines.push(`    ${style("(empty)", "muted")}`);
+    listLines.push("");
+    listLines.push(`  ${style("Agents", "strong")}`);
+    listLines.push(`    ${style("(empty)", "muted")}`);
+  } else {
+    const blocks = buildGraveyardCards(ctx, view.rows);
+    let first = true;
+    for (const block of blocks) {
+      if (!first) listLines.push("");
+      first = false;
+      if (block.kind === "header") {
+        listLines.push(`  ${style(block.label, "strong")}`);
+        continue;
+      }
+      if (block.kind === "loose") {
+        for (const looseRow of block.rows) {
+          if (looseRow.actionIndex !== undefined) lineByItemIndex.set(looseRow.actionIndex, listLines.length);
+          listLines.push(`  ${looseRow.text}`);
+        }
+        continue;
+      }
+      const startLine = listLines.length;
+      if (block.titleActionIndex !== undefined) lineByItemIndex.set(block.titleActionIndex, startLine);
+      block.rows.forEach((bodyRow, i) => {
+        if (bodyRow.actionIndex !== undefined) lineByItemIndex.set(bodyRow.actionIndex, startLine + 1 + i);
+      });
+      for (const line of card({
+        tone: "muted",
+        title: block.title,
+        summary: block.summary,
+        rows: block.rows.map((bodyRow) => bodyRow.text),
+        width: cardWidth,
+      })) {
+        listLines.push(line);
       }
     }
   }
@@ -428,11 +529,9 @@ export function renderGraveyardScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  let frame =
-    "\x1b[2J\x1b[H" +
-    [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 52)), cols), footer].join("\r\n");
+  let frame = "\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 52), footer].join("\r\n");
   if (ctx.graveyardWorktreeDeleteConfirm) {
-    frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx);
+    frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx, cols, rows);
   }
   ctx.writeFrame(frame);
 }
@@ -442,7 +541,7 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
   if (!selected) return new Array(height).fill("");
   if (selected.kind === "worktree") {
     const lines: string[] = [];
-    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(style("Details", "strong"));
     lines.push(...ctx.wrapKeyValue("Worktree", selected.entry.name, width));
     lines.push(...ctx.wrapKeyValue("Branch", selected.entry.branch, width));
     lines.push(...ctx.wrapKeyValue("Path", selected.entry.path, width));
@@ -452,9 +551,9 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
     if (selected.lastUsedAt)
       lines.push(...ctx.wrapKeyValue("Last Used", formatRelativeRecency(selected.lastUsedAt), width));
     lines.push("");
-    lines.push("\x1b[1mAttached Agents\x1b[0m");
+    lines.push(style("Attached Agents", "strong"));
     if (selected.attachedAgents.length === 0) {
-      lines.push("(none)");
+      lines.push(style("(none)", "muted"));
     } else {
       for (const agent of selected.visibleAttachedAgents.slice(0, Math.max(1, height - lines.length))) {
         const recency = agent.lastUsedAt ? ` · ${formatRelativeRecency(agent.lastUsedAt)}` : "";
@@ -468,7 +567,7 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
     }
     if (selected.attachedServices.length > 0 && lines.length < height) {
       lines.push("");
-      lines.push("\x1b[1mAttached Services\x1b[0m");
+      lines.push(style("Attached Services", "strong"));
       for (const service of selected.attachedServices.slice(0, Math.max(1, height - lines.length))) {
         const label = service.entry.label ?? service.entry.launchCommandLine ?? service.entry.id;
         const recency = service.lastUsedAt ? ` · ${formatRelativeRecency(service.lastUsedAt)}` : "";
@@ -480,7 +579,7 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
   }
   const lines: string[] = [];
   const worktreeName = selected.entry.worktreePath ? ctx.basename(selected.entry.worktreePath) : undefined;
-  lines.push("\x1b[1mDetails\x1b[0m");
+  lines.push(style("Details", "strong"));
   lines.push(...ctx.wrapKeyValue("Agent", selected.entry.label ?? selected.entry.id, width));
   lines.push(...ctx.wrapKeyValue("Session", selected.entry.id, width));
   lines.push(...ctx.wrapKeyValue("Tool", selected.entry.tool, width));
@@ -501,35 +600,18 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
   return lines.slice(0, height);
 }
 
-function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any): string {
+function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any, cols: number, rows: number): string {
   const confirm = ctx.graveyardWorktreeDeleteConfirm;
   if (!confirm) return "";
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
-  const lines = [
-    `Delete graveyarded worktree "${confirm.name}"?`,
+  const body = [
+    `  ${style(`"${confirm.name}"`, "strong")}`,
+    `  ${style("Path:", "muted")} ${confirm.path}`,
+    `  ${style("This runs: git worktree remove --force", "muted")}`,
+    `  ${style("Attached agents will be deleted directly.", "muted")}`,
     "",
-    `  Path: ${confirm.path}`,
-    "  This runs: git worktree remove --force",
-    "  Attached agents will be deleted directly.",
-    "",
-    "  [Enter/y] yes  [n/Esc] cancel",
+    `  ${keycapHint("Enter/y", "yes")}  ${keycapHint("n/Esc", "cancel")}`,
   ];
-  const boxWidth = Math.max(...lines.map((line) => line.length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[41;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      output += `\x1b[41;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  return renderOverlayBox({ title: "Delete graveyarded worktree", body, cols, rows, variant: "red" });
 }
 
 function buildPlanPreview(ctx: any, content: string, width: number, maxLines: number): string[] {
@@ -546,13 +628,11 @@ function buildPlanPreview(ctx: any, content: string, width: number, maxLines: nu
 
 export function renderPlansScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
-  const header: string[] = [];
-  header.push("");
-  header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
-  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-  header.push("");
+  const header = screenHeader(ctx, cols, "plans");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+    keycapHints(
+      "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+    ),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -560,17 +640,18 @@ export function renderPlansScreen(ctx: any): void {
   const listLines: string[] = [];
 
   if (ctx.planEntries.length === 0) {
-    listLines.push("  No plan files found in .aimux/plans/");
+    listLines.push(`  ${style("No plan files found in .aimux/plans/", "muted")}`);
   } else {
-    listLines.push("  Plans");
+    listLines.push(`  ${style("Plans", "strong")}`);
     for (let i = 0; i < ctx.planEntries.length; i++) {
       const plan = ctx.planEntries[i];
       const selected = i === ctx.planIndex;
-      const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
       const identity = plan.label ?? plan.tool ?? "unknown";
       const worktree = plan.worktree ?? "main";
       const updated = plan.updatedAt ? ` · ${plan.updatedAt.replace("T", " ").slice(0, 16)}` : "";
-      listLines.push(`${marker}[${i + 1}] ${identity} \x1b[2m(${plan.sessionId})\x1b[0m · ${worktree}${updated}`);
+      listLines.push(
+        `${marker(selected)}${itemNumber(i)} ${style(identity, "strong")} ${style(`(${plan.sessionId}) · ${worktree}${updated}`, "muted")}`,
+      );
     }
   }
   const focusLine = ctx.planEntries.length === 0 ? 0 : ctx.planIndex + 1;
@@ -582,17 +663,14 @@ export function renderPlansScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  ctx.writeFrame(
-    "\x1b[2J\x1b[H" +
-      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 56)), cols), footer].join("\r\n"),
-  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 56), footer].join("\r\n"));
 }
 
 export function renderPlanDetails(ctx: any, width: number, height: number): string[] {
   const selectedPlan = ctx.planEntries[ctx.planIndex];
   if (!selectedPlan) return new Array(height).fill("");
   const lines: string[] = [];
-  lines.push("\x1b[1mDetails\x1b[0m");
+  lines.push(style("Details", "strong"));
   lines.push(
     ...ctx.wrapKeyValue(
       "Agent",
@@ -605,7 +683,7 @@ export function renderPlanDetails(ctx: any, width: number, height: number): stri
   if (selectedPlan.updatedAt) lines.push(...ctx.wrapKeyValue("Updated", selectedPlan.updatedAt, width));
   lines.push(...ctx.wrapKeyValue("File", `.aimux/plans/${selectedPlan.sessionId}.md`, width));
   lines.push("");
-  lines.push("\x1b[1mPreview\x1b[0m");
+  lines.push(style("Preview", "strong"));
   for (const previewLine of buildPlanPreview(ctx, selectedPlan.content, width, Math.max(4, height - lines.length))) {
     lines.push(previewLine);
   }

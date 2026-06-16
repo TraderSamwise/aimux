@@ -1,5 +1,5 @@
 export function stripAnsi(text: string): string {
-  return text.replace(/\x1b\[[0-9;]*m/g, "");
+  return text.replace(/\x1b\[[0-9;:]*m/g, "");
 }
 
 export function center(text: string, width: number): string {
@@ -27,7 +27,7 @@ export function truncateAnsi(text: string, max: number): string {
   let out = "";
   for (let i = 0; i < text.length; i++) {
     if (text[i] === "\x1b") {
-      const match = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+      const match = text.slice(i).match(/^\x1b\[[0-9;:]*m/);
       if (match) {
         out += match[0];
         i += match[0].length - 1;
@@ -69,11 +69,18 @@ export function wrapKeyValue(key: string, value: string, width: number): string[
   return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
 }
 
-export function composeTwoPane(left: string[], right: string[], cols: number): string[] {
-  const leftWidth = Math.max(32, Math.floor(cols * 0.58));
-  const rightWidth = Math.max(20, cols - leftWidth - 4);
+/** Visible width of the left (list) pane in the shared two-pane layout. Card/list
+ *  builders size their content to this so it never clips against composeTwoPane. */
+export function twoPaneLeftWidth(cols: number): number {
+  return Math.max(32, Math.floor(cols * 0.58));
+}
+
+export function composeTwoPane(left: string[], right: string[], cols: number, separator = " │ "): string[] {
+  const leftWidth = twoPaneLeftWidth(cols);
+  const separatorWidth = stripAnsi(separator).length;
+  const rightWidth = Math.max(20, cols - leftWidth - separatorWidth - 1);
   const height = Math.max(left.length, right.length);
-  const totalWidth = leftWidth + 3 + rightWidth;
+  const totalWidth = leftWidth + separatorWidth + rightWidth;
   const outerPad = Math.max(0, Math.floor((cols - totalWidth) / 2));
   const out: string[] = [];
   for (let i = 0; i < height; i++) {
@@ -81,7 +88,7 @@ export function composeTwoPane(left: string[], right: string[], cols: number): s
     const rightLine = truncateAnsi(right[i] ?? "", rightWidth);
     const leftPad = Math.max(0, leftWidth - stripAnsi(leftLine).length);
     const rightPad = Math.max(0, rightWidth - stripAnsi(rightLine).length);
-    out.push(`${" ".repeat(outerPad)}${leftLine}${" ".repeat(leftPad)} │ ${rightLine}${" ".repeat(rightPad)}`);
+    out.push(`${" ".repeat(outerPad)}${leftLine}${" ".repeat(leftPad)}${separator}${rightLine}${" ".repeat(rightPad)}`);
   }
   return out;
 }

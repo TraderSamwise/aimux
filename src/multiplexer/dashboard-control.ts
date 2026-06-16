@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
 import { updateNotificationContext } from "../notification-context.js";
+import { markSessionViewed } from "../session-viewed.js";
 import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
@@ -27,7 +28,10 @@ import {
   buildTeammatePickerOverlayOutput,
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
+  hints,
 } from "../tui/screens/overlay-renderers.js";
+import { renderOverlayBox } from "../tui/render/box.js";
+import { keycap, style } from "../tui/render/theme.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
 import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
@@ -197,54 +201,62 @@ export function renderActiveDashboardOverlay(host: DashboardControlHost): boolea
   return true;
 }
 
-export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): string | null {
+export function buildActiveDashboardOverlayOutput(
+  host: DashboardControlHost,
+  viewport?: { cols: number; rows: number },
+): string | null {
+  // Overlays must be sized to the same viewport the dashboard renders at (the tmux
+  // pane), not process.stdout (the controlling tty, which reports 80 in tmux). The
+  // caller passes the viewport it already computed for this frame; fall back only
+  // when invoked outside the render path.
+  const { cols, rows } = viewport ?? host.getViewportSize();
   if (host.dashboardOverlayState.kind === "worktree-remove-confirm") {
-    return buildWorktreeRemoveConfirmOverlayOutput(host);
+    return buildWorktreeRemoveConfirmOverlayOutput(host, cols, rows);
   }
   if (host.dashboardErrorState) {
-    return buildDashboardErrorOverlayOutput(host);
+    return buildDashboardErrorOverlayOutput(host, cols, rows);
   }
   if (host.dashboardBusyState) {
-    return buildDashboardBusyOverlayOutput(host);
+    return buildDashboardBusyOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "switcher") {
-    return buildSwitcherOverlayOutput(host);
+    return buildSwitcherOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "notification-panel") {
-    return buildNotificationPanelOverlayOutput(host);
+    return buildNotificationPanelOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "teammate-picker") {
-    return buildTeammatePickerOverlayOutput(host);
+    return buildTeammatePickerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "thread-reply") {
-    return buildThreadReplyOverlayOutput(host);
+    return buildThreadReplyOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "orchestration-input") {
-    return buildOrchestrationInputOverlayOutput(host);
+    return buildOrchestrationInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "migrate-picker") {
-    return buildMigratePickerOverlayOutput(host);
+    return buildMigratePickerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "worktree-list") {
-    return buildWorktreeListOverlayOutput(host);
+    return buildWorktreeListOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "label-input") {
-    return buildLabelInputOverlayOutput(host);
+    return buildLabelInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "worktree-input") {
-    return buildWorktreeInputOverlayOutput(host);
+    return buildWorktreeInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "service-input") {
-    return buildServiceInputOverlayOutput(host);
+    return buildServiceInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "tool-picker") {
-    return buildToolPickerOverlayOutput(host);
+    return buildToolPickerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "tool-options") {
-    return buildToolOptionsOverlayOutput(host);
+    return buildToolOptionsOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "orchestration-route-picker") {
-    return buildOrchestrationRoutePickerOverlayOutput(host);
+    return buildOrchestrationRoutePickerOverlayOutput(host, cols, rows);
   }
   return null;
 }
@@ -320,12 +332,12 @@ export function openLiveTmuxWindowForEntry(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void host.postToProjectService("/statusline/refresh", { sessionId: entry.id }).catch(() => {});
-    host.agentTracker.markSeen(entry.id);
     updateNotificationContext("tui", {
       focused: true,
       sessionId: entry.id,
       panelOpen: false,
     });
+    markSessionViewed(entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
   } catch (error) {
@@ -505,49 +517,36 @@ export function showOrchestrationInput(
   host.renderOrchestrationInput();
 }
 
-export function buildOrchestrationInputOverlayOutput(host: DashboardControlHost): string | null {
+export function buildOrchestrationInputOverlayOutput(
+  host: DashboardControlHost,
+  cols: number,
+  rows: number,
+): string | null {
   const target = host.orchestrationInputTarget;
   const mode = host.orchestrationInputMode;
   if (!target || !mode) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
   const actionLabel = mode === "task" ? "assign" : "send";
-  const worktreeLine = target.worktreePath ? `  Worktree: ${target.worktreePath}` : null;
+  const worktreeLine = target.worktreePath ? `  ${style("Worktree:", "muted")} ${target.worktreePath}` : null;
   const recipientCount = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
   const recipientPreview =
     target.sessionId || recipientCount === 0
       ? null
       : mode === "task"
-        ? `  Route: best match from ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}`
-        : `  Recipients: ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}${target.recipientIds && target.recipientIds.length > 0 ? ` (${target.recipientIds.slice(0, 3).join(", ")}${target.recipientIds.length > 3 ? ", ..." : ""})` : ""}`;
-  const lines = [
-    `${modeLabel}:`,
-    "",
-    `  To: ${target.label}`,
+        ? `  ${style("Route:", "muted")} best match from ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}`
+        : `  ${style("Recipients:", "muted")} ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}${target.recipientIds && target.recipientIds.length > 0 ? ` (${target.recipientIds.slice(0, 3).join(", ")}${target.recipientIds.length > 3 ? ", ..." : ""})` : ""}`;
+  const body = [
+    `  ${style("To:", "muted")} ${target.label}`,
     ...(worktreeLine ? [worktreeLine] : []),
     ...(recipientPreview ? [recipientPreview] : []),
-    `  Text: ${host.orchestrationInputBuffer}_`,
+    `  ${style("Text:", "muted")} ${host.orchestrationInputBuffer}_`,
     "",
-    `  [Enter] ${actionLabel}  [Esc] cancel`,
+    hints([
+      ["Enter", actionLabel],
+      ["Esc", "cancel"],
+    ]),
   ];
-
-  const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = lines[i - 1]!;
-      output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  return renderOverlayBox({ title: modeLabel, body, cols, rows });
 }
 
 export function renderOrchestrationInput(host: DashboardControlHost): void {
@@ -555,42 +554,29 @@ export function renderOrchestrationInput(host: DashboardControlHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildOrchestrationInputOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildOrchestrationInputOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildOrchestrationRoutePickerOverlayOutput(host: DashboardControlHost): string | null {
+export function buildOrchestrationRoutePickerOverlayOutput(
+  host: DashboardControlHost,
+  cols: number,
+  rows: number,
+): string | null {
   const mode = host.orchestrationRouteMode;
   if (!mode) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Send handoff" : "Assign task";
-  const lines = [`${modeLabel}: choose target`, ""];
+  const body: string[] = [];
   for (let i = 0; i < Math.min(host.orchestrationRouteOptions.length, 9); i++) {
-    lines.push(`  [${i + 1}] ${host.orchestrationRouteOptions[i]!.label}`);
+    body.push(`  ${keycap(String(i + 1))} ${host.orchestrationRouteOptions[i]!.label}`);
   }
   if (host.orchestrationRouteOptions.length > 9) {
-    lines.push("  ...");
+    body.push(`  ${style("...", "muted")}`);
   }
-  lines.push("");
-  lines.push("  [Esc] cancel");
-
-  const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = lines[i - 1]!;
-      output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  body.push("");
+  body.push(hints([["Esc", "cancel"]]));
+  return renderOverlayBox({ title: `${modeLabel}: choose target`, body, cols, rows });
 }
 
 export function renderOrchestrationRoutePicker(host: DashboardControlHost): void {
@@ -598,7 +584,8 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildOrchestrationRoutePickerOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildOrchestrationRoutePickerOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 

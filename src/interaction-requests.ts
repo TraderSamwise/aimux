@@ -46,6 +46,7 @@ export interface InteractionRequest {
   sessionId: string;
   /** Optional: the registry is project-scoped, but the hook always knows it. */
   projectRoot?: string;
+  dedupeKey?: string;
   type: InteractionType;
   payload: InteractionPayload;
   status: InteractionStatus;
@@ -59,6 +60,7 @@ export interface RegisterInteractionInput {
   type: InteractionType;
   payload: InteractionPayload;
   projectRoot?: string;
+  dedupeKey?: string;
   /** Caller-supplied id (e.g. an agent's request id); otherwise generated. */
   id?: string;
 }
@@ -83,11 +85,17 @@ export class InteractionRegistry {
 
   register(input: RegisterInteractionInput): InteractionRequest {
     this.pruneSettled();
+    const dedupeKey = input.dedupeKey?.trim() || undefined;
+    if (dedupeKey) {
+      const existing = this.findPendingByDedupeKey(dedupeKey);
+      if (existing) return existing;
+    }
     const id = input.id?.trim() || randomUUID();
     const request: InteractionRequest = {
       id,
       sessionId: input.sessionId,
       projectRoot: input.projectRoot,
+      dedupeKey,
       type: input.type,
       payload: input.payload,
       status: "pending",
@@ -170,6 +178,13 @@ export class InteractionRegistry {
     if (response) request.response = response;
     this.notify(id, request);
     return request;
+  }
+
+  private findPendingByDedupeKey(dedupeKey: string): InteractionRequest | undefined {
+    for (const request of this.requests.values()) {
+      if (request.status === "pending" && request.dedupeKey === dedupeKey) return request;
+    }
+    return undefined;
   }
 
   private makeMissing(id: string): InteractionRequest {

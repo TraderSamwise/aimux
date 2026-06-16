@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataState } from "./metadata-store.js";
-import { upsertNotification } from "./notifications.js";
+import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
+import { listNotifications, upsertNotification } from "./notifications.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
@@ -531,6 +531,22 @@ describe("MetadataServer threads API", () => {
     };
     TmuxRuntimeManager.prototype.refreshStatus = vi.fn();
     try {
+      updateSessionMetadata("teammate-1", (current) => ({
+        ...current,
+        derived: {
+          ...(current.derived ?? {}),
+          activity: "waiting",
+          attention: "needs_input",
+          unseenCount: 2,
+        },
+      }));
+      upsertNotification({
+        title: "Needs input",
+        body: "Agent needs input",
+        sessionId: "teammate-1",
+        kind: "needs_input",
+      });
+
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -543,6 +559,11 @@ describe("MetadataServer threads API", () => {
 
       expect(res.ok).toBe(true);
       expect(opened).toEqual([target]);
+      expect(loadMetadataState().sessions["teammate-1"]?.derived).toMatchObject({
+        attention: "normal",
+        unseenCount: 0,
+      });
+      expect(listNotifications({ sessionId: "teammate-1" })[0]?.unread).toBe(false);
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;

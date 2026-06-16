@@ -142,6 +142,7 @@ export interface DashboardViewModel {
   selectedTeammates: DashboardSession[];
   runtimeLabel?: string;
   isDevRuntime?: boolean;
+  version?: string;
   mainCheckout: MainCheckoutInfo;
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
   operationFailures: DashboardOperationFailure[];
@@ -168,6 +169,7 @@ export class Dashboard {
     selectedTeammates: [],
     runtimeLabel: undefined,
     isDevRuntime: false,
+    version: undefined,
     mainCheckout: { name: "Main Checkout", branch: "" },
     worktreeRemoval: undefined,
     operationFailures: [],

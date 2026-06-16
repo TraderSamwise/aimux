@@ -131,10 +131,11 @@ export const dashboardStateMethods = {
   writeFrame(this: any, output: string, force = false): void {
     if (this.mode === "dashboard") {
       this.lastRenderedBaseFrame = output;
-      const overlayOutput = this.buildActiveDashboardOverlayOutput?.() ?? null;
+      const viewport = this.getViewportSize();
+      const overlayOutput = this.buildActiveDashboardOverlayOutput?.(viewport) ?? null;
       const finalOutput = overlayOutput ? `${output}${overlayOutput}` : output;
       const renderKey = [
-        this.getViewportKey(),
+        `${viewport.cols}x${viewport.rows}`,
         `model:${this.dashboardModelVersion ?? 0}`,
         `pending:${this.dashboardPendingActions.getVersion?.() ?? 0}`,
         `overlay:${this.dashboardOverlayState.version ?? 0}`,
