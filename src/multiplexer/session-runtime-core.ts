@@ -9,6 +9,8 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { isAgentOutputEventKind } from "../agent-events.js";
+import { loadLastUsedState } from "../last-used.js";
+import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
@@ -399,10 +401,18 @@ export function buildTmuxWindowMetadata(
   const lastOutputAt =
     derived?.lastOutputAt ??
     (derived?.lastEvent && isAgentOutputEventKind(derived.lastEvent.kind) ? derived.lastEvent.ts : undefined);
+  const label = semantic.user.label;
+  // latestUnread only feeds the prompted/blocked/failed anchors — skip the notification
+  // scan for the common working/ready/idle states.
+  const wantsUnread = label === "needs_input" || label === "needs_response" || label === "blocked" || label === "error";
   const anchor = sessionRecencyAnchor({
-    label: semantic.user.label,
+    label,
     lastOutputAt,
     becameIdleAt: derived?.becameIdleAt,
+    lastUsedAt: loadLastUsedState(process.cwd()).items[sessionId]?.lastUsedAt,
+    latestUnreadAt: wantsUnread
+      ? summarizeUnreadNotificationsBySession().get(sessionId)?.latestUnread?.createdAt
+      : undefined,
   });
   return {
     kind: "agent",

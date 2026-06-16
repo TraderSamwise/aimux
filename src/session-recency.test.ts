@@ -14,6 +14,7 @@ describe("sessionRecencyAnchor", () => {
 
   it("returns null for working/ready with no output yet", () => {
     expect(sessionRecencyAnchor({ label: "working" })).toBeNull();
+    expect(sessionRecencyAnchor({ label: "ready" })).toBeNull();
   });
 
   it("prefers output, else became-idle, for idle/next_step", () => {
