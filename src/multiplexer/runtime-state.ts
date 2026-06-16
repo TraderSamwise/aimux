@@ -600,6 +600,16 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
       delete next.progress;
       return next;
     });
+  } else if (useBackendResume && derived?.activity === "running") {
+    // A reattached agent is sitting at its prompt, not mid-generation. Restoring
+    // the stale "running" from disk would read as "working" forever (the
+    // dropped-stop-hook trap). Settle it to idle so it derives "ready"; a real
+    // prompt-submit hook re-marks it running the moment work resumes. Genuine
+    // needs_input/blocked (activity "waiting") is preserved for the resumed agent.
+    updateSessionMetadata(session.id, (current: any) => ({
+      ...current,
+      derived: current.derived ? { ...current.derived, activity: "idle" } : current.derived,
+    }));
   }
 
   const preservedLabel = session.label ?? host.getSessionLabel(session.id);
