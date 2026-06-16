@@ -7,6 +7,7 @@ import { initPaths } from "./paths.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
 import { addNotification, listNotifications } from "./notifications.js";
 import { markSessionViewed } from "./session-viewed.js";
+import { deriveSessionSemantics } from "./session-semantics.js";
 
 describe("markSessionViewed", () => {
   let repoRoot = "";
@@ -58,7 +59,28 @@ describe("markSessionViewed", () => {
     expect(result).toEqual({ notificationsRead: 1, attentionCleared: true });
     expect(derived?.unseenCount).toBe(0);
     expect(derived?.attention).toBe("normal");
+    // The paired waiting activity is resolved so the agent settles to "ready", not "working".
+    expect(derived?.activity).toBe("idle");
+    expect(deriveSessionSemantics({ status: "running", ...derived }).user.label).toBe("ready");
     expect(listNotifications({ sessionId: "claude-1" })[0]?.unread).toBe(false);
+  });
+
+  it("leaves a genuinely working agent's activity untouched", () => {
+    updateSessionMetadata(
+      "claude-busy",
+      (current) => ({
+        ...current,
+        derived: { ...(current.derived ?? {}), activity: "running", attention: "normal", unseenCount: 1 },
+      }),
+      repoRoot,
+    );
+
+    const result = markSessionViewed("claude-busy", repoRoot);
+
+    const derived = loadMetadataState(repoRoot).sessions["claude-busy"]?.derived;
+    expect(result.attentionCleared).toBe(false);
+    expect(derived?.activity).toBe("running");
+    expect(deriveSessionSemantics({ status: "running", ...derived }).user.label).toBe("working");
   });
 
   it("does not clear formal interaction attention by default", () => {
@@ -83,6 +105,8 @@ describe("markSessionViewed", () => {
     expect(result).toEqual({ notificationsRead: 0, attentionCleared: false });
     expect(derived?.unseenCount).toBe(0);
     expect(derived?.attention).toBe("blocked");
+    // Not cleared on view, so the paired waiting activity stays put.
+    expect(derived?.activity).toBe("waiting");
   });
 
   it("honors view behavior config overrides", () => {
@@ -110,6 +134,7 @@ describe("markSessionViewed", () => {
     expect(result).toEqual({ notificationsRead: 0, attentionCleared: true });
     expect(derived?.unseenCount).toBe(0);
     expect(derived?.attention).toBe("normal");
+    expect(derived?.activity).toBe("idle");
     expect(listNotifications({ sessionId: "codex-ask" })[0]?.unread).toBe(true);
   });
 });
