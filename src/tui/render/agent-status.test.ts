@@ -39,6 +39,11 @@ describe("agentStatusChip", () => {
       label: "Working",
     });
     expect(agentStatusChip({ activity: "idle", userLabel: "ready" })).toEqual({ kind: "ready", label: "Ready" });
+    // Also wins over an attention signal, not just activity.
+    expect(agentStatusChip({ attention: "needs_input", userLabel: "working" })).toEqual({
+      kind: "working",
+      label: "Working",
+    });
     expect(agentStatusChip({ userLabel: "next_step" })).toEqual({ kind: "needs", label: "Next step" });
     expect(agentStatusChip({ userLabel: "offline" })).toEqual({ kind: "offline", label: "Offline" });
   });
