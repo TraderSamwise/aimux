@@ -8,6 +8,11 @@ import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
+import { isAgentOutputEventKind } from "../agent-events.js";
+import { loadLastUsedState } from "../last-used.js";
+import { summarizeUnreadNotificationsBySession } from "../notifications.js";
+import { sessionRecencyAnchor } from "../session-recency.js";
+import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
@@ -384,6 +389,31 @@ export function buildTmuxWindowMetadata(
 ): any {
   const sessionMetadata = loadMetadataState().sessions[sessionId];
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
+  // Compute the same semantic user label the dashboard shows, from the single source
+  // of truth, so Exposé and the dashboard never disagree on an agent's state.
+  const semantic = deriveSessionSemantics({
+    status: runtime?.status ?? "running",
+    activity: sessionMetadata?.derived?.activity,
+    attention: sessionMetadata?.derived?.attention,
+    unseenCount: sessionMetadata?.derived?.unseenCount,
+  });
+  const derived = sessionMetadata?.derived;
+  const lastOutputAt =
+    derived?.lastOutputAt ??
+    (derived?.lastEvent && isAgentOutputEventKind(derived.lastEvent.kind) ? derived.lastEvent.ts : undefined);
+  const label = semantic.user.label;
+  // latestUnread only feeds the prompted/blocked/failed anchors — skip the notification
+  // scan for the common working/ready/idle states.
+  const wantsUnread = label === "needs_input" || label === "needs_response" || label === "blocked" || label === "error";
+  const anchor = sessionRecencyAnchor({
+    label,
+    lastOutputAt,
+    becameIdleAt: derived?.becameIdleAt,
+    lastUsedAt: loadLastUsedState(process.cwd()).items[sessionId]?.lastUsedAt,
+    latestUnreadAt: wantsUnread
+      ? summarizeUnreadNotificationsBySession().get(sessionId)?.latestUnread?.createdAt
+      : undefined,
+  });
   return {
     kind: "agent",
     sessionId,
@@ -399,7 +429,9 @@ export function buildTmuxWindowMetadata(
     attention: sessionMetadata?.derived?.attention,
     unseenCount: sessionMetadata?.derived?.unseenCount,
     statusText: sessionMetadata?.status?.text,
-    lastActivityAt: sessionMetadata?.derived?.lastEvent?.ts ?? sessionMetadata?.updatedAt,
+    userLabel: semantic.user.label,
+    recencyAt: anchor?.value,
+    recencyLabel: anchor?.label,
   };
 }
 

@@ -103,32 +103,46 @@ describe("drawTile", () => {
     expect(stripAnsi(out)).not.toContain("▸");
   });
 
+  it("renders the dashboard-semantic user label (not the raw activity) as the pill", () => {
+    // Raw activity "waiting" would read "WAITING"; the semantic label "working" wins.
+    const out = renderTile(56, true, { activity: "waiting", userLabel: "working", worktreePath: "/x/wt" }, "p / wt");
+    const plain = stripAnsi(out);
+    expect(plain).toContain("WORKING");
+    expect(plain).not.toContain("WAITING");
+  });
+
   it("shows the agent status text (last message) on the pill row", () => {
     const out = renderTile(56, true, { ...needs, statusText: "wrapping it up" }, "aimux / beautify-tui");
     expect(stripAnsi(out)).toContain("wrapping it up");
   });
 
-  it("shows relative recency from lastActivityAt next to the pill", () => {
+  it("shows the labeled time anchor (verb + recency) next to the pill", () => {
     // A minutes-bucket delta keeps the assertion stable against sub-second drift.
-    const lastActivityAt = new Date(Date.now() - 7 * 60_000).toISOString();
+    const recencyAt = new Date(Date.now() - 7 * 60_000).toISOString();
     const out = renderTile(
       60,
       true,
-      { ...needs, lastActivityAt, statusText: "wrapping it up" },
+      { ...needs, recencyAt, recencyLabel: "output", statusText: "wrapping it up" },
       "aimux / beautify-tui",
     );
     const plain = stripAnsi(out);
-    expect(plain).toContain("7m ago");
-    expect(plain).toContain("7m ago · wrapping it up");
+    expect(plain).toContain("output 7m ago");
+    expect(plain).toContain("output 7m ago · wrapping it up");
   });
 
   it("keeps the recency/status row on a short tile even with no status pill", () => {
-    const lastActivityAt = new Date(Date.now() - 7 * 60_000).toISOString();
+    const recencyAt = new Date(Date.now() - 7 * 60_000).toISOString();
     // No activity/attention → no pill; the row carries only recency, and must survive.
-    const out = renderTile(34, true, { worktreePath: "/x/wt", lastActivityAt }, "proj / a-long-worktree-name", 4);
+    const out = renderTile(
+      34,
+      true,
+      { worktreePath: "/x/wt", recencyAt, recencyLabel: "output" },
+      "proj / a-long-worktree-name",
+      4,
+    );
     const lines = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
     expect(lines.length).toBe(4);
-    expect(stripAnsi(out)).toContain("7m ago");
+    expect(stripAnsi(out)).toContain("output 7m ago");
   });
 
   it("inlines the worktree/project context in the top rule when wide", () => {

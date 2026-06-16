@@ -2,6 +2,7 @@ import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGr
 import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
+import { sessionRecencyAnchor } from "../../session-recency.js";
 import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
 import {
   card,
@@ -99,8 +100,6 @@ function sessionUserStateLabel(session: DashboardSession, fallback: string): str
 }
 
 function sessionTimeAnchor(session: DashboardSession): { label: string; value?: string } | null {
-  const userLabel = effectiveSessionRowState(session);
-  const latestUnreadAt = session.semantic?.notifications.latestUnread?.createdAt;
   const lastOutputAt =
     session.lastOutputAt ??
     (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
@@ -113,35 +112,13 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
     };
   }
 
-  if (userLabel === "needs_input" || userLabel === "needs_response") {
-    return { label: "prompted", value: latestUnreadAt ?? lastOutputAt ?? session.becameIdleAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "next_step" || userLabel === "idle" || userLabel === "interrupted") {
-    return lastOutputAt
-      ? { label: "output", value: lastOutputAt }
-      : { label: "idle", value: session.becameIdleAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "working") {
-    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
-  }
-  if (userLabel === "ready") {
-    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
-  }
-  if (userLabel === "done") {
-    return lastOutputAt
-      ? { label: "output", value: lastOutputAt }
-      : { label: "done", value: session.becameIdleAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "offline") {
-    return lastOutputAt ? { label: "output", value: lastOutputAt } : { label: "offline", value: session.lastUsedAt };
-  }
-  if (userLabel === "blocked") {
-    return { label: "blocked", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "error") {
-    return { label: "failed", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
-  }
-  return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
+  return sessionRecencyAnchor({
+    label: session.semantic?.user.label,
+    latestUnreadAt: session.semantic?.notifications.latestUnread?.createdAt,
+    lastOutputAt,
+    becameIdleAt: session.becameIdleAt,
+    lastUsedAt: session.lastUsedAt,
+  });
 }
 
 function sessionTimeText(session: DashboardSession): string {
