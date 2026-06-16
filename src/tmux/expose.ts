@@ -142,7 +142,7 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
 // chip/pill tone, which carries the label color via the shared status vocabulary.
 const STATE_BORDER: Partial<Record<StatusKind, { on: string; off: string }>> = {
   working: { on: "38;5;38", off: "38;5;24" },
-  ready: { on: "38;5;79", off: "38;5;29" },
+  ready: { on: "38;5;75", off: "38;5;67" },
   idle: { on: "38;5;108", off: "38;5;65" },
   offline: { on: "38;5;244", off: "38;5;238" },
   needs: { on: "38;5;179", off: "38;5;94" },
