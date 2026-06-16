@@ -17,6 +17,7 @@ export type Tone =
   | "danger"
   | "blocked"
   | "info"
+  | "ready"
   | "idle";
 
 const TONE_SGR: Record<Tone, string> = {
@@ -30,6 +31,7 @@ const TONE_SGR: Record<Tone, string> = {
   danger: "\x1b[31m",
   blocked: "\x1b[35m",
   info: "\x1b[34m",
+  ready: "\x1b[38;5;75m",
   idle: "\x1b[2;32m",
 };
 
@@ -181,7 +183,7 @@ const STATE_GLYPH: Record<StatusKind, string> = {
 
 const STATE_TONE: Record<StatusKind, Tone> = {
   working: "work",
-  ready: "muted",
+  ready: "ready",
   idle: "idle",
   offline: "muted",
   needs: "attn",
@@ -211,6 +213,7 @@ const TMUX_COLOR: Partial<Record<Tone, string>> = {
   danger: "red",
   blocked: "magenta",
   info: "cyan",
+  ready: "colour75",
   idle: "green",
 };
 
