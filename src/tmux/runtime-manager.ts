@@ -8,6 +8,7 @@ import { loadConfig } from "../config.js";
 import { debug, log } from "../debug.js";
 import { getProjectStateDirFor } from "../paths.js";
 import { getRuntimeOwnerId, TMUX_RUNTIME_OWNER_OPTION } from "../runtime-owner.js";
+import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 export interface TmuxExecOptions {
@@ -88,8 +89,12 @@ export interface TmuxWindowMetadata {
   attention?: string;
   unseenCount?: number;
   statusText?: string;
-  /** Timestamp of the agent's last event/activity, for relative-recency display. */
-  lastActivityAt?: string;
+  /** Dashboard-semantic user state label, so Exposé matches the dashboard. */
+  userLabel?: SessionUserLabel;
+  /** Dashboard time-anchor: the timestamp to show as relative recency... */
+  recencyAt?: string;
+  /** ...and the verb describing it ("output", "prompted", "idle", …). */
+  recencyLabel?: string;
 }
 
 export function isDashboardWindowName(name: string): boolean {

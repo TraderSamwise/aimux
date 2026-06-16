@@ -142,7 +142,9 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
 // chip/pill tone, which carries the label color via the shared status vocabulary.
 const STATE_BORDER: Partial<Record<StatusKind, { on: string; off: string }>> = {
   working: { on: "38;5;38", off: "38;5;24" },
+  ready: { on: "38;5;79", off: "38;5;29" },
   idle: { on: "38;5;108", off: "38;5;65" },
+  offline: { on: "38;5;244", off: "38;5;238" },
   needs: { on: "38;5;179", off: "38;5;94" },
   error: { on: "38;5;174", off: "38;5;88" },
   done: { on: "38;5;71", off: "38;5;28" },
@@ -224,7 +226,8 @@ export function drawTile(
   const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
   const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
   const pillStr = renderAgentStatusPill(item.metadata);
-  const recency = formatRelativeRecency(item.metadata.lastActivityAt) ?? "";
+  const rel = formatRelativeRecency(item.metadata.recencyAt) ?? "";
+  const recency = rel && item.metadata.recencyLabel ? `${item.metadata.recencyLabel} ${rel}` : rel;
   const statusText = (item.metadata.statusText ?? "").replace(/[\r\n]+/g, " ").trim();
   const detail = [recency, statusText].filter(Boolean).join(" · ");
   // Inset the header rows by the marker width so they line up under the title text.
