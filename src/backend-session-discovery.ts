@@ -22,6 +22,12 @@ function encodeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[/.]/g, "-");
 }
 
+/** The on-disk Claude transcript path for a session's cwd + backend id. Single
+ *  source of truth for the encoding so derivation can't drift across modules. */
+export function claudeTranscriptPath(cwd: string, backendSessionId: string): string {
+  return join(claudeProjectsDir(), encodeClaudeProjectPath(cwd), `${backendSessionId}.jsonl`);
+}
+
 /**
  * Best-effort recovery of a claude backend session id from its on-disk
  * transcript store, for a session whose durable backend id was lost (e.g. a

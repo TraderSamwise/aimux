@@ -31,6 +31,25 @@ describe("claudeTurnState", () => {
     expect(claudeTurnState(tail)).toBe("complete");
   });
 
+  it("treats any terminal stop_reason (max_tokens, refusal, …) as complete", () => {
+    expect(claudeTurnState(jsonl([{ type: "assistant", message: { stop_reason: "max_tokens" } }]))).toBe("complete");
+    expect(claudeTurnState(jsonl([{ type: "assistant", message: { stop_reason: "refusal" } }]))).toBe("complete");
+  });
+
+  it("reports in_progress for pause_turn (model will continue)", () => {
+    expect(claudeTurnState(jsonl([{ type: "assistant", message: { stop_reason: "pause_turn" } }]))).toBe("in_progress");
+  });
+
+  it("reports in_progress when a new user prompt follows the last end_turn", () => {
+    // Turn done, user submitted again, model not yet writing — still working.
+    const tail = jsonl([
+      { type: "assistant", message: { stop_reason: "end_turn" } },
+      { type: "last-prompt" },
+      { type: "user", message: { role: "user", content: "do more" } },
+    ]);
+    expect(claudeTurnState(tail)).toBe("in_progress");
+  });
+
   it("reports in_progress when the last assistant entry is a tool_use", () => {
     const tail = jsonl([
       { type: "assistant", message: { stop_reason: "end_turn" } },

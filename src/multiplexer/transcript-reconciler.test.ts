@@ -133,11 +133,13 @@ describe("TranscriptReconciler — codex path cache", () => {
 });
 
 describe("TranscriptReconciler — stranded needs_response", () => {
-  it("clears needs_response when no live interaction remains", () => {
+  it("clears needs_response only after it stays unbacked for a second tick", () => {
     const { reconciler, clearStaleResponse } = makeReconciler({
       loadMetadata: () => metadata("a", { activity: "idle", attention: "needs_response" }),
       hasPendingInteraction: () => false,
     });
+    reconciler.scan(); // first observation — not yet cleared (guards a fast restart)
+    expect(clearStaleResponse).not.toHaveBeenCalled();
     reconciler.scan();
     expect(clearStaleResponse).toHaveBeenCalledWith("a");
   });
@@ -148,6 +150,35 @@ describe("TranscriptReconciler — stranded needs_response", () => {
       hasPendingInteraction: () => true,
     });
     reconciler.scan();
+    reconciler.scan();
     expect(clearStaleResponse).not.toHaveBeenCalled();
+  });
+
+  it("resets the confirm if the interaction re-registers before the second tick", () => {
+    let pending = false;
+    const { reconciler, clearStaleResponse } = makeReconciler({
+      loadMetadata: () => metadata("a", { activity: "idle", attention: "needs_response" }),
+      hasPendingInteraction: () => pending,
+    });
+    reconciler.scan(); // unbacked -> pendingClear
+    pending = true; // interaction re-registered (e.g. just after a restart)
+    reconciler.scan(); // backed again -> confirm reset
+    pending = false;
+    reconciler.scan(); // unbacked again -> first observation, still not cleared
+    expect(clearStaleResponse).not.toHaveBeenCalled();
+  });
+});
+
+describe("TranscriptReconciler — codex miss backoff", () => {
+  it("does not re-scan the codex tree every tick after a miss", () => {
+    const findCodexPath = vi.fn(() => null);
+    const { reconciler } = makeReconciler({
+      findCodexPath,
+      loadMetadata: () => metadata("a", { activity: "running", attention: "normal" }, {}),
+      loadSessions: () => [session("a", { toolConfigKey: "codex", backendSessionId: "be" })],
+    });
+    for (let i = 0; i < 5; i++) reconciler.scan();
+    // First tick scans (miss -> backoff); the next 4 are within the backoff window.
+    expect(findCodexPath).toHaveBeenCalledTimes(1);
   });
 });

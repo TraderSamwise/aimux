@@ -1,8 +1,11 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { claudeTranscriptPath } from "../backend-session-discovery.js";
 import type { MetadataState } from "../metadata-store.js";
 import type { RuntimeTopologySessionState } from "../runtime-core/topology-sessions.js";
 import { findCodexTranscriptPath, probeTranscript, type TranscriptProbe } from "../transcript-turn-state.js";
+
+// Ticks to skip re-scanning the Codex session tree after a path lookup miss, so a
+// not-yet-written transcript doesn't trigger a recursive walk every tick.
+const CODEX_MISS_BACKOFF_TICKS = 8;
 
 export interface TranscriptReconcilerDeps {
   intervalMs?: number;
@@ -15,15 +18,6 @@ export interface TranscriptReconcilerDeps {
   clearStaleResponse: (sessionId: string) => void;
   probe?: (toolConfigKey: string, path: string) => TranscriptProbe | null;
   findCodexPath?: (backendSessionId: string) => string | null;
-}
-
-function claudeProjectsDir(): string {
-  const override = process.env.CLAUDE_CONFIG_DIR?.trim();
-  return join(override ? override : join(homedir(), ".claude"), "projects");
-}
-
-function deriveClaudeTranscriptPath(cwd: string, backendSessionId: string): string {
-  return join(claudeProjectsDir(), cwd.replace(/[/.]/g, "-"), `${backendSessionId}.jsonl`);
 }
 
 /**
@@ -43,6 +37,12 @@ export class TranscriptReconciler {
   // only settle after confirming the file stayed quiescent across a full tick.
   private readonly pending = new Map<string, { size: number; mtimeMs: number }>();
   private readonly codexPathCache = new Map<string, string>();
+  // Sessions whose Codex transcript lookup missed, with the tick to retry at.
+  private readonly codexMissUntil = new Map<string, number>();
+  // Sessions seen needing a needs_response clear once, awaiting a second tick so a
+  // fast daemon restart can't clear a still-re-registering interaction.
+  private readonly pendingClear = new Set<string>();
+  private tick = 0;
 
   constructor(private readonly deps: TranscriptReconcilerDeps) {
     this.intervalMs = deps.intervalMs ?? 4000;
@@ -60,6 +60,8 @@ export class TranscriptReconciler {
     }
     this.pending.clear();
     this.codexPathCache.clear();
+    this.codexMissUntil.clear();
+    this.pendingClear.clear();
   }
 
   private resolveTranscriptPath(session: RuntimeTopologySessionState, metadata: MetadataState): string | null {
@@ -70,18 +72,26 @@ export class TranscriptReconciler {
     if (session.toolConfigKey === "codex") {
       const cached = this.codexPathCache.get(session.id);
       if (cached) return cached;
+      const retryAt = this.codexMissUntil.get(session.id);
+      if (retryAt !== undefined && this.tick < retryAt) return null;
       const found = (this.deps.findCodexPath ?? findCodexTranscriptPath)(session.backendSessionId);
-      if (found) this.codexPathCache.set(session.id, found);
+      if (found) {
+        this.codexPathCache.set(session.id, found);
+        this.codexMissUntil.delete(session.id);
+      } else {
+        this.codexMissUntil.set(session.id, this.tick + CODEX_MISS_BACKOFF_TICKS);
+      }
       return found;
     }
     if (!cwd) return null;
-    return deriveClaudeTranscriptPath(cwd, session.backendSessionId);
+    return claudeTranscriptPath(cwd, session.backendSessionId);
   }
 
   /** Exposed for tests; runs one reconciliation pass. */
   scan(): void {
     if (this.scanning) return;
     this.scanning = true;
+    this.tick++;
     try {
       const metadata = this.deps.loadMetadata();
       const live = new Set<string>();
@@ -93,9 +103,17 @@ export class TranscriptReconciler {
         if (!derived) continue;
 
         // Part B — clear a needs_response stranded by a lost in-memory interaction
-        // registry (e.g. after a daemon restart) while the agent is back to normal.
+        // registry (e.g. after a daemon restart) once it's still unbacked on a
+        // second tick (so a fast restart mid-re-registration can't clear a live one).
         if (derived.attention === "needs_response" && !this.deps.hasPendingInteraction(session.id)) {
-          this.deps.clearStaleResponse(session.id);
+          if (this.pendingClear.has(session.id)) {
+            this.deps.clearStaleResponse(session.id);
+            this.pendingClear.delete(session.id);
+          } else {
+            this.pendingClear.add(session.id);
+          }
+        } else {
+          this.pendingClear.delete(session.id);
         }
 
         // Part A — settle a stuck "working" agent against transcript ground truth.
@@ -132,6 +150,12 @@ export class TranscriptReconciler {
       }
       for (const id of [...this.codexPathCache.keys()]) {
         if (!live.has(id)) this.codexPathCache.delete(id);
+      }
+      for (const id of [...this.codexMissUntil.keys()]) {
+        if (!live.has(id)) this.codexMissUntil.delete(id);
+      }
+      for (const id of [...this.pendingClear]) {
+        if (!live.has(id)) this.pendingClear.delete(id);
       }
     } finally {
       this.scanning = false;
