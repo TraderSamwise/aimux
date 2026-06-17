@@ -686,7 +686,7 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
   });
 
-  it("rejects out-of-range window index jumps", () => {
+  it("rejects out-of-range window index jumps with a friendly message, not a raw error", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
       windows: {
@@ -710,6 +710,8 @@ describe("tmux-control.sh", () => {
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
     writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
 
+    // The bad jump is rejected without surfacing tmux's raw "returned N" error (exit 0),
+    // and no window switch is performed.
     expect(() =>
       runControl(envRoot, [
         "window",
@@ -728,7 +730,87 @@ describe("tmux-control.sh", () => {
         "--current-path",
         "/repo/project/worktree",
       ]),
-    ).toThrow();
+    ).not.toThrow();
+
+    const log = readLog(envRoot);
+    expect(log.some((line) => line.startsWith("switch-client"))).toBe(false);
+    expect(log.some((line) => line.includes("couldn't switch window"))).toBe(true);
+  });
+
+  it("reports a friendly message when prev cannot reach the runtime", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [],
+      windows: {},
+      windowMetadata: {},
+      sessionOptions: {},
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    let output = "";
+    expect(() => {
+      output = runControl(envRoot, [
+        "prev",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-live",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "dashboard",
+        "--current-window-id",
+        "@dash",
+        "--current-path",
+        "/repo/project",
+      ]);
+    }).not.toThrow();
+
+    // No raw "returned N" leak: clean exit, plus a styled aimux message.
+    expect(output).toBe("");
+    const log = readLog(envRoot);
+    expect(log.some((line) => line.includes("aimux") && line.includes("couldn't switch window"))).toBe(true);
+    expect(log.some((line) => line.includes("runtime is not responding"))).toBe(true);
+  });
+
+  it("reports the runtime as unavailable when no endpoint file exists", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [],
+      windows: {},
+      windowMetadata: {},
+      sessionOptions: {},
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    // No metadata-api.txt: the runtime endpoint is unknown, not merely unresponsive.
+
+    let output = "";
+    expect(() => {
+      output = runControl(envRoot, [
+        "prev",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-live",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "dashboard",
+        "--current-window-id",
+        "@dash",
+        "--current-path",
+        "/repo/project",
+      ]);
+    }).not.toThrow();
+
+    expect(output).toBe("");
+    const log = readLog(envRoot);
+    expect(log.some((line) => line.includes("couldn't switch window"))).toBe(true);
+    expect(log.some((line) => line.includes("runtime is unavailable"))).toBe(true);
   });
 
   it("keeps next scoped to main checkout items when current window has no explicit worktree path", () => {
