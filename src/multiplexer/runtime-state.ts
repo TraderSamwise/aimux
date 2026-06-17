@@ -109,6 +109,10 @@ export function renderCurrentDashboardView(host: RuntimeStateHost): void {
     host.renderLibrary();
     return;
   }
+  if (host.isDashboardScreen("topology")) {
+    host.renderTopology();
+    return;
+  }
   if (host.isDashboardScreen("help")) {
     host.renderHelp();
     return;
