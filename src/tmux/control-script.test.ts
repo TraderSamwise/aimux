@@ -809,6 +809,7 @@ describe("tmux-control.sh", () => {
 
     expect(output).toBe("");
     const log = readLog(envRoot);
+    expect(log.some((line) => line.includes("couldn't switch window"))).toBe(true);
     expect(log.some((line) => line.includes("runtime is unavailable"))).toBe(true);
   });
 
