@@ -205,6 +205,7 @@ export function describeHandoffState(_host: SubscreenHost, thread: Orchestration
 
 function refreshCoordinationThreads(host: SubscreenHost): void {
   host.threadEntries = buildCoordinationThreadEntries("user");
+  if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
   host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
   host.renderCoordination();
 }

@@ -87,6 +87,25 @@ describe("DashboardUiStateStore", () => {
     expect(state.level).toBe("sessions");
   });
 
+  it("migrates a pre-merge persisted screen (workflow/threads/notifications) onto coordination", () => {
+    const store = new DashboardUiStateStore();
+    store.persist("dashboard", "legacy", Object.assign(new DashboardState(), { screen: "workflow" as any }), 0, []);
+
+    const state = new DashboardState();
+    store.loadInto(state, "legacy");
+    expect(state.screen).toBe("coordination");
+  });
+
+  it("falls back to the dashboard for an unrecognized persisted screen", () => {
+    const store = new DashboardUiStateStore();
+    store.persist("dashboard", "weird", Object.assign(new DashboardState(), { screen: "bogus" as any }), 0, []);
+
+    const state = new DashboardState();
+    state.screen = "activity";
+    store.loadInto(state, "weird");
+    expect(state.screen).toBe("dashboard");
+  });
+
   it("re-arms selection restore when a preferred entry is loaded from client state", () => {
     const persisted = Object.assign(new DashboardState(), {
       focusedWorktreePath: "/repo/wt",
