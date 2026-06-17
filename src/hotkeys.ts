@@ -5,7 +5,7 @@ export const HOTKEY_TIMEOUT_MS = 1000;
 
 export type HotkeyAction =
   | { type: "dashboard" }
-  | { type: "notifications" }
+  | { type: "coordination" }
   | { type: "help" }
   | { type: "focus"; index: number }
   | { type: "next" }
@@ -84,7 +84,7 @@ export class HotkeyHandler {
         this.onAction({ type: "next" });
         return null;
       case "i":
-        this.onAction({ type: "notifications" });
+        this.onAction({ type: "coordination" });
         return null;
       case "p":
         this.onAction({ type: "prev" });

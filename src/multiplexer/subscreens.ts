@@ -1,5 +1,5 @@
 import { parseKeys } from "../key-parser.js";
-import { markThreadSeen, setThreadStatus, type OrchestrationThread, type ThreadStatus } from "../threads.js";
+import { setThreadStatus, type OrchestrationThread, type ThreadStatus } from "../threads.js";
 import {
   acceptHandoff,
   acceptTask,
@@ -10,40 +10,14 @@ import {
   reopenTask,
   requestTaskChanges,
 } from "../orchestration-actions.js";
-import {
-  buildThreadEntries,
-  buildWorkflowEntries,
-  filterWorkflowEntries,
-  type ThreadEntry,
-  type WorkflowEntry,
-  type WorkflowFilter,
-} from "../workflow.js";
-import {
-  renderActivityScreen,
-  renderThreadDetails,
-  renderThreadsScreen,
-  renderWorkflowDetails,
-  renderWorkflowScreen,
-} from "../tui/screens/subscreen-renderers.js";
-import {
-  handleNotificationsKey as handleNotificationsKeyImpl,
-  notificationTargetLabel as notificationTargetLabelImpl,
-  renderNotifications as renderNotificationsImpl,
-  showNotifications as showNotificationsImpl,
-} from "./notifications.js";
+import { buildCoordinationThreadEntries, type ThreadEntry } from "../workflow.js";
+import { renderActivityScreen } from "../tui/screens/subscreen-renderers.js";
 import { navigationUrgencyScore } from "../fast-control.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { style } from "../tui/render/theme.js";
 
 type SubscreenHost = any;
-
-function findDashboardSessionOrTeammate(host: SubscreenHost, sessionId: string): any | undefined {
-  return (
-    host.getDashboardSessions?.().find((session: any) => session.id === sessionId) ??
-    (host.dashboardTeammatesCache ?? []).find((session: any) => session.id === sessionId)
-  );
-}
 
 export function attentionScore(host: SubscreenHost, entry: any): number {
   return navigationUrgencyScore(entry);
@@ -73,169 +47,6 @@ export function showActivityDashboard(host: SubscreenHost): void {
   host.setDashboardScreen("activity");
   host.writeStatuslineFile();
   renderActivityDashboard(host);
-}
-
-export function showNotifications(host: SubscreenHost): void {
-  showNotificationsImpl(host);
-}
-
-export function renderNotifications(host: SubscreenHost): void {
-  renderNotificationsImpl(host);
-}
-
-export function notificationTargetLabel(host: SubscreenHost, sessionId?: string): string | null {
-  return notificationTargetLabelImpl(host, sessionId);
-}
-
-export function buildWorkflowEntriesForHost(host: SubscreenHost): WorkflowEntry[] {
-  return filterWorkflowEntries(buildWorkflowEntries("user"), host.workflowFilter, "user");
-}
-
-export function showWorkflow(host: SubscreenHost): void {
-  host.clearDashboardSubscreens();
-  host.workflowEntries = buildWorkflowEntriesForHost(host);
-  if (host.workflowIndex >= host.workflowEntries.length) {
-    host.workflowIndex = Math.max(0, host.workflowEntries.length - 1);
-  }
-  host.setDashboardScreen("workflow");
-  host.writeStatuslineFile();
-  renderWorkflow(host);
-}
-
-export function renderWorkflow(host: SubscreenHost): void {
-  renderWorkflowScreen(host);
-}
-
-export function renderWorkflowDetailsForHost(host: SubscreenHost, width: number, height: number): string[] {
-  return renderWorkflowDetails(host, width, height);
-}
-
-export function handleWorkflowKey(host: SubscreenHost, data: Buffer): void {
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const event = events[0];
-  const key = event.name || event.char;
-  const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-  if (isTabToggle) {
-    host.dashboardState.toggleDetailsSidebar();
-    renderWorkflow(host);
-    return;
-  }
-  if (key === "q") {
-    host.exitDashboardClientOrProcess();
-    return;
-  }
-  if (key === "escape" || key === "d") {
-    host.setDashboardScreen("dashboard");
-    host.renderDashboard();
-    return;
-  }
-  if (host.handleDashboardSubscreenNavigationKey(key, "workflow")) return;
-  if (key === "?") {
-    host.showHelp();
-    return;
-  }
-  if (key === "f") {
-    cycleWorkflowFilter(host);
-    return;
-  }
-  if (key === "s") {
-    const entry = host.workflowEntries[host.workflowIndex];
-    if (entry) {
-      host.threadEntries = buildThreadEntries();
-      host.threadIndex = Math.max(
-        0,
-        host.threadEntries.findIndex((thread: ThreadEntry) => thread.thread.id === entry.thread.id),
-      );
-      host.openDashboardOverlay("thread-reply");
-      host.threadReplyBuffer = "";
-      host.setDashboardScreen("threads");
-      renderThreadReply(host);
-    }
-    return;
-  }
-  if (key === "a" || key === "c" || key === "b" || key === "o" || key === "x") {
-    const entry = host.workflowEntries[host.workflowIndex];
-    if (!entry) return;
-    if (entry.task) {
-      if (key === "a") {
-        void runTaskLifecycleAction(host, "accept", entry.task.id);
-        return;
-      }
-      if (key === "b") {
-        void runTaskLifecycleAction(host, "block", entry.task.id);
-        return;
-      }
-      if (key === "c" || key === "x") {
-        void runTaskLifecycleAction(host, "complete", entry.task.id);
-        return;
-      }
-    }
-    if (key === "a" && entry.thread.kind === "handoff") {
-      void runThreadHandoffAction(host, "accept", entry.thread.id);
-      return;
-    }
-    if (key === "c" && entry.thread.kind === "handoff") {
-      void runThreadHandoffAction(host, "complete", entry.thread.id);
-      return;
-    }
-    const statusMap: Record<string, ThreadStatus> = { b: "blocked", o: "open", x: "done" };
-    const status = statusMap[key];
-    if (status) {
-      void runThreadStatusAction(host, entry.thread.id, status);
-    }
-    return;
-  }
-  if (key === "P" || key === "J" || key === "E") {
-    const entry = host.workflowEntries[host.workflowIndex];
-    if (!entry?.task) return;
-    if (key === "P") {
-      void runReviewLifecycleAction(host, "approve", entry.task.id);
-      return;
-    }
-    if (key === "J") {
-      void runReviewLifecycleAction(host, "request_changes", entry.task.id);
-      return;
-    }
-    if (key === "E") {
-      void runTaskLifecycleAction(host, "reopen", entry.task.id);
-    }
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (host.workflowEntries.length > 1) {
-      host.workflowIndex = (host.workflowIndex + 1) % host.workflowEntries.length;
-      renderWorkflow(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (host.workflowEntries.length > 1) {
-      host.workflowIndex = (host.workflowIndex - 1 + host.workflowEntries.length) % host.workflowEntries.length;
-      renderWorkflow(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    if (idx < host.workflowEntries.length) {
-      host.workflowIndex = idx;
-      renderWorkflow(host);
-    }
-    return;
-  }
-  if (key === "enter" || key === "return") {
-    const entry = host.workflowEntries[host.workflowIndex];
-    if (!entry) return;
-    host.threadEntries = buildThreadEntries();
-    host.threadIndex = Math.max(
-      0,
-      host.threadEntries.findIndex((thread: ThreadEntry) => thread.thread.id === entry.thread.id),
-    );
-    host.setDashboardScreen("threads");
-    renderThreads(host);
-  }
 }
 
 export function renderActivityDashboard(host: SubscreenHost): void {
@@ -298,17 +109,6 @@ export function handleActivityKey(host: SubscreenHost, data: Buffer): void {
   }
 }
 
-export function showThreads(host: SubscreenHost): void {
-  host.clearDashboardSubscreens();
-  host.threadEntries = buildThreadEntries();
-  if (host.threadIndex >= host.threadEntries.length) {
-    host.threadIndex = Math.max(0, host.threadEntries.length - 1);
-  }
-  host.setDashboardScreen("threads");
-  host.writeStatuslineFile();
-  renderThreads(host);
-}
-
 export function getPreferredThreadIndexForParticipant(
   _host: SubscreenHost,
   participantId: string,
@@ -338,7 +138,7 @@ export function getPreferredThreadIndexForParticipant(
 }
 
 export function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): void {
-  const entries = buildThreadEntries();
+  const entries = buildCoordinationThreadEntries("user");
   const idx = getPreferredThreadIndexForParticipant(host, sessionId, entries);
   if (idx < 0 || idx >= entries.length) {
     host.footerFlash = `No thread for ${sessionId}`;
@@ -348,7 +148,8 @@ export function openRelevantThreadForSession(host: SubscreenHost, sessionId: str
   }
   host.threadEntries = entries;
   host.threadIndex = idx;
-  host.setDashboardScreen("threads");
+  host.coordinationSection = "threads";
+  host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   const entry = host.threadEntries[host.threadIndex];
   if (entry && (entry.thread.waitingOn ?? []).includes(sessionId)) {
@@ -357,124 +158,7 @@ export function openRelevantThreadForSession(host: SubscreenHost, sessionId: str
     renderThreadReply(host);
     return;
   }
-  renderThreads(host);
-}
-
-export function renderThreads(host: SubscreenHost): void {
-  renderThreadsScreen(host);
-}
-
-export function renderThreadDetailsForHost(host: SubscreenHost, width: number, height: number): string[] {
-  return renderThreadDetails(host, width, height);
-}
-
-export function handleThreadsKey(host: SubscreenHost, data: Buffer): void {
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const event = events[0];
-  const key = event.name || event.char;
-  const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-  if (isTabToggle) {
-    host.dashboardState.toggleDetailsSidebar();
-    renderThreads(host);
-    return;
-  }
-  if (key === "q") {
-    host.exitDashboardClientOrProcess();
-    return;
-  }
-  if (key === "escape" || key === "d") {
-    host.setDashboardScreen("dashboard");
-    host.renderDashboard();
-    return;
-  }
-  if (host.handleDashboardSubscreenNavigationKey(key, "threads")) return;
-  if (key === "?") {
-    host.showHelp();
-    return;
-  }
-  if (key === "r") {
-    host.threadEntries = buildThreadEntries();
-    if (host.threadIndex >= host.threadEntries.length) {
-      host.threadIndex = Math.max(0, host.threadEntries.length - 1);
-    }
-    renderThreads(host);
-    return;
-  }
-  if (key === "s") {
-    if (host.threadEntries[host.threadIndex]) {
-      host.openDashboardOverlay("thread-reply");
-      host.threadReplyBuffer = "";
-      renderThreadReply(host);
-    }
-    return;
-  }
-  if (key === "a") {
-    const entry = host.threadEntries[host.threadIndex];
-    if (entry?.thread.kind === "handoff") void runThreadHandoffAction(host, "accept", entry.thread.id);
-    return;
-  }
-  if (key === "c") {
-    const entry = host.threadEntries[host.threadIndex];
-    if (entry?.thread.kind === "handoff") void runThreadHandoffAction(host, "complete", entry.thread.id);
-    return;
-  }
-  if (key === "b") {
-    const entry = host.threadEntries[host.threadIndex];
-    if (entry) void runThreadStatusAction(host, entry.thread.id, "blocked");
-    return;
-  }
-  if (key === "o") {
-    const entry = host.threadEntries[host.threadIndex];
-    if (entry) void runThreadStatusAction(host, entry.thread.id, "open");
-    return;
-  }
-  if (key === "x") {
-    const entry = host.threadEntries[host.threadIndex];
-    if (entry) void runThreadStatusAction(host, entry.thread.id, "done");
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (host.threadEntries.length > 1) {
-      host.threadIndex = (host.threadIndex + 1) % host.threadEntries.length;
-      renderThreads(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (host.threadEntries.length > 1) {
-      host.threadIndex = (host.threadIndex - 1 + host.threadEntries.length) % host.threadEntries.length;
-      renderThreads(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    if (idx < host.threadEntries.length) {
-      host.threadIndex = idx;
-      renderThreads(host);
-    }
-    return;
-  }
-  if (key === "enter" || key === "return") {
-    const entry = host.threadEntries[host.threadIndex];
-    if (!entry) return;
-    const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
-    if (targetSessionId) {
-      markThreadSeen(entry.thread.id, targetSessionId);
-      const dashEntry = findDashboardSessionOrTeammate(host, targetSessionId);
-      if (dashEntry) {
-        void host.activateDashboardEntry(dashEntry, {
-          preserveDashboardSelection: Boolean(dashEntry.team),
-        });
-      }
-    }
-  }
-}
-
-export function handleNotificationsKey(host: SubscreenHost, data: Buffer): void {
-  handleNotificationsKeyImpl(host, data);
+  host.renderCoordination();
 }
 
 export function renderThreadReply(host: SubscreenHost): void {
@@ -519,6 +203,13 @@ export function describeHandoffState(_host: SubscreenHost, thread: Orchestration
   return `awaiting acceptance from ${thread.participants.filter((id) => id !== thread.createdBy).join(", ") || "recipient"}`;
 }
 
+function refreshCoordinationThreads(host: SubscreenHost): void {
+  host.threadEntries = buildCoordinationThreadEntries("user");
+  if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
+  host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
+  host.renderCoordination();
+}
+
 export async function runThreadHandoffAction(
   host: SubscreenHost,
   mode: "accept" | "complete",
@@ -548,9 +239,7 @@ export async function runThreadHandoffAction(
       return;
     }
   }
-  host.threadEntries = buildThreadEntries();
-  host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
-  renderThreads(host);
+  refreshCoordinationThreads(host);
 }
 
 export async function runThreadStatusAction(
@@ -574,9 +263,7 @@ export async function runThreadStatusAction(
       return;
     }
   }
-  host.threadEntries = buildThreadEntries();
-  host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
-  renderThreads(host);
+  refreshCoordinationThreads(host);
 }
 
 export async function runTaskLifecycleAction(
@@ -620,9 +307,7 @@ export async function runTaskLifecycleAction(
       return;
     }
   }
-  host.workflowEntries = buildWorkflowEntriesForHost(host);
-  host.workflowIndex = Math.min(host.workflowIndex, Math.max(0, host.workflowEntries.length - 1));
-  renderWorkflow(host);
+  refreshCoordinationThreads(host);
 }
 
 export async function runReviewLifecycleAction(
@@ -656,27 +341,7 @@ export async function runReviewLifecycleAction(
       return;
     }
   }
-  host.workflowEntries = buildWorkflowEntriesForHost(host);
-  host.workflowIndex = Math.min(host.workflowIndex, Math.max(0, host.workflowEntries.length - 1));
-  renderWorkflow(host);
-}
-
-export function describeWorkflowFilter(host: SubscreenHost): string {
-  if (host.workflowFilter === "on_me") return "waiting on me";
-  if (host.workflowFilter === "blocked") return "blocked";
-  if (host.workflowFilter === "families") return "families";
-  return "all";
-}
-
-export function cycleWorkflowFilter(host: SubscreenHost): void {
-  const order: WorkflowFilter[] = ["all", "on_me", "blocked", "families"];
-  const current = order.indexOf(host.workflowFilter);
-  host.workflowFilter = order[(current + 1) % order.length] ?? "all";
-  host.workflowEntries = buildWorkflowEntriesForHost(host);
-  host.workflowIndex = Math.min(host.workflowIndex, Math.max(0, host.workflowEntries.length - 1));
-  host.footerFlash = `Workflow filter: ${describeWorkflowFilter(host)}`;
-  host.footerFlashTicks = 3;
-  renderWorkflow(host);
+  refreshCoordinationThreads(host);
 }
 
 export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
@@ -688,7 +353,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
   if (key === "escape") {
     host.clearDashboardOverlay();
     host.threadReplyBuffer = "";
-    renderThreads(host);
+    host.renderCoordination();
     return;
   }
 
@@ -698,7 +363,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
     host.clearDashboardOverlay();
     host.threadReplyBuffer = "";
     if (!entry || !body) {
-      renderThreads(host);
+      host.renderCoordination();
       return;
     }
     try {
@@ -712,9 +377,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
       host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
       return;
     }
-    host.threadEntries = buildThreadEntries();
-    host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
-    renderThreads(host);
+    refreshCoordinationThreads(host);
     return;
   }
 
