@@ -39,6 +39,11 @@ import {
   showProject as showProjectImpl,
 } from "./project.js";
 import {
+  handleTopologyKey as handleTopologyKeyImpl,
+  renderTopology as renderTopologyImpl,
+  showTopology as showTopologyImpl,
+} from "./topology.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   describeHandoffState as describeHandoffStateImpl,
@@ -96,6 +101,15 @@ export const dashboardActionMethods = {
   },
   handleProjectKey(this: any, data: Buffer): void {
     handleProjectKeyImpl(this, data);
+  },
+  showTopology(this: any): void {
+    showTopologyImpl(this);
+  },
+  renderTopology(this: any): void {
+    renderTopologyImpl(this);
+  },
+  handleTopologyKey(this: any, data: Buffer): void {
+    handleTopologyKeyImpl(this, data);
   },
   renderActivityDashboard(this: any): void {
     renderActivityDashboardImpl(this);

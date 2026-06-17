@@ -304,6 +304,14 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
+  if (key === "t") {
+    if (currentScreen === "topology") {
+      host.renderTopology();
+    } else {
+      host.showTopology();
+    }
+    return true;
+  }
   if (key === "g") {
     if (currentScreen === "graveyard") {
       host.renderGraveyard();

@@ -110,6 +110,11 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     host.showLibrary();
     return;
   }
+  if (key === "t") {
+    dismissHelp(host);
+    host.showTopology();
+    return;
+  }
   if (key === "i") {
     dismissHelp(host);
     host.showCoordination();

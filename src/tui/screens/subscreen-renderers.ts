@@ -269,6 +269,88 @@ export function renderProjectDetails(ctx: any, width: number, height: number): s
   return lines.slice(0, height);
 }
 
+const TOPOLOGY_HEALTH_TONE: Record<string, Tone> = {
+  active: "done",
+  attention: "attn",
+  idle: "idle",
+  offline: "muted",
+};
+
+function topologyDot(health: string): string {
+  return style("●", TOPOLOGY_HEALTH_TONE[health] ?? "muted");
+}
+
+export function renderTopologyScreen(ctx: any): void {
+  const { cols, rows } = ctx.getViewportSize();
+  const header = screenHeader(ctx, cols, "topology");
+  const footer = ctx.centerInWidth(
+    keycapHints(
+      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/a/i/y/p/g] screens  [Esc] dashboard  [q] quit",
+    ),
+    cols,
+  );
+  const viewportHeight = rows - header.length - 2;
+  const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
+  const topology = ctx.topology ?? { projectName: "project", health: "idle", counts: null, rows: [] };
+  const listLines: string[] = [];
+
+  const c = topology.counts;
+  listLines.push(
+    `  ${topologyDot(topology.health)} ${style(topology.projectName, "strong")}${
+      c ? ` ${style(`· ${c.worktrees} worktrees · ${c.agents} agents · ${c.services} services`, "muted")}` : ""
+    }`,
+  );
+  listLines.push("");
+
+  if (topology.rows.length === 0) {
+    listLines.push(`  ${style("No worktrees.", "muted")}`);
+  }
+  let focusLine = topology.rows.length === 0 ? 1 : 1;
+  for (let i = 0; i < topology.rows.length; i++) {
+    const row = topology.rows[i]!;
+    const selected = i === ctx.topologyIndex;
+    if (selected) focusLine = listLines.length + 1;
+    const indent = row.depth > 0 ? "    " : "  ";
+    const detail = row.detail ? ` ${style(`(${row.detail})`, "muted")}` : "";
+    if (row.kind === "worktree") {
+      const counts = `${style(`· ${row.status ?? ""}`.trimEnd(), "muted")}`;
+      listLines.push(
+        `${selected ? style("▸", "accent") : " "} ${indent}${topologyDot(row.health)} ${style(ctx.truncatePlain(row.label, 30), "strong")}${detail} ${counts}${trailingMark(selected)}`,
+      );
+    } else {
+      listLines.push(
+        `${selected ? style("▸", "accent") : " "} ${indent}${topologyDot(row.health)} ${style(`[${row.kind}]`, "muted")} ${ctx.truncatePlain(row.label, 28)}${detail}${trailingMark(selected)}`,
+      );
+    }
+  }
+
+  const body = ctx.composeSplitScreen(
+    listLines,
+    renderTopologyDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+    cols,
+    viewportHeight,
+    focusLine,
+    twoPane,
+  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
+}
+
+export function renderTopologyDetails(ctx: any, width: number, height: number): string[] {
+  const row = ctx.topology?.rows?.[ctx.topologyIndex];
+  if (!row) return new Array(height).fill("");
+  const lines: string[] = [];
+  lines.push(style(row.kind === "worktree" ? "Worktree" : row.kind === "service" ? "Service" : "Agent", "strong"));
+  lines.push(...ctx.wrapKeyValue("Name", row.label, width));
+  lines.push(...ctx.wrapKeyValue("Health", row.health, width));
+  if (row.detail) lines.push(...ctx.wrapKeyValue(row.kind === "worktree" ? "Branch" : "Detail", row.detail, width));
+  if (row.status) lines.push(...ctx.wrapKeyValue("Status", row.status, width));
+  if (row.worktreePath) lines.push(...ctx.wrapKeyValue("Worktree", row.worktreePath, width));
+  if (row.sessionId) lines.push(...ctx.wrapKeyValue("Session", row.sessionId, width));
+  if (row.serviceId) lines.push(...ctx.wrapKeyValue("Service", row.serviceId, width));
+  while (lines.length < height) lines.push("");
+  return lines.slice(0, height);
+}
+
 export function renderActivityScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "activity");
