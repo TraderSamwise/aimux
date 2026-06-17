@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildGraveyardViewModel } from "../../multiplexer/graveyard-view-model.js";
 import { keycap, statusDot } from "../render/theme.js";
 import { stripAnsi } from "../render/text.js";
-import { renderGraveyardScreen } from "./subscreen-renderers.js";
+import { renderGraveyardDetails, renderGraveyardScreen } from "./subscreen-renderers.js";
 
 const ago = (days: number): string => new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
@@ -69,6 +69,24 @@ describe("renderGraveyardScreen", () => {
   it("shows recency as a count chip in the card summary", () => {
     const plain = stripAnsi(renderGraveyard());
     expect(plain).toContain("1w ago");
+  });
+
+  it("shows when a worktree was graveyarded in the detail pane", () => {
+    const vm = buildGraveyardViewModel({
+      worktrees: [
+        { path: "/x/test6", name: "test6", branch: "test6", graveyardedAt: ago(8), agents: [], services: [] },
+      ] as never,
+      agents: [] as never,
+      lastUsedById: {} as never,
+    });
+    const ctx = {
+      graveyardViewModel: vm,
+      graveyardIndex: 0,
+      wrapKeyValue: (k: string, v: string) => [`${k ? `${k}: ` : ""}${v ?? ""}`],
+      basename: (p: string) => p.split("/").pop(),
+    };
+    const lines = renderGraveyardDetails(ctx as never, 60, 20).join("\n");
+    expect(lines).toContain("Graveyarded: 1w ago");
   });
 
   it("renders orphan agents as loose selectable rows, not blank-titled cards", () => {
