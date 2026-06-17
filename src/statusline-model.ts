@@ -76,7 +76,7 @@ export interface StatuslineMetadataEntry {
 
 export interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "coordination" | "project" | "library" | "help";
+  dashboardScreen?: "dashboard" | "graveyard" | "activity" | "coordination" | "project" | "library" | "help";
   sessions?: StatuslineSession[];
   teammates?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;

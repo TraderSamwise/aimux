@@ -30,8 +30,8 @@ export function renderCoordinationScreen(ctx: any): void {
   const footer = ctx.centerInWidth(
     keycapHints(
       section === "notifications"
-        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/a/l/g] screens  [Esc] dashboard  [q] quit"
-        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/a/l/g] screens  [Esc] dashboard  [q] quit",
+        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/a/p/g] screens  [Esc] dashboard  [q] quit"
+        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/a/p/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -192,7 +192,7 @@ export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "project");
   const footer = ctx.centerInWidth(
-    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/a/i/l/g] screens  [Esc] dashboard  [q] quit"),
+    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/a/i/p/g] screens  [Esc] dashboard  [q] quit"),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -274,7 +274,7 @@ export function renderActivityScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "activity");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/i/l/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/i/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
     ),
     cols,
   );

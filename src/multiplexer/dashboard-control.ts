@@ -296,7 +296,7 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
-  if (key === "l") {
+  if (key === "p") {
     if (currentScreen === "library") {
       host.renderLibrary();
     } else {

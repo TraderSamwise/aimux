@@ -375,7 +375,7 @@ export const dashboardInteractionMethods = {
       case "y":
         this.showProject();
         return;
-      case "l":
+      case "p":
         this.showLibrary();
         return;
       case "a":
