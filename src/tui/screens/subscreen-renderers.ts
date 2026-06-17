@@ -30,8 +30,8 @@ export function renderCoordinationScreen(ctx: any): void {
   const footer = ctx.centerInWidth(
     keycapHints(
       section === "notifications"
-        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/a/p/g] screens  [Esc] dashboard  [q] quit"
-        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/a/p/g] screens  [Esc] dashboard  [q] quit",
+        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"
+        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -192,7 +192,7 @@ export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "project");
   const footer = ctx.centerInWidth(
-    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/a/i/p/g] screens  [Esc] dashboard  [q] quit"),
+    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -285,7 +285,7 @@ export function renderTopologyScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "topology");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/a/i/y/p/g] screens  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -305,7 +305,7 @@ export function renderTopologyScreen(ctx: any): void {
   if (topology.rows.length === 0) {
     listLines.push(`  ${style("No worktrees.", "muted")}`);
   }
-  let focusLine = topology.rows.length === 0 ? 1 : 1;
+  let focusLine = 1;
   for (let i = 0; i < topology.rows.length; i++) {
     const row = topology.rows[i]!;
     const selected = i === ctx.topologyIndex;
@@ -356,7 +356,7 @@ export function renderActivityScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "activity");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/i/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/i/y/p/t/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -538,7 +538,7 @@ export function renderGraveyardScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "graveyard");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/i/y/p/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -688,7 +688,7 @@ export function renderLibraryScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "library");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/i/y/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/i/y/p/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
