@@ -362,6 +362,23 @@ show_local_message() {
   fi
 }
 
+report_control_failure() {
+  failure_reason="$1"
+  case "$action" in
+    next | prev | window) action_label="switch window" ;;
+    attention) action_label="jump to attention" ;;
+    dashboard) action_label="open dashboard" ;;
+    inbox) action_label="open coordination" ;;
+    menu) action_label="open switcher" ;;
+    expose) action_label="expose sessions" ;;
+    meta) action_label="open meta" ;;
+    team) action_label="reach teammate" ;;
+    *) action_label="$action" ;;
+  esac
+  debug_log_line "control failure action=$action endpoint_available=${endpoint_available:-0} reason=$failure_reason"
+  show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label — $failure_reason"
+}
+
 show_local_switcher() {
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
@@ -893,4 +910,9 @@ fi
 
 fallback_local_control && exit 0
 
-exit 28
+if [ "$endpoint_available" -eq 1 ]; then
+  report_control_failure "runtime is not responding"
+else
+  report_control_failure "runtime is unavailable (restarting or stopped)"
+fi
+exit 0
