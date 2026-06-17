@@ -101,6 +101,10 @@ export function renderCurrentDashboardView(host: RuntimeStateHost): void {
     host.renderCoordination();
     return;
   }
+  if (host.isDashboardScreen("project")) {
+    host.renderProject();
+    return;
+  }
   if (host.isDashboardScreen("plans")) {
     host.renderPlans();
     return;

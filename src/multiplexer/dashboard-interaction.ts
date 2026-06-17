@@ -372,6 +372,9 @@ export const dashboardInteractionMethods = {
       case "i":
         this.showCoordination();
         return;
+      case "y":
+        this.showProject();
+        return;
       case "p":
         this.showPlans();
         return;

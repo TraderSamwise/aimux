@@ -26,6 +26,7 @@ import {
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
+import { type ProjectObservability } from "../project-observability.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
@@ -198,6 +199,8 @@ export class Multiplexer {
   private notificationEntries: NotificationRecord[] = [];
   private notificationIndex = 0;
   private coordinationSection: "notifications" | "threads" = "notifications";
+  private projectObservability: ProjectObservability | null = null;
+  private projectIndex = 0;
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
