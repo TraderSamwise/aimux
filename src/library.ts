@@ -19,7 +19,7 @@ export interface LibraryEntry {
 const DOC_ALLOWLIST: ReadonlyArray<string> = ["AGENTS.md", "CLAUDE.md", "CODEX.md", "README.md"];
 const DEFAULT_PREVIEW_BYTES = 4000;
 
-const FRONTMATTER = /^---\n[\s\S]*?\n---\n?/;
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 
 function stripFrontmatter(content: string): string {
   return content.replace(FRONTMATTER, "").trim();
@@ -38,10 +38,12 @@ export function isStubPlan(content: string): boolean {
 function frontmatterUpdatedAt(content: string): string | undefined {
   const match = content.match(FRONTMATTER);
   if (!match) return undefined;
-  for (const line of match[0].split("\n")) {
+  for (const line of match[0].split(/\r?\n/)) {
     const idx = line.indexOf(":");
     if (idx > 0 && line.slice(0, idx).trim() === "updatedAt") {
-      return line.slice(idx + 1).trim() || undefined;
+      const value = line.slice(idx + 1).trim();
+      // Ignore malformed timestamps so they don't degrade the recency sort.
+      return value && !Number.isNaN(Date.parse(value)) ? value : undefined;
     }
   }
   return undefined;
