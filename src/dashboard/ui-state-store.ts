@@ -62,7 +62,7 @@ export class DashboardUiStateStore {
       const raw = readFileSync(getDashboardClientUiStatePath(clientKey), "utf-8");
       const snapshot = JSON.parse(raw) as DashboardUiClientSnapshot;
       if (snapshot.screen) {
-        state.screen = snapshot.screen;
+        state.screen = normalizePersistedScreen(snapshot.screen);
       }
       if ("focusedWorktreePath" in snapshot) {
         state.focusedWorktreePath = snapshot.focusedWorktreePath;
@@ -232,6 +232,23 @@ export class DashboardUiStateStore {
     };
     return result.moved;
   }
+}
+
+const VALID_SCREENS: ReadonlySet<DashboardScreen> = new Set([
+  "dashboard",
+  "activity",
+  "coordination",
+  "plans",
+  "graveyard",
+  "help",
+]);
+
+// Map screens persisted before the Inbox/Threads/Workflow merge onto coordination,
+// and fall back to the dashboard for anything else unrecognized.
+function normalizePersistedScreen(screen: string): DashboardScreen {
+  if (VALID_SCREENS.has(screen as DashboardScreen)) return screen as DashboardScreen;
+  if (screen === "notifications" || screen === "threads" || screen === "workflow") return "coordination";
+  return "dashboard";
 }
 
 function sanitizeOrderMap(value: unknown): Record<string, string[]> {
