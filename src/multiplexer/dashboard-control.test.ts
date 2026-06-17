@@ -58,3 +58,55 @@ describe("postToProjectService", () => {
     expect(mocks.requestJson).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("handleDashboardSubscreenNavigationKey", () => {
+  function makeHost() {
+    return {
+      showCoordination: vi.fn(),
+      renderCoordination: vi.fn(),
+      showProject: vi.fn(),
+      renderProject: vi.fn(),
+      showLibrary: vi.fn(),
+      renderLibrary: vi.fn(),
+      showTopology: vi.fn(),
+      renderTopology: vi.fn(),
+      showGraveyard: vi.fn(),
+      renderGraveyard: vi.fn(),
+    };
+  }
+
+  it("maps leading-letter hotkeys to their screens (c/p/l/t/g)", async () => {
+    const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
+    const cases: Array<[string, keyof ReturnType<typeof makeHost>, string]> = [
+      ["c", "showCoordination", "project"],
+      ["p", "showProject", "coordination"],
+      ["l", "showLibrary", "coordination"],
+      ["t", "showTopology", "coordination"],
+      ["g", "showGraveyard", "coordination"],
+    ];
+    for (const [key, method, otherScreen] of cases) {
+      const host = makeHost();
+      // currentScreen differs from target, so the show* (not render*) path runs.
+      const handled = handleDashboardSubscreenNavigationKey(host as never, key, otherScreen as never);
+      expect(handled).toBe(true);
+      expect(host[method]).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("re-renders in place when the hotkey matches the current screen", async () => {
+    const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
+    const host = makeHost();
+    const handled = handleDashboardSubscreenNavigationKey(host as never, "p", "project");
+    expect(handled).toBe(true);
+    expect(host.renderProject).toHaveBeenCalledTimes(1);
+    expect(host.showProject).not.toHaveBeenCalled();
+  });
+
+  it("no longer treats the retired i/y keys as navigation", async () => {
+    const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
+    for (const key of ["i", "y", "z"]) {
+      const host = makeHost();
+      expect(handleDashboardSubscreenNavigationKey(host as never, key, "graveyard")).toBe(false);
+    }
+  });
+});

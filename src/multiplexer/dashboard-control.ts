@@ -272,7 +272,7 @@ export function handleDashboardSubscreenNavigationKey(
     host.renderDashboard();
     return true;
   }
-  if (key === "i") {
+  if (key === "c") {
     if (currentScreen === "coordination") {
       host.renderCoordination();
     } else {
@@ -280,7 +280,7 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
-  if (key === "y") {
+  if (key === "p") {
     if (currentScreen === "project") {
       host.renderProject();
     } else {
@@ -288,7 +288,7 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
-  if (key === "p") {
+  if (key === "l") {
     if (currentScreen === "library") {
       host.renderLibrary();
     } else {

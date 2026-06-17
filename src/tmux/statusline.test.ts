@@ -93,9 +93,10 @@ describe("renderTmuxStatusline", () => {
       JSON.stringify({ updatedAt: freshUpdatedAt(), sessions: [], dashboardScreen: "library" }),
     );
     const rendered = renderTmuxStatusline(repoRoot, "bottom", { currentWindow: "dashboard", currentPath: repoRoot });
-    expect(rendered).toContain("dashboard");
+    // Inactive tabs accent their leading hotkey letter; the active tab is fully highlighted.
+    expect(rendered).toContain("#[fg=yellow,bold]d#[default]ashboard");
+    expect(rendered).toContain("#[fg=yellow,bold]g#[default]raveyard");
     expect(rendered).toContain("#[fg=black,bg=yellow] library #[default]");
-    expect(rendered).toContain("graveyard");
   });
 
   it("uses existing statusline data even if it is not freshly rewritten", () => {

@@ -105,7 +105,7 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     dismissHelp(host);
     return;
   }
-  if (key === "p") {
+  if (key === "l") {
     dismissHelp(host);
     host.showLibrary();
     return;
@@ -115,12 +115,12 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     host.showTopology();
     return;
   }
-  if (key === "i") {
+  if (key === "c") {
     dismissHelp(host);
     host.showCoordination();
     return;
   }
-  if (key === "y") {
+  if (key === "p") {
     dismissHelp(host);
     host.showProject();
     return;
