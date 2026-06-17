@@ -31,7 +31,9 @@ export function showProject(host: ProjectHost): void {
 }
 
 export function renderProject(host: ProjectHost): void {
-  refreshProjectObservability(host);
+  // Pure render — navigation keystrokes and live re-renders reuse the snapshot
+  // built on entry / explicit refresh, so cursor moves don't re-read the store.
+  if (!host.projectObservability) refreshProjectObservability(host);
   renderProjectScreen(host);
 }
 
