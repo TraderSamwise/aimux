@@ -28,6 +28,7 @@ import { listNotifications, type NotificationRecord } from "../notifications.js"
 import { type WorkflowEntry } from "../workflow.js";
 import { type ProjectObservability } from "../project-observability.js";
 import { type LibraryEntry } from "../library.js";
+import { type ProjectTopology } from "../project-topology.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
@@ -192,6 +193,8 @@ export class Multiplexer {
   private coordinationSection: "notifications" | "threads" = "notifications";
   private projectObservability: ProjectObservability | null = null;
   private projectIndex = 0;
+  private topology: ProjectTopology | null = null;
+  private topologyIndex = 0;
   private libraryEntries: LibraryEntry[] = [];
   private libraryIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;

@@ -378,6 +378,9 @@ export const dashboardInteractionMethods = {
       case "p":
         this.showLibrary();
         return;
+      case "t":
+        this.showTopology();
+        return;
       case "a":
         this.showActivityDashboard();
         return;

@@ -240,6 +240,7 @@ const VALID_SCREENS: ReadonlySet<DashboardScreen> = new Set([
   "coordination",
   "project",
   "library",
+  "topology",
   "graveyard",
   "help",
 ]);
