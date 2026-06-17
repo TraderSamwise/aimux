@@ -112,4 +112,21 @@ describe("loadLibraryEntries", () => {
   it("returns empty when nothing exists", () => {
     expect(loadLibraryEntries({ repoRoot, plansDir })).toEqual([]);
   });
+
+  it("parses CRLF-authored plan frontmatter and skips CRLF stubs", () => {
+    writeFileSync(join(plansDir, "claude-crlf.md"), REAL_PLAN.replace(/\n/g, "\r\n"));
+    writeFileSync(join(plansDir, "claude-crlf-stub.md"), STUB.replace(/\n/g, "\r\n"));
+    const entries = loadLibraryEntries({ repoRoot, plansDir });
+    const ids = entries.map((e) => e.id);
+    expect(ids).toContain("plan:claude-crlf");
+    expect(ids).not.toContain("plan:claude-crlf-stub");
+    const plan = entries.find((e) => e.id === "plan:claude-crlf")!;
+    expect(plan.updatedAt).toBe("2026-06-17T05:00:00.000Z"); // read from CRLF frontmatter, not mtime
+  });
+
+  it("ignores a malformed frontmatter updatedAt and falls back to mtime", () => {
+    writeFileSync(join(plansDir, "claude-bad.md"), REAL_PLAN.replace("2026-06-17T05:00:00.000Z", "not-a-date"));
+    const plan = loadLibraryEntries({ repoRoot, plansDir }).find((e) => e.id === "plan:claude-bad")!;
+    expect(Number.isNaN(Date.parse(plan.updatedAt))).toBe(false);
+  });
 });

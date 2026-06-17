@@ -41,10 +41,13 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
   host.terminalHost.exitRawMode();
   host.terminalHost.exitAlternateScreen();
 
-  const result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
-
-  host.terminalHost.enterRawMode();
-  host.terminalHost.enterAlternateScreen(true);
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
+  } finally {
+    host.terminalHost.enterRawMode();
+    host.terminalHost.enterAlternateScreen(true);
+  }
 
   if (result.error) {
     host.dashboardErrorState = {
