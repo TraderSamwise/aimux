@@ -197,6 +197,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleLibraryKey(data);
       return;
     }
+    if (host.isDashboardScreen("topology")) {
+      host.handleTopologyKey(data);
+      return;
+    }
     if (host.isDashboardScreen("help")) {
       host.handleHelpKey(data);
       return;
