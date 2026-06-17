@@ -289,7 +289,7 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  a  activity",
     "  i  coordination",
     "  y  project",
-    "  p  plans",
+    "  l  library",
     "  r  name agent",
     "  m  migrate agent",
     "  g  graveyard",
