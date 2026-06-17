@@ -93,10 +93,6 @@ function isIntentionalOfflineSession(session: any): boolean {
 
 export function renderCurrentDashboardView(host: RuntimeStateHost): void {
   host.reconcileDashboardRenderState();
-  if (host.isDashboardScreen("activity")) {
-    host.renderActivityDashboard();
-    return;
-  }
   if (host.isDashboardScreen("coordination")) {
     host.renderCoordination();
     return;

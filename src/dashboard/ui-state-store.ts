@@ -236,7 +236,6 @@ export class DashboardUiStateStore {
 
 const VALID_SCREENS: ReadonlySet<DashboardScreen> = new Set([
   "dashboard",
-  "activity",
   "coordination",
   "project",
   "library",

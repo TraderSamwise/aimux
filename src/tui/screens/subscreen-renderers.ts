@@ -30,8 +30,8 @@ export function renderCoordinationScreen(ctx: any): void {
   const footer = ctx.centerInWidth(
     keycapHints(
       section === "notifications"
-        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"
-        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
+        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"
+        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -192,7 +192,7 @@ export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "project");
   const footer = ctx.centerInWidth(
-    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"),
+    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -285,7 +285,7 @@ export function renderTopologyScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "topology");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/a/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -349,62 +349,6 @@ export function renderTopologyDetails(ctx: any, width: number, height: number): 
   if (row.serviceId) lines.push(...ctx.wrapKeyValue("Service", row.serviceId, width));
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
-}
-
-export function renderActivityScreen(ctx: any): void {
-  const { cols, rows } = ctx.getViewportSize();
-  const header = screenHeader(ctx, cols, "activity");
-  const footer = ctx.centerInWidth(
-    keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/i/y/p/t/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
-  const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
-  const listLines: string[] = [];
-
-  if (ctx.activityEntries.length === 0) {
-    listLines.push(`  ${style("Activity", "strong")}`);
-    listLines.push(`    ${style("No sessions currently need attention.", "muted")}`);
-  } else {
-    listLines.push(`  ${style("Activity", "strong")}`);
-    for (let i = 0; i < ctx.activityEntries.length; i++) {
-      const entry = ctx.activityEntries[i]!;
-      const selected = i === ctx.activityIndex;
-      const identity = entry.label ?? entry.command;
-      const roleTag = entry.role ? ` ${style(`(${entry.role})`, "work")}` : "";
-      const wt = entry.worktreeName
-        ? ` ${style(`· ${ctx.truncatePlain(entry.worktreeName, 18)}${entry.worktreeBranch ? `@${ctx.truncatePlain(entry.worktreeBranch, 18)}` : ""}`, "muted")}`
-        : "";
-      const state = entry.semantic?.presentation?.statusLabel ?? entry.status;
-      const unread =
-        (entry.semantic?.notifications?.unreadCount ?? 0) > 0
-          ? ` ${style(String(Math.min(entry.semantic.notifications.unreadCount, 99)), "work")}`
-          : "";
-      const service = entry.services?.[0]
-        ? ` ${style(`· ${entry.services[0].port ? `:${entry.services[0].port}` : ctx.truncatePlain(entry.services[0].url ?? "", 16)}`, "muted")}`
-        : "";
-      listLines.push(
-        `${marker(selected)}${itemNumber(i)} ${identity}${roleTag} ${style("—", "muted")} ${state}${unread}${wt}${service}${trailingMark(selected)}`,
-      );
-    }
-  }
-
-  const focusLine = ctx.activityEntries.length === 0 ? 1 : ctx.activityIndex + 1;
-  const body = ctx.composeSplitScreen(
-    listLines,
-    ctx.renderSessionDetails(
-      ctx.activityEntries[ctx.activityIndex],
-      Math.max(28, cols - Math.floor(cols * 0.56) - 3),
-      viewportHeight,
-    ),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
-  );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 interface GraveyardCardRow {
@@ -538,7 +482,7 @@ export function renderGraveyardScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "graveyard");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/i/y/p/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/i/y/p/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -688,7 +632,7 @@ export function renderLibraryScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "library");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/i/y/p/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/i/y/p/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
     ),
     cols,
   );

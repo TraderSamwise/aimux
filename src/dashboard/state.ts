@@ -1,14 +1,6 @@
 import type { DashboardSession, DashboardWorktreeEntry } from "./index.js";
 
-export type DashboardScreen =
-  | "dashboard"
-  | "activity"
-  | "coordination"
-  | "project"
-  | "library"
-  | "topology"
-  | "graveyard"
-  | "help";
+export type DashboardScreen = "dashboard" | "coordination" | "project" | "library" | "topology" | "graveyard" | "help";
 export type DashboardLevel = "worktrees" | "sessions";
 export type DashboardOverlayKind =
   | "none"
