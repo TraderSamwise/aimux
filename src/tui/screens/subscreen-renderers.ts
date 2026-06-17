@@ -557,6 +557,8 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
     lines.push(...ctx.wrapKeyValue("Branch", selected.entry.branch, width));
     lines.push(...ctx.wrapKeyValue("Path", selected.entry.path, width));
     lines.push(...ctx.wrapKeyValue("Status", "graveyard", width));
+    if (selected.entry.graveyardedAt)
+      lines.push(...ctx.wrapKeyValue("Graveyarded", formatRelativeRecency(selected.entry.graveyardedAt), width));
     lines.push(...ctx.wrapKeyValue("Agents", String(selected.attachedAgents.length), width));
     lines.push(...ctx.wrapKeyValue("Services", String(selected.attachedServices.length), width));
     if (selected.lastUsedAt)
