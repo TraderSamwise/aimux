@@ -288,6 +288,14 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
+  if (key === "y") {
+    if (currentScreen === "project") {
+      host.renderProject();
+    } else {
+      host.showProject();
+    }
+    return true;
+  }
   if (key === "p") {
     if (currentScreen === "plans") {
       host.renderPlans();

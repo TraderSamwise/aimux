@@ -189,6 +189,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleCoordinationKey(data);
       return;
     }
+    if (host.isDashboardScreen("project")) {
+      host.handleProjectKey(data);
+      return;
+    }
     if (host.isDashboardScreen("plans")) {
       host.handlePlansKey(data);
       return;

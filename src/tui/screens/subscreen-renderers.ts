@@ -186,6 +186,89 @@ function renderCoordinationThreadDetails(ctx: any, width: number, height: number
   return lines.slice(0, height);
 }
 
+const STORY_KIND_DOT: Record<string, Tone> = { task: "work", review: "info", notification: "attn" };
+
+export function renderProjectScreen(ctx: any): void {
+  const { cols, rows } = ctx.getViewportSize();
+  const header = screenHeader(ctx, cols, "project");
+  const footer = ctx.centerInWidth(
+    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/a/i/p/g] screens  [Esc] dashboard  [q] quit"),
+    cols,
+  );
+  const viewportHeight = rows - header.length - 2;
+  const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
+  const obs = ctx.projectObservability ?? { summary: null, progress: null, story: [] };
+  const listLines: string[] = [];
+
+  if (obs.summary) {
+    const s = obs.summary;
+    listLines.push(`  ${style("Summary", "strong")}`);
+    listLines.push(
+      `    ${style(`agents ${s.agentsRunning + s.agentsWaiting + s.agentsOffline}`, "muted")} ${style(`(${s.agentsRunning} run · ${s.agentsWaiting} wait · ${s.agentsOffline} off)`, "muted")}  ${style(`services ${s.services}`, "muted")}  ${style(`worktrees ${s.worktrees}`, "muted")}`,
+    );
+    listLines.push(
+      `    ${style(`tasks ${s.openTasks} open / ${s.doneTasks} done`, "muted")}  ${s.unreadNotifications > 0 ? style(`${s.unreadNotifications} unread`, "attn") : style("0 unread", "muted")}`,
+    );
+  }
+  if (obs.progress) {
+    const p = obs.progress;
+    listLines.push("");
+    listLines.push(`  ${style("Progress", "strong")} ${style(`(${p.total} tasks)`, "muted")}`);
+    listLines.push(
+      `    ${style(`pending ${p.pending}`, "muted")} · ${style(`assigned ${p.assigned}`, "muted")} · ${style(`active ${p.in_progress}`, "work")} · ${p.blocked > 0 ? style(`blocked ${p.blocked}`, "blocked") : style("blocked 0", "muted")} · ${style(`done ${p.done}`, "done")} · ${p.failed > 0 ? style(`failed ${p.failed}`, "danger") : style("failed 0", "muted")}`,
+    );
+  }
+
+  listLines.push("");
+  listLines.push(`  ${style("Story", "strong")} ${style(`(${obs.story.length})`, "muted")}`);
+  let focusLine = listLines.length;
+  if (obs.story.length === 0) {
+    listLines.push(`    ${style("No recent activity.", "muted")}`);
+  } else {
+    for (let i = 0; i < obs.story.length; i++) {
+      const item = obs.story[i]!;
+      const selected = i === ctx.projectIndex;
+      if (selected) focusLine = listLines.length + 1;
+      const dot = statusDot(item.status === "unread" ? "needs" : "offline");
+      const tone = STORY_KIND_DOT[item.kind] ?? "muted";
+      const when = ` ${style(`· ${formatRelativeRecency(item.createdAt)}`, "muted")}`;
+      const meta = item.meta ? ` ${style(`· ${ctx.truncatePlain(item.meta, 22)}`, "muted")}` : "";
+      listLines.push(
+        `${marker(selected)}${itemNumber(i)} ${dot} ${style(`[${item.kind}]`, tone)} ${ctx.truncatePlain(item.title, 40)}${meta}${when}${trailingMark(selected)}`,
+      );
+    }
+  }
+
+  const body = ctx.composeSplitScreen(
+    listLines,
+    renderProjectDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+    cols,
+    viewportHeight,
+    focusLine,
+    twoPane,
+  );
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
+}
+
+export function renderProjectDetails(ctx: any, width: number, height: number): string[] {
+  const item = ctx.projectObservability?.story?.[ctx.projectIndex];
+  if (!item) return new Array(height).fill("");
+  const lines: string[] = [];
+  lines.push(style("Story item", "strong"));
+  lines.push(...ctx.wrapKeyValue("Title", item.title, width));
+  lines.push(...ctx.wrapKeyValue("Kind", item.kind, width));
+  if (item.status) lines.push(...ctx.wrapKeyValue("Status", item.status, width));
+  if (item.meta) lines.push(...ctx.wrapKeyValue("Meta", item.meta, width));
+  lines.push(...ctx.wrapKeyValue("When", item.createdAt, width));
+  if (item.body) {
+    lines.push("");
+    lines.push(style("Body", "strong"));
+    lines.push(...ctx.wrapKeyValue("", item.body, width));
+  }
+  while (lines.length < height) lines.push("");
+  return lines.slice(0, height);
+}
+
 export function renderActivityScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "activity");

@@ -34,6 +34,11 @@ import {
   showCoordination as showCoordinationImpl,
 } from "./coordination.js";
 import {
+  handleProjectKey as handleProjectKeyImpl,
+  renderProject as renderProjectImpl,
+  showProject as showProjectImpl,
+} from "./project.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   describeHandoffState as describeHandoffStateImpl,
@@ -82,6 +87,15 @@ export const dashboardActionMethods = {
   },
   handleCoordinationKey(this: any, data: Buffer): void {
     handleCoordinationKeyImpl(this, data);
+  },
+  showProject(this: any): void {
+    showProjectImpl(this);
+  },
+  renderProject(this: any): void {
+    renderProjectImpl(this);
+  },
+  handleProjectKey(this: any, data: Buffer): void {
+    handleProjectKeyImpl(this, data);
   },
   renderActivityDashboard(this: any): void {
     renderActivityDashboardImpl(this);

@@ -288,6 +288,7 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  Enter  open, resume, or focus",
     "  a  activity",
     "  i  coordination",
+    "  y  project",
     "  p  plans",
     "  r  name agent",
     "  m  migrate agent",

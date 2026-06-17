@@ -76,7 +76,7 @@ export interface StatuslineMetadataEntry {
 
 export interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "coordination" | "help";
+  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "coordination" | "project" | "help";
   sessions?: StatuslineSession[];
   teammates?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;
@@ -105,6 +105,7 @@ export const DASHBOARD_SCREEN_TABS: Array<{
   { key: "dashboard", label: "dashboard" },
   { key: "activity", label: "activity" },
   { key: "coordination", label: "coordination" },
+  { key: "project", label: "project" },
   { key: "plans", label: "plans" },
   { key: "graveyard", label: "graveyard" },
 ];
