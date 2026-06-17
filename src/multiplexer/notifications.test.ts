@@ -5,39 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import type { NotificationRecord } from "../notifications.js";
+import { upsertNotification } from "../notifications.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
-import { appendMessage, createThread } from "../threads.js";
 import { handleNotificationsKey, notificationTargetLabel, notificationTargetState } from "./notifications.js";
 
 function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
-  const thread = createThread({
-    title: "Needs input",
-    kind: "conversation",
-    createdBy: "sender",
-    participants: ["sender", sessionId],
-  });
-  appendMessage(thread.id, {
-    from: "sender",
-    to: [sessionId],
-    kind: "request",
-    body,
-  });
-  const entry = createRuntimeExchangeStore()
-    .read()
-    .inbox.find((candidate) => candidate.participantId === sessionId && candidate.subjectId === thread.id);
-  if (!entry) throw new Error("expected exchange inbox entry");
-  return {
-    id: entry.id,
-    title: thread.title,
-    body,
-    sessionId,
-    targetKind: "session",
-    kind: "thread",
-    unread: true,
-    cleared: false,
-    createdAt: entry.updatedAt,
-    updatedAt: entry.updatedAt,
-  };
+  return upsertNotification({ title: "Needs input", body, sessionId, kind: "thread" });
 }
 
 function unreadInboxEntries(sessionId: string) {
