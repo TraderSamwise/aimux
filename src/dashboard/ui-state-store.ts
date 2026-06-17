@@ -238,6 +238,7 @@ const VALID_SCREENS: ReadonlySet<DashboardScreen> = new Set([
   "dashboard",
   "activity",
   "coordination",
+  "project",
   "plans",
   "graveyard",
   "help",

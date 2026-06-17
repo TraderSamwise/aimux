@@ -115,6 +115,11 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     host.showCoordination();
     return;
   }
+  if (key === "y") {
+    dismissHelp(host);
+    host.showProject();
+    return;
+  }
   if (key === "a") {
     dismissHelp(host);
     host.showActivityDashboard();
