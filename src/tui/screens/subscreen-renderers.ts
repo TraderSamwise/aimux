@@ -599,78 +599,66 @@ function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any, cols: number, rows
   return renderOverlayBox({ title: "Delete graveyarded worktree", body, cols, rows, variant: "red" });
 }
 
-function buildPlanPreview(ctx: any, content: string, width: number, maxLines: number): string[] {
-  const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
-  const rawLines = body.length > 0 ? body.split(/\r?\n/) : ["(empty)"];
-  const preview: string[] = [];
-  for (const line of rawLines) {
-    if (preview.length >= maxLines) break;
-    const normalized = line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line;
-    preview.push(normalized);
-  }
-  return preview;
-}
+const LIBRARY_KIND_TONE: Record<string, Tone> = { doc: "info", plan: "work" };
 
-export function renderPlansScreen(ctx: any): void {
+export function renderLibraryScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
-  const header = screenHeader(ctx, cols, "plans");
+  const header = screenHeader(ctx, cols, "library");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/i/y/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
+  const entries = ctx.libraryEntries ?? [];
   const listLines: string[] = [];
 
-  if (ctx.planEntries.length === 0) {
-    listLines.push(`  ${style("No plan files found in .aimux/plans/", "muted")}`);
+  if (entries.length === 0) {
+    listLines.push(`  ${style("Library", "strong")}`);
+    listLines.push(`    ${style("No project docs or plans yet.", "muted")}`);
   } else {
-    listLines.push(`  ${style("Plans", "strong")}`);
-    for (let i = 0; i < ctx.planEntries.length; i++) {
-      const plan = ctx.planEntries[i];
-      const selected = i === ctx.planIndex;
-      const identity = plan.label ?? plan.tool ?? "unknown";
-      const worktree = plan.worktree ?? "main";
-      const updated = plan.updatedAt ? ` · ${plan.updatedAt.replace("T", " ").slice(0, 16)}` : "";
+    listLines.push(`  ${style("Library", "strong")}`);
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]!;
+      const selected = i === ctx.libraryIndex;
+      const tone = LIBRARY_KIND_TONE[entry.kind] ?? "muted";
+      const sub = entry.kind === "plan" && entry.sessionId ? ` ${style(`(${entry.sessionId})`, "muted")}` : "";
+      const when = ` ${style(`· ${formatRelativeRecency(entry.updatedAt)}`, "muted")}`;
       listLines.push(
-        `${marker(selected)}${itemNumber(i)} ${style(identity, "strong")} ${style(`(${plan.sessionId}) · ${worktree}${updated}`, "muted")}`,
+        `${marker(selected)}${itemNumber(i)} ${style(`[${entry.kind}]`, tone)} ${style(ctx.truncatePlain(entry.title, 38), "strong")}${sub}${when}${trailingMark(selected)}`,
       );
     }
   }
-  const focusLine = ctx.planEntries.length === 0 ? 0 : ctx.planIndex + 1;
+  const focusLine = entries.length === 0 ? 1 : ctx.libraryIndex + 2;
   const body = ctx.composeSplitScreen(
     listLines,
-    renderPlanDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+    renderLibraryDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
     cols,
     viewportHeight,
     focusLine,
     twoPane,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 56), footer].join("\r\n"));
+  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
-export function renderPlanDetails(ctx: any, width: number, height: number): string[] {
-  const selectedPlan = ctx.planEntries[ctx.planIndex];
-  if (!selectedPlan) return new Array(height).fill("");
+export function renderLibraryDetails(ctx: any, width: number, height: number): string[] {
+  const entry = ctx.libraryEntries?.[ctx.libraryIndex];
+  if (!entry) return new Array(height).fill("");
   const lines: string[] = [];
   lines.push(style("Details", "strong"));
-  lines.push(
-    ...ctx.wrapKeyValue(
-      "Agent",
-      `${selectedPlan.label ?? selectedPlan.tool ?? "unknown"} (${selectedPlan.sessionId})`,
-      width,
-    ),
-  );
-  lines.push(...ctx.wrapKeyValue("Tool", selectedPlan.tool ?? "unknown", width));
-  lines.push(...ctx.wrapKeyValue("Worktree", selectedPlan.worktree ?? "main", width));
-  if (selectedPlan.updatedAt) lines.push(...ctx.wrapKeyValue("Updated", selectedPlan.updatedAt, width));
-  lines.push(...ctx.wrapKeyValue("File", `.aimux/plans/${selectedPlan.sessionId}.md`, width));
+  lines.push(...ctx.wrapKeyValue("Title", entry.title, width));
+  lines.push(...ctx.wrapKeyValue("Kind", entry.kind, width));
+  if (entry.sessionId) lines.push(...ctx.wrapKeyValue("Session", entry.sessionId, width));
+  lines.push(...ctx.wrapKeyValue("Updated", entry.updatedAt, width));
+  lines.push(...ctx.wrapKeyValue("Path", entry.path, width));
   lines.push("");
   lines.push(style("Preview", "strong"));
-  for (const previewLine of buildPlanPreview(ctx, selectedPlan.content, width, Math.max(4, height - lines.length))) {
-    lines.push(previewLine);
+  const bodyLines = (entry.preview && entry.preview.length > 0 ? entry.preview : "(empty)").split(/\r?\n/);
+  for (const line of bodyLines) {
+    if (lines.length >= height) break;
+    lines.push(line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line);
   }
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);

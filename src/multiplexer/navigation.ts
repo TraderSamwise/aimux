@@ -107,7 +107,7 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
   }
   if (key === "p") {
     dismissHelp(host);
-    host.showPlans();
+    host.showLibrary();
     return;
   }
   if (key === "i") {

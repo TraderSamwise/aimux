@@ -239,16 +239,17 @@ const VALID_SCREENS: ReadonlySet<DashboardScreen> = new Set([
   "activity",
   "coordination",
   "project",
-  "plans",
+  "library",
   "graveyard",
   "help",
 ]);
 
-// Map screens persisted before the Inbox/Threads/Workflow merge onto coordination,
-// and fall back to the dashboard for anything else unrecognized.
+// Migrate screens persisted before the IA redesign: inbox/threads/workflow ->
+// coordination, plans -> library; fall back to dashboard for anything unknown.
 function normalizePersistedScreen(screen: string): DashboardScreen {
   if (VALID_SCREENS.has(screen as DashboardScreen)) return screen as DashboardScreen;
   if (screen === "notifications" || screen === "threads" || screen === "workflow") return "coordination";
+  if (screen === "plans") return "library";
   return "dashboard";
 }
 

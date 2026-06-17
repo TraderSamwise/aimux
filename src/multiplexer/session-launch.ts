@@ -193,8 +193,8 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleProjectKey(data);
       return;
     }
-    if (host.isDashboardScreen("plans")) {
-      host.handlePlansKey(data);
+    if (host.isDashboardScreen("library")) {
+      host.handleLibraryKey(data);
       return;
     }
     if (host.isDashboardScreen("help")) {

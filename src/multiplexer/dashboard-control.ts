@@ -297,10 +297,10 @@ export function handleDashboardSubscreenNavigationKey(
     return true;
   }
   if (key === "p") {
-    if (currentScreen === "plans") {
-      host.renderPlans();
+    if (currentScreen === "library") {
+      host.renderLibrary();
     } else {
-      host.showPlans();
+      host.showLibrary();
     }
     return true;
   }
