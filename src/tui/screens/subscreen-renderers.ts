@@ -30,8 +30,8 @@ export function renderCoordinationScreen(ctx: any): void {
   const footer = ctx.centerInWidth(
     keycapHints(
       section === "notifications"
-        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"
-        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
+        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"
+        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -192,7 +192,7 @@ export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "project");
   const footer = ctx.centerInWidth(
-    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit"),
+    keycapHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -285,7 +285,7 @@ export function renderTopologyScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "topology");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/i/y/p/t/g] screens  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -482,7 +482,7 @@ export function renderGraveyardScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "graveyard");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/i/y/p/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
@@ -634,7 +634,7 @@ export function renderLibraryScreen(ctx: any): void {
   const header = screenHeader(ctx, cols, "library");
   const footer = ctx.centerInWidth(
     keycapHints(
-      "[↑↓] select  [Tab] details  [d/i/y/p/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
     ),
     cols,
   );
