@@ -910,7 +910,9 @@ fi
 
 fallback_local_control && exit 0
 
-if [ "$endpoint_available" -eq 1 ]; then
+if [ -z "$path" ]; then
+  report_control_failure "no tmux target available"
+elif [ "$endpoint_available" -eq 1 ]; then
   report_control_failure "runtime is not responding"
 else
   report_control_failure "runtime is unavailable (restarting or stopped)"
