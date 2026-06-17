@@ -773,6 +773,43 @@ describe("tmux-control.sh", () => {
     expect(output).toBe("");
     const log = readLog(envRoot);
     expect(log.some((line) => line.includes("aimux") && line.includes("couldn't switch window"))).toBe(true);
+    expect(log.some((line) => line.includes("runtime is not responding"))).toBe(true);
+  });
+
+  it("reports the runtime as unavailable when no endpoint file exists", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [],
+      windows: {},
+      windowMetadata: {},
+      sessionOptions: {},
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    // No metadata-api.txt: the runtime endpoint is unknown, not merely unresponsive.
+
+    let output = "";
+    expect(() => {
+      output = runControl(envRoot, [
+        "prev",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-live",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "dashboard",
+        "--current-window-id",
+        "@dash",
+        "--current-path",
+        "/repo/project",
+      ]);
+    }).not.toThrow();
+
+    expect(output).toBe("");
+    const log = readLog(envRoot);
+    expect(log.some((line) => line.includes("runtime is unavailable"))).toBe(true);
   });
 
   it("keeps next scoped to main checkout items when current window has no explicit worktree path", () => {
