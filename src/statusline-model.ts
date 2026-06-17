@@ -192,9 +192,13 @@ export function renderDashboardScreens(activeScreen: StatuslineData["dashboardSc
     if (screen.key === active) {
       return `#[fg=black,bg=yellow] ${screen.label} #[default]`;
     }
-    // Accent the leading letter to signal the screen's hotkey.
-    const [first, ...rest] = screen.label;
-    return `#[fg=yellow,bold]${first}#[default]${rest.join("")}`;
+    // Accent the hotkey letter within the label to signal the screen's shortcut.
+    const idx = screen.label.toLowerCase().indexOf(screen.hotkey.toLowerCase());
+    if (idx < 0) return screen.label;
+    const before = screen.label.slice(0, idx);
+    const hot = screen.label.slice(idx, idx + 1);
+    const after = screen.label.slice(idx + 1);
+    return `${before}#[fg=yellow,bold]${hot}#[default]${after}`;
   });
 }
 

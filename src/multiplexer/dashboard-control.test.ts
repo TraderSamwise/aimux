@@ -93,13 +93,19 @@ describe("handleDashboardSubscreenNavigationKey", () => {
     }
   });
 
-  it("re-renders in place when the hotkey matches the current screen", async () => {
+  it("declines (returns false) when the hotkey matches the current screen, so the screen's own handler can act", async () => {
     const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
-    const host = makeHost();
-    const handled = handleDashboardSubscreenNavigationKey(host as never, "p", "project");
-    expect(handled).toBe(true);
-    expect(host.renderProject).toHaveBeenCalledTimes(1);
-    expect(host.showProject).not.toHaveBeenCalled();
+    // e.g. on coordination, [c] must reach the section handler (clear/complete), not re-nav.
+    for (const [key, screen] of [
+      ["c", "coordination"],
+      ["p", "project"],
+      ["l", "library"],
+      ["t", "topology"],
+      ["g", "graveyard"],
+    ] as const) {
+      const host = makeHost();
+      expect(handleDashboardSubscreenNavigationKey(host as never, key, screen as never)).toBe(false);
+    }
   });
 
   it("no longer treats the retired i/y keys as navigation", async () => {

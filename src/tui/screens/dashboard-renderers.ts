@@ -741,7 +741,7 @@ export function renderDashboardFrame(
     content.push("");
   }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
-    content.push(centerInBlock("No sessions. Press [c] to create one."));
+    content.push(centerInBlock("No sessions. Press [n] to create one."));
   } else if (state.hasWorktrees) {
     renderWorktreeGrouped(content);
   } else {

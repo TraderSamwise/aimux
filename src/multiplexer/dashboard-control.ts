@@ -272,44 +272,32 @@ export function handleDashboardSubscreenNavigationKey(
     host.renderDashboard();
     return true;
   }
+  // For each screen hotkey: when already on that screen, decline (return false) so the
+  // key falls through to the screen's own action handler (e.g. coordination's [c] clear/
+  // complete). Otherwise switch to it.
   if (key === "c") {
-    if (currentScreen === "coordination") {
-      host.renderCoordination();
-    } else {
-      host.showCoordination();
-    }
+    if (currentScreen === "coordination") return false;
+    host.showCoordination();
     return true;
   }
   if (key === "p") {
-    if (currentScreen === "project") {
-      host.renderProject();
-    } else {
-      host.showProject();
-    }
+    if (currentScreen === "project") return false;
+    host.showProject();
     return true;
   }
   if (key === "l") {
-    if (currentScreen === "library") {
-      host.renderLibrary();
-    } else {
-      host.showLibrary();
-    }
+    if (currentScreen === "library") return false;
+    host.showLibrary();
     return true;
   }
   if (key === "t") {
-    if (currentScreen === "topology") {
-      host.renderTopology();
-    } else {
-      host.showTopology();
-    }
+    if (currentScreen === "topology") return false;
+    host.showTopology();
     return true;
   }
   if (key === "g") {
-    if (currentScreen === "graveyard") {
-      host.renderGraveyard();
-    } else {
-      host.showGraveyard();
-    }
+    if (currentScreen === "graveyard") return false;
+    host.showGraveyard();
     return true;
   }
   return false;
