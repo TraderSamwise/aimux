@@ -1,6 +1,5 @@
 import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
 import { parseKeys } from "../key-parser.js";
-import { renderNotificationsScreen } from "../tui/screens/subscreen-renderers.js";
 
 type NotificationHost = any;
 
@@ -77,7 +76,7 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
   }
 }
 
-function refreshNotificationEntries(host: NotificationHost): void {
+export function refreshNotificationEntries(host: NotificationHost): void {
   host.notificationEntries = listNotifications();
   if (host.notificationIndex >= host.notificationEntries.length) {
     host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
@@ -85,12 +84,12 @@ function refreshNotificationEntries(host: NotificationHost): void {
 }
 
 export function hydrateDashboardNotificationScreenState(host: NotificationHost): void {
-  if (!host.isDashboardScreen?.("notifications")) return;
+  if (!host.isDashboardScreen?.("coordination")) return;
   refreshNotificationEntries(host);
   host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
 }
 
-function ensureNotificationState(host: NotificationHost): void {
+export function ensureNotificationState(host: NotificationHost): void {
   if (!Array.isArray(host.notificationEntries)) {
     host.notificationEntries = [];
   }
@@ -108,21 +107,6 @@ function findNotificationSessionTarget(host: NotificationHost, sessionId: string
 
 function findNotificationServiceTarget(host: NotificationHost, sessionId: string): any | undefined {
   return host.getDashboardServices?.().find((entry: any) => entry.id === sessionId);
-}
-
-export function showNotifications(host: NotificationHost): void {
-  host.clearDashboardSubscreens();
-  refreshNotificationEntries(host);
-  host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
-  host.setDashboardScreen("notifications");
-  host.writeStatuslineFile();
-  renderNotifications(host);
-}
-
-export function renderNotifications(host: NotificationHost): void {
-  ensureNotificationState(host);
-  refreshNotificationEntries(host);
-  renderNotificationsScreen(host);
 }
 
 export function notificationTargetLabel(host: NotificationHost, sessionId?: string): string | null {
@@ -154,7 +138,7 @@ export function notificationTargetState(
   return "missing";
 }
 
-async function openSelectedNotification(host: NotificationHost): Promise<void> {
+export async function openSelectedNotification(host: NotificationHost): Promise<void> {
   const entry = host.notificationEntries[host.notificationIndex];
   if (!entry) return;
   if (!entry.sessionId) {
@@ -162,14 +146,14 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
       markNotificationsRead({ id: entry.id });
       refreshNotificationEntries(host);
     }
-    renderNotifications(host);
+    host.renderCoordination();
     return;
   }
   const targetState = notificationTargetState(host, entry.sessionId);
   if (targetState === "missing") {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
-    renderNotifications(host);
+    host.renderCoordination();
     return;
   }
   const session = findNotificationSessionTarget(host, entry.sessionId);
@@ -181,7 +165,7 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
     } catch {
       host.footerFlash = "Failed to open notification target";
       host.footerFlashTicks = 3;
-      renderNotifications(host);
+      host.renderCoordination();
       return;
     }
     if (entry.unread) {
@@ -194,7 +178,7 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
   if (!service) {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
-    renderNotifications(host);
+    host.renderCoordination();
     return;
   }
   try {
@@ -202,93 +186,11 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
   } catch {
     host.footerFlash = "Failed to open notification target";
     host.footerFlashTicks = 3;
-    renderNotifications(host);
+    host.renderCoordination();
     return;
   }
   if (entry.unread) {
     markNotificationsRead({ id: entry.id });
     refreshNotificationEntries(host);
-  }
-}
-
-export function handleNotificationsKey(host: NotificationHost, data: Buffer): void {
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const event = events[0];
-  const key = event.name || event.char;
-  const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-  if (isTabToggle) {
-    host.dashboardState.toggleDetailsSidebar();
-    renderNotifications(host);
-    return;
-  }
-  if (key === "q") {
-    host.exitDashboardClientOrProcess();
-    return;
-  }
-  if (key === "escape" || key === "d") {
-    host.setDashboardScreen("dashboard");
-    host.renderDashboard();
-    return;
-  }
-  if (host.handleDashboardSubscreenNavigationKey(key, "notifications")) return;
-  if (key === "?") {
-    host.showHelp();
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (host.notificationEntries.length > 1) {
-      host.notificationIndex = (host.notificationIndex + 1) % host.notificationEntries.length;
-      renderNotifications(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (host.notificationEntries.length > 1) {
-      host.notificationIndex =
-        (host.notificationIndex - 1 + host.notificationEntries.length) % host.notificationEntries.length;
-      renderNotifications(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    if (idx < host.notificationEntries.length) {
-      host.notificationIndex = idx;
-      renderNotifications(host);
-    }
-    return;
-  }
-  if (key === "r") {
-    const entry = host.notificationEntries[host.notificationIndex];
-    if (!entry) return;
-    markNotificationsRead({ id: entry.id });
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "R") {
-    markNotificationsRead();
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "c") {
-    const entry = host.notificationEntries[host.notificationIndex];
-    if (!entry) return;
-    clearNotifications({ id: entry.id });
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "C") {
-    clearNotifications();
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "enter" || key === "return") {
-    void openSelectedNotification(host);
   }
 }

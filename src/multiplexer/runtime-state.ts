@@ -97,16 +97,8 @@ export function renderCurrentDashboardView(host: RuntimeStateHost): void {
     host.renderActivityDashboard();
     return;
   }
-  if (host.isDashboardScreen("workflow")) {
-    host.renderWorkflow();
-    return;
-  }
-  if (host.isDashboardScreen("notifications")) {
-    host.renderNotifications();
-    return;
-  }
-  if (host.isDashboardScreen("threads")) {
-    host.renderThreads();
+  if (host.isDashboardScreen("coordination")) {
+    host.renderCoordination();
     return;
   }
   if (host.isDashboardScreen("plans")) {

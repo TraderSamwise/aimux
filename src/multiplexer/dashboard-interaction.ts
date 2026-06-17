@@ -370,16 +370,10 @@ export const dashboardInteractionMethods = {
         this.showGraveyard();
         return;
       case "i":
-        this.showNotifications();
-        return;
-      case "y":
-        this.showWorkflow();
+        this.showCoordination();
         return;
       case "p":
         this.showPlans();
-        return;
-      case "t":
-        this.showThreads();
         return;
       case "a":
         this.showActivityDashboard();

@@ -280,27 +280,11 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
-  if (key === "t") {
-    if (currentScreen === "threads") {
-      host.renderThreads();
-    } else {
-      host.showThreads();
-    }
-    return true;
-  }
   if (key === "i") {
-    if (currentScreen === "notifications") {
-      host.renderNotifications();
+    if (currentScreen === "coordination") {
+      host.renderCoordination();
     } else {
-      host.showNotifications();
-    }
-    return true;
-  }
-  if (key === "y") {
-    if (currentScreen === "workflow") {
-      host.renderWorkflow();
-    } else {
-      host.showWorkflow();
+      host.showCoordination();
     }
     return true;
   }

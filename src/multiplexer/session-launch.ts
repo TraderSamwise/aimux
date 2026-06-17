@@ -185,16 +185,8 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleActivityKey(data);
       return;
     }
-    if (host.isDashboardScreen("workflow")) {
-      host.handleWorkflowKey(data);
-      return;
-    }
-    if (host.isDashboardScreen("notifications")) {
-      host.handleNotificationsKey(data);
-      return;
-    }
-    if (host.isDashboardScreen("threads")) {
-      host.handleThreadsKey(data);
+    if (host.isDashboardScreen("coordination")) {
+      host.handleCoordinationKey(data);
       return;
     }
     if (host.isDashboardScreen("plans")) {
@@ -763,9 +755,9 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "dashboard":
       host.openTmuxDashboardTarget();
       break;
-    case "notifications":
+    case "coordination":
       host.clearDashboardSubscreens();
-      host.setDashboardScreen("notifications");
+      host.setDashboardScreen("coordination");
       host.persistDashboardUiState();
       host.openTmuxDashboardTarget();
       break;

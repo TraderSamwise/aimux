@@ -42,7 +42,7 @@ export function buildThreadEntries(): ThreadEntry[] {
     .sort((a, b) => (a.thread.updatedAt < b.thread.updatedAt ? 1 : a.thread.updatedAt > b.thread.updatedAt ? -1 : 0));
 }
 
-export function buildWorkflowEntries(currentParticipant = "user"): WorkflowEntry[] {
+export function buildWorkflowEntries(currentParticipant = "user", opts?: { allKinds?: boolean }): WorkflowEntry[] {
   const tasks = readAllTasks();
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
   const familyByRoot = new Map<string, Task[]>();
@@ -57,7 +57,11 @@ export function buildWorkflowEntries(currentParticipant = "user"): WorkflowEntry
   }
   return buildThreadEntries()
     .filter(
-      (entry) => entry.thread.kind === "task" || entry.thread.kind === "review" || entry.thread.kind === "handoff",
+      (entry) =>
+        opts?.allKinds ||
+        entry.thread.kind === "task" ||
+        entry.thread.kind === "review" ||
+        entry.thread.kind === "handoff",
     )
     .map((entry) => {
       const task = entry.thread.taskId ? taskById.get(entry.thread.taskId) : undefined;
@@ -90,6 +94,11 @@ export function buildWorkflowEntries(currentParticipant = "user"): WorkflowEntry
       };
     })
     .sort((a, b) => b.urgency - a.urgency || (a.thread.updatedAt < b.thread.updatedAt ? 1 : -1));
+}
+
+/** All-kinds, task-aware thread entries for the merged Coordination screen. */
+export function buildCoordinationThreadEntries(currentParticipant = "user"): WorkflowEntry[] {
+  return buildWorkflowEntries(currentParticipant, { allKinds: true });
 }
 
 export function filterWorkflowEntries(
