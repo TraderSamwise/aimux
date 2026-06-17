@@ -27,6 +27,7 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
 import { type ProjectObservability } from "../project-observability.js";
+import { type LibraryEntry } from "../library.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
@@ -120,16 +121,6 @@ interface WorktreeCreateJob {
   startedAt: number;
 }
 
-interface PlanEntry {
-  sessionId: string;
-  tool?: string;
-  label?: string;
-  worktree?: string;
-  updatedAt?: string;
-  path: string;
-  content: string;
-}
-
 interface NotificationPanelState {
   entries: NotificationRecord[];
   index: number;
@@ -201,8 +192,8 @@ export class Multiplexer {
   private coordinationSection: "notifications" | "threads" = "notifications";
   private projectObservability: ProjectObservability | null = null;
   private projectIndex = 0;
-  private planEntries: PlanEntry[] = [];
-  private planIndex = 0;
+  private libraryEntries: LibraryEntry[] = [];
+  private libraryIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
   private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
