@@ -25,39 +25,30 @@ import {
   updateWorktreeSessions as updateWorktreeSessionsImpl,
 } from "./dashboard-control.js";
 import {
-  handleNotificationsKey as handleNotificationsKeyImpl,
   notificationTargetLabel as notificationTargetLabelImpl,
-  renderNotifications as renderNotificationsImpl,
-  showNotifications as showNotificationsImpl,
   notificationTargetState as notificationTargetStateImpl,
 } from "./notifications.js";
 import {
+  handleCoordinationKey as handleCoordinationKeyImpl,
+  renderCoordination as renderCoordinationImpl,
+  showCoordination as showCoordinationImpl,
+} from "./coordination.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
-  buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
-  cycleWorkflowFilter as cycleWorkflowFilterImpl,
   describeHandoffState as describeHandoffStateImpl,
-  describeWorkflowFilter as describeWorkflowFilterImpl,
   getActivityEntries as getActivityEntriesImpl,
   getPreferredThreadIndexForParticipant as getPreferredThreadIndexForParticipantImpl,
   handleActivityKey as handleActivityKeyImpl,
   handleThreadReplyKey as handleThreadReplyKeyImpl,
-  handleThreadsKey as handleThreadsKeyImpl,
-  handleWorkflowKey as handleWorkflowKeyImpl,
   openRelevantThreadForSession as openRelevantThreadForSessionImpl,
   renderActivityDashboard as renderActivityDashboardImpl,
-  renderThreadDetailsForHost as renderThreadDetailsForHostImpl,
   renderThreadReply as renderThreadReplyImpl,
-  renderThreads as renderThreadsImpl,
-  renderWorkflow as renderWorkflowImpl,
-  renderWorkflowDetailsForHost as renderWorkflowDetailsForHostImpl,
   runReviewLifecycleAction as runReviewLifecycleActionImpl,
   runTaskLifecycleAction as runTaskLifecycleActionImpl,
   runThreadHandoffAction as runThreadHandoffActionImpl,
   runThreadStatusAction as runThreadStatusActionImpl,
   showActivityDashboard as showActivityDashboardImpl,
-  showThreads as showThreadsImpl,
-  showWorkflow as showWorkflowImpl,
 } from "./subscreens.js";
 import {
   handleToolOptionsKey as handleToolOptionsKeyImpl,
@@ -77,32 +68,20 @@ export const dashboardActionMethods = {
   showActivityDashboard(this: any): void {
     showActivityDashboardImpl(this);
   },
-  showNotifications(this: any): void {
-    showNotificationsImpl(this);
-  },
-  renderNotifications(this: any): void {
-    renderNotificationsImpl(this);
-  },
   notificationTargetLabel(this: any, sessionId?: string): string | null {
     return notificationTargetLabelImpl(this, sessionId);
   },
   notificationTargetState(this: any, sessionId?: string): "live" | "offline" | "missing" | "none" {
     return notificationTargetStateImpl(this, sessionId);
   },
-  buildWorkflowEntries(this: any): any[] {
-    return buildWorkflowEntriesForHostImpl(this);
+  showCoordination(this: any): void {
+    showCoordinationImpl(this);
   },
-  showWorkflow(this: any): void {
-    showWorkflowImpl(this);
+  renderCoordination(this: any): void {
+    renderCoordinationImpl(this);
   },
-  renderWorkflow(this: any): void {
-    renderWorkflowImpl(this);
-  },
-  renderWorkflowDetails(this: any, width: number, height: number): string[] {
-    return renderWorkflowDetailsForHostImpl(this, width, height);
-  },
-  handleWorkflowKey(this: any, data: Buffer): void {
-    handleWorkflowKeyImpl(this, data);
+  handleCoordinationKey(this: any, data: Buffer): void {
+    handleCoordinationKeyImpl(this, data);
   },
   renderActivityDashboard(this: any): void {
     renderActivityDashboardImpl(this);
@@ -110,26 +89,11 @@ export const dashboardActionMethods = {
   handleActivityKey(this: any, data: Buffer): void {
     handleActivityKeyImpl(this, data);
   },
-  handleNotificationsKey(this: any, data: Buffer): void {
-    handleNotificationsKeyImpl(this, data);
-  },
-  showThreads(this: any): void {
-    showThreadsImpl(this);
-  },
   getPreferredThreadIndexForParticipant(this: any, participantId: string, entries: any[]): number {
     return getPreferredThreadIndexForParticipantImpl(this, participantId, entries);
   },
   openRelevantThreadForSession(this: any, sessionId: string): void {
     openRelevantThreadForSessionImpl(this, sessionId);
-  },
-  renderThreads(this: any): void {
-    renderThreadsImpl(this);
-  },
-  renderThreadDetails(this: any, width: number, height: number): string[] {
-    return renderThreadDetailsForHostImpl(this, width, height);
-  },
-  handleThreadsKey(this: any, data: Buffer): void {
-    handleThreadsKeyImpl(this, data);
   },
   renderThreadReply(this: any): void {
     renderThreadReplyImpl(this);
@@ -152,12 +116,6 @@ export const dashboardActionMethods = {
   },
   async runReviewLifecycleAction(this: any, mode: "approve" | "request_changes", taskId: string): Promise<void> {
     await runReviewLifecycleActionImpl(this, mode, taskId);
-  },
-  describeWorkflowFilter(this: any): string {
-    return describeWorkflowFilterImpl(this);
-  },
-  cycleWorkflowFilter(this: any): void {
-    cycleWorkflowFilterImpl(this);
   },
   handleThreadReplyKey(this: any, data: Buffer): void {
     handleThreadReplyKeyImpl(this, data);

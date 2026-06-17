@@ -25,7 +25,7 @@ import {
 } from "../alert-display.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
-import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
+import { type WorkflowEntry } from "../workflow.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
@@ -192,12 +192,12 @@ export class Multiplexer {
   private graveyardWorktreeDeleteConfirm: WorktreeGraveyardEntry | null = null;
   private activityEntries: DashboardSession[] = [];
   private activityIndex = 0;
-  private workflowEntries: WorkflowEntry[] = [];
-  private workflowIndex = 0;
-  private workflowFilter: WorkflowFilter = "all";
-  private threadEntries: ThreadEntry[] = [];
+  private threadEntries: WorkflowEntry[] = [];
   private threadIndex = 0;
   private threadReplyBuffer = "";
+  private notificationEntries: NotificationRecord[] = [];
+  private notificationIndex = 0;
+  private coordinationSection: "notifications" | "threads" = "notifications";
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;

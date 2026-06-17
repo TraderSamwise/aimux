@@ -68,7 +68,7 @@ describe("DashboardUiStateStore", () => {
       "dashboard",
       "client-b",
       Object.assign(new DashboardState(), {
-        screen: "workflow",
+        screen: "coordination",
         detailsSidebarVisible: false,
         focusedWorktreePath: "/repo/wt-b",
         level: "sessions",
@@ -82,7 +82,7 @@ describe("DashboardUiStateStore", () => {
     store.loadInto(state, "client-b");
 
     expect(state.detailsSidebarVisible).toBe(false);
-    expect(state.screen).toBe("workflow");
+    expect(state.screen).toBe("coordination");
     expect(state.focusedWorktreePath).toBe("/repo/wt-b");
     expect(state.level).toBe("sessions");
   });

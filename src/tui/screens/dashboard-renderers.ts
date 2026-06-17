@@ -447,20 +447,20 @@ export function renderDashboardFrame(
         : "Enter focus";
 
     if (state.sessions.length === 0 && !state.hasWorktrees) {
-      return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [p] plans  [g] graveyard  [?] help  [q] quit ";
+      return " [u] attention  [a] activity  [i] coordination  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [p] plans  [g] graveyard  [?] help  [q] quit ";
     }
     if (state.hasWorktrees && state.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ items  Shift+↑↓ reorder  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ items  Shift+↑↓ reorder  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [a] activity  [i] coordination  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (state.hasWorktrees) {
-      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [a] activity  [i] coordination  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (state.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [w] worktree${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [i] coordination  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [w] worktree${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
-    return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
+    return " [u] attention  [a] activity  [i] coordination  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   };
 
   const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
