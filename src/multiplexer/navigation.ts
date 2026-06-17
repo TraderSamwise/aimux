@@ -125,11 +125,6 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     host.showProject();
     return;
   }
-  if (key === "a") {
-    dismissHelp(host);
-    host.showActivityDashboard();
-    return;
-  }
   if (key === "g") {
     dismissHelp(host);
     host.showGraveyard();

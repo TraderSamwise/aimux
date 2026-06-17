@@ -183,8 +183,6 @@ export class Multiplexer {
   private worktreeGraveyardEntries: WorktreeGraveyardEntry[] = [];
   private graveyardIndex = 0;
   private graveyardWorktreeDeleteConfirm: WorktreeGraveyardEntry | null = null;
-  private activityEntries: DashboardSession[] = [];
-  private activityIndex = 0;
   private threadEntries: WorkflowEntry[] = [];
   private threadIndex = 0;
   private threadReplyBuffer = "";
