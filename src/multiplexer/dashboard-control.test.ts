@@ -96,15 +96,18 @@ describe("handleDashboardSubscreenNavigationKey", () => {
   it("declines (returns false) when the hotkey matches the current screen, so the screen's own handler can act", async () => {
     const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
     // e.g. on coordination, [c] must reach the section handler (clear/complete), not re-nav.
-    for (const [key, screen] of [
-      ["c", "coordination"],
-      ["p", "project"],
-      ["l", "library"],
-      ["t", "topology"],
-      ["g", "graveyard"],
-    ] as const) {
+    const cases: Array<[string, string, keyof ReturnType<typeof makeHost>]> = [
+      ["c", "coordination", "showCoordination"],
+      ["p", "project", "showProject"],
+      ["l", "library", "showLibrary"],
+      ["t", "topology", "showTopology"],
+      ["g", "graveyard", "showGraveyard"],
+    ];
+    for (const [key, screen, showMethod] of cases) {
       const host = makeHost();
       expect(handleDashboardSubscreenNavigationKey(host as never, key, screen as never)).toBe(false);
+      // Declining must not also fire the switch — the key belongs to the screen's own handler.
+      expect(host[showMethod]).not.toHaveBeenCalled();
     }
   });
 
