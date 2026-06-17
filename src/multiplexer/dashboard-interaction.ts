@@ -308,8 +308,11 @@ export const dashboardInteractionMethods = {
       case "?":
         this.showHelp();
         return;
-      case "c":
+      case "n":
         this.showToolPicker();
+        return;
+      case "c":
+        this.showCoordination();
         return;
       case "v":
         this.showServiceCreatePrompt();
@@ -369,13 +372,10 @@ export const dashboardInteractionMethods = {
       case "g":
         this.showGraveyard();
         return;
-      case "i":
-        this.showCoordination();
-        return;
-      case "y":
+      case "p":
         this.showProject();
         return;
-      case "p":
+      case "l":
         this.showLibrary();
         return;
       case "t":
@@ -516,7 +516,6 @@ export const dashboardInteractionMethods = {
           break;
         case "up":
         case "k":
-        case "p":
           if (totalCount > 1) {
             this.activeIndex = (this.activeIndex - 1 + totalCount) % totalCount;
             this.renderDashboard();
@@ -554,8 +553,7 @@ export const dashboardInteractionMethods = {
           break;
         }
         case "up":
-        case "k":
-        case "p": {
+        case "k": {
           const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
           this.dashboardState.focusedWorktreePath =
             this.dashboardState.worktreeNavOrder[
@@ -565,8 +563,7 @@ export const dashboardInteractionMethods = {
           break;
         }
         case "enter":
-        case "right":
-        case "l": {
+        case "right": {
           const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
           if (isCreatingDashboardWorktree(focusedGroup)) {
             this.footerFlash = creatingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
@@ -612,7 +609,6 @@ export const dashboardInteractionMethods = {
           break;
         case "up":
         case "k":
-        case "p":
           if (this.dashboardState.worktreeEntries.length > 1) {
             this.dashboardState.sessionIndex =
               (this.dashboardState.sessionIndex - 1 + this.dashboardState.worktreeEntries.length) %

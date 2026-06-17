@@ -101,13 +101,14 @@ export interface ResolvedStatuslineSession extends StatuslineSession {
 export const DASHBOARD_SCREEN_TABS: Array<{
   key: NonNullable<StatuslineData["dashboardScreen"]>;
   label: string;
+  hotkey: string;
 }> = [
-  { key: "dashboard", label: "dashboard" },
-  { key: "coordination", label: "coordination" },
-  { key: "project", label: "project" },
-  { key: "library", label: "library" },
-  { key: "topology", label: "topology" },
-  { key: "graveyard", label: "graveyard" },
+  { key: "dashboard", label: "dashboard", hotkey: "d" },
+  { key: "coordination", label: "coordination", hotkey: "c" },
+  { key: "project", label: "project", hotkey: "p" },
+  { key: "library", label: "library", hotkey: "l" },
+  { key: "topology", label: "topology", hotkey: "t" },
+  { key: "graveyard", label: "graveyard", hotkey: "g" },
 ];
 
 export function trim(text: string, max: number): string {
@@ -187,9 +188,18 @@ export function renderSessionCompactHint(session: {
 
 export function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"]): string[] {
   const active = activeScreen ?? "dashboard";
-  return DASHBOARD_SCREEN_TABS.map((screen) =>
-    screen.key === active ? `#[fg=black,bg=yellow] ${screen.label} #[default]` : screen.label,
-  );
+  return DASHBOARD_SCREEN_TABS.map((screen) => {
+    if (screen.key === active) {
+      return `#[fg=black,bg=yellow] ${screen.label} #[default]`;
+    }
+    // Accent the hotkey letter within the label to signal the screen's shortcut.
+    const idx = screen.label.toLowerCase().indexOf(screen.hotkey.toLowerCase());
+    if (idx < 0) return screen.label;
+    const before = screen.label.slice(0, idx);
+    const hot = screen.label.slice(idx, idx + 1);
+    const after = screen.label.slice(idx + 1);
+    return `${before}#[fg=yellow,bold]${hot}#[default]${after}`;
+  });
 }
 
 export function currentPathContext(currentPath: string | undefined): { worktreeName?: string; branch?: string } | null {
