@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initPaths } from "../paths.js";
 import { appendMessage, createThread } from "../threads.js";
-import { renderThreadDetails } from "../tui/screens/subscreen-renderers.js";
+import { renderCoordinationDetails } from "../tui/screens/subscreen-renderers.js";
 import { buildThreadEntries } from "../workflow.js";
-import { handleThreadsKey } from "./subscreens.js";
+import { handleCoordinationKey } from "./coordination.js";
 
 describe("thread subscreen navigation", () => {
   let repoRoot = "";
@@ -37,6 +37,7 @@ describe("thread subscreen navigation", () => {
       team: { teamId: "team-parent", parentSessionId: "parent-1", role: "reviewer" },
     };
     const host: any = {
+      coordinationSection: "threads",
       threadEntries: [{ thread, displayTitle: "Review" }],
       threadIndex: 0,
       getDashboardSessions: vi.fn(() => []),
@@ -50,7 +51,7 @@ describe("thread subscreen navigation", () => {
       showHelp: vi.fn(),
     };
 
-    handleThreadsKey(host, Buffer.from("\r"));
+    handleCoordinationKey(host, Buffer.from("\r"));
 
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(teammate, { preserveDashboardSelection: true });
   });
@@ -73,13 +74,14 @@ describe("thread subscreen navigation", () => {
     });
 
     const host: any = {
+      coordinationSection: "threads",
       threadEntries: buildThreadEntries(),
       threadIndex: 0,
       describeHandoffState: vi.fn(),
       wrapKeyValue: (_key: string, value: string) => [value],
     };
 
-    expect(() => renderThreadDetails(host, 80, 20)).not.toThrow();
-    expect(renderThreadDetails(host, 80, 20).join("\n")).toContain("Please check this thread.");
+    expect(() => renderCoordinationDetails(host, 80, 20)).not.toThrow();
+    expect(renderCoordinationDetails(host, 80, 20).join("\n")).toContain("Please check this thread.");
   });
 });

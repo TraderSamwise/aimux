@@ -5,39 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import type { NotificationRecord } from "../notifications.js";
+import { upsertNotification } from "../notifications.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
-import { appendMessage, createThread } from "../threads.js";
-import { handleNotificationsKey, notificationTargetLabel, notificationTargetState } from "./notifications.js";
+import { notificationTargetLabel, notificationTargetState } from "./notifications.js";
+import { handleCoordinationKey } from "./coordination.js";
 
 function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
-  const thread = createThread({
-    title: "Needs input",
-    kind: "conversation",
-    createdBy: "sender",
-    participants: ["sender", sessionId],
-  });
-  appendMessage(thread.id, {
-    from: "sender",
-    to: [sessionId],
-    kind: "request",
-    body,
-  });
-  const entry = createRuntimeExchangeStore()
-    .read()
-    .inbox.find((candidate) => candidate.participantId === sessionId && candidate.subjectId === thread.id);
-  if (!entry) throw new Error("expected exchange inbox entry");
-  return {
-    id: entry.id,
-    title: thread.title,
-    body,
-    sessionId,
-    targetKind: "session",
-    kind: "thread",
-    unread: true,
-    cleared: false,
-    createdAt: entry.updatedAt,
-    updatedAt: entry.updatedAt,
-  };
+  return upsertNotification({ title: "Needs input", body, sessionId, kind: "thread" });
 }
 
 function unreadInboxEntries(sessionId: string) {
@@ -56,8 +30,10 @@ describe("notification target open", () => {
     await initPaths(repoRoot);
     const notification = addExchangeNotification("service-1", "Open service");
     host = {
+      coordinationSection: "notifications",
       notificationEntries: [notification],
       notificationIndex: 0,
+      renderCoordination: vi.fn(),
       getDashboardSessions: vi.fn(() => []),
       getDashboardServices: vi.fn(() => [{ id: "service-1", status: "offline", label: "shell", command: "shell" }]),
       notificationTargetLabel: vi.fn(() => "shell [service]"),
@@ -89,7 +65,7 @@ describe("notification target open", () => {
   });
 
   it("routes service notification targets through the unified service activator", async () => {
-    handleNotificationsKey(host, Buffer.from("\r"));
+    handleCoordinationKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
 
     expect(host.activateDashboardService).toHaveBeenCalledWith({
@@ -108,7 +84,7 @@ describe("notification target open", () => {
       throw new Error("open failed");
     });
 
-    handleNotificationsKey(host, Buffer.from("\r"));
+    handleCoordinationKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
 
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
@@ -132,7 +108,7 @@ describe("notification target open", () => {
     expect(notificationTargetLabel(host, "teammate-1")).toBe("reviewer · demo");
     expect(notificationTargetState(host, "teammate-1")).toBe("offline");
 
-    handleNotificationsKey(host, Buffer.from("\r"));
+    handleCoordinationKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(host.activateDashboardEntry).toHaveBeenCalled());
 
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "teammate-1" }), {

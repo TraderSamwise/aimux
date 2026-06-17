@@ -1674,7 +1674,7 @@ export class MetadataServer {
           return;
         }
         persistDashboardClientPreference(currentClientSession, (snapshot) => {
-          snapshot.screen = "notifications";
+          snapshot.screen = "coordination";
         });
         const tmux = new TmuxRuntimeManager();
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
