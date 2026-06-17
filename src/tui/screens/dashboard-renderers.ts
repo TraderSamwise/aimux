@@ -447,20 +447,20 @@ export function renderDashboardFrame(
         : "Enter focus";
 
     if (state.sessions.length === 0 && !state.hasWorktrees) {
-      return " [u] attention  [i] coordination  [y] project  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [p] library  [t] topology  [g] graveyard  [?] help  [q] quit ";
+      return " [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [?] help  [q] quit ";
     }
     if (state.hasWorktrees && state.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ items  Shift+↑↓ reorder  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [i] coordination  [y] project  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [m] migrate${xPart}${rLabel}  [p] library  [t] topology  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ items  Shift+↑↓ reorder  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [m] migrate${xPart}${rLabel}  [?] help  [q] quit `;
     }
     if (state.hasWorktrees) {
-      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [i] coordination  [y] project  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] library  [t] topology  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork(step in)  [w] worktree  [?] help  [q] quit `;
     }
     if (state.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [i] coordination  [y] project  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [w] worktree${xPart}${rLabel}  [p] library  [t] topology  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [w] worktree${xPart}${rLabel}  [?] help  [q] quit `;
     }
-    return " [u] attention  [i] coordination  [y] project  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] library  [t] topology  [g] graveyard  [?] help  [q] quit ";
+    return " [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [?] help  [q] quit ";
   };
 
   const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
@@ -741,7 +741,7 @@ export function renderDashboardFrame(
     content.push("");
   }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
-    content.push(centerInBlock("No sessions. Press [c] to create one."));
+    content.push(centerInBlock("No sessions. Press [n] to create one."));
   } else if (state.hasWorktrees) {
     renderWorktreeGrouped(content);
   } else {
