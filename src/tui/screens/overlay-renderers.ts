@@ -286,7 +286,6 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  Ctrl+A d  return to dashboard window",
     "  arrows / j k  navigate",
     "  Enter  open, resume, or focus",
-    "  a  activity",
     "  i  coordination",
     "  y  project",
     "  p  library",

@@ -47,18 +47,14 @@ import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   describeHandoffState as describeHandoffStateImpl,
-  getActivityEntries as getActivityEntriesImpl,
   getPreferredThreadIndexForParticipant as getPreferredThreadIndexForParticipantImpl,
-  handleActivityKey as handleActivityKeyImpl,
   handleThreadReplyKey as handleThreadReplyKeyImpl,
   openRelevantThreadForSession as openRelevantThreadForSessionImpl,
-  renderActivityDashboard as renderActivityDashboardImpl,
   renderThreadReply as renderThreadReplyImpl,
   runReviewLifecycleAction as runReviewLifecycleActionImpl,
   runTaskLifecycleAction as runTaskLifecycleActionImpl,
   runThreadHandoffAction as runThreadHandoffActionImpl,
   runThreadStatusAction as runThreadStatusActionImpl,
-  showActivityDashboard as showActivityDashboardImpl,
 } from "./subscreens.js";
 import {
   handleToolOptionsKey as handleToolOptionsKeyImpl,
@@ -71,12 +67,6 @@ import {
 export const dashboardActionMethods = {
   attentionScore(this: any, entry: any): number {
     return attentionScoreImpl(this, entry);
-  },
-  getActivityEntries(this: any): any[] {
-    return getActivityEntriesImpl(this);
-  },
-  showActivityDashboard(this: any): void {
-    showActivityDashboardImpl(this);
   },
   notificationTargetLabel(this: any, sessionId?: string): string | null {
     return notificationTargetLabelImpl(this, sessionId);
@@ -110,12 +100,6 @@ export const dashboardActionMethods = {
   },
   handleTopologyKey(this: any, data: Buffer): void {
     handleTopologyKeyImpl(this, data);
-  },
-  renderActivityDashboard(this: any): void {
-    renderActivityDashboardImpl(this);
-  },
-  handleActivityKey(this: any, data: Buffer): void {
-    handleActivityKeyImpl(this, data);
   },
   getPreferredThreadIndexForParticipant(this: any, participantId: string, entries: any[]): number {
     return getPreferredThreadIndexForParticipantImpl(this, participantId, entries);
