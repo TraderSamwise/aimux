@@ -381,9 +381,6 @@ export const dashboardInteractionMethods = {
       case "t":
         this.showTopology();
         return;
-      case "a":
-        this.showActivityDashboard();
-        return;
       case "u":
         void this.activateNextAttentionEntry();
         return;

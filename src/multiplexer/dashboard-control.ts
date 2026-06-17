@@ -272,14 +272,6 @@ export function handleDashboardSubscreenNavigationKey(
     host.renderDashboard();
     return true;
   }
-  if (key === "a") {
-    if (currentScreen === "activity") {
-      host.renderActivityDashboard();
-    } else {
-      host.showActivityDashboard();
-    }
-    return true;
-  }
   if (key === "i") {
     if (currentScreen === "coordination") {
       host.renderCoordination();

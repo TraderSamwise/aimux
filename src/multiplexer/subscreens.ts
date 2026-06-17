@@ -11,7 +11,6 @@ import {
   requestTaskChanges,
 } from "../orchestration-actions.js";
 import { buildCoordinationThreadEntries, type ThreadEntry } from "../workflow.js";
-import { renderActivityScreen } from "../tui/screens/subscreen-renderers.js";
 import { navigationUrgencyScore } from "../fast-control.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
@@ -21,92 +20,6 @@ type SubscreenHost = any;
 
 export function attentionScore(host: SubscreenHost, entry: any): number {
   return navigationUrgencyScore(entry);
-}
-
-export function getActivityEntries(host: SubscreenHost): any[] {
-  return host
-    .getDashboardSessionsInVisualOrder()
-    .filter((entry: any) => attentionScore(host, entry) > 0 || entry.status === "running" || entry.status === "waiting")
-    .sort((a: any, b: any) => {
-      const scoreDiff = attentionScore(host, b) - attentionScore(host, a);
-      if (scoreDiff !== 0) return scoreDiff;
-      const activeDiff = Number(b.active) - Number(a.active);
-      if (activeDiff !== 0) return activeDiff;
-      const aName = a.label ?? a.command;
-      const bName = b.label ?? b.command;
-      return aName.localeCompare(bName);
-    });
-}
-
-export function showActivityDashboard(host: SubscreenHost): void {
-  host.clearDashboardSubscreens();
-  host.activityEntries = getActivityEntries(host);
-  if (host.activityIndex >= host.activityEntries.length) {
-    host.activityIndex = Math.max(0, host.activityEntries.length - 1);
-  }
-  host.setDashboardScreen("activity");
-  host.writeStatuslineFile();
-  renderActivityDashboard(host);
-}
-
-export function renderActivityDashboard(host: SubscreenHost): void {
-  renderActivityScreen(host);
-}
-
-export function handleActivityKey(host: SubscreenHost, data: Buffer): void {
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const event = events[0];
-  const key = event.name || event.char;
-  const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-  if (isTabToggle) {
-    host.dashboardState.toggleDetailsSidebar();
-    renderActivityDashboard(host);
-    return;
-  }
-  if (key === "q") {
-    host.exitDashboardClientOrProcess();
-    return;
-  }
-  if (key === "escape" || key === "d") {
-    host.setDashboardScreen("dashboard");
-    host.renderDashboard();
-    return;
-  }
-  if (host.handleDashboardSubscreenNavigationKey(key, "activity")) return;
-  if (key === "?") {
-    host.showHelp();
-    return;
-  }
-  if (key === "u") {
-    void activateNextAttentionEntry(host);
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (host.activityEntries.length > 1) {
-      host.activityIndex = (host.activityIndex + 1) % host.activityEntries.length;
-      renderActivityDashboard(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (host.activityEntries.length > 1) {
-      host.activityIndex = (host.activityIndex - 1 + host.activityEntries.length) % host.activityEntries.length;
-      renderActivityDashboard(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    const entry = host.activityEntries[idx];
-    if (entry) void host.activateDashboardEntry(entry);
-    return;
-  }
-  if (key === "enter" || key === "return") {
-    const entry = host.activityEntries[host.activityIndex];
-    if (entry) void host.activateDashboardEntry(entry);
-  }
 }
 
 export function getPreferredThreadIndexForParticipant(
