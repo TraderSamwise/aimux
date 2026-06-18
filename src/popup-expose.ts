@@ -66,6 +66,6 @@ export function buildExposeProgram(): Command {
 }
 
 /** Entry point invoked by bin/aimux for the `expose` subcommand. */
-export function runExpose(): void {
-  buildExposeProgram().parse();
+export async function runExpose(): Promise<void> {
+  await buildExposeProgram().parseAsync(process.argv);
 }

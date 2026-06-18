@@ -87,9 +87,13 @@ export function cliEntryFor(argv: string[]): "expose" | "main" {
  * the full program, which self-runs via its top-level parse().
  */
 export function runRoutedCli(): void {
-  if (cliEntryFor(process.argv) === "expose") {
-    void import("./popup-expose.js").then((m) => m.runExpose());
-  } else {
-    void import("./main.js");
-  }
+  const run =
+    cliEntryFor(process.argv) === "expose"
+      ? import("./popup-expose.js").then((m) => m.runExpose())
+      : import("./main.js").then(() => undefined);
+
+  void run.catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
 }
