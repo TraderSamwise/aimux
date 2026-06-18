@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
-import { buildBackdrop, buildTileHeader, drawTile, fitHeaderRows } from "./expose.js";
+import { buildBackdrop, buildPanelFrame, buildTileHeader, drawTile, fitHeaderRows, panelGeometry } from "./expose.js";
 
 const PILL = "[PILL]";
 
@@ -31,6 +31,41 @@ describe("buildTileHeader", () => {
   it("always gives the status pill its own row regardless of width", () => {
     expect(buildTileHeader(50, 56, "X", "", PILL, "", 0).headerRows).toEqual([PILL]);
     expect(stripAnsi(buildTileHeader(12, 16, "X", "proj / wt", PILL, "", 0).headerRows.at(-1)!)).toContain("PILL");
+  });
+});
+
+describe("panelGeometry", () => {
+  it("centres an inset ~90% panel within the viewport", () => {
+    const geo = panelGeometry(100, 40);
+    expect(geo.width).toBe(90);
+    expect(geo.height).toBe(36);
+    expect(geo.left).toBe(6); // (100-90)/2 + 1
+    expect(geo.top).toBe(3); // (40-36)/2 + 1
+    // Margin on both sides shows the dimmed backdrop.
+    expect(geo.left + geo.width - 1).toBeLessThan(100);
+    expect(geo.top + geo.height - 1).toBeLessThan(40);
+  });
+
+  it("clamps to the viewport on tiny terminals", () => {
+    const geo = panelGeometry(34, 9);
+    expect(geo.width).toBeLessThanOrEqual(34);
+    expect(geo.height).toBeLessThanOrEqual(9);
+    expect(geo.left).toBeGreaterThanOrEqual(1);
+    expect(geo.top).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("buildPanelFrame", () => {
+  it("draws an opaque bordered box positioned at the panel origin", () => {
+    const out = buildPanelFrame({ top: 3, left: 6, width: 10, height: 4 });
+    expect(out).toContain("\x1b[3;6H"); // top border at origin
+    expect(out).toContain("\x1b[6;6H"); // bottom border row (top + height - 1)
+    expect(out).toContain("╭");
+    expect(out).toContain("╮");
+    expect(out).toContain("╰");
+    expect(out).toContain("╯");
+    // Body rows fill the interior with opaque spaces (width - 2).
+    expect(out).toContain("│\x1b[0m" + " ".repeat(8) + "\x1b[38;5;248m│");
   });
 });
 
