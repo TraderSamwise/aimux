@@ -1037,6 +1037,9 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
+    // Single-color status-bar band: one uniform colour236 behind both the status
+    // and tab rows (distinct from the pane above), set via status-style so it
+    // fills full width without per-row shade seams.
     this.exec(["set-option", "-t", sessionName, "status-style", "bg=colour236,fg=colour252"]);
     this.exec(["set-option", "-t", sessionName, "message-style", "bg=colour24,fg=colour255,bold"]);
     this.exec(["set-option", "-t", sessionName, "message-command-style", "bg=colour24,fg=colour255"]);
@@ -1052,7 +1055,7 @@ export class TmuxRuntimeManager {
       "-t",
       sessionName,
       "status-format[0]",
-      `#[bg=colour238,fg=colour255,bold] #(${top})#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}`,
+      `#[bg=colour236,fg=colour255,bold] #(${top})#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}`,
     ]);
     this.exec([
       "set-option",
