@@ -5,6 +5,7 @@ import {
   chip,
   cols,
   divider,
+  footerHints,
   keycap,
   keycapHint,
   keycapHintLines,
@@ -101,6 +102,13 @@ describe("theme primitives", () => {
     expect(stripAnsi(rendered)).toBe(" ↑↓  select   q  quit");
     expect(rendered).toContain(keycap("↑↓"));
     expect(rendered).toContain(keycap("q"));
+  });
+
+  it("styles a footer line box-free (bold glyph keys, no pill background)", () => {
+    const rendered = footerHints("[↑↓] select  q quit");
+    expect(stripAnsi(rendered)).toBe("↑↓ select  q quit");
+    expect(rendered).not.toContain("48;5;"); // no keycap background fill
+    expect(rendered).toContain("\x1b[1;38;5;255m↑↓"); // bold key glyph
   });
 
   it("wraps keycap hint groups to a width budget across lines", () => {

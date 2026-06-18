@@ -114,13 +114,19 @@ export function footerKey(key: string, tone?: "danger"): string {
   return `\x1b[1;38;5;${fg}m${key}${RESET}`;
 }
 
-// Style one "[key] label" or "key label" help group into a keycap + muted label.
-function styleHintGroup(group: string): string {
+// Split a "[key] label" or "key label" group into its [key, label] parts.
+function parseHintGroup(group: string): [string, string] {
   const bracket = group.match(/^\[(.+?)\]\s*(.*)$/);
-  if (bracket) return keycapHint(bracket[1], bracket[2]);
+  if (bracket) return [bracket[1], bracket[2]];
   const splitAt = group.indexOf(" ");
-  if (splitAt < 0) return keycap(group);
-  return keycapHint(group.slice(0, splitAt), group.slice(splitAt + 1));
+  if (splitAt < 0) return [group, ""];
+  return [group.slice(0, splitAt), group.slice(splitAt + 1)];
+}
+
+// Style one group into a (boxed) keycap + muted label.
+function styleHintGroup(group: string): string {
+  const [key, label] = parseHintGroup(group);
+  return label ? keycapHint(key, label) : keycap(key);
 }
 
 /** Style a help/footer line ("[a] x  [b] y" or "a x  b y") into joined keycap hints. */
@@ -130,6 +136,19 @@ export function keycapHints(line: string): string {
     .split(/\s{2,}/)
     .filter(Boolean)
     .map(styleHintGroup)
+    .join("  ");
+}
+
+/** Like keycapHints, but box-free (bold glyph keys), matching the dashboard footer. */
+export function footerHints(line: string): string {
+  return line
+    .trim()
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map((group) => {
+      const [key, label] = parseHintGroup(group);
+      return label ? `${footerKey(key)} ${style(label, "muted")}` : footerKey(key);
+    })
     .join("  ");
 }
 
