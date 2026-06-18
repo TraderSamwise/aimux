@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
-import { buildTileHeader, drawTile, fitHeaderRows } from "./expose.js";
+import { buildBackdrop, buildTileHeader, drawTile, fitHeaderRows } from "./expose.js";
 
 const PILL = "[PILL]";
 
@@ -31,6 +31,39 @@ describe("buildTileHeader", () => {
   it("always gives the status pill its own row regardless of width", () => {
     expect(buildTileHeader(50, 56, "X", "", PILL, "", 0).headerRows).toEqual([PILL]);
     expect(stripAnsi(buildTileHeader(12, 16, "X", "proj / wt", PILL, "", 0).headerRows.at(-1)!)).toContain("PILL");
+  });
+});
+
+describe("buildBackdrop", () => {
+  it("returns empty for an empty capture", () => {
+    expect(buildBackdrop("", 80, 24)).toBe("");
+  });
+
+  it("positions each line and dims it with the faint lead", () => {
+    const out = buildBackdrop("hello\nworld", 80, 24);
+    expect(out).toContain("\x1b[1;1H");
+    expect(out).toContain("\x1b[2;1H");
+    expect(out).toContain("\x1b[2;38;5;240m"); // recede faint lead
+    expect(stripAnsi(out)).toContain("hello");
+    expect(stripAnsi(out)).toContain("world");
+  });
+
+  it("keeps host colors (dimmed) but strips dangerous control sequences", () => {
+    const out = buildBackdrop("\x1b[31mred\x1b[0m\x1b[5;5Htail", 80, 24);
+    expect(out).toContain("\x1b[31m"); // color preserved under faint
+    expect(out).not.toContain("\x1b[5;5H"); // cursor move stripped by sanitizeLine
+    expect(stripAnsi(out)).toContain("redtail");
+  });
+
+  it("caps painted lines to the row budget", () => {
+    const many = Array.from({ length: 50 }, (_, i) => `row${i}`).join("\n");
+    const positions = (buildBackdrop(many, 80, 5).match(/\x1b\[\d+;1H/g) ?? []).length;
+    expect(positions).toBe(5);
+  });
+
+  it("truncates each line to the column budget", () => {
+    const out = buildBackdrop("x".repeat(200), 20, 24);
+    expect((stripAnsi(out).match(/x/g) ?? []).length).toBeLessThanOrEqual(20);
   });
 });
 
