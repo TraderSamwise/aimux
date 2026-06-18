@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync, unlinkSync } from "node:fs";
 import { basename, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
@@ -29,6 +30,8 @@ export interface TmuxExposeOptions {
   paneId?: string;
   /** Baked AIMUX_HOME so cross-project Exposé reads the right project registry. */
   aimuxHome?: string;
+  /** Host snapshot captured by the launcher before the popup opened (read once, then deleted). */
+  backdropFile?: string;
 }
 
 const CAPTURE_LINES = 40;
@@ -378,17 +381,31 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
   };
 
-  // Snapshot the host window's visible screen once; it's frozen behind the popup, so a
-  // single capture is enough to paint a dimmed backdrop that matches the dialog dimming.
+  // Backdrop snapshot of the screen behind the popup. Prefer the launcher's pre-popup capture:
+  // opening the popup transiently reflows the host pane, so capturing in-popup would catch a
+  // mis-sized (off-centre) frame. Fall back to capturing now only when no snapshot was passed.
   let hostCapture = "";
-  if (options.currentWindowId) {
+  if (options.backdropFile) {
     try {
-      hostCapture = tmux.captureTarget(
-        { sessionName: "", windowId: options.currentWindowId, windowIndex: 0, windowName: "" },
-        { startLine: 0, includeEscapes: true },
-      );
+      hostCapture = readFileSync(options.backdropFile, "utf8");
     } catch {
       hostCapture = "";
+    }
+    try {
+      unlinkSync(options.backdropFile);
+    } catch {}
+  }
+  if (!hostCapture) {
+    const hostTarget = options.currentClientSession || options.currentWindowId;
+    if (hostTarget) {
+      try {
+        hostCapture = tmux.captureTarget(
+          { sessionName: "", windowId: hostTarget, windowIndex: 0, windowName: "" },
+          { startLine: 0, includeEscapes: true },
+        );
+      } catch {
+        hostCapture = "";
+      }
     }
   }
 

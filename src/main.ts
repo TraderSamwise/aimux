@@ -3294,6 +3294,7 @@ program
   .option("--current-path <path>", "Current path")
   .option("--pane-id <id>", "Current pane id")
   .option("--aimux-home <path>", "AIMUX_HOME to scope cross-project Exposé")
+  .option("--backdrop-file <path>", "Pre-popup host snapshot to dim as the backdrop")
   .action(
     async (opts: {
       projectRoot: string;
@@ -3305,6 +3306,7 @@ program
       currentPath?: string;
       paneId?: string;
       aimuxHome?: string;
+      backdropFile?: string;
     }) => {
       const code = await runTmuxExpose({
         projectRoot: pathResolve(opts.projectRoot),
@@ -3316,6 +3318,7 @@ program
         currentPath: opts.currentPath,
         paneId: opts.paneId,
         aimuxHome: opts.aimuxHome,
+        backdropFile: opts.backdropFile,
       });
       process.exit(code);
     },
