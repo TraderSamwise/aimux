@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { derivedStatusLabel, type DashboardViewModel } from "../../dashboard/index.js";
 import { deriveSessionSemantics } from "../../session-semantics.js";
 import { stripAnsi } from "../render/text.js";
-import { renderDashboardFrame } from "./dashboard-renderers.js";
+import { buildDashboardFooterRows, renderDashboardFrame } from "./dashboard-renderers.js";
 
 function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): DashboardViewModel {
   return {
@@ -26,6 +26,105 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
     ...overrides,
   };
 }
+
+describe("buildDashboardFooterRows", () => {
+  const labels = (vm: Partial<DashboardViewModel>) =>
+    buildDashboardFooterRows(baseDashboardViewModel(vm)).map((row) =>
+      row.groups.map((g) => [g.label, g.hints.map((h) => h[0]).join("")]),
+    );
+
+  it("splits into a MOVE row and grouped action row at session level", () => {
+    const rows = buildDashboardFooterRows(
+      baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: [{ id: "a" } as never] }),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].groups[0].label).toBe("move");
+    const actLabels = rows[1].groups.map((g) => g.label);
+    expect(actLabels).toEqual(["create", "talk", "manage", undefined]);
+    // system group is unlabelled with help/quit
+    expect(rows[1].groups.at(-1)).toEqual({
+      hints: [
+        ["?", "help"],
+        ["q", "quit"],
+      ],
+    });
+  });
+
+  it("keeps only create + system actions at worktree level", () => {
+    const rows = buildDashboardFooterRows(baseDashboardViewModel({ hasWorktrees: true, navLevel: "worktrees" }));
+    const actLabels = rows[1].groups.map((g) => g.label);
+    expect(actLabels).toEqual(["create", undefined]);
+    expect(rows[1].groups[0].hints.map((h) => h[0])).toContain("w");
+  });
+
+  it("adds name/kill to MANAGE only when a session is selected", () => {
+    const withSel = labels({
+      hasWorktrees: false,
+      sessions: [{ id: "a", status: "running" } as never],
+      selectedSessionId: "a",
+    });
+    const manage = withSel.flat().find(([l]) => l === "manage");
+    expect(manage?.[1]).toContain("x");
+    expect(manage?.[1]).toContain("r");
+  });
+
+  it("preserves the exact key set per state variant (parity with the old footer)", () => {
+    const keys = (vm: Partial<DashboardViewModel>) =>
+      new Set(
+        buildDashboardFooterRows(baseDashboardViewModel(vm)).flatMap((r) =>
+          r.groups.flatMap((g) => g.hints.map((h) => h[0])),
+        ),
+      );
+    const sess = (over: Record<string, unknown> = {}) => [{ id: "a", status: "running", ...over } as never];
+
+    // no sessions, no worktrees
+    expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
+      new Set(["u", "Tab", "n", "v", "f", "S", "H", "T", "o", "R", "?", "q"]),
+    );
+    // worktree level
+    expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
+      new Set(["↑↓", "1-9", "Enter", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
+    );
+    // session level with worktrees + a selected session + a teammate
+    expect(
+      keys({
+        hasWorktrees: true,
+        navLevel: "sessions",
+        sessions: sess(),
+        selectedSessionId: "a",
+        selectedTeammates: sess(),
+      }),
+    ).toEqual(
+      new Set([
+        "↑↓",
+        "⇧↑↓",
+        "1-9",
+        "Enter",
+        "Esc",
+        "u",
+        "Tab",
+        "n",
+        "v",
+        "f",
+        "S",
+        "H",
+        "T",
+        "o",
+        "R",
+        "e",
+        "m",
+        "r",
+        "x",
+        "?",
+        "q",
+      ]),
+    );
+    // flat session list with a selected session
+    expect(keys({ hasWorktrees: false, navLevel: "sessions", sessions: sess(), selectedSessionId: "a" })).toEqual(
+      new Set(["↑↓", "Enter", "u", "Tab", "n", "v", "f", "w", "S", "H", "T", "o", "R", "x", "r", "?", "q"]),
+    );
+  });
+});
 
 describe("renderDashboardFrame worktree progress", () => {
   it("shows a simple creating state for creating worktrees", () => {

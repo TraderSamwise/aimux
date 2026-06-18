@@ -9,8 +9,10 @@ import {
   chip,
   type ChipTone,
   cols as gridCols,
-  keycapHintLines,
+  type FooterGroup,
+  type FooterRow,
   pill,
+  renderFooterRows,
   statusDot,
   style,
   type Tone,
@@ -313,6 +315,186 @@ function summarizeTeammate(
     .join(" · ");
 }
 
+/**
+ * Build the two-row dashboard footer: row 1 "MOVE" (navigation), row 2 grouped
+ * actions (CREATE / TALK / MANAGE / system). Each state variant keeps exactly the
+ * keys it had before; only the layout is grouped. Presentation-only.
+ */
+export function buildDashboardFooterRows(state: DashboardViewModel): FooterRow[] {
+  const selectedSession = state.selectedSessionId
+    ? state.sessions.find((s) => s.id === state.selectedSessionId)
+    : undefined;
+  const selectedService = state.selectedServiceId
+    ? state.services.find((s) => s.id === state.selectedServiceId)
+    : undefined;
+  const enterVerb = selectedService ? "open" : selectedSession?.status === "offline" ? "resume" : "focus";
+  const killVerb = selectedService
+    ? "stop"
+    : selectedSession?.status === "offline"
+      ? "kill"
+      : selectedSession
+        ? "stop"
+        : "";
+  const system: FooterGroup = {
+    hints: [
+      ["?", "help"],
+      ["q", "quit"],
+    ],
+  };
+
+  const talkGroup = (): FooterGroup => {
+    const hints: Array<[string, string]> = [
+      ["S", "msg"],
+      ["H", "handoff"],
+      ["T", "task"],
+      ["o", "thread"],
+      ["R", "reply"],
+    ];
+    if (selectedSession && state.selectedTeammates.length > 0) hints.push(["e", "team"]);
+    return { label: "talk", hints };
+  };
+
+  // Worktrees present, focused at session level: the full action set.
+  if (state.hasWorktrees && state.navLevel === "sessions") {
+    const manage: FooterGroup = { label: "manage", hints: [["m", "migrate"]] };
+    if (selectedSession) manage.hints.push(["r", "name"]);
+    if (killVerb) manage.hints.push(["x", killVerb]);
+    return [
+      {
+        groups: [
+          {
+            label: "move",
+            hints: [
+              ["↑↓", "items"],
+              ["⇧↑↓", "reorder"],
+              ["1-9", "jump"],
+              ["Enter", enterVerb],
+              ["Esc", "back"],
+              ["u", "attention"],
+              ["Tab", "details"],
+            ],
+          },
+        ],
+      },
+      {
+        groups: [
+          {
+            label: "create",
+            hints: [
+              ["n", "agent"],
+              ["v", "service"],
+              ["f", "fork"],
+            ],
+          },
+          talkGroup(),
+          manage,
+          system,
+        ],
+      },
+    ];
+  }
+
+  // Worktrees present, focused at worktree level: create-only actions.
+  if (state.hasWorktrees) {
+    return [
+      {
+        groups: [
+          {
+            label: "move",
+            hints: [
+              ["↑↓", "worktrees"],
+              ["1-9", "jump"],
+              ["Enter", "step in"],
+              ["u", "attention"],
+              ["Tab", "details"],
+            ],
+          },
+        ],
+      },
+      {
+        groups: [
+          {
+            label: "create",
+            hints: [
+              ["n", "agent"],
+              ["v", "service"],
+              ["f", "fork"],
+              ["w", "worktree"],
+            ],
+          },
+          system,
+        ],
+      },
+    ];
+  }
+
+  // Flat session list (no worktrees).
+  if (state.sessions.length > 0) {
+    const manage: FooterGroup = { label: "manage", hints: [] };
+    if (killVerb) manage.hints.push(["x", killVerb]);
+    if (selectedSession) manage.hints.push(["r", "name"]);
+    const actGroups: FooterGroup[] = [
+      {
+        label: "create",
+        hints: [
+          ["n", "agent"],
+          ["v", "service"],
+          ["f", "fork"],
+          ["w", "worktree"],
+        ],
+      },
+      talkGroup(),
+    ];
+    if (manage.hints.length > 0) actGroups.push(manage);
+    actGroups.push(system);
+    return [
+      {
+        groups: [
+          {
+            label: "move",
+            hints: [
+              ["↑↓", "select"],
+              ["Enter", enterVerb],
+              ["u", "attention"],
+              ["Tab", "details"],
+            ],
+          },
+        ],
+      },
+      { groups: actGroups },
+    ];
+  }
+
+  // No sessions and no worktrees: nothing to navigate; create + talk only.
+  return [
+    {
+      groups: [
+        {
+          label: "move",
+          hints: [
+            ["u", "attention"],
+            ["Tab", "details"],
+          ],
+        },
+      ],
+    },
+    {
+      groups: [
+        {
+          label: "create",
+          hints: [
+            ["n", "agent"],
+            ["v", "service"],
+            ["f", "fork"],
+          ],
+        },
+        talkGroup(),
+        system,
+      ],
+    },
+  ];
+}
+
 export function renderDashboardFrame(
   state: DashboardViewModel,
   cols: number,
@@ -324,7 +506,6 @@ export function renderDashboardFrame(
   const cardWidth = twoPane ? leftWidth : contentWidth;
   const padBlockLine = (line: string): string => line;
   const centerInBlock = (line: string): string => truncateAnsi(center(line, contentWidth), cols);
-  const buildHelpLines = (line: string): string[] => keycapHintLines(line, contentWidth);
 
   const trailingHints = (parts: string[]): string => parts.filter(Boolean).join(" ");
 
@@ -422,45 +603,6 @@ export function renderDashboardFrame(
       if (stripped.includes("▸")) return i;
     }
     return -1;
-  };
-
-  const buildHelpLine = (): string => {
-    const selectedSession = state.selectedSessionId
-      ? state.sessions.find((s) => s.id === state.selectedSessionId)
-      : undefined;
-    const selectedService = state.selectedServiceId
-      ? state.services.find((s) => s.id === state.selectedServiceId)
-      : undefined;
-    const xLabel = selectedService
-      ? "[x] stop"
-      : selectedSession?.status === "offline"
-        ? "[x] kill"
-        : selectedSession
-          ? "[x] stop"
-          : "";
-    const rLabel = selectedSession ? "  [r] name" : "";
-    const teamLabel = selectedSession && state.selectedTeammates.length > 0 ? "  [e] team" : "";
-    const enterLabel = selectedService
-      ? "Enter open"
-      : selectedSession?.status === "offline"
-        ? "Enter resume"
-        : "Enter focus";
-
-    if (state.sessions.length === 0 && !state.hasWorktrees) {
-      return " [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [?] help  [q] quit ";
-    }
-    if (state.hasWorktrees && state.navLevel === "sessions") {
-      const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ items  Shift+↑↓ reorder  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [m] migrate${xPart}${rLabel}  [?] help  [q] quit `;
-    }
-    if (state.hasWorktrees) {
-      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork(step in)  [w] worktree  [?] help  [q] quit `;
-    }
-    if (state.sessions.length > 0) {
-      const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [w] worktree${xPart}${rLabel}  [?] help  [q] quit `;
-    }
-    return " [u] attention  [Tab] details  [n] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [?] help  [q] quit ";
   };
 
   const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
@@ -752,7 +894,7 @@ export function renderDashboardFrame(
     });
   }
 
-  const helpLines = buildHelpLines(buildHelpLine());
+  const helpLines = renderFooterRows(buildDashboardFooterRows(state), contentWidth);
   const footer: string[] = ["─".repeat(Math.max(0, cols)), ...helpLines.map((line) => centerInBlock(line))];
   const viewportHeight = rows - header.length - footer.length;
   let scrollOffset = state.scrollOffset;

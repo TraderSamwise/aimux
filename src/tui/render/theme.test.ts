@@ -10,6 +10,7 @@ import {
   keycapHintLines,
   keycapHints,
   padVisible,
+  renderFooterRows,
   pill,
   statusDot,
   statusTone,
@@ -100,6 +101,72 @@ describe("theme primitives", () => {
     const lines = keycapHintLines("[a] alpha  [b] bravo  [c] charlie", 14);
     expect(lines.length).toBeGreaterThan(1);
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(14);
+  });
+});
+
+describe("renderFooterRows", () => {
+  it("renders each row on its own line with uppercase group labels and keycap hints", () => {
+    const lines = renderFooterRows(
+      [
+        { groups: [{ label: "move", hints: [["u", "attention"]] }] },
+        {
+          groups: [{ label: "create", hints: [["n", "agent"]] }, { hints: [["q", "quit"]] }],
+        },
+      ],
+      200,
+    );
+    expect(lines).toHaveLength(2);
+    expect(stripAnsi(lines[0])).toContain("MOVE");
+    expect(stripAnsi(lines[0])).toContain("attention");
+    expect(stripAnsi(lines[1])).toContain("CREATE");
+    expect(stripAnsi(lines[1])).toContain("agent");
+    expect(stripAnsi(lines[1])).toContain("quit");
+  });
+
+  it("separates same-line groups with a divider", () => {
+    const [line] = renderFooterRows(
+      [
+        {
+          groups: [
+            { label: "create", hints: [["n", "agent"]] },
+            { label: "talk", hints: [["S", "msg"]] },
+          ],
+        },
+      ],
+      200,
+    );
+    expect(stripAnsi(line)).toContain("│");
+  });
+
+  it("wraps within a row to the width budget and never starts a line with a divider", () => {
+    const lines = renderFooterRows(
+      [
+        {
+          groups: [
+            {
+              label: "create",
+              hints: [
+                ["n", "agent"],
+                ["v", "service"],
+              ],
+            },
+            {
+              label: "talk",
+              hints: [
+                ["S", "msg"],
+                ["H", "handoff"],
+              ],
+            },
+          ],
+        },
+      ],
+      18,
+    );
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(18);
+      expect(stripAnsi(line).trimStart().startsWith("│")).toBe(false);
+    }
   });
 });
 

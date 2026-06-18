@@ -139,6 +139,50 @@ export function keycapHintLines(line: string, width: number): string[] {
   return lines;
 }
 
+/** A labelled cluster of keycap hints for the dashboard footer. */
+export interface FooterGroup {
+  /** Dim uppercase category label (e.g. "create"), omitted for a bare cluster. */
+  label?: string;
+  /** [key, label] pairs rendered as keycap hints. */
+  hints: Array<[string, string]>;
+}
+
+/** One footer row: groups laid out left-to-right, separated by a dim divider. */
+export interface FooterRow {
+  groups: FooterGroup[];
+}
+
+/**
+ * Render footer rows into physical lines. Each FooterRow starts on a fresh line;
+ * within a row, tokens (a dim uppercase group label, then a keycap hint per pair)
+ * are greedy-packed to `width` with a dim `│` between groups on the same line. A
+ * wrapped line never starts with a divider.
+ */
+export function renderFooterRows(rows: FooterRow[], width: number): string[] {
+  const out: string[] = [];
+  const groupSep = `  ${style("│", "muted")}  `;
+  for (const row of rows) {
+    let line = "";
+    for (const group of row.groups) {
+      const tokens: string[] = [];
+      if (group.label) tokens.push(style(group.label.toUpperCase(), "muted"));
+      for (const [key, label] of group.hints) tokens.push(keycapHint(key, label));
+      tokens.forEach((token, ti) => {
+        const sep = line === "" ? "" : ti === 0 ? groupSep : "  ";
+        const candidate = `${line}${sep}${token}`;
+        if (line === "" || visibleWidth(candidate) <= width) {
+          line = candidate;
+        } else {
+          out.push(line);
+          line = token;
+        }
+      });
+    }
+    if (line) out.push(line);
+  }
+  return out;
+}
+
 export type BandTone = "info" | "danger";
 
 const BAND_SGR: Record<BandTone, string> = {
