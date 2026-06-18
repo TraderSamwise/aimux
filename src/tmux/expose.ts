@@ -79,6 +79,20 @@ function tilePreview(raw: string, count: number): string[] {
   return tail;
 }
 
+// Paint a captured host screen as a dimmed full-screen backdrop, so the floating tile
+// grid reads above the user's real (receded) content. Each line is sanitized (control
+// bytes stripped, SGR kept), clamped to the viewport, then dimmed via recede "faint".
+export function buildBackdrop(capture: string, cols: number, rows: number): string {
+  if (!capture) return "";
+  const lines = capture.replace(/\r/g, "").split("\n");
+  const count = Math.min(lines.length, rows);
+  let out = "";
+  for (let i = 0; i < count; i += 1) {
+    out += `\x1b[${i + 1};1H${recede(truncateAnsi(sanitizeLine(lines[i]!), cols), "faint")}`;
+  }
+  return out;
+}
+
 function runWindowSwitch(options: TmuxExposeOptions, targetWindowId: string): number {
   const scriptPath = fileURLToPath(new URL("../../scripts/tmux-control.sh", import.meta.url));
   const args = [
@@ -332,6 +346,20 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
   };
 
+  // Snapshot the host window's visible screen once; it's frozen behind the popup, so a
+  // single capture is enough to paint a dimmed backdrop that matches the dialog dimming.
+  let hostCapture = "";
+  if (options.currentWindowId) {
+    try {
+      hostCapture = tmux.captureTarget(
+        { sessionName: "", windowId: options.currentWindowId, windowIndex: 0, windowName: "" },
+        { startLine: 0, includeEscapes: true },
+      );
+    } catch {
+      hostCapture = "";
+    }
+  }
+
   const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
   let index = currentIdx >= 0 ? currentIdx : 0;
   let tileCols = 1;
@@ -351,15 +379,17 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const zoom = scope === "global" ? "" : " · g zoom out";
     const help = `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`;
 
+    const backdrop = buildBackdrop(hostCapture, cols, rows);
+
     if (visibleCount === 0) {
       const msg = `No active agents in ${scopeLabel}.`;
       const col = Math.max(1, Math.floor((cols - msg.length) / 2));
-      const out = `\x1b[2J\x1b[H\x1b[1;2H${title}\x1b[${Math.floor(rows / 2)};${col}H\x1b[2m${msg}${RESET}\x1b[${rows};2H${help}`;
+      const out = `\x1b[2J\x1b[H${backdrop}\x1b[1;2H${title}\x1b[${Math.floor(rows / 2)};${col}H\x1b[2m${msg}${RESET}\x1b[${rows};2H${help}`;
       process.stdout.write(out);
       return;
     }
 
-    let out = `\x1b[2J\x1b[H\x1b[1;2H${title}`;
+    let out = `\x1b[2J\x1b[H${backdrop}\x1b[1;2H${title}`;
     for (let i = 0; i < visibleCount; i += 1) {
       const r = Math.floor(i / layout.tileCols);
       const c = i % layout.tileCols;
