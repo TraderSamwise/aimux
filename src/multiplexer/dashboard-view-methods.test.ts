@@ -309,9 +309,9 @@ describe("dashboardStateMethods.writeFrame", () => {
 
     // The stored base stays raw; the composited frame dims it (faint) behind the overlay.
     expect(host.lastRenderedBaseFrame).toBe("base-frame");
-    expect(host.lastRenderedFrame).toBe("\x1b[2mbase-frame\x1b[0moverlay-frame");
+    expect(host.lastRenderedFrame).toBe("\x1b[2;38;5;240mbase-frame\x1b[0moverlay-frame");
     expect(host.lastRenderedFrameKey).toBe("120x40|model:3|pending:7|overlay:2|ui:screen:dashboard|level:worktrees");
-    expect(writes).toEqual(["\x1b[?25l\x1b[H\x1b[J\x1b[2mbase-frame\x1b[0moverlay-frame"]);
+    expect(writes).toEqual(["\x1b[?25l\x1b[H\x1b[J\x1b[2;38;5;240mbase-frame\x1b[0moverlay-frame"]);
     stdoutWrite.mockRestore();
   });
 });

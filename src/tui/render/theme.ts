@@ -46,23 +46,29 @@ export type RecedeMode = "faint" | "soft" | "deep";
 // 256-color grays for flattened (color-stripped) receded content.
 const RECEDE_SOFT_FG = 250; // readable but colorless (e.g. selected exposé preview)
 const RECEDE_DEEP_FG = 240; // deeper recession (e.g. unselected preview)
+// Gray floor for faint backdrops so uncolored text dims further (matches RECEDE_DEEP_FG).
+const FAINT_FG = 240;
 
 /**
  * Recede content visually so a foreground layer (a modal, exposé chrome) reads above it.
- * - "faint": keep the content's own colors but dim them. SGR-2 (faint) is re-injected
- *   after every embedded reset (`\x1b[m`, `\x1b[0m`, or a reset-led form like `\x1b[0;1m`)
- *   so a pre-styled frame stays uniformly dimmed; a harmless `faint+reset` may trail.
- *   Faint is widely but not universally honored — it degrades to a no-op where ignored.
+ * - "faint": keep the content's own colors but dim them, over a gray foreground floor
+ *   so uncolored text recedes further. The lead is re-injected after every embedded reset
+ *   (`\x1b[m`, `\x1b[0m`, or a reset-led form like `\x1b[0;1m`) so a pre-styled frame stays
+ *   uniformly dimmed; a harmless trailing reset may remain. Colored spans override the gray
+ *   (kept, faint-dimmed); faint itself is not universally honored, but the gray floor still dims.
  * - "soft"/"deep": strip all color and re-emit as one 256-color gray (flatten). Fully
  *   portable and unambiguous; visible width is preserved. Callers pass single lines.
  */
 export function recede(text: string, mode: RecedeMode = "faint"): string {
   if (text === "") return "";
   if (mode === "faint") {
-    const faint = "\x1b[2m";
-    // Match any reset-led SGR so faint resumes after it; a combined form like
-    // `\x1b[0;1m` collapses to a plain reset, which is the intent behind a backdrop.
-    return `${faint}${text.replace(/\x1b\[(?:0(?:;[0-9;]*)?)?m/g, `${RESET}${faint}`)}${RESET}`;
+    const faint = `\x1b[2;38;5;${FAINT_FG}m`;
+    // Resume the faint lead after each embedded reset; re-emit any params that followed a
+    // reset-led form (e.g. `\x1b[0;31m`) so colored content stays colored, just dimmed.
+    return `${faint}${text.replace(
+      /\x1b\[(?:0(?:;([0-9;]*))?)?m/g,
+      (_match, rest?: string) => `${RESET}${faint}${rest ? `\x1b[${rest}m` : ""}`,
+    )}${RESET}`;
   }
   const fg = mode === "soft" ? RECEDE_SOFT_FG : RECEDE_DEEP_FG;
   return `\x1b[38;5;${fg}m${stripAnsi(text)}${RESET}`;
