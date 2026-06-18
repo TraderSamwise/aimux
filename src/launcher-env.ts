@@ -75,3 +75,25 @@ export function prepareDevCliEnv(env: MutableEnv = process.env): void {
 
   if (inheritedStableTarget) clearSessionScopedEnv(env);
 }
+
+/** Which CLI entry to load for the given argv. `expose` uses the lightweight popup entry. */
+export function cliEntryFor(argv: string[]): "expose" | "main" {
+  return argv[2] === "expose" ? "expose" : "main";
+}
+
+/**
+ * Load and run the CLI entry for the current argv. `expose` routes to the lightweight
+ * popup entry (no full-CLI graph) to avoid the cold-start blank; everything else loads
+ * the full program, which self-runs via its top-level parse().
+ */
+export function runRoutedCli(): void {
+  const run =
+    cliEntryFor(process.argv) === "expose"
+      ? import("./popup-expose.js").then((m) => m.runExpose())
+      : import("./main.js").then(() => undefined);
+
+  void run.catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

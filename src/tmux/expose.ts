@@ -257,12 +257,15 @@ export function drawTile(
   layout: GridLayout,
   sublabel: string,
   options: TmuxExposeOptions,
+  dimInactive: boolean,
 ): string {
   const innerW = Math.max(1, width - 2);
   const textW = Math.max(0, innerW - 1);
+  // Only non-selected tiles dim, and only when configured; the active tile is always full color.
+  const dimmed = dimInactive && !selected;
   const kind = agentStatusKind(item.metadata);
   const palette = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
-  const bd = `\x1b[${selected ? palette.on : palette.off}m`;
+  const bd = `\x1b[${dimmed ? palette.off : palette.on}m`;
   // Focus is shown by a bolder (heavy-line) outline, not a distinct color, so the
   // border always reflects the agent's state.
   const box = selected
@@ -288,12 +291,11 @@ export function drawTile(
   // The status row is the last header row; preserve it under capacity pressure when
   // it carries either the pill or the recency/status detail.
   const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "" || detail !== "");
-  // Flatten the captured preview into gray so the tile chrome (border, title, pill)
-  // reads above it; the selected tile's preview stays the brightest. Deep gray shares
-  // the neutral dim register on purpose.
+  // Dimmed (non-selected, when enabled) tiles flatten their preview to gray so the chrome
+  // reads above it; otherwise previews keep the captured pane's real colors.
   const previewRows = preview
     .slice(0, Math.max(0, bodyCapacity - header.length))
-    .map((line) => recede(line, selected ? "soft" : "deep"));
+    .map((line) => (dimmed ? recede(line, "deep") : line));
   const bodyRows = [...header, ...previewRows];
   while (bodyRows.length < bodyCapacity) bodyRows.push("");
 
@@ -350,6 +352,22 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return "";
   };
 
+  // Read and delete the launcher's backdrop snapshot up front, before any terminal
+  // state or signal handlers exist, so a fatal signal during startup can't leak the
+  // temp file. Opening the popup transiently reflows the host pane, so capturing
+  // in-popup would catch a mis-sized (off-centre) frame — hence the launcher capture.
+  let hostCapture = "";
+  if (options.backdropFile) {
+    try {
+      hostCapture = readFileSync(options.backdropFile, "utf8");
+    } catch {
+      hostCapture = "";
+    }
+    try {
+      unlinkSync(options.backdropFile);
+    } catch {}
+  }
+
   const terminal = new TerminalHost();
   terminal.enterRawMode();
   terminal.enterAlternateScreen(true);
@@ -382,20 +400,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
   };
 
-  // Backdrop snapshot of the screen behind the popup. Prefer the launcher's pre-popup capture:
-  // opening the popup transiently reflows the host pane, so capturing in-popup would catch a
-  // mis-sized (off-centre) frame. Fall back to capturing now only when no snapshot was passed.
-  let hostCapture = "";
-  if (options.backdropFile) {
-    try {
-      hostCapture = readFileSync(options.backdropFile, "utf8");
-    } catch {
-      hostCapture = "";
-    }
-    try {
-      unlinkSync(options.backdropFile);
-    } catch {}
-  }
+  // Fall back to capturing the host pane now only when the launcher passed no snapshot.
   if (!hostCapture) {
     // Prefer the exact host window; fall back to the client session's active pane.
     const hostTarget = options.currentWindowId || options.currentClientSession;
@@ -473,6 +478,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         layout,
         tileSublabel(items[i]!),
         options,
+        config.expose.dimInactive,
       );
     }
     out += `${helpAt}\x1b[?2026l`;

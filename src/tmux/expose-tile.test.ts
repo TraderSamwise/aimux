@@ -132,6 +132,7 @@ function renderTile(
   sublabel: string,
   tileHeight = 6,
   preview: string[] = ["* Worked for 41s", "recap", "next"],
+  dimInactive = false,
 ): string {
   const layout = {
     tileCols: 1,
@@ -142,9 +143,19 @@ function renderTile(
     gridTopRow: 3,
   };
   const item = { id: "x", label: "claude(coder)", target: { windowId: "@1" }, metadata: meta, activity: 0 };
-  return drawTile(item as never, preview, 3, selected, 1, 1, width, layout as never, sublabel, {
-    currentWindowId: "@other",
-  } as never);
+  return drawTile(
+    item as never,
+    preview,
+    3,
+    selected,
+    1,
+    1,
+    width,
+    layout as never,
+    sublabel,
+    { currentWindowId: "@other" } as never,
+    dimInactive,
+  );
 }
 
 describe("drawTile", () => {
@@ -162,13 +173,20 @@ describe("drawTile", () => {
     expect(lines.length).toBe(6);
   });
 
-  it("uses a light frame in the same state tone when not selected, without the marker", () => {
+  it("uses a light frame at full state tone when not selected, without the marker", () => {
     const out = renderTile(56, false, needs, "aimux / beautify-tui");
     expect(out).toContain("╭");
     expect(out).toContain("│");
     expect(out).not.toContain("┏");
-    expect(out).toContain("\x1b[38;5;94m");
+    expect(out).toContain("\x1b[38;5;179m"); // bright state tone by default — inactive tiles aren't dimmed
+    expect(out).not.toContain("\x1b[38;5;94m");
     expect(stripAnsi(out)).not.toContain("▸");
+  });
+
+  it("dims the inactive border only when dimInactive is enabled", () => {
+    const out = renderTile(56, false, needs, "aimux / beautify-tui", 6, undefined, true);
+    expect(out).toContain("\x1b[38;5;94m"); // dim (off) state tone
+    expect(out).not.toContain("\x1b[38;5;179m");
   });
 
   it("renders the dashboard-semantic user label (not the raw activity) as the pill", () => {
@@ -227,22 +245,22 @@ describe("drawTile", () => {
     expect(stripAnsi(out)).toContain("NEEDS INPUT");
   });
 
-  it("flattens captured preview colors to gray so the tile chrome reads above them", () => {
+  it("keeps preview colors by default, dimming only inactive tiles when dimInactive is on", () => {
     const colored = ["\x1b[31mRED error\x1b[0m here", "\x1b[32mgreen line\x1b[0m"];
-    // `needs` gives a state-tinted border (94/179), never 240/250 — so the preview grays
-    // below are unambiguous. Selected previews are the brightest (250); unselected dim (240).
-    const sel = renderTile(56, true, needs, "aimux / beautify-tui", 8, colored);
-    const unsel = renderTile(56, false, needs, "aimux / beautify-tui", 8, colored);
-    for (const out of [sel, unsel]) {
-      expect(out).not.toContain("\x1b[31m");
-      expect(out).not.toContain("\x1b[32m");
-      expect(stripAnsi(out)).toContain("RED error here");
-      expect(stripAnsi(out)).toContain("green line");
+    // Default: every tile keeps the captured pane's real colors, no gray flatten.
+    for (const sel of [true, false]) {
+      const out = renderTile(56, sel, needs, "aimux / beautify-tui", 8, colored, false);
+      expect(out).toContain("\x1b[31m");
+      expect(out).toContain("\x1b[32m");
+      expect(out).not.toContain("\x1b[38;5;240m");
     }
-    expect(sel).toContain("\x1b[38;5;250m");
-    expect(sel).not.toContain("\x1b[38;5;240m");
-    expect(unsel).toContain("\x1b[38;5;240m");
-    expect(unsel).not.toContain("\x1b[38;5;250m");
+    // dimInactive on: the active tile stays colored; only the inactive tile flattens to gray.
+    const active = renderTile(56, true, needs, "aimux / beautify-tui", 8, colored, true);
+    const inactive = renderTile(56, false, needs, "aimux / beautify-tui", 8, colored, true);
+    expect(active).toContain("\x1b[31m");
+    expect(inactive).not.toContain("\x1b[31m");
+    expect(inactive).toContain("\x1b[38;5;240m"); // deep gray flatten
+    expect(stripAnsi(inactive)).toContain("RED error here");
   });
 
   it("keeps every rendered line the same visible width (aligned borders)", () => {
