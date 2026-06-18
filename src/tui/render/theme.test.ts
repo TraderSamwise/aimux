@@ -5,12 +5,13 @@ import {
   chip,
   cols,
   divider,
+  footerHints,
   keycap,
   keycapHint,
   keycapHintLines,
   keycapHints,
   padVisible,
-  renderFooterRows,
+  renderFooterHints,
   pill,
   statusDot,
   statusTone,
@@ -90,11 +91,24 @@ describe("theme primitives", () => {
     expect(keycapHint("q", "quit")).toContain(keycap("q"));
   });
 
+  it("tints destructive keycaps red and uses the standard glyph otherwise", () => {
+    expect(keycap("n")).toContain("38;5;255");
+    expect(keycap("x", "danger")).toContain("38;5;203");
+    expect(keycapHint("x", "kill", "danger")).toContain(keycap("x", "danger"));
+  });
+
   it("styles a footer line into keycap groups, supporting [key] and key forms", () => {
     const rendered = keycapHints("[↑↓] select  q quit");
     expect(stripAnsi(rendered)).toBe(" ↑↓  select   q  quit");
     expect(rendered).toContain(keycap("↑↓"));
     expect(rendered).toContain(keycap("q"));
+  });
+
+  it("styles a footer line box-free (bold glyph keys, no pill background)", () => {
+    const rendered = footerHints("[↑↓] select  q quit");
+    expect(stripAnsi(rendered)).toBe("↑↓ select  q quit");
+    expect(rendered).not.toContain("48;5;"); // no keycap background fill
+    expect(rendered).toContain("\x1b[1;38;5;255m↑↓"); // bold key glyph
   });
 
   it("wraps keycap hint groups to a width budget across lines", () => {
@@ -104,69 +118,40 @@ describe("theme primitives", () => {
   });
 });
 
-describe("renderFooterRows", () => {
-  it("renders each row on its own line with uppercase group labels and keycap hints", () => {
-    const lines = renderFooterRows(
+describe("renderFooterHints", () => {
+  it("renders all hints on one line when they fit", () => {
+    const [line, ...rest] = renderFooterHints(
       [
-        { groups: [{ label: "move", hints: [["u", "attention"]] }] },
-        {
-          groups: [{ label: "create", hints: [["n", "agent"]] }, { hints: [["q", "quit"]] }],
-        },
+        ["u", "attention"],
+        ["n", "agent"],
+        ["q", "quit"],
       ],
       200,
     );
-    expect(lines).toHaveLength(2);
-    expect(stripAnsi(lines[0])).toContain("MOVE");
-    expect(stripAnsi(lines[0])).toContain("attention");
-    expect(stripAnsi(lines[1])).toContain("CREATE");
-    expect(stripAnsi(lines[1])).toContain("agent");
-    expect(stripAnsi(lines[1])).toContain("quit");
+    expect(rest).toHaveLength(0);
+    const plain = stripAnsi(line);
+    expect(plain).toContain("attention");
+    expect(plain).toContain("agent");
+    expect(plain).toContain("quit");
   });
 
-  it("separates same-line groups with a divider", () => {
-    const [line] = renderFooterRows(
-      [
-        {
-          groups: [
-            { label: "create", hints: [["n", "agent"]] },
-            { label: "talk", hints: [["S", "msg"]] },
-          ],
-        },
-      ],
-      200,
-    );
-    expect(stripAnsi(line)).toContain("│");
+  it("tints destructive hints red", () => {
+    const [line] = renderFooterHints([["x", "kill", "danger"]], 200);
+    expect(line).toContain("38;5;203");
   });
 
-  it("wraps within a row to the width budget and never starts a line with a divider", () => {
-    const lines = renderFooterRows(
-      [
-        {
-          groups: [
-            {
-              label: "create",
-              hints: [
-                ["n", "agent"],
-                ["v", "service"],
-              ],
-            },
-            {
-              label: "talk",
-              hints: [
-                ["S", "msg"],
-                ["H", "handoff"],
-              ],
-            },
-          ],
-        },
-      ],
-      18,
-    );
+  it("wraps a long list to the width budget, showing every hint", () => {
+    const hints: Array<[string, string]> = [
+      ["a", "alpha"],
+      ["b", "bravo"],
+      ["c", "charlie"],
+      ["d", "delta"],
+    ];
+    const lines = renderFooterHints(hints, 16);
     expect(lines.length).toBeGreaterThan(1);
-    for (const line of lines) {
-      expect(visibleWidth(line)).toBeLessThanOrEqual(18);
-      expect(stripAnsi(line).trimStart().startsWith("│")).toBe(false);
-    }
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(16);
+    const all = lines.map(stripAnsi).join(" ");
+    for (const [, label] of hints) expect(all).toContain(label);
   });
 });
 
