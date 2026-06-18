@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { prepareDevCliEnv, prepareStableCliEnv } from "./launcher-env.js";
+import { cliEntryFor, prepareDevCliEnv, prepareStableCliEnv } from "./launcher-env.js";
 
 describe("launcher environment targeting", () => {
   it("normalizes stable aimux away from inherited dev defaults", () => {
@@ -86,5 +86,17 @@ describe("launcher environment targeting", () => {
       AIMUX_ENV: "production",
       AIMUX_WEB_APP_URL: "https://preview.aimux.app",
     });
+  });
+});
+
+describe("cliEntryFor", () => {
+  it("routes the expose subcommand to the lightweight popup entry", () => {
+    expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("expose");
+  });
+
+  it("routes everything else (and the bare invocation) to the full CLI", () => {
+    expect(cliEntryFor(["node", "/p/bin/aimux", "spawn"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "--help"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux"])).toBe("main");
   });
 });
