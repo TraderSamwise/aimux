@@ -15,6 +15,7 @@ import {
 } from "./dashboard-model.js";
 import { hydrateDashboardArchiveScreenState } from "./archives.js";
 import { hydrateDashboardNotificationScreenState } from "./notifications.js";
+import { recede } from "../tui/render/theme.js";
 import type { TmuxTarget } from "../tmux/runtime-manager.js";
 
 export const dashboardStateMethods = {
@@ -133,7 +134,10 @@ export const dashboardStateMethods = {
       this.lastRenderedBaseFrame = output;
       const viewport = this.getViewportSize();
       const overlayOutput = this.buildActiveDashboardOverlayOutput?.(viewport) ?? null;
-      const finalOutput = overlayOutput ? `${output}${overlayOutput}` : output;
+      // Dim the dashboard into a backdrop behind a centered modal; the box overdraws
+      // its rectangle at full brightness on top. The stored base stays undimmed so a
+      // dismissal redraws bright and each frame re-dims freshly.
+      const finalOutput = overlayOutput ? `${recede(output, "faint")}${overlayOutput}` : output;
       const renderKey = [
         `${viewport.cols}x${viewport.rows}`,
         `model:${this.dashboardModelVersion ?? 0}`,
