@@ -120,21 +120,21 @@ describe("theme primitives", () => {
 });
 
 describe("recede", () => {
-  it("faint mode prepends faint and re-injects it after embedded resets", () => {
-    expect(recede("plain")).toBe("\x1b[2mplain\x1b[0m");
-    // A pre-styled span keeps its color but gains faint, and faint resumes after the reset.
-    expect(recede(`${style("hi", "danger")}bye`)).toBe("\x1b[2m\x1b[31mhi\x1b[0m\x1b[2mbye\x1b[0m");
+  it("faint mode prepends the gray faint lead and re-injects it after embedded resets", () => {
+    expect(recede("plain")).toBe("\x1b[2;38;5;240mplain\x1b[0m");
+    // A pre-styled span keeps its color but gains faint, and the lead resumes after the reset.
+    expect(recede(`${style("hi", "danger")}bye`)).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m\x1b[2;38;5;240mbye\x1b[0m");
   });
 
   it("faint mode also matches the shorthand reset \\x1b[m", () => {
-    expect(recede("a\x1b[mb")).toBe("\x1b[2ma\x1b[0m\x1b[2mb\x1b[0m");
+    expect(recede("a\x1b[mb")).toBe("\x1b[2;38;5;240ma\x1b[0m\x1b[2;38;5;240mb\x1b[0m");
   });
 
   it("faint mode resumes after reset-led combined sequences (e.g. \\x1b[0;1m)", () => {
-    // A reset-led form would otherwise clear faint; it must collapse to reset + faint.
-    expect(recede("x\x1b[0;1my")).toBe("\x1b[2mx\x1b[0m\x1b[2my\x1b[0m");
+    // A reset-led form would otherwise clear faint; it must collapse to reset + faint lead.
+    expect(recede("x\x1b[0;1my")).toBe("\x1b[2;38;5;240mx\x1b[0m\x1b[2;38;5;240my\x1b[0m");
     // A non-reset color (\x1b[31m) is left intact so its color still shows, dimmed.
-    expect(recede("\x1b[31mhi")).toBe("\x1b[2m\x1b[31mhi\x1b[0m");
+    expect(recede("\x1b[31mhi")).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m");
   });
 
   it("flatten modes strip color and re-emit as a single 256-color gray", () => {
