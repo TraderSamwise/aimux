@@ -40,6 +40,34 @@ export function style(text: string, tone: Tone): string {
   return sgr ? `${sgr}${text}${RESET}` : text;
 }
 
+/** How to push content into the background; see {@link recede}. */
+export type RecedeMode = "faint" | "soft" | "deep";
+
+// 256-color grays for flattened (color-stripped) receded content.
+const RECEDE_SOFT_FG = 250; // readable but colorless (e.g. selected exposé preview)
+const RECEDE_DEEP_FG = 240; // deeper recession (e.g. unselected preview)
+
+/**
+ * Recede content visually so a foreground layer (a modal, exposé chrome) reads above it.
+ * - "faint": keep the content's own colors but dim them. SGR-2 (faint) is re-injected
+ *   after every embedded reset (`\x1b[m`, `\x1b[0m`, or a reset-led form like `\x1b[0;1m`)
+ *   so a pre-styled frame stays uniformly dimmed; a harmless `faint+reset` may trail.
+ *   Faint is widely but not universally honored — it degrades to a no-op where ignored.
+ * - "soft"/"deep": strip all color and re-emit as one 256-color gray (flatten). Fully
+ *   portable and unambiguous; visible width is preserved. Callers pass single lines.
+ */
+export function recede(text: string, mode: RecedeMode = "faint"): string {
+  if (text === "") return "";
+  if (mode === "faint") {
+    const faint = "\x1b[2m";
+    // Match any reset-led SGR so faint resumes after it; a combined form like
+    // `\x1b[0;1m` collapses to a plain reset, which is the intent behind a backdrop.
+    return `${faint}${text.replace(/\x1b\[(?:0(?:;[0-9;]*)?)?m/g, `${RESET}${faint}`)}${RESET}`;
+  }
+  const fg = mode === "soft" ? RECEDE_SOFT_FG : RECEDE_DEEP_FG;
+  return `\x1b[38;5;${fg}m${stripAnsi(text)}${RESET}`;
+}
+
 /** Visible width of a string, ignoring ANSI escape sequences. */
 export function visibleWidth(text: string): number {
   return stripAnsi(text).length;

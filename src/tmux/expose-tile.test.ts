@@ -55,6 +55,7 @@ function renderTile(
   meta: Record<string, unknown>,
   sublabel: string,
   tileHeight = 6,
+  preview: string[] = ["* Worked for 41s", "recap", "next"],
 ): string {
   const layout = {
     tileCols: 1,
@@ -65,18 +66,9 @@ function renderTile(
     gridTopRow: 3,
   };
   const item = { id: "x", label: "claude(coder)", target: { windowId: "@1" }, metadata: meta, activity: 0 };
-  return drawTile(
-    item as never,
-    ["* Worked for 41s", "recap", "next"],
-    3,
-    selected,
-    1,
-    1,
-    width,
-    layout as never,
-    sublabel,
-    { currentWindowId: "@other" } as never,
-  );
+  return drawTile(item as never, preview, 3, selected, 1, 1, width, layout as never, sublabel, {
+    currentWindowId: "@other",
+  } as never);
 }
 
 describe("drawTile", () => {
@@ -157,6 +149,24 @@ describe("drawTile", () => {
     expect(lines.length).toBe(4);
     // The status pill survives even when context rows are dropped for space.
     expect(stripAnsi(out)).toContain("NEEDS INPUT");
+  });
+
+  it("flattens captured preview colors to gray so the tile chrome reads above them", () => {
+    const colored = ["\x1b[31mRED error\x1b[0m here", "\x1b[32mgreen line\x1b[0m"];
+    // `needs` gives a state-tinted border (94/179), never 240/250 — so the preview grays
+    // below are unambiguous. Selected previews are the brightest (250); unselected dim (240).
+    const sel = renderTile(56, true, needs, "aimux / beautify-tui", 8, colored);
+    const unsel = renderTile(56, false, needs, "aimux / beautify-tui", 8, colored);
+    for (const out of [sel, unsel]) {
+      expect(out).not.toContain("\x1b[31m");
+      expect(out).not.toContain("\x1b[32m");
+      expect(stripAnsi(out)).toContain("RED error here");
+      expect(stripAnsi(out)).toContain("green line");
+    }
+    expect(sel).toContain("\x1b[38;5;250m");
+    expect(sel).not.toContain("\x1b[38;5;240m");
+    expect(unsel).toContain("\x1b[38;5;240m");
+    expect(unsel).not.toContain("\x1b[38;5;250m");
   });
 
   it("keeps every rendered line the same visible width (aligned borders)", () => {
