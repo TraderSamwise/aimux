@@ -1356,10 +1356,13 @@ describe("tmux-control.sh", () => {
     const curlLog = readCurlLog(envRoot);
     expect(
       log.some((entry) =>
-        entry.includes("display-popup -c /dev/live -T aimux exposé -x C -y C -w 100% -h 100% -B -E exec"),
+        // -E now starts with the instant pre-paint (cat the snapshot) before exec-ing exposé.
+        entry.includes("display-popup -c /dev/live -T aimux exposé -x C -y C -w 100% -h 100% -B -E printf"),
       ),
     ).toBe(true);
-    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
+    expect(
+      log.some((entry) => entry.includes("cat ") && entry.includes("exec") && entry.includes("expose --project-root")),
+    ).toBe(true);
     expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-dev"))).toBe(true);
     expect(curlLog).toEqual([]);
   });
