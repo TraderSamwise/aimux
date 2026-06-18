@@ -8,7 +8,7 @@ import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
-import { style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
+import { recede, style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
 import {
   initialExposeScope,
   loadExposeScopeItems,
@@ -238,7 +238,12 @@ export function drawTile(
   // The status row is the last header row; preserve it under capacity pressure when
   // it carries either the pill or the recency/status detail.
   const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "" || detail !== "");
-  const previewRows = preview.slice(0, Math.max(0, bodyCapacity - header.length));
+  // Flatten the captured preview into gray so the tile chrome (border, title, pill)
+  // reads above it; the selected tile's preview stays the brightest. Deep gray shares
+  // the neutral dim register on purpose.
+  const previewRows = preview
+    .slice(0, Math.max(0, bodyCapacity - header.length))
+    .map((line) => recede(line, selected ? "soft" : "deep"));
   const bodyRows = [...header, ...previewRows];
   while (bodyRows.length < bodyCapacity) bodyRows.push("");
 
