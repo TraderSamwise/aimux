@@ -93,6 +93,38 @@ export function buildBackdrop(capture: string, cols: number, rows: number): stri
   return out;
 }
 
+// Exposé floats as an inset panel (centred, ~90%) over the dimmed backdrop, like a dialog.
+const PANEL_RATIO = 0.9;
+const PANEL_BORDER = "\x1b[38;5;248m";
+
+export interface PanelGeometry {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+export function panelGeometry(cols: number, rows: number): PanelGeometry {
+  const width = Math.max(MIN_TILE_WIDTH + 2, Math.min(cols, Math.round(cols * PANEL_RATIO)));
+  const height = Math.max(MIN_TILE_HEIGHT + 4, Math.min(rows, Math.round(rows * PANEL_RATIO)));
+  const left = Math.max(1, Math.floor((cols - width) / 2) + 1);
+  const top = Math.max(1, Math.floor((rows - height) / 2) + 1);
+  return { top, left, width, height };
+}
+
+// An opaque bordered box that covers the dimmed backdrop so the panel body reads as solid;
+// tiles/title/help are drawn on top of it. Border rows position absolutely.
+export function buildPanelFrame(geo: PanelGeometry): string {
+  const innerW = Math.max(0, geo.width - 2);
+  const fill = " ".repeat(innerW);
+  let out = `\x1b[${geo.top};${geo.left}H${PANEL_BORDER}╭${"─".repeat(innerW)}╮${RESET}`;
+  for (let r = 1; r < geo.height - 1; r += 1) {
+    out += `\x1b[${geo.top + r};${geo.left}H${PANEL_BORDER}│${RESET}${fill}${PANEL_BORDER}│${RESET}`;
+  }
+  out += `\x1b[${geo.top + geo.height - 1};${geo.left}H${PANEL_BORDER}╰${"─".repeat(innerW)}╯${RESET}`;
+  return out;
+}
+
 function runWindowSwitch(options: TmuxExposeOptions, targetWindowId: string): number {
   const scriptPath = fileURLToPath(new URL("../../scripts/tmux-control.sh", import.meta.url));
   const args = [
@@ -364,37 +396,52 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let index = currentIdx >= 0 ? currentIdx : 0;
   let tileCols = 1;
   let visibleCount = items.length;
+  let lastRenderSize = "";
 
   const render = () => {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const layout = computeLayout(items.length, cols, rows);
+    const geo = panelGeometry(cols, rows);
+    const innerW = geo.width - 2;
+    const innerH = geo.height - 2;
+    const layout = computeLayout(items.length, innerW, innerH);
     tileCols = layout.tileCols;
     visibleCount = layout.visibleCount;
     if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
-    const title = `\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`;
     const hidden = items.length - visibleCount;
     const more = hidden > 0 ? `   +${hidden} more (use ^A s)` : "";
     const zoom = scope === "global" ? "" : " · g zoom out";
-    const help = `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`;
+    const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, innerW - 2);
+    const help = truncateAnsi(
+      `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`,
+      innerW - 2,
+    );
 
-    const backdrop = buildBackdrop(hostCapture, cols, rows);
+    // Wrap each frame in synchronized output so the repaint lands atomically (no flicker);
+    // only clear on a resize since the panel fill overwrites stale interior cells each frame.
+    const size = `${cols}x${rows}`;
+    const clear = size === lastRenderSize ? "" : "\x1b[2J";
+    lastRenderSize = size;
+    // Dimmed real backdrop fills the screen; the opaque panel floats inset over it.
+    const base = `\x1b[?2026h${clear}${buildBackdrop(hostCapture, cols, rows)}${buildPanelFrame(geo)}`;
+    const titleAt = `\x1b[${geo.top + 1};${geo.left + 2}H${title}`;
+    const helpAt = `\x1b[${geo.top + innerH};${geo.left + 2}H${help}`;
 
     if (visibleCount === 0) {
       const msg = `No active agents in ${scopeLabel}.`;
-      const col = Math.max(1, Math.floor((cols - msg.length) / 2));
-      const out = `\x1b[2J\x1b[H${backdrop}\x1b[1;2H${title}\x1b[${Math.floor(rows / 2)};${col}H\x1b[2m${msg}${RESET}\x1b[${rows};2H${help}`;
-      process.stdout.write(out);
+      const msgCol = geo.left + 1 + Math.max(0, Math.floor((innerW - msg.length) / 2));
+      const msgRow = geo.top + Math.floor(innerH / 2);
+      process.stdout.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
       return;
     }
 
-    let out = `\x1b[2J\x1b[H${backdrop}\x1b[1;2H${title}`;
+    let out = `${base}${titleAt}`;
     for (let i = 0; i < visibleCount; i += 1) {
       const r = Math.floor(i / layout.tileCols);
       const c = i % layout.tileCols;
-      const top = layout.gridTopRow + r * layout.tileHeight;
-      const left = 1 + c * (layout.tileWidth + GAP);
+      const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
+      const left = geo.left + 1 + c * (layout.tileWidth + GAP);
       const preview = tilePreview(captures.get(items[i]!.target.windowId) ?? "", layout.bodyLines);
       out += drawTile(
         items[i]!,
@@ -409,7 +456,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         options,
       );
     }
-    out += `\x1b[${rows};2H${help}`;
+    out += `${helpAt}\x1b[?2026l`;
     process.stdout.write(out);
   };
 
