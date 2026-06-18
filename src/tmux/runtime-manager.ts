@@ -1037,7 +1037,9 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
-    this.exec(["set-option", "-t", sessionName, "status-style", "bg=colour236,fg=colour252"]);
+    // bg=default: the status bar shares the terminal/pane background so there is
+    // no color band between the dashboard footer and the status/tab rows.
+    this.exec(["set-option", "-t", sessionName, "status-style", "bg=default,fg=colour252"]);
     this.exec(["set-option", "-t", sessionName, "message-style", "bg=colour24,fg=colour255,bold"]);
     this.exec(["set-option", "-t", sessionName, "message-command-style", "bg=colour24,fg=colour255"]);
     this.exec(["set-option", "-t", sessionName, "window-status-separator", " "]);
@@ -1052,14 +1054,14 @@ export class TmuxRuntimeManager {
       "-t",
       sessionName,
       "status-format[0]",
-      `#[bg=colour238,fg=colour255,bold] #(${top})#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}`,
+      `#[bg=default,fg=colour255,bold] #(${top})#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}`,
     ]);
     this.exec([
       "set-option",
       "-t",
       sessionName,
       "status-format[1]",
-      `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
+      `#[bg=default,fg=colour252] #(${bottom}) #[default]`,
     ]);
   }
 
