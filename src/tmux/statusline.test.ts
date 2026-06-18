@@ -94,9 +94,9 @@ describe("renderTmuxStatusline", () => {
     );
     const rendered = renderTmuxStatusline(repoRoot, "bottom", { currentWindow: "dashboard", currentPath: repoRoot });
     // Inactive tabs accent their leading hotkey letter; the active tab is fully highlighted.
-    expect(rendered).toContain("#[fg=yellow,bold]d#[default]ashboard");
-    expect(rendered).toContain("#[fg=yellow,bold]g#[default]raveyard");
-    expect(rendered).toContain("#[fg=black,bg=yellow] library #[default]");
+    expect(rendered).toContain("#[fg=yellow,bold]D#[default]ashboard");
+    expect(rendered).toContain("#[fg=yellow,bold]G#[default]raveyard");
+    expect(rendered).toContain("#[fg=black,bg=yellow] Library #[default]");
   });
 
   it("uses existing statusline data even if it is not freshly rewritten", () => {

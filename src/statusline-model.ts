@@ -103,12 +103,12 @@ export const DASHBOARD_SCREEN_TABS: Array<{
   label: string;
   hotkey: string;
 }> = [
-  { key: "dashboard", label: "dashboard", hotkey: "d" },
-  { key: "coordination", label: "coordination", hotkey: "c" },
-  { key: "project", label: "project", hotkey: "p" },
-  { key: "library", label: "library", hotkey: "l" },
-  { key: "topology", label: "topology", hotkey: "t" },
-  { key: "graveyard", label: "graveyard", hotkey: "g" },
+  { key: "dashboard", label: "Dashboard", hotkey: "d" },
+  { key: "coordination", label: "Coordination", hotkey: "c" },
+  { key: "project", label: "Project", hotkey: "p" },
+  { key: "library", label: "Library", hotkey: "l" },
+  { key: "topology", label: "Topology", hotkey: "t" },
+  { key: "graveyard", label: "Graveyard", hotkey: "g" },
 ];
 
 export function trim(text: string, max: number): string {
