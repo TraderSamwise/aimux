@@ -239,7 +239,7 @@ describe("config", () => {
   });
 
   it("defaults exposé scope to per-worktree (forceGlobalScope disabled)", () => {
-    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false });
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false, dimInactive: false });
   });
 
   it("merges an exposé forceGlobalScope override", () => {
@@ -250,6 +250,16 @@ describe("config", () => {
     );
 
     expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(true);
+  });
+
+  it("merges an exposé dimInactive override", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { dimInactive: true } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false, dimInactive: true });
   });
 
   it("reads an explicit projectRoot config without touching global path state", () => {

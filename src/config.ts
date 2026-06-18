@@ -56,6 +56,8 @@ export interface RuntimeConfig {
 export interface ExposeConfig {
   /** When true, the Exposé popup always shows agents across all worktrees, ignoring the current-worktree scope. */
   forceGlobalScope: boolean;
+  /** When true, non-selected tiles are dimmed (preview receded to gray, border dimmed); off keeps every tile in full color. */
+  dimInactive: boolean;
 }
 
 export interface LoopConfig {
@@ -190,6 +192,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
   expose: {
     forceGlobalScope: false,
+    dimInactive: false,
   },
   tools: {
     claude: {
