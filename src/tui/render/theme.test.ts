@@ -11,6 +11,7 @@ import {
   keycapHintLines,
   keycapHints,
   padVisible,
+  recede,
   renderFooterHints,
   pill,
   statusDot,
@@ -115,6 +116,36 @@ describe("theme primitives", () => {
     const lines = keycapHintLines("[a] alpha  [b] bravo  [c] charlie", 14);
     expect(lines.length).toBeGreaterThan(1);
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(14);
+  });
+});
+
+describe("recede", () => {
+  it("faint mode prepends faint and re-injects it after embedded resets", () => {
+    expect(recede("plain")).toBe("\x1b[2mplain\x1b[0m");
+    // A pre-styled span keeps its color but gains faint, and faint resumes after the reset.
+    expect(recede(`${style("hi", "danger")}bye`)).toBe("\x1b[2m\x1b[31mhi\x1b[0m\x1b[2mbye\x1b[0m");
+  });
+
+  it("faint mode also matches the shorthand reset \\x1b[m", () => {
+    expect(recede("a\x1b[mb")).toBe("\x1b[2ma\x1b[0m\x1b[2mb\x1b[0m");
+  });
+
+  it("flatten modes strip color and re-emit as a single 256-color gray", () => {
+    expect(recede(style("hi", "danger"), "soft")).toBe("\x1b[38;5;250mhi\x1b[0m");
+    expect(recede(style("hi", "danger"), "deep")).toBe("\x1b[38;5;240mhi\x1b[0m");
+  });
+
+  it("preserves visible width when flattening multicolor content", () => {
+    const colored = `${style("ab", "work")}${style("cd", "accent")}`;
+    expect(visibleWidth(colored)).toBe(4);
+    expect(visibleWidth(recede(colored, "deep"))).toBe(4);
+    expect(stripAnsi(recede(colored, "deep"))).toBe("abcd");
+  });
+
+  it("returns an empty string unchanged in every mode", () => {
+    expect(recede("")).toBe("");
+    expect(recede("", "soft")).toBe("");
+    expect(recede("", "deep")).toBe("");
   });
 });
 
