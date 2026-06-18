@@ -239,7 +239,7 @@ describe("config", () => {
   });
 
   it("defaults exposé scope to per-worktree (forceGlobalScope disabled)", () => {
-    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false });
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false, dimInactive: false });
   });
 
   it("merges an exposé forceGlobalScope override", () => {
