@@ -108,8 +108,9 @@ export interface PanelGeometry {
 }
 
 export function panelGeometry(cols: number, rows: number): PanelGeometry {
-  const width = Math.max(MIN_TILE_WIDTH + 2, Math.min(cols, Math.round(cols * PANEL_RATIO)));
-  const height = Math.max(MIN_TILE_HEIGHT + 4, Math.min(rows, Math.round(rows * PANEL_RATIO)));
+  // Clamp to the viewport last so the floor never makes the panel larger than the screen.
+  const width = Math.min(cols, Math.max(MIN_TILE_WIDTH + 2, Math.round(cols * PANEL_RATIO)));
+  const height = Math.min(rows, Math.max(MIN_TILE_HEIGHT + 4, Math.round(rows * PANEL_RATIO)));
   const left = Math.max(1, Math.floor((cols - width) / 2) + 1);
   const top = Math.max(1, Math.floor((rows - height) / 2) + 1);
   return { top, left, width, height };
@@ -396,7 +397,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     } catch {}
   }
   if (!hostCapture) {
-    const hostTarget = options.currentClientSession || options.currentWindowId;
+    // Prefer the exact host window; fall back to the client session's active pane.
+    const hostTarget = options.currentWindowId || options.currentClientSession;
     if (hostTarget) {
       try {
         hostCapture = tmux.captureTarget(

@@ -46,12 +46,20 @@ describe("panelGeometry", () => {
     expect(geo.top + geo.height - 1).toBeLessThan(40);
   });
 
-  it("clamps to the viewport on tiny terminals", () => {
-    const geo = panelGeometry(34, 9);
-    expect(geo.width).toBeLessThanOrEqual(34);
-    expect(geo.height).toBeLessThanOrEqual(9);
-    expect(geo.left).toBeGreaterThanOrEqual(1);
-    expect(geo.top).toBeGreaterThanOrEqual(1);
+  it("clamps to the viewport on tiny terminals (never larger than the screen)", () => {
+    for (const [cols, rows] of [
+      [34, 9],
+      [20, 6],
+      [10, 4],
+    ] as const) {
+      const geo = panelGeometry(cols, rows);
+      expect(geo.width).toBeLessThanOrEqual(cols);
+      expect(geo.height).toBeLessThanOrEqual(rows);
+      expect(geo.left).toBeGreaterThanOrEqual(1);
+      expect(geo.top).toBeGreaterThanOrEqual(1);
+      expect(geo.left + geo.width - 1).toBeLessThanOrEqual(cols);
+      expect(geo.top + geo.height - 1).toBeLessThanOrEqual(rows);
+    }
   });
 });
 
