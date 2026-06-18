@@ -473,6 +473,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     refreshCaptures();
   };
 
+  // Paint the backdrop, panel, and tile chrome immediately (previews blank), then capture
+  // previews and repaint — so entry shows the framed exposé at once instead of a blank wait.
+  render();
   refreshCaptures();
   render();
 
