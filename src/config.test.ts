@@ -252,6 +252,16 @@ describe("config", () => {
     expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(true);
   });
 
+  it("merges an exposé dimInactive override", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { dimInactive: true } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false, dimInactive: true });
+  });
+
   it("reads an explicit projectRoot config without touching global path state", () => {
     // Exposé relies on this to load config without initPaths' write side effects.
     const otherRepo = mkdtempSync(join(tmpdir(), "aimux-config-other-"));

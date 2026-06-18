@@ -352,6 +352,22 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return "";
   };
 
+  // Read and delete the launcher's backdrop snapshot up front, before any terminal
+  // state or signal handlers exist, so a fatal signal during startup can't leak the
+  // temp file. Opening the popup transiently reflows the host pane, so capturing
+  // in-popup would catch a mis-sized (off-centre) frame — hence the launcher capture.
+  let hostCapture = "";
+  if (options.backdropFile) {
+    try {
+      hostCapture = readFileSync(options.backdropFile, "utf8");
+    } catch {
+      hostCapture = "";
+    }
+    try {
+      unlinkSync(options.backdropFile);
+    } catch {}
+  }
+
   const terminal = new TerminalHost();
   terminal.enterRawMode();
   terminal.enterAlternateScreen(true);
@@ -384,20 +400,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
   };
 
-  // Backdrop snapshot of the screen behind the popup. Prefer the launcher's pre-popup capture:
-  // opening the popup transiently reflows the host pane, so capturing in-popup would catch a
-  // mis-sized (off-centre) frame. Fall back to capturing now only when no snapshot was passed.
-  let hostCapture = "";
-  if (options.backdropFile) {
-    try {
-      hostCapture = readFileSync(options.backdropFile, "utf8");
-    } catch {
-      hostCapture = "";
-    }
-    try {
-      unlinkSync(options.backdropFile);
-    } catch {}
-  }
+  // Fall back to capturing the host pane now only when the launcher passed no snapshot.
   if (!hostCapture) {
     // Prefer the exact host window; fall back to the client session's active pane.
     const hostTarget = options.currentWindowId || options.currentClientSession;
