@@ -814,7 +814,9 @@ export function renderDashboardFrame(
   // Flat footer: every active key on one line that wraps naturally to width,
   // left-aligned with a 2-space gutter to match the dashboard content.
   const footerIndent = "  ";
-  const footerWidth = Math.max(0, contentWidth - footerIndent.length);
+  // Wrap to the real terminal width (not contentWidth's 72 floor) so keys wrap
+  // instead of being truncated on narrow panes.
+  const footerWidth = Math.max(0, cols - footerIndent.length);
   const helpLines = renderFooterHints(buildDashboardFooterHints(state), footerWidth);
   const footer: string[] = [
     "─".repeat(Math.max(0, cols)),
