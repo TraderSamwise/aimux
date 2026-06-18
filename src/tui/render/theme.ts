@@ -88,14 +88,30 @@ export function chip(label: string, tone: ChipTone = "info"): string {
   return `\x1b[48;5;236;38;5;${CHIP_FG[tone]}m ${label} ${RESET}`;
 }
 
-/** A keyboard keycap for footer/help bars (` key `). */
-export function keycap(key: string): string {
-  return `\x1b[48;5;238;38;5;253m ${key} ${RESET}`;
+// 256-color anchors for keycap chrome (kept here so all keycaps restyle from one place).
+const KEYCAP_BG = 240;
+const KEYCAP_FG = 255;
+const KEYCAP_DANGER_FG = 203;
+
+/** A keyboard keycap for footer/help bars (` key `). `danger` tints the glyph red. */
+export function keycap(key: string, tone?: "danger"): string {
+  const fg = tone === "danger" ? KEYCAP_DANGER_FG : KEYCAP_FG;
+  return `\x1b[48;5;${KEYCAP_BG};38;5;${fg}m ${key} ${RESET}`;
 }
 
 /** A footer/help hint: a keycap plus a muted label (label optional). */
-export function keycapHint(key: string, label = ""): string {
-  return label ? `${keycap(key)} ${style(label, "muted")}` : keycap(key);
+export function keycapHint(key: string, label = "", tone?: "danger"): string {
+  return label ? `${keycap(key, tone)} ${style(label, "muted")}` : keycap(key, tone);
+}
+
+/**
+ * A box-free footer key: a bold glyph (red when destructive), no filled pill.
+ * Distinguishing keys by weight/color keeps a dense, wrapping footer light —
+ * boxes add a gray block of padding around every key.
+ */
+export function footerKey(key: string, tone?: "danger"): string {
+  const fg = tone === "danger" ? KEYCAP_DANGER_FG : KEYCAP_FG;
+  return `\x1b[1;38;5;${fg}m${key}${RESET}`;
 }
 
 // Style one "[key] label" or "key label" help group into a keycap + muted label.
@@ -139,48 +155,29 @@ export function keycapHintLines(line: string, width: number): string[] {
   return lines;
 }
 
-/** A labelled cluster of keycap hints for the dashboard footer. */
-export interface FooterGroup {
-  /** Dim uppercase category label (e.g. "create"), omitted for a bare cluster. */
-  label?: string;
-  /** [key, label] pairs rendered as keycap hints. */
-  hints: Array<[string, string]>;
-}
-
-/** One footer row: groups laid out left-to-right, separated by a dim divider. */
-export interface FooterRow {
-  groups: FooterGroup[];
-}
+/** A footer hint: [key, label], optionally tagged "danger" to tint the keycap red. */
+export type FooterHint = [string, string] | [string, string, "danger"];
 
 /**
- * Render footer rows into physical lines. Each FooterRow starts on a fresh line;
- * within a row, tokens (a dim uppercase group label, then a keycap hint per pair)
- * are greedy-packed to `width` with a dim `│` between groups on the same line. A
- * wrapped line never starts with a divider.
+ * Render a flat list of footer hints, greedy-wrapped to `width`. Every hint is
+ * always shown; a long list simply wraps onto more lines. No grouping and no
+ * width-conditional dropping — it just flows.
  */
-export function renderFooterRows(rows: FooterRow[], width: number): string[] {
-  const out: string[] = [];
-  const groupSep = `  ${style("│", "muted")}  `;
-  for (const row of rows) {
-    let line = "";
-    for (const group of row.groups) {
-      const tokens: string[] = [];
-      if (group.label) tokens.push(style(group.label.toUpperCase(), "muted"));
-      for (const [key, label] of group.hints) tokens.push(keycapHint(key, label));
-      tokens.forEach((token, ti) => {
-        const sep = line === "" ? "" : ti === 0 ? groupSep : "  ";
-        const candidate = `${line}${sep}${token}`;
-        if (line === "" || visibleWidth(candidate) <= width) {
-          line = candidate;
-        } else {
-          out.push(line);
-          line = token;
-        }
-      });
+export function renderFooterHints(hints: FooterHint[], width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const [key, label, tone] of hints) {
+    const token = `${footerKey(key, tone)} ${style(label, "muted")}`;
+    const candidate = line ? `${line}  ${token}` : token;
+    if (line === "" || visibleWidth(candidate) <= width) {
+      line = candidate;
+    } else {
+      lines.push(line);
+      line = token;
     }
-    if (line) out.push(line);
   }
-  return out;
+  if (line) lines.push(line);
+  return lines;
 }
 
 export type BandTone = "info" | "danger";

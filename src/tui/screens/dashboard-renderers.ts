@@ -9,10 +9,9 @@ import {
   chip,
   type ChipTone,
   cols as gridCols,
-  type FooterGroup,
-  type FooterRow,
+  type FooterHint,
   pill,
-  renderFooterRows,
+  renderFooterHints,
   statusDot,
   style,
   type Tone,
@@ -316,11 +315,13 @@ function summarizeTeammate(
 }
 
 /**
- * Build the two-row dashboard footer: row 1 "MOVE" (navigation), row 2 grouped
- * actions (CREATE / TALK / MANAGE / system). Each state variant keeps exactly the
- * keys it had before; only the layout is grouped. Presentation-only.
+ * Build the dashboard footer as a flat, ordered list of every active key for the
+ * current state (navigation, then actions, then system). It is rendered as one
+ * line that wraps naturally to the available width — no grouping, no
+ * width-conditional dropping. Presentation-only. The destructive `x` is tagged
+ * "danger" so its keycap renders red.
  */
-export function buildDashboardFooterRows(state: DashboardViewModel): FooterRow[] {
+export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint[] {
   const selectedSession = state.selectedSessionId
     ? state.sessions.find((s) => s.id === state.selectedSessionId)
     : undefined;
@@ -335,164 +336,80 @@ export function buildDashboardFooterRows(state: DashboardViewModel): FooterRow[]
       : selectedSession
         ? "stop"
         : "";
-  const system: FooterGroup = {
-    hints: [
-      ["?", "help"],
-      ["q", "quit"],
-    ],
-  };
 
-  const talkGroup = (): FooterGroup => {
-    const hints: Array<[string, string]> = [
-      ["S", "msg"],
-      ["H", "handoff"],
-      ["T", "task"],
-      ["o", "thread"],
-      ["R", "reply"],
-    ];
-    if (selectedSession && state.selectedTeammates.length > 0) hints.push(["e", "team"]);
-    return { label: "talk", hints };
-  };
+  const talk: FooterHint[] = [
+    ["S", "msg"],
+    ["H", "handoff"],
+    ["T", "task"],
+    ["o", "thread"],
+    ["R", "reply"],
+  ];
+  if (selectedSession && state.selectedTeammates.length > 0) talk.push(["e", "team"]);
+  const system: FooterHint[] = [
+    ["?", "help"],
+    ["q", "quit"],
+  ];
 
-  // Worktrees present, focused at session level: the full action set.
+  // Worktrees present, focused at session level: the full set.
   if (state.hasWorktrees && state.navLevel === "sessions") {
-    const manage: FooterGroup = { label: "manage", hints: [["m", "migrate"]] };
-    if (selectedSession) manage.hints.push(["r", "name"]);
-    if (killVerb) manage.hints.push(["x", killVerb]);
+    const manage: FooterHint[] = [["m", "migrate"]];
+    if (selectedSession) manage.push(["r", "name"]);
+    if (killVerb) manage.push(["x", killVerb, "danger"]);
     return [
-      {
-        groups: [
-          {
-            label: "move",
-            hints: [
-              ["↑↓", "items"],
-              ["⇧↑↓", "reorder"],
-              ["1-9", "jump"],
-              ["Enter", enterVerb],
-              ["Esc", "back"],
-              ["u", "attention"],
-              ["Tab", "details"],
-            ],
-          },
-        ],
-      },
-      {
-        groups: [
-          {
-            label: "create",
-            hints: [
-              ["n", "agent"],
-              ["v", "service"],
-              ["f", "fork"],
-            ],
-          },
-          talkGroup(),
-          manage,
-          system,
-        ],
-      },
+      ["↑↓", "items"],
+      ["1-9", "jump"],
+      ["Enter", enterVerb],
+      ["Tab", "details"],
+      ["u", "attention"],
+      ["Esc", "back"],
+      ["⇧↑↓", "reorder"],
+      ["n", "agent"],
+      ["v", "service"],
+      ["f", "fork"],
+      ...talk,
+      ...manage,
+      ...system,
     ];
   }
 
   // Worktrees present, focused at worktree level: create-only actions.
   if (state.hasWorktrees) {
     return [
-      {
-        groups: [
-          {
-            label: "move",
-            hints: [
-              ["↑↓", "worktrees"],
-              ["1-9", "jump"],
-              ["Enter", "step in"],
-              ["u", "attention"],
-              ["Tab", "details"],
-            ],
-          },
-        ],
-      },
-      {
-        groups: [
-          {
-            label: "create",
-            hints: [
-              ["n", "agent"],
-              ["v", "service"],
-              ["f", "fork"],
-              ["w", "worktree"],
-            ],
-          },
-          system,
-        ],
-      },
+      ["↑↓", "worktrees"],
+      ["1-9", "jump"],
+      ["Enter", "step in"],
+      ["Tab", "details"],
+      ["u", "attention"],
+      ["n", "agent"],
+      ["v", "service"],
+      ["f", "fork"],
+      ["w", "worktree"],
+      ...system,
     ];
   }
 
   // Flat session list (no worktrees).
   if (state.sessions.length > 0) {
-    const manage: FooterGroup = { label: "manage", hints: [] };
-    if (killVerb) manage.hints.push(["x", killVerb]);
-    if (selectedSession) manage.hints.push(["r", "name"]);
-    const actGroups: FooterGroup[] = [
-      {
-        label: "create",
-        hints: [
-          ["n", "agent"],
-          ["v", "service"],
-          ["f", "fork"],
-          ["w", "worktree"],
-        ],
-      },
-      talkGroup(),
-    ];
-    if (manage.hints.length > 0) actGroups.push(manage);
-    actGroups.push(system);
+    const manage: FooterHint[] = [];
+    if (killVerb) manage.push(["x", killVerb, "danger"]);
+    if (selectedSession) manage.push(["r", "name"]);
     return [
-      {
-        groups: [
-          {
-            label: "move",
-            hints: [
-              ["↑↓", "select"],
-              ["Enter", enterVerb],
-              ["u", "attention"],
-              ["Tab", "details"],
-            ],
-          },
-        ],
-      },
-      { groups: actGroups },
+      ["↑↓", "select"],
+      ["Enter", enterVerb],
+      ["Tab", "details"],
+      ["u", "attention"],
+      ["n", "agent"],
+      ["v", "service"],
+      ["f", "fork"],
+      ["w", "worktree"],
+      ...talk,
+      ...manage,
+      ...system,
     ];
   }
 
-  // No sessions and no worktrees: nothing to navigate; create + talk only.
-  return [
-    {
-      groups: [
-        {
-          label: "move",
-          hints: [
-            ["u", "attention"],
-            ["Tab", "details"],
-          ],
-        },
-      ],
-    },
-    {
-      groups: [
-        {
-          label: "create",
-          hints: [
-            ["n", "agent"],
-            ["v", "service"],
-            ["f", "fork"],
-          ],
-        },
-        talkGroup(),
-        system,
-      ],
-    },
-  ];
+  // No sessions and no worktrees: nothing to navigate.
+  return [["Tab", "details"], ["u", "attention"], ["n", "agent"], ["v", "service"], ["f", "fork"], ...talk, ...system];
 }
 
 export function renderDashboardFrame(
@@ -894,8 +811,15 @@ export function renderDashboardFrame(
     });
   }
 
-  const helpLines = renderFooterRows(buildDashboardFooterRows(state), contentWidth);
-  const footer: string[] = ["─".repeat(Math.max(0, cols)), ...helpLines.map((line) => centerInBlock(line))];
+  // Flat footer: every active key on one line that wraps naturally to width,
+  // left-aligned with a 2-space gutter to match the dashboard content.
+  const footerIndent = "  ";
+  const footerWidth = Math.max(0, contentWidth - footerIndent.length);
+  const helpLines = renderFooterHints(buildDashboardFooterHints(state), footerWidth);
+  const footer: string[] = [
+    "─".repeat(Math.max(0, cols)),
+    ...helpLines.map((line) => truncateAnsi(`${footerIndent}${line}`, cols)),
+  ];
   const viewportHeight = rows - header.length - footer.length;
   let scrollOffset = state.scrollOffset;
   const focusLine = findFocusLine(content);

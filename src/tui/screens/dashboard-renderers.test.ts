@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { derivedStatusLabel, type DashboardViewModel } from "../../dashboard/index.js";
 import { deriveSessionSemantics } from "../../session-semantics.js";
 import { stripAnsi } from "../render/text.js";
-import { buildDashboardFooterRows, renderDashboardFrame } from "./dashboard-renderers.js";
+import { buildDashboardFooterHints, renderDashboardFrame } from "./dashboard-renderers.js";
 
 function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): DashboardViewModel {
   return {
@@ -27,56 +27,28 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
   };
 }
 
-describe("buildDashboardFooterRows", () => {
-  const labels = (vm: Partial<DashboardViewModel>) =>
-    buildDashboardFooterRows(baseDashboardViewModel(vm)).map((row) =>
-      row.groups.map((g) => [g.label, g.hints.map((h) => h[0]).join("")]),
+describe("buildDashboardFooterHints", () => {
+  const keys = (vm: Partial<DashboardViewModel>) =>
+    new Set(buildDashboardFooterHints(baseDashboardViewModel(vm)).map((h) => h[0]));
+  const sess = (over: Record<string, unknown> = {}) => [{ id: "a", status: "running", ...over } as never];
+
+  it("returns a flat, ordered list (nav first, system last)", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: sess() }),
     );
+    expect(hints[0][0]).toBe("↑↓");
+    expect(hints.at(-2)).toEqual(["?", "help"]);
+    expect(hints.at(-1)).toEqual(["q", "quit"]);
+  });
 
-  it("splits into a MOVE row and grouped action row at session level", () => {
-    const rows = buildDashboardFooterRows(
-      baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: [{ id: "a" } as never] }),
+  it("tags the destructive kill key as danger", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({ hasWorktrees: false, sessions: sess(), selectedSessionId: "a" }),
     );
-    expect(rows).toHaveLength(2);
-    expect(rows[0].groups[0].label).toBe("move");
-    const actLabels = rows[1].groups.map((g) => g.label);
-    expect(actLabels).toEqual(["create", "talk", "manage", undefined]);
-    // system group is unlabelled with help/quit
-    expect(rows[1].groups.at(-1)).toEqual({
-      hints: [
-        ["?", "help"],
-        ["q", "quit"],
-      ],
-    });
+    expect(hints.find((h) => h[0] === "x")).toEqual(["x", "stop", "danger"]);
   });
 
-  it("keeps only create + system actions at worktree level", () => {
-    const rows = buildDashboardFooterRows(baseDashboardViewModel({ hasWorktrees: true, navLevel: "worktrees" }));
-    const actLabels = rows[1].groups.map((g) => g.label);
-    expect(actLabels).toEqual(["create", undefined]);
-    expect(rows[1].groups[0].hints.map((h) => h[0])).toContain("w");
-  });
-
-  it("adds name/kill to MANAGE only when a session is selected", () => {
-    const withSel = labels({
-      hasWorktrees: false,
-      sessions: [{ id: "a", status: "running" } as never],
-      selectedSessionId: "a",
-    });
-    const manage = withSel.flat().find(([l]) => l === "manage");
-    expect(manage?.[1]).toContain("x");
-    expect(manage?.[1]).toContain("r");
-  });
-
-  it("preserves the exact key set per state variant (parity with the old footer)", () => {
-    const keys = (vm: Partial<DashboardViewModel>) =>
-      new Set(
-        buildDashboardFooterRows(baseDashboardViewModel(vm)).flatMap((r) =>
-          r.groups.flatMap((g) => g.hints.map((h) => h[0])),
-        ),
-      );
-    const sess = (over: Record<string, unknown> = {}) => [{ id: "a", status: "running", ...over } as never];
-
+  it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
       new Set(["u", "Tab", "n", "v", "f", "S", "H", "T", "o", "R", "?", "q"]),
