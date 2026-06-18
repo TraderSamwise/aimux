@@ -130,11 +130,18 @@ describe("recede", () => {
     expect(recede("a\x1b[mb")).toBe("\x1b[2;38;5;240ma\x1b[0m\x1b[2;38;5;240mb\x1b[0m");
   });
 
-  it("faint mode resumes after reset-led combined sequences (e.g. \\x1b[0;1m)", () => {
-    // A reset-led form would otherwise clear faint; it must collapse to reset + faint lead.
-    expect(recede("x\x1b[0;1my")).toBe("\x1b[2;38;5;240mx\x1b[0m\x1b[2;38;5;240my\x1b[0m");
+  it("faint mode resumes after reset-led sequences, re-emitting their params", () => {
+    // A reset-led form clears faint, so re-apply the lead AND the params (here bold) after it.
+    expect(recede("x\x1b[0;1my")).toBe("\x1b[2;38;5;240mx\x1b[0m\x1b[2;38;5;240m\x1b[1my\x1b[0m");
     // A non-reset color (\x1b[31m) is left intact so its color still shows, dimmed.
     expect(recede("\x1b[31mhi")).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m");
+  });
+
+  it("faint mode keeps a reset-led color (e.g. \\x1b[0;31m) so backdrops stay colored", () => {
+    const out = recede("\x1b[0;31mred");
+    expect(out).toContain("\x1b[31m"); // the red survives the reset, just faint-dimmed
+    expect(out).toContain("\x1b[2;38;5;240m"); // and the faint lead is reapplied after the reset
+    expect(stripAnsi(out)).toBe("red");
   });
 
   it("flatten modes strip color and re-emit as a single 256-color gray", () => {

@@ -63,9 +63,12 @@ export function recede(text: string, mode: RecedeMode = "faint"): string {
   if (text === "") return "";
   if (mode === "faint") {
     const faint = `\x1b[2;38;5;${FAINT_FG}m`;
-    // Match any reset-led SGR so the faint lead resumes after it; a combined form like
-    // `\x1b[0;1m` collapses to a plain reset, which is the intent behind a backdrop.
-    return `${faint}${text.replace(/\x1b\[(?:0(?:;[0-9;]*)?)?m/g, `${RESET}${faint}`)}${RESET}`;
+    // Resume the faint lead after each embedded reset; re-emit any params that followed a
+    // reset-led form (e.g. `\x1b[0;31m`) so colored content stays colored, just dimmed.
+    return `${faint}${text.replace(
+      /\x1b\[(?:0(?:;([0-9;]*))?)?m/g,
+      (_match, rest?: string) => `${RESET}${faint}${rest ? `\x1b[${rest}m` : ""}`,
+    )}${RESET}`;
   }
   const fg = mode === "soft" ? RECEDE_SOFT_FG : RECEDE_DEEP_FG;
   return `\x1b[38;5;${fg}m${stripAnsi(text)}${RESET}`;
