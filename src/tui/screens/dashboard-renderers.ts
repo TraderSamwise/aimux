@@ -354,37 +354,6 @@ export function buildDashboardFooterRows(state: DashboardViewModel): FooterRow[]
     return { label: "talk", hints };
   };
 
-  // No sessions and no worktrees: nothing to navigate; create + talk only.
-  if (state.sessions.length === 0 && !state.hasWorktrees) {
-    return [
-      {
-        groups: [
-          {
-            label: "move",
-            hints: [
-              ["u", "attention"],
-              ["Tab", "details"],
-            ],
-          },
-        ],
-      },
-      {
-        groups: [
-          {
-            label: "create",
-            hints: [
-              ["n", "agent"],
-              ["v", "service"],
-              ["f", "fork"],
-            ],
-          },
-          talkGroup(),
-          system,
-        ],
-      },
-    ];
-  }
-
   // Worktrees present, focused at session level: the full action set.
   if (state.hasWorktrees && state.navLevel === "sessions") {
     const manage: FooterGroup = { label: "manage", hints: [["m", "migrate"]] };
@@ -496,7 +465,7 @@ export function buildDashboardFooterRows(state: DashboardViewModel): FooterRow[]
     ];
   }
 
-  // Fallback (no sessions): create + talk, plus worktree creation.
+  // No sessions and no worktrees: nothing to navigate; create + talk only.
   return [
     {
       groups: [
@@ -517,7 +486,6 @@ export function buildDashboardFooterRows(state: DashboardViewModel): FooterRow[]
             ["n", "agent"],
             ["v", "service"],
             ["f", "fork"],
-            ["w", "worktree"],
           ],
         },
         talkGroup(),
