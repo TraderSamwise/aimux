@@ -130,6 +130,13 @@ describe("recede", () => {
     expect(recede("a\x1b[mb")).toBe("\x1b[2ma\x1b[0m\x1b[2mb\x1b[0m");
   });
 
+  it("faint mode resumes after reset-led combined sequences (e.g. \\x1b[0;1m)", () => {
+    // A reset-led form would otherwise clear faint; it must collapse to reset + faint.
+    expect(recede("x\x1b[0;1my")).toBe("\x1b[2mx\x1b[0m\x1b[2my\x1b[0m");
+    // A non-reset color (\x1b[31m) is left intact so its color still shows, dimmed.
+    expect(recede("\x1b[31mhi")).toBe("\x1b[2m\x1b[31mhi\x1b[0m");
+  });
+
   it("flatten modes strip color and re-emit as a single 256-color gray", () => {
     expect(recede(style("hi", "danger"), "soft")).toBe("\x1b[38;5;250mhi\x1b[0m");
     expect(recede(style("hi", "danger"), "deep")).toBe("\x1b[38;5;240mhi\x1b[0m");
