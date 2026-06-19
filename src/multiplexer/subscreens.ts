@@ -233,18 +233,13 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
       host.renderCoordination();
       return;
     }
-    try {
-      host.sendOrchestrationMessage({
-        threadId: entry.thread.id,
-        from: "user",
-        kind: "reply",
-        body,
-      });
-    } catch (error) {
-      host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
-      return;
-    }
-    refreshCoordinationThreads(host);
+    // Reply through the service (sole writer) rather than mutating the thread store in-process.
+    void host
+      .postToProjectService("/threads/send", { threadId: entry.thread.id, from: "user", kind: "reply", body })
+      .then(() => refreshCoordinationThreads(host))
+      .catch((error: unknown) =>
+        host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]),
+      );
     return;
   }
 
