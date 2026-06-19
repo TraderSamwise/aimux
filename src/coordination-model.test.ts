@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCoordinationModel,
+  buildCoordinationView,
   buildCoordinationWorklist,
   isNotificationStale,
   type CoordinationSessionLike,
@@ -255,5 +256,27 @@ describe("coordination worklist", () => {
     expect(wl.items.filter((i) => i.kind === "thread")).toHaveLength(1);
     expect(wl.items.filter((i) => i.key === "t:task1")).toHaveLength(1);
     expect(wl.items.filter((i) => i.key === "n:live")).toHaveLength(1);
+  });
+});
+
+describe("coordination view", () => {
+  it("matches building the model and worklist separately", () => {
+    const input: BuildCoordinationModelInput & { currentParticipant?: string } = {
+      sessions: [session("live", "needs_input", 4), session("off", "offline", 0, "offline")],
+      notifications: [
+        notif({ id: "1", sessionId: "live", kind: "needs_input" }),
+        notif({ id: "2", sessionId: "off", kind: "needs_input" }),
+      ],
+      threads: [threadEntry({ id: "t1", kind: "task", participants: ["aimux", "live"], waitingOn: ["user"] })],
+      currentParticipant: "user",
+    };
+    const view = buildCoordinationView(input);
+    const model = buildCoordinationModel(input);
+    const worklist = buildCoordinationWorklist({ ...input, model });
+
+    expect(view.model.items.map((i) => i.key)).toEqual(model.items.map((i) => i.key));
+    expect(view.worklist.items.map((i) => i.key)).toEqual(worklist.items.map((i) => i.key));
+    // The worklist is derived from the same model instance (no second, divergent build).
+    expect(view.worklist.items.map((i) => i.bucket)).toEqual(worklist.items.map((i) => i.bucket));
   });
 });

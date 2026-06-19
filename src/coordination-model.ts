@@ -345,3 +345,16 @@ export function buildCoordinationWorklist(
     tail: items.filter((item) => item.bucket === "handled" || item.bucket === "unreachable"),
   };
 }
+
+/**
+ * Reconciled coordination view in one pass: the agent-keyed model plus the unified worklist
+ * built from it. Shared by the service endpoint and the TUI's local fallback so both produce an
+ * identical view (the model is built once and threaded into the worklist to avoid a double build).
+ */
+export function buildCoordinationView(
+  input: BuildCoordinationModelInput & { currentParticipant?: string },
+): { model: CoordinationModel; worklist: CoordinationWorklist } {
+  const model = buildCoordinationModel(input);
+  const worklist = buildCoordinationWorklist({ ...input, model });
+  return { model, worklist };
+}

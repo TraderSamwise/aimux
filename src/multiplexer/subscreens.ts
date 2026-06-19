@@ -116,10 +116,15 @@ export function describeHandoffState(_host: SubscreenHost, thread: Orchestration
 }
 
 function refreshCoordinationThreads(host: SubscreenHost): void {
-  host.threadEntries = buildCoordinationThreadEntries("user");
+  // Instant local rebuild (sets threadEntries + worklist), then refine from the service.
+  refreshNotificationEntries(host);
   if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
   host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
   host.renderCoordination();
+  void host
+    .refreshCoordinationFromService?.()
+    .then(() => host.renderCoordination())
+    .catch(() => {});
 }
 
 export async function runThreadHandoffAction(

@@ -17,6 +17,7 @@ import {
   waitAndOpenLiveTmuxWindowForEntry as waitAndOpenLiveTmuxWindowForEntryImpl,
   waitAndOpenLiveTmuxWindowForService as waitAndOpenLiveTmuxWindowForServiceImpl,
   postToProjectService as postToProjectServiceImpl,
+  getFromProjectService as getFromProjectServiceImpl,
   buildActiveDashboardOverlayOutput as buildActiveDashboardOverlayOutputImpl,
   renderActiveDashboardOverlay as renderActiveDashboardOverlayImpl,
   renderOrchestrationInput as renderOrchestrationInputImpl,
@@ -30,6 +31,7 @@ import {
 import {
   notificationTargetLabel as notificationTargetLabelImpl,
   notificationTargetState as notificationTargetStateImpl,
+  refreshCoordinationFromService as refreshCoordinationFromServiceImpl,
 } from "./notifications.js";
 import {
   handleCoordinationKey as handleCoordinationKeyImpl,
@@ -220,6 +222,12 @@ export const dashboardActionMethods = {
   },
   async postToProjectService(this: any, path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<any> {
     return postToProjectServiceImpl(this, path, body, opts);
+  },
+  async getFromProjectService(this: any, path: string, opts?: { timeoutMs?: number }): Promise<any> {
+    return getFromProjectServiceImpl(this, path, opts);
+  },
+  async refreshCoordinationFromService(this: any): Promise<boolean> {
+    return refreshCoordinationFromServiceImpl(this);
   },
   async ensureDashboardControlPlane(this: any): Promise<void> {
     await ensureDashboardControlPlaneImpl(this);

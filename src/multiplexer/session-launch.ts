@@ -777,8 +777,12 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "coordination":
       host.clearDashboardSubscreens();
       host.setDashboardScreen("coordination");
+      // Force a fresh local load on next render (this path bypasses showCoordination), then refine
+      // from the service so this entry point reaches the same authority as showCoordination.
+      host.coordinationLoaded = false;
       host.persistDashboardUiState();
       host.openTmuxDashboardTarget();
+      void host.refreshCoordinationFromService?.().catch(() => {});
       break;
     case "help":
       host.showHelp();
