@@ -718,6 +718,67 @@ export async function listTasks(
   );
 }
 
+// ── Coordination worklist (reconciled "needs-you" inbox) ─────────────────
+// The server builds the reconciled worklist (notifications + threads joined against live agent
+// state); clients render and act from it. Mirrors src/coordination-model.ts WorklistItem.
+
+export type CoordinationReachability = "live" | "offline" | "missing" | "none";
+export type CoordinationBucket = "awake" | "asleep" | "handled" | "unreachable";
+export type CoordinationWorklistType =
+  | "msg"
+  | "note"
+  | "task"
+  | "review"
+  | "handoff"
+  | "conversation";
+
+export interface CoordinationWorklistItem {
+  key: string;
+  kind: "notification" | "thread";
+  sessionId?: string;
+  type: CoordinationWorklistType;
+  bucket: CoordinationBucket;
+  title: string;
+  urgency: number;
+  reachability: CoordinationReachability;
+  actionable: boolean;
+  stale: boolean;
+  when?: string;
+  /** Agent-keyed notification rollup (for notification rows); shape mirrors CoordinationItem. */
+  notification?: Record<string, unknown>;
+  /** Genuine thread entry (for thread rows); shape mirrors WorkflowEntry. */
+  thread?: Record<string, unknown>;
+}
+
+export interface CoordinationWorklistResponse {
+  ok: boolean;
+  worklist: {
+    items: CoordinationWorklistItem[];
+    needsYou: CoordinationWorklistItem[];
+    tail: CoordinationWorklistItem[];
+  };
+  model: {
+    items: Array<Record<string, unknown>>;
+    actionable: Array<Record<string, unknown>>;
+    unreachable: Array<Record<string, unknown>>;
+  };
+  threads: Array<Record<string, unknown>>;
+  [k: string]: unknown;
+}
+
+export async function getCoordinationWorklist(
+  endpoint: ServiceEndpoint,
+  participant = "user",
+  opts?: ApiOpts,
+): Promise<CoordinationWorklistResponse> {
+  return callProjectJson<CoordinationWorklistResponse>(
+    endpoint,
+    "GET",
+    `/coordination-worklist?participant=${encodeURIComponent(participant)}`,
+    opts,
+  );
+}
+
 export interface LibraryDocument {
   id: string;
   title: string;
