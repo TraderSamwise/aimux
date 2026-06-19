@@ -627,14 +627,16 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
   if (output) process.stdout.write(output);
 }
 
-export async function postToProjectService(
+// Shared retry/recovery loop for project-service requests: resolve the endpoint (reviving the
+// control plane if missing), make the request, and retry on retryable status / connection errors
+// until the deadline. Used by both the POST and GET helpers so they share recovery semantics.
+async function requestProjectService(
   host: DashboardControlHost,
   path: string,
-  body: unknown,
-  opts?: { timeoutMs?: number },
+  opts: { method: "GET" | "POST"; body?: unknown; timeoutMs?: number },
 ): Promise<any> {
   const projectRoot = process.cwd();
-  const timeoutMs = opts?.timeoutMs ?? 1000;
+  const timeoutMs = opts.timeoutMs ?? 1000;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
   for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
@@ -646,9 +648,9 @@ export async function postToProjectService(
     }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
+        method: opts.method,
+        headers: opts.method === "POST" ? { "content-type": "application/json" } : undefined,
+        body: opts.method === "POST" ? opts.body : undefined,
         timeoutMs: Math.max(1, deadline - Date.now()),
       });
       if (status >= 200 && status < 300 && json?.ok !== false) {
@@ -673,6 +675,23 @@ export async function postToProjectService(
     }
   }
   throw lastError instanceof Error ? lastError : new Error("no live project service endpoint");
+}
+
+export async function postToProjectService(
+  host: DashboardControlHost,
+  path: string,
+  body: unknown,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  return requestProjectService(host, path, { method: "POST", body, timeoutMs: opts?.timeoutMs });
+}
+
+export async function getFromProjectService(
+  host: DashboardControlHost,
+  path: string,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  return requestProjectService(host, path, { method: "GET", timeoutMs: opts?.timeoutMs });
 }
 
 function isProjectServiceConnectionError(error: unknown): boolean {

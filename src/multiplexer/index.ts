@@ -26,6 +26,7 @@ import {
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { type CoordinationModel, type WorklistItem } from "../coordination-model.js";
+import { scheduleCoordinationPush } from "./coordination.js";
 import { type NotificationRowMeta } from "./notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
 import { type ProjectObservability } from "../project-observability.js";
@@ -335,6 +336,8 @@ export class Multiplexer {
         this.footerFlash = `✗ ${event.title}`;
       }
       this.footerFlashTicks = 4;
+      // Push the worklist live the moment activity happens, if the screen is showing.
+      scheduleCoordinationPush(this);
     });
   }
 

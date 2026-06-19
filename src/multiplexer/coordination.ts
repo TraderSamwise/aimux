@@ -3,6 +3,7 @@ import { markThreadSeen } from "../threads.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
 import type { WorklistItem } from "../coordination-model.js";
 import {
+  applyCoordinationFilter,
   ensureNotificationState,
   findNotificationSessionTarget,
   markCoordinationItemRead,
@@ -28,18 +29,50 @@ function clampCoordinationIndex(host: CoordinationHost): void {
 export function showCoordination(host: CoordinationHost): void {
   host.clearDashboardSubscreens();
   ensureNotificationState(host);
+  // Instant local paint, then refine from the service (the authority) and re-render.
   refreshNotificationEntries(host);
   clampCoordinationIndex(host);
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   renderCoordination(host);
+  void host
+    .refreshCoordinationFromService?.()
+    .then(() => renderCoordination(host))
+    .catch(() => {});
 }
 
 export function renderCoordination(host: CoordinationHost): void {
   ensureNotificationState(host);
-  refreshNotificationEntries(host);
+  // Render from cached coordination state; only build locally if nothing has loaded yet. Refreshes
+  // (service or local) populate the cache on screen entry, heartbeat, and after mutations.
+  if (!host.coordinationLoaded) refreshNotificationEntries(host);
   clampCoordinationIndex(host);
   renderCoordinationScreen(host);
+}
+
+// Reload the worklist after a mutation: prefer the service (sole authority); fall back to the
+// local build when the host has no service binding (e.g. tests) or the service is unreachable.
+function reloadCoordination(host: CoordinationHost): Promise<void> {
+  if (typeof host.refreshCoordinationFromService === "function") {
+    return host.refreshCoordinationFromService().then(() => undefined);
+  }
+  refreshNotificationEntries(host);
+  return Promise.resolve();
+}
+
+// Push-driven liveness: a coordination-relevant project event (another agent needs you, a task
+// completed, …) refreshes the worklist and re-renders immediately when the screen is showing,
+// instead of waiting for the heartbeat poll. Coalesced so a burst of events does one refresh.
+export function scheduleCoordinationPush(host: CoordinationHost): void {
+  if (host.coordinationPushScheduled) return;
+  if (!host.isDashboardScreen?.("coordination")) return;
+  host.coordinationPushScheduled = true;
+  void reloadCoordination(host)
+    .then(() => renderCoordination(host))
+    .catch(() => {})
+    .finally(() => {
+      host.coordinationPushScheduled = false;
+    });
 }
 
 // Point the reply-overlay backing (host.threadEntries[threadIndex]) at a worklist thread item.
@@ -66,10 +99,8 @@ async function clearNotificationItem(host: CoordinationHost, item: WorklistItem)
 // Run a notification mutation through the service, then refresh + re-render. Failures flash.
 function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unknown>): void {
   void mutate
-    .then(() => {
-      refreshNotificationEntries(host);
-      renderCoordination(host);
-    })
+    .then(() => reloadCoordination(host))
+    .then(() => renderCoordination(host))
     .catch(() => {
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
@@ -158,6 +189,7 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
   if (isTabToggle) {
     host.coordinationFilter = host.coordinationFilter === "threads" ? "all" : "threads";
     host.coordinationIndex = 0;
+    applyCoordinationFilter(host);
     renderCoordination(host);
     return;
   }

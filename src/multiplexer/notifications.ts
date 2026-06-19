@@ -1,6 +1,12 @@
 import { listNotifications } from "../notifications.js";
-import { buildCoordinationModel, buildCoordinationWorklist, type CoordinationReachability, type WorklistItem } from "../coordination-model.js";
-import { buildCoordinationThreadEntries } from "../workflow.js";
+import {
+  buildCoordinationView,
+  type CoordinationModel,
+  type CoordinationReachability,
+  type CoordinationWorklist,
+  type WorklistItem,
+} from "../coordination-model.js";
+import { buildCoordinationThreadEntries, type WorkflowEntry } from "../workflow.js";
 import { parseKeys } from "../key-parser.js";
 
 type NotificationHost = any;
@@ -100,23 +106,21 @@ async function mutateNotificationsViaService(
   host.renderDashboard();
 }
 
-export function refreshNotificationEntries(host: NotificationHost): void {
-  // Single coordination refresh: rebuild genuine threads, reconcile notifications against live
-  // agent state, and merge both into the unified worklist that drives the screen. Called from
-  // every notification/thread mutation site (actions, cleanup, hydrate) so the screen stays
-  // coherent. The legacy notificationEntries/meta are kept for the open path + reply overlay.
-  host.threadEntries = buildCoordinationThreadEntries("user");
-  const modelInput = {
-    sessions: host.getDashboardSessions?.() ?? [],
-    teammates: host.dashboardTeammatesCache ?? [],
-    services: host.getDashboardServices?.() ?? [],
-    notifications: listNotifications(),
-    threads: host.threadEntries,
-  };
-  const model = buildCoordinationModel(modelInput);
-  host.coordinationModel = model;
-  host.notificationEntries = model.items.flatMap((item) => item.notifications);
-  host.notificationRowMeta = model.items.flatMap((item) =>
+/** Reconciled coordination payload — either built locally or received from the service. */
+interface CoordinationPayload {
+  model: CoordinationModel;
+  worklist: CoordinationWorklist;
+  threads: WorkflowEntry[];
+}
+
+// Apply a reconciled coordination payload to the host: legacy notificationEntries/meta (open path
+// + reply overlay), the full unfiltered worklist, then the filtered view. Shared by the local
+// build and the service refresh so both produce identical host state.
+export function applyCoordinationModel(host: NotificationHost, payload: CoordinationPayload): void {
+  host.threadEntries = payload.threads;
+  host.coordinationModel = payload.model;
+  host.notificationEntries = payload.model.items.flatMap((item) => item.notifications);
+  host.notificationRowMeta = payload.model.items.flatMap((item) =>
     item.notifications.map(
       (): NotificationRowMeta => ({
         reachability: item.reachability,
@@ -125,15 +129,58 @@ export function refreshNotificationEntries(host: NotificationHost): void {
       }),
     ),
   );
-  const worklist = buildCoordinationWorklist({ ...modelInput, model });
+  host.coordinationWorklistAll = payload.worklist.items;
+  host.coordinationLoaded = true;
+  applyCoordinationFilter(host);
+}
+
+// Derive the filtered worklist from the full set and clamp the selection indices. Cheap and
+// synchronous so the Tab filter toggle re-applies without a rebuild or a service round-trip.
+export function applyCoordinationFilter(host: NotificationHost): void {
+  const all: WorklistItem[] = host.coordinationWorklistAll ?? [];
   host.coordinationWorklist =
-    host.coordinationFilter === "threads" ? worklist.items.filter((item) => item.kind === "thread") : worklist.items;
+    host.coordinationFilter === "threads" ? all.filter((item) => item.kind === "thread") : all;
   const length = host.coordinationWorklist.length;
   if (host.coordinationIndex == null || host.coordinationIndex >= length) {
     host.coordinationIndex = length > 0 ? Math.max(0, length - 1) : -1;
   }
-  if (host.notificationIndex >= host.notificationEntries.length) {
-    host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
+  const notificationCount = Array.isArray(host.notificationEntries) ? host.notificationEntries.length : 0;
+  if (host.notificationIndex >= notificationCount) {
+    host.notificationIndex = Math.max(0, notificationCount - 1);
+  }
+}
+
+export function refreshNotificationEntries(host: NotificationHost): void {
+  // Local coordination build (the offline fallback): rebuild genuine threads, reconcile
+  // notifications against live agent state, and merge both into the unified worklist that drives
+  // the screen. The service endpoint runs this same buildCoordinationView, so the two never
+  // diverge. Called from every notification/thread mutation site so the screen stays coherent.
+  const threads = buildCoordinationThreadEntries("user");
+  const { model, worklist } = buildCoordinationView({
+    sessions: host.getDashboardSessions?.() ?? [],
+    teammates: host.dashboardTeammatesCache ?? [],
+    services: host.getDashboardServices?.() ?? [],
+    notifications: listNotifications(),
+    threads,
+  });
+  applyCoordinationModel(host, { model, worklist, threads });
+}
+
+// Prefer the service's reconciled worklist (the single authority, shared with the app); on any
+// failure fall back to the local build so a disconnected dashboard still shows last-known state.
+export async function refreshCoordinationFromService(host: NotificationHost): Promise<boolean> {
+  try {
+    const res = await host.getFromProjectService("/coordination-worklist");
+    // Validate the shape before mutating host state so a malformed/version-skewed payload fails
+    // fast into the local fallback instead of half-applying and crashing a renderer downstream.
+    if (!res?.ok || !Array.isArray(res.model?.items) || !Array.isArray(res.worklist?.items)) {
+      throw new Error("invalid coordination payload");
+    }
+    applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads: res.threads ?? [] });
+    return true;
+  } catch {
+    refreshNotificationEntries(host);
+    return false;
   }
 }
 
@@ -152,6 +199,9 @@ export function ensureNotificationState(host: NotificationHost): void {
   }
   if (!Array.isArray(host.coordinationWorklist)) {
     host.coordinationWorklist = [];
+  }
+  if (!Array.isArray(host.coordinationWorklistAll)) {
+    host.coordinationWorklistAll = [];
   }
   if (host.coordinationFilter !== "threads") {
     host.coordinationFilter = "all";
