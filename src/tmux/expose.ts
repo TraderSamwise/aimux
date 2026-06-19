@@ -611,7 +611,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const scheduleRefresh = () => {
       timer = setTimeout(() => {
         try {
-          if (refreshCaptures()) render(false);
+          // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
+          // idle exposé still reflows when the window size changes.
+          const captureChanged = refreshCaptures();
+          const sizeNow = `${process.stdout.columns ?? 80}x${process.stdout.rows ?? 24}`;
+          if (captureChanged || sizeNow !== staticSize) render(false);
           scheduleRefresh();
         } catch {
           finish(1);

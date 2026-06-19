@@ -136,7 +136,7 @@ function buildItem(
   threads: WorkflowEntry[],
 ): CoordinationItem {
   const unread = group.filter((n) => n.unread);
-  const latestUnread = unread.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latestUnread = [...unread].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const thread = sessionId ? threadForSession(sessionId, threads) : undefined;
   const pendingDeliveries = thread?.pendingDeliveries ?? 0;
   const hasUnreadNeedsInput = group.some((n) => n.unread && n.kind === NEEDS_INPUT_KIND);
@@ -175,16 +175,20 @@ export function buildCoordinationModel(input: BuildCoordinationModelInput): Coor
   const services = input.services ?? [];
   const threads = input.threads ?? [];
 
-  // Group notifications by target session; sessionless ones each stand alone.
+  // Group notifications by target session; sessionless ones group by dedupeKey (falling back
+  // to their id, which is unique) so repeat project-level alerts collapse into one row.
   const bySession = new Map<string, NotificationRecord[]>();
-  const standalone: NotificationRecord[] = [];
+  const standalone = new Map<string, NotificationRecord[]>();
   for (const notification of input.notifications) {
     if (notification.sessionId) {
       const existing = bySession.get(notification.sessionId) ?? [];
       existing.push(notification);
       bySession.set(notification.sessionId, existing);
     } else {
-      standalone.push(notification);
+      const key = notification.dedupeKey || notification.id;
+      const existing = standalone.get(key) ?? [];
+      existing.push(notification);
+      standalone.set(key, existing);
     }
   }
 
@@ -192,9 +196,8 @@ export function buildCoordinationModel(input: BuildCoordinationModelInput): Coor
   for (const [sessionId, group] of bySession) {
     items.push(buildItem(sessionId, sessionId, group, resolveReachability(sessionId, sessions, teammates, services), threads));
   }
-  for (const notification of standalone) {
-    const key = notification.dedupeKey || notification.id;
-    items.push(buildItem(key, undefined, [notification], { reachability: "none", attentionScore: 0 }, threads));
+  for (const [key, group] of standalone) {
+    items.push(buildItem(key, undefined, group, { reachability: "none", attentionScore: 0 }, threads));
   }
 
   items.sort((a, b) => b.urgency - a.urgency || (b.latestUnread?.createdAt ?? "").localeCompare(a.latestUnread?.createdAt ?? ""));
