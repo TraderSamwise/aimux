@@ -387,17 +387,21 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   process.once("SIGTERM", onFatalSignal);
 
   const captures = new Map<string, string>();
-  const refreshCaptures = () => {
+  // Returns whether any capture changed, so the refresh loop can skip a repaint when
+  // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
+  const refreshCaptures = (): boolean => {
+    let changed = false;
     for (const item of items) {
+      let next: string;
       try {
-        captures.set(
-          item.target.windowId,
-          tmux.captureTarget(item.target, { startLine: -CAPTURE_LINES, includeEscapes: true }),
-        );
+        next = tmux.captureTarget(item.target, { startLine: -CAPTURE_LINES, includeEscapes: true });
       } catch {
-        captures.set(item.target.windowId, captures.get(item.target.windowId) ?? "");
+        next = captures.get(item.target.windowId) ?? "";
       }
+      if (next !== captures.get(item.target.windowId)) changed = true;
+      captures.set(item.target.windowId, next);
     }
+    return changed;
   };
 
   // Fall back to capturing the host pane now only when the launcher passed no snapshot.
@@ -421,8 +425,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let tileCols = 1;
   let visibleCount = items.length;
   let lastRenderSize = "";
+  let staticSize = "";
+  let staticVisibleCount = -1;
 
-  const render = () => {
+  const render = (full = true) => {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
     const geo = panelGeometry(cols, rows);
@@ -442,13 +448,22 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       innerW - 2,
     );
 
-    // Wrap each frame in synchronized output so the repaint lands atomically (no flicker);
-    // only clear on a resize since the panel fill overwrites stale interior cells each frame.
+    // Wrap each frame in synchronized output so the repaint lands atomically. The dimmed
+    // backdrop and panel frame are static (they depend only on size), so only repaint them
+    // on a full render, a resize, or a tile-count change; the periodic capture refresh and
+    // navigation repaint just the opaque tiles in place. This avoids the full-screen
+    // blank-and-repaint that flickers on terminals which ignore synchronized output.
     const size = `${cols}x${rows}`;
-    const clear = size === lastRenderSize ? "" : "\x1b[2J";
-    lastRenderSize = size;
-    // Dimmed real backdrop fills the screen; the opaque panel floats inset over it.
-    const base = `\x1b[?2026h${clear}${buildBackdrop(hostCapture, cols, rows)}${buildPanelFrame(geo)}`;
+    const needsStatic = full || size !== staticSize || visibleCount !== staticVisibleCount;
+    let base = "\x1b[?2026h";
+    if (needsStatic) {
+      const clear = size === lastRenderSize ? "" : "\x1b[2J";
+      lastRenderSize = size;
+      staticSize = size;
+      staticVisibleCount = visibleCount;
+      // Dimmed real backdrop fills the screen; the opaque panel floats inset over it.
+      base += `${clear}${buildBackdrop(hostCapture, cols, rows)}${buildPanelFrame(geo)}`;
+    }
     const titleAt = `\x1b[${geo.top + 1};${geo.left + 2}H${title}`;
     const helpAt = `\x1b[${geo.top + innerH};${geo.left + 2}H${help}`;
 
@@ -499,10 +514,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   };
 
   // Paint the backdrop, panel, and tile chrome immediately (previews blank), then capture
-  // previews and repaint — so entry shows the framed exposé at once instead of a blank wait.
+  // previews and repaint just the tiles — so entry shows the framed exposé at once instead
+  // of a blank wait, without re-blanking the backdrop.
   render();
-  refreshCaptures();
-  render();
+  if (refreshCaptures()) render(false);
 
   return await new Promise<number>((resolve) => {
     const finish = (code: number) => {
@@ -568,22 +583,22 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         if (visibleCount === 0) return;
         if (key === "right" || key === "l" || key === "n" || key === "tab") {
           index = (index + 1) % visibleCount;
-          render();
+          render(false);
           return;
         }
         if (key === "left" || key === "h" || key === "p") {
           index = (index - 1 + visibleCount) % visibleCount;
-          render();
+          render(false);
           return;
         }
         if (key === "down" || key === "j") {
           if (index + tileCols < visibleCount) index += tileCols;
-          render();
+          render(false);
           return;
         }
         if (key === "up" || key === "k") {
           if (index - tileCols >= 0) index -= tileCols;
-          render();
+          render(false);
           return;
         }
       } catch {
@@ -596,8 +611,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const scheduleRefresh = () => {
       timer = setTimeout(() => {
         try {
-          refreshCaptures();
-          render();
+          if (refreshCaptures()) render(false);
           scheduleRefresh();
         } catch {
           finish(1);
