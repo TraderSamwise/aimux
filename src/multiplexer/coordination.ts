@@ -1,5 +1,4 @@
 import { parseKeys } from "../key-parser.js";
-import { clearNotifications, markNotificationsRead } from "../notifications.js";
 import { markThreadSeen } from "../threads.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
 import type { WorklistItem } from "../coordination-model.js";
@@ -51,24 +50,40 @@ function syncThreadIndex(host: CoordinationHost, item: WorklistItem): void {
   if (idx >= 0) host.threadIndex = idx;
 }
 
-function clearNotificationItem(item: WorklistItem): void {
+// Clear an agent's whole rollup (by sessionId) or each sessionless record — via the service.
+async function clearNotificationItem(host: CoordinationHost, item: WorklistItem): Promise<void> {
   const note = item.notification;
   if (!note) return;
-  if (item.sessionId) clearNotifications({ sessionId: item.sessionId });
-  else for (const record of note.notifications) clearNotifications({ id: record.id });
+  if (item.sessionId) {
+    await host.postToProjectService("/notifications/clear", { sessionId: item.sessionId });
+  } else {
+    for (const record of note.notifications) {
+      await host.postToProjectService("/notifications/clear", { id: record.id });
+    }
+  }
+}
+
+// Run a notification mutation through the service, then refresh + re-render. Failures flash.
+function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unknown>): void {
+  void mutate
+    .then(() => {
+      refreshNotificationEntries(host);
+      renderCoordination(host);
+    })
+    .catch(() => {
+      host.footerFlash = "Notification update failed";
+      host.footerFlashTicks = 3;
+      renderCoordination(host);
+    });
 }
 
 function dispatchNotificationItem(host: CoordinationHost, key: string, item: WorklistItem): void {
   if (key === "r") {
-    markCoordinationItemRead(item);
-    refreshNotificationEntries(host);
-    renderCoordination(host);
+    applyNotificationMutation(host, markCoordinationItemRead(host, item));
     return;
   }
   if (key === "c") {
-    clearNotificationItem(item);
-    refreshNotificationEntries(host);
-    renderCoordination(host);
+    applyNotificationMutation(host, clearNotificationItem(host, item));
     return;
   }
   if (key === "enter" || key === "return") {
@@ -185,15 +200,11 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
     return;
   }
   if (key === "R") {
-    markNotificationsRead();
-    refreshNotificationEntries(host);
-    renderCoordination(host);
+    applyNotificationMutation(host, host.postToProjectService("/notifications/read", {}));
     return;
   }
   if (key === "C") {
-    clearNotifications();
-    refreshNotificationEntries(host);
-    renderCoordination(host);
+    applyNotificationMutation(host, host.postToProjectService("/notifications/clear", {}));
     return;
   }
 

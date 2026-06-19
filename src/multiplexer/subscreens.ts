@@ -1,15 +1,5 @@
 import { parseKeys } from "../key-parser.js";
-import { setThreadStatus, type OrchestrationThread, type ThreadStatus } from "../threads.js";
-import {
-  acceptHandoff,
-  acceptTask,
-  approveReview,
-  blockTask,
-  completeHandoff,
-  completeTask,
-  reopenTask,
-  requestTaskChanges,
-} from "../orchestration-actions.js";
+import { type OrchestrationThread, type ThreadStatus } from "../threads.js";
 import { buildCoordinationThreadEntries, type ThreadEntry } from "../workflow.js";
 import { refreshNotificationEntries } from "./notifications.js";
 import { navigationUrgencyScore } from "../fast-control.js";
@@ -146,20 +136,9 @@ export async function runThreadHandoffAction(
       host.footerFlash = "⇢ Handoff completed";
     }
     host.footerFlashTicks = 3;
-  } catch {
-    try {
-      if (mode === "accept") {
-        acceptHandoff({ threadId, from: "user" });
-        host.footerFlash = "⇢ Handoff accepted";
-      } else {
-        completeHandoff({ threadId, from: "user" });
-        host.footerFlash = "⇢ Handoff completed";
-      }
-      host.footerFlashTicks = 3;
-    } catch (error) {
-      host.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
-      return;
-    }
+  } catch (error) {
+    host.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
+    return;
   }
   refreshCoordinationThreads(host);
 }
@@ -173,17 +152,11 @@ export async function runThreadStatusAction(
     await host.postToProjectService("/threads/status", { threadId, status });
     host.footerFlash = `Thread marked ${status}`;
     host.footerFlashTicks = 3;
-  } catch {
-    try {
-      setThreadStatus(threadId, status);
-      host.footerFlash = `Thread marked ${status}`;
-      host.footerFlashTicks = 3;
-    } catch (error) {
-      host.showDashboardError("Failed to update thread status", [
-        error instanceof Error ? error.message : String(error),
-      ]);
-      return;
-    }
+  } catch (error) {
+    host.showDashboardError("Failed to update thread status", [
+      error instanceof Error ? error.message : String(error),
+    ]);
+    return;
   }
   refreshCoordinationThreads(host);
 }
@@ -208,26 +181,9 @@ export async function runTaskLifecycleAction(
       host.footerFlash = "✓ Task completed";
     }
     host.footerFlashTicks = 3;
-  } catch {
-    try {
-      if (mode === "accept") {
-        await acceptTask({ taskId, from: "user" });
-        host.footerFlash = "⧫ Task accepted";
-      } else if (mode === "block") {
-        await blockTask({ taskId, from: "user" });
-        host.footerFlash = "⧫ Task blocked";
-      } else if (mode === "reopen") {
-        await reopenTask({ taskId, from: "user" });
-        host.footerFlash = "↺ Task reopened";
-      } else {
-        await completeTask({ taskId, from: "user" });
-        host.footerFlash = "✓ Task completed";
-      }
-      host.footerFlashTicks = 3;
-    } catch (error) {
-      host.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
-      return;
-    }
+  } catch (error) {
+    host.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
+    return;
   }
   refreshCoordinationThreads(host);
 }
@@ -246,22 +202,11 @@ export async function runReviewLifecycleAction(
       host.footerFlash = "↺ Changes requested";
     }
     host.footerFlashTicks = 3;
-  } catch {
-    try {
-      if (mode === "approve") {
-        await approveReview({ taskId, from: "user" });
-        host.footerFlash = "✓ Review approved";
-      } else {
-        await requestTaskChanges({ taskId, from: "user" });
-        host.footerFlash = "↺ Changes requested";
-      }
-      host.footerFlashTicks = 3;
-    } catch (error) {
-      host.showDashboardError(`Failed to ${mode === "approve" ? "approve review" : "request changes"}`, [
-        error instanceof Error ? error.message : String(error),
-      ]);
-      return;
-    }
+  } catch (error) {
+    host.showDashboardError(`Failed to ${mode === "approve" ? "approve review" : "request changes"}`, [
+      error instanceof Error ? error.message : String(error),
+    ]);
+    return;
   }
   refreshCoordinationThreads(host);
 }
@@ -288,18 +233,13 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
       host.renderCoordination();
       return;
     }
-    try {
-      host.sendOrchestrationMessage({
-        threadId: entry.thread.id,
-        from: "user",
-        kind: "reply",
-        body,
-      });
-    } catch (error) {
-      host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
-      return;
-    }
-    refreshCoordinationThreads(host);
+    // Reply through the service (sole writer) rather than mutating the thread store in-process.
+    void host
+      .postToProjectService("/threads/send", { threadId: entry.thread.id, from: "user", kind: "reply", body })
+      .then(() => refreshCoordinationThreads(host))
+      .catch((error: unknown) =>
+        host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]),
+      );
     return;
   }
 
