@@ -80,6 +80,16 @@ const NEEDS_INPUT_KIND = "needs_input";
 // Live labels that still want the user; any other label means the agent moved on.
 const WAITING_LABELS = new Set(["needs_input", "needs_response", "blocked", "error"]);
 
+/**
+ * An unread needs-input notice is stale when the live agent label has moved past a waiting
+ * state — the agent is no longer asking, so the notice is probably already handled. Display
+ * heuristic only (never a write); callers add their own reachability guard. Shared so the
+ * dashboard and Coordination reconcile the same way.
+ */
+export function isNotificationStale(liveLabel: string | undefined, hasUnreadNeedsInput: boolean): boolean {
+  return hasUnreadNeedsInput && liveLabel != null && !WAITING_LABELS.has(liveLabel);
+}
+
 interface Reachable {
   reachability: CoordinationReachability;
   liveLabel?: string;
@@ -140,11 +150,7 @@ function buildItem(
   const thread = sessionId ? threadForSession(sessionId, threads) : undefined;
   const pendingDeliveries = thread?.pendingDeliveries ?? 0;
   const hasUnreadNeedsInput = group.some((n) => n.unread && n.kind === NEEDS_INPUT_KIND);
-  const stale =
-    reachable.reachability === "live" &&
-    hasUnreadNeedsInput &&
-    reachable.liveLabel != null &&
-    !WAITING_LABELS.has(reachable.liveLabel);
+  const stale = reachable.reachability === "live" && isNotificationStale(reachable.liveLabel, hasUnreadNeedsInput);
   const actionable =
     reachable.reachability !== "missing" && (unread.length > 0 || pendingDeliveries > 0) && !stale;
   const item: CoordinationItem = {

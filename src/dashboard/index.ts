@@ -65,6 +65,8 @@ export interface DashboardSession {
   workflowNextAction?: string;
   notificationUnreadCount?: number;
   latestNotificationText?: string;
+  /** An unread needs-input notice lingers but the live label has moved on (display-only). */
+  notificationStale?: boolean;
   semantic?: SessionSemanticState;
   pendingAction?: SessionPendingAction;
   pendingStartedAt?: string;

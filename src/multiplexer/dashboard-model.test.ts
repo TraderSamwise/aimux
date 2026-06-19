@@ -1143,4 +1143,51 @@ describe("computeDashboardSessions thread stats", () => {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("marks an unread needs-input notice stale when the live label has moved on", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-stale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "needs input", body: "waiting", sessionId: "claude-1", kind: "needs_input" });
+
+      // A running session with no activity/attention resolves to label "ready" (not waiting).
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.semantic?.user.label).toBe("ready");
+      expect(session?.notificationStale).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark an offline agent's needs-input notice stale (live guard)", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-stale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "needs input", body: "waiting", sessionId: "claude-1", kind: "needs_input" });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "offline" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.notificationStale).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark a non-needs-input unread notice stale", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-nonstale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "done", body: "completed", sessionId: "claude-1", kind: "complete" });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.notificationStale).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });

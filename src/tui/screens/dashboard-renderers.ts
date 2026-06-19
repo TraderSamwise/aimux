@@ -150,7 +150,11 @@ function sessionActivityChips(session: DashboardSession): string {
   const offline = isSessionOffline(session);
   const tone = (active: ChipTone): ChipTone => (offline ? "muted" : active);
 
-  if (notificationUnread > 0) chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, tone("work")));
+  // A lingering needs-input notice whose agent has moved on is de-emphasized to match
+  // Coordination, instead of contradicting the live state with a bright unread chip.
+  if (notificationUnread > 0) {
+    chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, session.notificationStale ? "muted" : tone("work")));
+  }
   if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, tone("info")));
   if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
     chips.push(chip(`thread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}`, "muted"));
