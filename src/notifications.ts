@@ -43,7 +43,8 @@ export interface NotificationRecord {
 }
 
 const PROJECT_NOTIFICATION_PARTICIPANT = "project";
-const NOTIFICATION_TAG = "notification";
+/** Tag marking an exchange thread as a notification record (not a workflow thread). */
+export const NOTIFICATION_TAG = "notification";
 
 function normalizeTargetKey(input: { targetKey?: string; sessionId?: string }): string | undefined {
   const targetKey = input.targetKey?.trim();
