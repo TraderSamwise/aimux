@@ -1,3 +1,4 @@
+import { NOTIFICATION_TAG } from "./notifications.js";
 import { normalizeReviewStatus, readAllTasks, type Task } from "./tasks.js";
 import { listThreadSummaries, readMessages, type OrchestrationMessage, type ThreadSummary } from "./threads.js";
 
@@ -20,6 +21,10 @@ export type WorkflowFilter = "all" | "on_me" | "blocked" | "families";
 
 export function buildThreadEntries(): ThreadEntry[] {
   return listThreadSummaries()
+    // Notification records are stored as exchange threads tagged `notification`; they are the
+    // Inbox's domain, not workflow threads. Excluding them stops the Coordination Threads
+    // section from mirroring the Inbox.
+    .filter((summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG))
     .map((summary) => {
       const messages = readMessages(summary.thread.id);
       const pending = messages.flatMap((message) =>
