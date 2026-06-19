@@ -233,7 +233,7 @@ function renderCoordinationThreadDetails(ctx: any, width: number, height: number
   );
 }
 
-const STORY_KIND_DOT: Record<string, Tone> = { task: "work", review: "info", notification: "attn" };
+const STORY_KIND_CHIP: Record<string, ChipTone> = { task: "work", review: "info", notification: "attn" };
 
 export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
@@ -272,11 +272,12 @@ export function renderProjectScreen(ctx: any): void {
       const selected = i === ctx.projectIndex;
       if (selected) focusLine = listLines.length + 1;
       const dot = statusDot(item.status === "unread" ? "needs" : "offline");
-      const tone = STORY_KIND_DOT[item.kind] ?? "muted";
+      const kindChip = chip(item.kind, STORY_KIND_CHIP[item.kind] ?? "muted");
+      const titleTone: Tone = item.status === "unread" ? "strong" : "muted";
       const when = ` ${style(`· ${formatRelativeRecency(item.createdAt)}`, "muted")}`;
       const meta = item.meta ? ` ${style(`· ${ctx.truncatePlain(item.meta, 22)}`, "muted")}` : "";
       listLines.push(
-        `${marker(selected)}${itemNumber(i)} ${dot} ${style(`[${item.kind}]`, tone)} ${ctx.truncatePlain(item.title, 40)}${meta}${when}${trailingMark(selected)}`,
+        `${marker(selected)}${itemNumber(i)} ${dot} ${kindChip} ${style(ctx.truncatePlain(item.title, 40), titleTone)}${meta}${when}${trailingMark(selected)}`,
       );
     }
   }
@@ -300,20 +301,21 @@ export function renderProjectScreen(ctx: any): void {
 export function renderProjectDetails(ctx: any, width: number, height: number): string[] {
   const item = ctx.projectObservability?.story?.[ctx.projectIndex];
   if (!item) return new Array(height).fill("");
-  const lines: string[] = [];
-  lines.push(style("Story item", "strong"));
-  lines.push(...ctx.wrapKeyValue("Title", item.title, width));
-  lines.push(...ctx.wrapKeyValue("Kind", item.kind, width));
-  if (item.status) lines.push(...ctx.wrapKeyValue("Status", item.status, width));
-  if (item.meta) lines.push(...ctx.wrapKeyValue("Meta", item.meta, width));
-  lines.push(...ctx.wrapKeyValue("When", item.createdAt, width));
-  if (item.body) {
-    lines.push("");
-    lines.push(style("Body", "strong"));
-    lines.push(...ctx.wrapKeyValue("", item.body, width));
-  }
-  while (lines.length < height) lines.push("");
-  return lines.slice(0, height);
+  const inner = Math.max(8, width - 4);
+  const rows: string[] = [];
+  rows.push(...ctx.wrapKeyValue("Title", item.title, inner));
+  rows.push(...ctx.wrapKeyValue("Kind", item.kind, inner));
+  if (item.status) rows.push(...ctx.wrapKeyValue("Status", item.status, inner));
+  if (item.meta) rows.push(...ctx.wrapKeyValue("Meta", item.meta, inner));
+  rows.push(...ctx.wrapKeyValue("When", item.createdAt, inner));
+  const bodyRows = item.body ? ctx.wrapKeyValue("", item.body, inner) : [];
+  return padDetail(
+    [
+      ...card({ tone: "muted", title: style("Story", "strong"), rows, width }),
+      ...(bodyRows.length ? ["", ...card({ tone: "muted", title: style("Body", "strong"), rows: bodyRows, width })] : []),
+    ],
+    height,
+  );
 }
 
 const TOPOLOGY_HEALTH_TONE: Record<string, Tone> = {
@@ -359,7 +361,7 @@ export function renderTopologyScreen(ctx: any): void {
       );
     } else {
       listLines.push(
-        `${selected ? style("▸", "accent") : " "} ${indent}${topologyDot(row.health)} ${style(`[${row.kind}]`, "muted")} ${ctx.truncatePlain(row.label, 28)}${detail}${trailingMark(selected)}`,
+        `${selected ? style("▸", "accent") : " "} ${indent}${topologyDot(row.health)} ${chip(row.kind, "muted")} ${ctx.truncatePlain(row.label, 28)}${detail}${trailingMark(selected)}`,
       );
     }
   }
@@ -385,17 +387,17 @@ export function renderTopologyScreen(ctx: any): void {
 export function renderTopologyDetails(ctx: any, width: number, height: number): string[] {
   const row = ctx.topology?.rows?.[ctx.topologyIndex];
   if (!row) return new Array(height).fill("");
-  const lines: string[] = [];
-  lines.push(style(row.kind === "worktree" ? "Worktree" : row.kind === "service" ? "Service" : "Agent", "strong"));
-  lines.push(...ctx.wrapKeyValue("Name", row.label, width));
-  lines.push(...ctx.wrapKeyValue("Health", row.health, width));
-  if (row.detail) lines.push(...ctx.wrapKeyValue(row.kind === "worktree" ? "Branch" : "Detail", row.detail, width));
-  if (row.status) lines.push(...ctx.wrapKeyValue("Status", row.status, width));
-  if (row.worktreePath) lines.push(...ctx.wrapKeyValue("Worktree", row.worktreePath, width));
-  if (row.sessionId) lines.push(...ctx.wrapKeyValue("Session", row.sessionId, width));
-  if (row.serviceId) lines.push(...ctx.wrapKeyValue("Service", row.serviceId, width));
-  while (lines.length < height) lines.push("");
-  return lines.slice(0, height);
+  const inner = Math.max(8, width - 4);
+  const title = row.kind === "worktree" ? "Worktree" : row.kind === "service" ? "Service" : "Agent";
+  const rows: string[] = [];
+  rows.push(...ctx.wrapKeyValue("Name", row.label, inner));
+  rows.push(...ctx.wrapKeyValue("Health", row.health, inner));
+  if (row.detail) rows.push(...ctx.wrapKeyValue(row.kind === "worktree" ? "Branch" : "Detail", row.detail, inner));
+  if (row.status) rows.push(...ctx.wrapKeyValue("Status", row.status, inner));
+  if (row.worktreePath) rows.push(...ctx.wrapKeyValue("Worktree", row.worktreePath, inner));
+  if (row.sessionId) rows.push(...ctx.wrapKeyValue("Session", row.sessionId, inner));
+  if (row.serviceId) rows.push(...ctx.wrapKeyValue("Service", row.serviceId, inner));
+  return padDetail([...card({ tone: "muted", title: style(title, "strong"), rows, width })], height);
 }
 
 interface GraveyardCardRow {
