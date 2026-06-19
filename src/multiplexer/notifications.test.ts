@@ -30,7 +30,6 @@ describe("notification target open", () => {
     await initPaths(repoRoot);
     const notification = addExchangeNotification("service-1", "Open service");
     host = {
-      coordinationSection: "notifications",
       notificationEntries: [notification],
       notificationIndex: 0,
       renderCoordination: vi.fn(),
@@ -58,6 +57,8 @@ describe("notification target open", () => {
       footerFlash: "",
       footerFlashTicks: 0,
     };
+    refreshNotificationEntries(host);
+    host.coordinationIndex = 0;
   });
 
   afterEach(() => {
@@ -91,8 +92,7 @@ describe("notification target open", () => {
   });
 
   it("opens teammate notification targets from the hidden teammate cache", async () => {
-    const teammateNotification = addExchangeNotification("teammate-1", "Open teammate");
-    host.notificationEntries = [teammateNotification];
+    addExchangeNotification("teammate-1", "Open teammate");
     host.dashboardTeammatesCache = [
       {
         id: "teammate-1",
@@ -104,6 +104,8 @@ describe("notification target open", () => {
       },
     ];
     host.activateDashboardEntry = vi.fn(async () => undefined);
+    refreshNotificationEntries(host);
+    host.coordinationIndex = host.coordinationWorklist.findIndex((item: any) => item.sessionId === "teammate-1");
 
     expect(notificationTargetLabel(host, "teammate-1")).toBe("reviewer · demo");
     expect(notificationTargetState(host, "teammate-1")).toBe("offline");
@@ -156,5 +158,50 @@ describe("coordination inbox ordering", () => {
     const last = host.notificationEntries.length - 1;
     expect(host.notificationEntries[last].sessionId).toBe("ghost-1");
     expect(host.notificationRowMeta[last]).toMatchObject({ reachability: "missing", actionable: false });
+  });
+
+  it("builds a unified worklist and navigates/filters/reads it by single index", () => {
+    addExchangeNotification("ghost-1", "vanished agent needs input");
+    addExchangeNotification("live-1", "live agent needs input");
+    const host: any = {
+      coordinationIndex: 0,
+      coordinationFilter: "all",
+      dashboardTeammatesCache: [],
+      getDashboardServices: () => [],
+      getDashboardSessions: () => [
+        { id: "live-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } },
+      ],
+      handleDashboardSubscreenNavigationKey: () => false,
+      renderDashboard: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      exitDashboardClientOrProcess: vi.fn(),
+      showHelp: vi.fn(),
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      centerInWidth: (text: string) => text,
+      truncatePlain: (text: string) => text,
+      composeSplitScreen: (left: string[]) => left,
+      wrapKeyValue: (_key: string, value: string) => [value],
+      notificationTargetLabel: () => null,
+      dashboardState: {},
+      writeFrame: vi.fn(),
+    };
+    refreshNotificationEntries(host);
+
+    expect(host.coordinationWorklist[0].sessionId).toBe("live-1");
+
+    // digit nav selects by index
+    handleCoordinationKey(host, Buffer.from("2"));
+    expect(host.coordinationIndex).toBe(1);
+
+    // Tab filters to threads-only (none here)
+    handleCoordinationKey(host, Buffer.from("\t"));
+    expect(host.coordinationFilter).toBe("threads");
+
+    // r on the selected live notification marks its session read
+    host.coordinationFilter = "all";
+    refreshNotificationEntries(host);
+    host.coordinationIndex = 0;
+    handleCoordinationKey(host, Buffer.from("r"));
+    expect(unreadInboxEntries("live-1")).toHaveLength(0);
   });
 });
