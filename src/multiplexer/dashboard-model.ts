@@ -15,7 +15,7 @@ import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
-import { summarizeUnreadNotificationsBySession } from "../notifications.js";
+import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
@@ -622,7 +622,10 @@ export function computeDashboardSessions(
 ): DashboardSession[] {
   const lastUsedState = loadLastUsedState(process.cwd());
   const metadata = loadMetadataState().sessions;
-  const threadSummaries = listThreadSummaries();
+  // Notification records are exchange threads tagged `notification`; they are surfaced by the
+  // per-session unread-notification count, so excluding them here keeps the dashboard's
+  // thread chips from double-counting the same needs-input record.
+  const threadSummaries = listThreadSummaries().filter((summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG));
   const threadStats = new Map<
     string,
     {
