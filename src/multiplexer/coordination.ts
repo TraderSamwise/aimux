@@ -3,7 +3,13 @@ import { clearNotifications, markNotificationsRead } from "../notifications.js";
 import { markThreadSeen } from "../threads.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
 import type { WorklistItem } from "../coordination-model.js";
-import { ensureNotificationState, openCoordinationNotification, refreshNotificationEntries } from "./notifications.js";
+import {
+  ensureNotificationState,
+  findNotificationSessionTarget,
+  markCoordinationItemRead,
+  openCoordinationNotification,
+  refreshNotificationEntries,
+} from "./notifications.js";
 import {
   renderThreadReply,
   runReviewLifecycleAction,
@@ -37,26 +43,12 @@ export function renderCoordination(host: CoordinationHost): void {
   renderCoordinationScreen(host);
 }
 
-function findCoordinationTarget(host: CoordinationHost, sessionId: string): any | undefined {
-  return (
-    host.getDashboardSessions?.().find((entry: any) => entry.id === sessionId) ??
-    (host.dashboardTeammatesCache ?? []).find((entry: any) => entry.id === sessionId)
-  );
-}
-
 // Point the reply-overlay backing (host.threadEntries[threadIndex]) at a worklist thread item.
 function syncThreadIndex(host: CoordinationHost, item: WorklistItem): void {
   const threadId = item.thread?.thread.id;
   if (!threadId) return;
   const idx = (host.threadEntries ?? []).findIndex((entry: any) => entry.thread.id === threadId);
   if (idx >= 0) host.threadIndex = idx;
-}
-
-function readNotificationItem(item: WorklistItem): void {
-  const note = item.notification;
-  if (!note) return;
-  if (item.sessionId) markNotificationsRead({ sessionId: item.sessionId });
-  else for (const record of note.notifications) markNotificationsRead({ id: record.id });
 }
 
 function clearNotificationItem(item: WorklistItem): void {
@@ -68,7 +60,7 @@ function clearNotificationItem(item: WorklistItem): void {
 
 function dispatchNotificationItem(host: CoordinationHost, key: string, item: WorklistItem): void {
   if (key === "r") {
-    readNotificationItem(item);
+    markCoordinationItemRead(item);
     refreshNotificationEntries(host);
     renderCoordination(host);
     return;
@@ -134,7 +126,7 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
     if (!targetSessionId) return;
     markThreadSeen(entry.thread.id, targetSessionId);
-    const dashEntry = findCoordinationTarget(host, targetSessionId);
+    const dashEntry = findNotificationSessionTarget(host, targetSessionId);
     if (dashEntry) {
       void host.activateDashboardEntry(dashEntry, { preserveDashboardSelection: Boolean(dashEntry.team) });
     }

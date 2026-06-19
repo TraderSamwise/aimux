@@ -110,11 +110,12 @@ export function refreshNotificationEntries(host: NotificationHost): void {
       }),
     ),
   );
-  const worklist = buildCoordinationWorklist(modelInput);
+  const worklist = buildCoordinationWorklist({ ...modelInput, model });
   host.coordinationWorklist =
     host.coordinationFilter === "threads" ? worklist.items.filter((item) => item.kind === "thread") : worklist.items;
-  if (host.coordinationIndex == null || host.coordinationIndex >= host.coordinationWorklist.length) {
-    host.coordinationIndex = Math.max(0, host.coordinationWorklist.length - 1);
+  const length = host.coordinationWorklist.length;
+  if (host.coordinationIndex == null || host.coordinationIndex >= length) {
+    host.coordinationIndex = length > 0 ? Math.max(0, length - 1) : -1;
   }
   if (host.notificationIndex >= host.notificationEntries.length) {
     host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
@@ -148,7 +149,7 @@ export function ensureNotificationState(host: NotificationHost): void {
   }
 }
 
-function findNotificationSessionTarget(host: NotificationHost, sessionId: string): any | undefined {
+export function findNotificationSessionTarget(host: NotificationHost, sessionId: string): any | undefined {
   return (
     host.getDashboardSessions?.().find((entry: any) => entry.id === sessionId) ??
     (host.dashboardTeammatesCache ?? []).find((entry: any) => entry.id === sessionId)
@@ -189,7 +190,7 @@ export function notificationTargetState(
 }
 
 // Mark an agent's whole notification rollup read (by sessionId), or each sessionless record.
-function markCoordinationItemRead(item: WorklistItem): void {
+export function markCoordinationItemRead(item: WorklistItem): void {
   const note = item.notification;
   if (!note) return;
   if (item.sessionId) markNotificationsRead({ sessionId: item.sessionId });
