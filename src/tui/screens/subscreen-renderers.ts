@@ -2,7 +2,7 @@ import type { GraveyardViewRow } from "../../multiplexer/graveyard-view-model.js
 import { formatRelativeRecency } from "../../recency.js";
 import { renderOverlayBox } from "../render/box.js";
 import { twoPaneLeftWidth } from "../render/text.js";
-import { card, chip, footerHints, keycapHint, statusDot, style, type Tone } from "../render/theme.js";
+import { card, chip, footerHints, keycapHint, statusDot, style, type ChipTone, type Tone } from "../render/theme.js";
 
 // Shared subscreen chrome built from the design-language tokens.
 function screenHeader(ctx: any, cols: number, title: string, suffix = ""): string[] {
@@ -23,15 +23,44 @@ const marker = (selected: boolean): string => (selected ? `${style("▸", "accen
 const trailingMark = (selected: boolean): string => (selected ? ` ${style("◀", "accent")}` : "");
 const itemNumber = (index: number): string => style(`[${index + 1}]`, "muted");
 
+const WORKLIST_TYPE_TONE: Record<string, ChipTone> = {
+  msg: "work",
+  note: "muted",
+  task: "info",
+  review: "info",
+  handoff: "attn",
+  conversation: "muted",
+};
+const WORKLIST_BUCKET_LABEL: Record<string, string> = {
+  "needs-you": "Needs you",
+  handled: "Handled",
+  unreachable: "Unreachable",
+};
+
+// Trailing reachability/state tags for a worklist row (reuse the inbox + thread vocabularies).
+function worklistTags(item: any): string {
+  const parts: string[] = [];
+  if (item.kind === "notification") {
+    if (item.reachability === "live") parts.push(style("live", "done"));
+    else if (item.reachability === "offline") parts.push(style("offline", "attn"));
+    else if (item.reachability === "missing") parts.push(style("missing", "danger"));
+    if (item.stale) parts.push(style("stale", "muted"));
+  } else if (item.thread) {
+    const thread = item.thread.thread;
+    if ((thread.waitingOn?.length ?? 0) > 0) parts.push(style(`→ ${thread.waitingOn.join(",")}`, "blocked"));
+    if (item.thread.pendingDeliveries > 0) parts.push(style(`⇢ ${item.thread.pendingDeliveries}`, "danger"));
+    parts.push(style(item.thread.stateLabel ?? thread.status, "muted"));
+  }
+  return parts.length ? ` ${style("·", "muted")} ${parts.join(` ${style("·", "muted")} `)}` : "";
+}
+
 export function renderCoordinationScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "coordination");
-  const section = ctx.coordinationSection === "threads" ? "threads" : "notifications";
+  const filterThreads = ctx.coordinationFilter === "threads";
   const footer = ctx.centerInWidth(
     footerHints(
-      section === "notifications"
-        ? "[↑↓] select  [Tab] threads  [Enter] open  [r] read  [R] read all  [c] clear  [C] clear all  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"
-        : "[↑↓] select  [Tab] inbox  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P] approve  [J] changes  [E] reopen  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
+      `[↑↓] select  [Tab] ${filterThreads ? "all" : "threads"}  [Enter] open  [r] read  [c] clear/done  [s] reply  [A] accept  [R] read all  [C] clear all  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit`,
     ),
     cols,
   );
@@ -40,78 +69,29 @@ export function renderCoordinationScreen(ctx: any): void {
   const listLines: string[] = [];
   let focusLine = 1;
 
-  const notifs = ctx.notificationEntries ?? [];
-  const rowMeta = ctx.notificationRowMeta ?? [];
-  const inboxActive = section === "notifications";
-  const actionableCount =
-    rowMeta.length === notifs.length ? rowMeta.filter((m: any) => m?.actionable).length : notifs.length;
-  const inboxSummary = actionableCount === notifs.length ? `(${notifs.length})` : `(${actionableCount} of ${notifs.length})`;
-  listLines.push(`  ${style("Inbox", inboxActive ? "strong" : "muted")} ${style(inboxSummary, "muted")}`);
-  if (notifs.length === 0) {
-    listLines.push(`    ${style("No inbox items.", "muted")}`);
+  const items = ctx.coordinationWorklist ?? [];
+  const needYou = items.filter((item: any) => item.bucket === "needs-you").length;
+  listLines.push(
+    `  ${style("Coordination", "strong")} ${style(`(${needYou} need you · ${items.length})`, "muted")}${filterThreads ? ` ${style("· threads", "muted")}` : ""}`,
+  );
+  if (items.length === 0) {
+    listLines.push(`    ${style(filterThreads ? "No threads." : "Nothing needs you.", "muted")}`);
   } else {
-    let dividerEmitted = false;
-    let anyActionable = false;
-    for (let i = 0; i < notifs.length; i++) {
-      const entry = notifs[i]!;
-      const meta = rowMeta[i] as { reachability?: string; stale?: boolean; actionable?: boolean } | undefined;
-      // Model orders actionable items first; mark the boundary to the handled/unreachable tail,
-      // but only once at least one actionable row has been shown above it.
-      if (meta && meta.actionable === false && anyActionable && !dividerEmitted) {
-        listLines.push(`  ${style("─ handled · unreachable ─", "muted")}`);
-        dividerEmitted = true;
+    let lastBucket = "";
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      if (item.bucket !== lastBucket) {
+        listLines.push(`  ${style(`─ ${WORKLIST_BUCKET_LABEL[item.bucket] ?? item.bucket} ─`, "muted")}`);
+        lastBucket = item.bucket;
       }
-      if (meta?.actionable) anyActionable = true;
-      const selected = inboxActive && i === ctx.notificationIndex;
+      const selected = i === ctx.coordinationIndex;
       if (selected) focusLine = listLines.length + 1;
-      const actionable = meta ? meta.actionable !== false : entry.unread;
-      const dot = entry.unread && actionable ? statusDot("needs") : statusDot("offline");
-      const target = entry.sessionId ? ctx.notificationTargetLabel(entry.sessionId) : null;
-      const reach = meta?.reachability ?? (entry.sessionId ? ctx.notificationTargetState(entry.sessionId) : "none");
-      const reachLabel =
-        reach === "live"
-          ? style("live", "done")
-          : reach === "offline"
-            ? style("offline", "attn")
-            : reach === "missing"
-              ? style("missing", "danger")
-              : "";
-      const staleLabel = meta?.stale ? ` ${style("·", "muted")} ${style("stale", "muted")}` : "";
-      const targetHint = target ? ` ${style(`· ${ctx.truncatePlain(target, 24)}`, "muted")}` : "";
-      const kind = entry.kind ? ` ${style(`(${entry.kind})`, "muted")}` : "";
-      const when = ` ${style(`· ${formatRelativeRecency(entry.createdAt)}`, "muted")}`;
-      const titleTone = entry.unread && actionable ? "strong" : "muted";
+      const dot = item.actionable ? statusDot("needs") : statusDot("offline");
+      const typeChip = chip(item.type, WORKLIST_TYPE_TONE[item.type] ?? "muted");
+      const titleTone = item.actionable ? "strong" : "muted";
+      const when = item.when ? ` ${style(`· ${formatRelativeRecency(item.when)}`, "muted")}` : "";
       listLines.push(
-        `${marker(selected)}${itemNumber(i)} ${dot} ${style(ctx.truncatePlain(entry.title, 40), titleTone)}${kind}${reachLabel ? ` ${style("·", "muted")} ${reachLabel}` : ""}${staleLabel}${targetHint}${when}${trailingMark(selected)}`,
-      );
-    }
-  }
-
-  listLines.push("");
-
-  const threads = ctx.threadEntries ?? [];
-  const threadsActive = section === "threads";
-  listLines.push(`  ${style("Threads", threadsActive ? "strong" : "muted")} ${style(`(${threads.length})`, "muted")}`);
-  if (threads.length === 0) {
-    listLines.push(`    ${style("No threads.", "muted")}`);
-  } else {
-    for (let i = 0; i < threads.length; i++) {
-      const entry = threads[i]!;
-      const selected = threadsActive && i === ctx.threadIndex;
-      if (selected) focusLine = listLines.length + 1;
-      const unread =
-        (entry.thread.unreadBy?.length ?? 0) > 0 ? ` ${style(String(entry.thread.unreadBy!.length), "work")}` : "";
-      const waiting =
-        (entry.thread.waitingOn?.length ?? 0) > 0
-          ? ` ${style(`→ ${entry.thread.waitingOn!.join(",")}`, "blocked")}`
-          : "";
-      const pending = entry.pendingDeliveries > 0 ? ` ${style(`⇢ ${entry.pendingDeliveries}`, "danger")}` : "";
-      const latest = entry.latestMessage?.body
-        ? ` ${style(`· ${ctx.truncatePlain(entry.latestMessage.body, 30)}`, "muted")}`
-        : "";
-      const stateLabel = entry.stateLabel ?? entry.thread.status;
-      listLines.push(
-        `${marker(selected)}${itemNumber(i)} ${entry.displayTitle} ${style(`(${entry.thread.kind})`, "muted")} ${style("—", "muted")} ${stateLabel}${unread}${waiting}${pending}${latest}${trailingMark(selected)}`,
+        `${marker(selected)}${itemNumber(i)} ${dot} ${typeChip} ${style(ctx.truncatePlain(item.title, 36), titleTone)}${worklistTags(item)}${when}${trailingMark(selected)}`,
       );
     }
   }
@@ -128,36 +108,37 @@ export function renderCoordinationScreen(ctx: any): void {
 }
 
 export function renderCoordinationDetails(ctx: any, width: number, height: number): string[] {
-  return ctx.coordinationSection === "threads"
-    ? renderCoordinationThreadDetails(ctx, width, height)
-    : renderCoordinationNotificationDetails(ctx, width, height);
+  const item = (ctx.coordinationWorklist ?? [])[ctx.coordinationIndex];
+  if (!item) return new Array(height).fill("");
+  return item.kind === "thread"
+    ? renderCoordinationThreadDetails(ctx, width, height, item.thread)
+    : renderCoordinationNotificationDetails(ctx, width, height, item.notification);
 }
 
-function renderCoordinationNotificationDetails(ctx: any, width: number, height: number): string[] {
-  const entry = ctx.notificationEntries?.[ctx.notificationIndex];
-  if (!entry) return new Array(height).fill("");
+function renderCoordinationNotificationDetails(ctx: any, width: number, height: number, note: any): string[] {
+  if (!note) return new Array(height).fill("");
+  const latest = note.latestUnread ?? note.notifications[note.notifications.length - 1];
   const lines: string[] = [];
   lines.push(style("Inbox", "strong"));
-  lines.push(...ctx.wrapKeyValue("Title", entry.title, width));
-  if (entry.subtitle) lines.push(...ctx.wrapKeyValue("Subtitle", entry.subtitle, width));
-  lines.push(...ctx.wrapKeyValue("State", entry.unread ? "unread" : "read", width));
-  lines.push(...ctx.wrapKeyValue("Created", entry.createdAt, width));
-  if (entry.kind) lines.push(...ctx.wrapKeyValue("Kind", entry.kind, width));
-  if (entry.sessionId) {
-    lines.push(...ctx.wrapKeyValue("Session", entry.sessionId, width));
-    lines.push(...ctx.wrapKeyValue("Target State", ctx.notificationTargetState(entry.sessionId), width));
-    const targetLabel = ctx.notificationTargetLabel(entry.sessionId);
+  lines.push(...ctx.wrapKeyValue("Title", note.title, width));
+  if (latest?.subtitle) lines.push(...ctx.wrapKeyValue("Subtitle", latest.subtitle, width));
+  lines.push(...ctx.wrapKeyValue("State", note.unreadCount > 0 ? `${note.unreadCount} unread` : "read", width));
+  if (latest?.createdAt) lines.push(...ctx.wrapKeyValue("Created", latest.createdAt, width));
+  if (latest?.kind) lines.push(...ctx.wrapKeyValue("Kind", latest.kind, width));
+  if (note.sessionId) {
+    lines.push(...ctx.wrapKeyValue("Session", note.sessionId, width));
+    lines.push(...ctx.wrapKeyValue("Reach", note.reachability, width));
+    const targetLabel = ctx.notificationTargetLabel(note.sessionId);
     if (targetLabel) lines.push(...ctx.wrapKeyValue("Target", targetLabel, width));
   }
   lines.push("");
   lines.push(style("Body", "strong"));
-  lines.push(...ctx.wrapKeyValue("", entry.body, width));
+  if (latest?.body) lines.push(...ctx.wrapKeyValue("", latest.body, width));
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
 }
 
-function renderCoordinationThreadDetails(ctx: any, width: number, height: number): string[] {
-  const entry = ctx.threadEntries?.[ctx.threadIndex];
+function renderCoordinationThreadDetails(ctx: any, width: number, height: number, entry: any): string[] {
   if (!entry) return new Array(height).fill("");
   const lines: string[] = [];
   lines.push(style("Thread", "strong"));
