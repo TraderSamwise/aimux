@@ -2,8 +2,14 @@ import { parseKeys } from "../key-parser.js";
 import { clearNotifications, markNotificationsRead } from "../notifications.js";
 import { markThreadSeen } from "../threads.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
-import { buildCoordinationThreadEntries } from "../workflow.js";
-import { ensureNotificationState, openSelectedNotification, refreshNotificationEntries } from "./notifications.js";
+import type { WorklistItem } from "../coordination-model.js";
+import {
+  ensureNotificationState,
+  findNotificationSessionTarget,
+  markCoordinationItemRead,
+  openCoordinationNotification,
+  refreshNotificationEntries,
+} from "./notifications.js";
 import {
   renderThreadReply,
   runReviewLifecycleAction,
@@ -14,21 +20,17 @@ import {
 
 type CoordinationHost = any;
 
-function clampThreadIndex(host: CoordinationHost): void {
-  if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
-  if (host.threadIndex >= host.threadEntries.length) host.threadIndex = Math.max(0, host.threadEntries.length - 1);
+function clampCoordinationIndex(host: CoordinationHost): void {
+  const len = host.coordinationWorklist?.length ?? 0;
+  if (typeof host.coordinationIndex !== "number" || Number.isNaN(host.coordinationIndex)) host.coordinationIndex = 0;
+  host.coordinationIndex = len > 0 ? Math.min(Math.max(0, host.coordinationIndex), len - 1) : -1;
 }
 
 export function showCoordination(host: CoordinationHost): void {
   host.clearDashboardSubscreens();
   ensureNotificationState(host);
-  // Build threads before the notification refresh so the coordination model can annotate
-  // agent items with their thread/pending on the first paint (avoids a reorder on re-render).
-  host.threadEntries = buildCoordinationThreadEntries("user");
   refreshNotificationEntries(host);
-  host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
-  clampThreadIndex(host);
-  if (host.coordinationSection !== "threads") host.coordinationSection = "notifications";
+  clampCoordinationIndex(host);
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   renderCoordination(host);
@@ -37,109 +39,48 @@ export function showCoordination(host: CoordinationHost): void {
 export function renderCoordination(host: CoordinationHost): void {
   ensureNotificationState(host);
   refreshNotificationEntries(host);
-  if (!Array.isArray(host.threadEntries)) host.threadEntries = buildCoordinationThreadEntries("user");
-  clampThreadIndex(host);
-  if (host.coordinationSection !== "threads") host.coordinationSection = "notifications";
+  clampCoordinationIndex(host);
   renderCoordinationScreen(host);
 }
 
-function handleNotificationsSectionKey(host: CoordinationHost, key: string): void {
-  const entries = host.notificationEntries ?? [];
-  if (key === "down" || key === "j") {
-    if (entries.length > 1) {
-      host.notificationIndex = (host.notificationIndex + 1) % entries.length;
-      renderCoordination(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (entries.length > 1) {
-      host.notificationIndex = (host.notificationIndex - 1 + entries.length) % entries.length;
-      renderCoordination(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    if (idx < entries.length) {
-      host.notificationIndex = idx;
-      renderCoordination(host);
-    }
-    return;
-  }
+// Point the reply-overlay backing (host.threadEntries[threadIndex]) at a worklist thread item.
+function syncThreadIndex(host: CoordinationHost, item: WorklistItem): void {
+  const threadId = item.thread?.thread.id;
+  if (!threadId) return;
+  const idx = (host.threadEntries ?? []).findIndex((entry: any) => entry.thread.id === threadId);
+  if (idx >= 0) host.threadIndex = idx;
+}
+
+function clearNotificationItem(item: WorklistItem): void {
+  const note = item.notification;
+  if (!note) return;
+  if (item.sessionId) clearNotifications({ sessionId: item.sessionId });
+  else for (const record of note.notifications) clearNotifications({ id: record.id });
+}
+
+function dispatchNotificationItem(host: CoordinationHost, key: string, item: WorklistItem): void {
   if (key === "r") {
-    const entry = entries[host.notificationIndex];
-    if (!entry) return;
-    markNotificationsRead({ id: entry.id });
-    refreshNotificationEntries(host);
-    renderCoordination(host);
-    return;
-  }
-  if (key === "R") {
-    markNotificationsRead();
+    markCoordinationItemRead(item);
     refreshNotificationEntries(host);
     renderCoordination(host);
     return;
   }
   if (key === "c") {
-    const entry = entries[host.notificationIndex];
-    if (!entry) return;
-    clearNotifications({ id: entry.id });
-    refreshNotificationEntries(host);
-    renderCoordination(host);
-    return;
-  }
-  if (key === "C") {
-    clearNotifications();
+    clearNotificationItem(item);
     refreshNotificationEntries(host);
     renderCoordination(host);
     return;
   }
   if (key === "enter" || key === "return") {
-    void openSelectedNotification(host);
+    void openCoordinationNotification(host, item);
   }
 }
 
-function findCoordinationTarget(host: CoordinationHost, sessionId: string): any | undefined {
-  return (
-    host.getDashboardSessions?.().find((entry: any) => entry.id === sessionId) ??
-    (host.dashboardTeammatesCache ?? []).find((entry: any) => entry.id === sessionId)
-  );
-}
-
-function handleThreadsSectionKey(host: CoordinationHost, key: string): void {
-  const entries = host.threadEntries ?? [];
-  if (key === "down" || key === "j") {
-    if (entries.length > 1) {
-      host.threadIndex = (host.threadIndex + 1) % entries.length;
-      renderCoordination(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (entries.length > 1) {
-      host.threadIndex = (host.threadIndex - 1 + entries.length) % entries.length;
-      renderCoordination(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    if (idx < entries.length) {
-      host.threadIndex = idx;
-      renderCoordination(host);
-    }
-    return;
-  }
-  if (key === "r") {
-    host.threadEntries = buildCoordinationThreadEntries("user");
-    clampThreadIndex(host);
-    renderCoordination(host);
-    return;
-  }
-  const entry = entries[host.threadIndex];
+function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistItem): void {
+  const entry = item.thread;
   if (!entry) return;
   if (key === "s") {
+    syncThreadIndex(host, item);
     host.openDashboardOverlay("thread-reply");
     host.threadReplyBuffer = "";
     renderThreadReply(host);
@@ -185,7 +126,7 @@ function handleThreadsSectionKey(host: CoordinationHost, key: string): void {
     const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
     if (!targetSessionId) return;
     markThreadSeen(entry.thread.id, targetSessionId);
-    const dashEntry = findCoordinationTarget(host, targetSessionId);
+    const dashEntry = findNotificationSessionTarget(host, targetSessionId);
     if (dashEntry) {
       void host.activateDashboardEntry(dashEntry, { preserveDashboardSelection: Boolean(dashEntry.team) });
     }
@@ -200,7 +141,8 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
   const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
   if (isTabToggle) {
-    host.coordinationSection = host.coordinationSection === "threads" ? "notifications" : "threads";
+    host.coordinationFilter = host.coordinationFilter === "threads" ? "all" : "threads";
+    host.coordinationIndex = 0;
     renderCoordination(host);
     return;
   }
@@ -218,9 +160,45 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
     host.showHelp();
     return;
   }
-  if (host.coordinationSection === "threads") {
-    handleThreadsSectionKey(host, key);
-  } else {
-    handleNotificationsSectionKey(host, key);
+
+  const items: WorklistItem[] = host.coordinationWorklist ?? [];
+  if (key === "down" || key === "j") {
+    if (items.length > 1) {
+      host.coordinationIndex = (host.coordinationIndex + 1) % items.length;
+      renderCoordination(host);
+    }
+    return;
   }
+  if (key === "up" || key === "k") {
+    if (items.length > 1) {
+      host.coordinationIndex = (host.coordinationIndex - 1 + items.length) % items.length;
+      renderCoordination(host);
+    }
+    return;
+  }
+  if (key >= "1" && key <= "9") {
+    const idx = parseInt(key, 10) - 1;
+    if (idx < items.length) {
+      host.coordinationIndex = idx;
+      renderCoordination(host);
+    }
+    return;
+  }
+  if (key === "R") {
+    markNotificationsRead();
+    refreshNotificationEntries(host);
+    renderCoordination(host);
+    return;
+  }
+  if (key === "C") {
+    clearNotifications();
+    refreshNotificationEntries(host);
+    renderCoordination(host);
+    return;
+  }
+
+  const item = items[host.coordinationIndex];
+  if (!item) return;
+  if (item.kind === "thread") dispatchThreadItem(host, key, item);
+  else dispatchNotificationItem(host, key, item);
 }

@@ -25,7 +25,7 @@ import {
 } from "../alert-display.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
-import { type CoordinationModel } from "../coordination-model.js";
+import { type CoordinationModel, type WorklistItem } from "../coordination-model.js";
 import { type NotificationRowMeta } from "./notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
 import { type ProjectObservability } from "../project-observability.js";
@@ -191,8 +191,10 @@ export class Multiplexer {
   private notificationEntries: NotificationRecord[] = [];
   private notificationRowMeta: NotificationRowMeta[] = [];
   private coordinationModel: CoordinationModel | null = null;
+  private coordinationWorklist: WorklistItem[] = [];
+  private coordinationIndex = 0;
+  private coordinationFilter: "all" | "threads" = "all";
   private notificationIndex = 0;
-  private coordinationSection: "notifications" | "threads" = "notifications";
   private projectObservability: ProjectObservability | null = null;
   private projectIndex = 0;
   private topology: ProjectTopology | null = null;

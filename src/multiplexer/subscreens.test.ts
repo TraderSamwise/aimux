@@ -37,7 +37,8 @@ describe("thread subscreen navigation", () => {
       team: { teamId: "team-parent", parentSessionId: "parent-1", role: "reviewer" },
     };
     const host: any = {
-      coordinationSection: "threads",
+      coordinationWorklist: [{ kind: "thread", key: "t:thread-1", thread: { thread, displayTitle: "Review" } }],
+      coordinationIndex: 0,
       threadEntries: [{ thread, displayTitle: "Review" }],
       threadIndex: 0,
       getDashboardSessions: vi.fn(() => []),
@@ -74,9 +75,8 @@ describe("thread subscreen navigation", () => {
     });
 
     const host: any = {
-      coordinationSection: "threads",
-      threadEntries: buildThreadEntries(),
-      threadIndex: 0,
+      coordinationWorklist: [{ kind: "thread", thread: buildThreadEntries()[0] }],
+      coordinationIndex: 0,
       describeHandoffState: vi.fn(),
       wrapKeyValue: (_key: string, value: string) => [value],
     };

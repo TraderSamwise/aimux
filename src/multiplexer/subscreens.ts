@@ -11,6 +11,7 @@ import {
   requestTaskChanges,
 } from "../orchestration-actions.js";
 import { buildCoordinationThreadEntries, type ThreadEntry } from "../workflow.js";
+import { refreshNotificationEntries } from "./notifications.js";
 import { navigationUrgencyScore } from "../fast-control.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
@@ -61,10 +62,18 @@ export function openRelevantThreadForSession(host: SubscreenHost, sessionId: str
   }
   host.threadEntries = entries;
   host.threadIndex = idx;
-  host.coordinationSection = "threads";
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   const entry = host.threadEntries[host.threadIndex];
+  // Build the unified worklist (no frame write) so we can focus its row for this thread.
+  host.coordinationFilter = "all";
+  refreshNotificationEntries(host);
+  if (Array.isArray(host.coordinationWorklist) && entry) {
+    const widx = host.coordinationWorklist.findIndex(
+      (item: any) => item.kind === "thread" && item.thread?.thread.id === entry.thread.id,
+    );
+    if (widx >= 0) host.coordinationIndex = widx;
+  }
   if (entry && (entry.thread.waitingOn ?? []).includes(sessionId)) {
     host.openDashboardOverlay("thread-reply");
     host.threadReplyBuffer = "";
