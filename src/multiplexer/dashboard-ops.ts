@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 
-import { composeTwoPane, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "../tui/render/text.js";
+import { truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "../tui/render/text.js";
 import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
@@ -597,41 +597,6 @@ export function renderSessionDetails(host: DashboardOpsHost, session: any, width
   }
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
-}
-
-export function composeSplitScreen(
-  host: DashboardOpsHost,
-  leftLines: string[],
-  rightLines: string[],
-  cols: number,
-  viewportHeight: number,
-  focusLine: number,
-  twoPane: boolean,
-): string[] {
-  const content = [...leftLines];
-  let scrollOffset = 0;
-  const maxScroll = Math.max(0, content.length - viewportHeight);
-  if (focusLine >= 0) {
-    if (focusLine < scrollOffset + 1) {
-      scrollOffset = Math.max(0, focusLine - 1);
-    } else if (focusLine >= scrollOffset + viewportHeight - 1) {
-      scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
-    }
-  }
-  const visibleLeft = content.slice(scrollOffset, scrollOffset + viewportHeight);
-  const canScrollUp = scrollOffset > 0;
-  const canScrollDown = scrollOffset < maxScroll;
-  if (canScrollUp && visibleLeft.length > 0) visibleLeft[0] = host.centerInWidth("\x1b[2m▲ more ▲\x1b[0m", cols);
-  if (canScrollDown && visibleLeft.length > 0) {
-    visibleLeft[visibleLeft.length - 1] = host.centerInWidth("\x1b[2m▼ more ▼\x1b[0m", cols);
-  }
-  while (visibleLeft.length < viewportHeight) visibleLeft.push("");
-  if (!twoPane) return visibleLeft;
-  return composeTwoPaneLines(visibleLeft, rightLines, cols);
-}
-
-export function composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
-  return composeTwoPane(left, right, cols);
 }
 
 export function wrapKeyValueForHost(key: string, value: string, width: number): string[] {

@@ -3,6 +3,7 @@ import type { GraveyardViewRow } from "../../multiplexer/graveyard-view-model.js
 import { formatRelativeRecency } from "../../recency.js";
 import { AIMUX_VERSION } from "../../version.js";
 import { renderOverlayBox } from "../render/box.js";
+import { composeScreenFrame } from "../render/screen-frame.js";
 import { twoPaneLeftWidth } from "../render/text.js";
 import { card, chip, footerHints, keycapHint, statusDot, style, type ChipTone, type Tone } from "../render/theme.js";
 
@@ -15,10 +16,6 @@ function screenHeader(ctx: any, cols: number, title: string): string[] {
   const heading = `${devBadge}${style("aimux", "strong")} ${versionTag}— ${title}  ${style("● tmux", "done")}`;
   const divider = dev ? `\x1b[33m${"─".repeat(Math.max(0, cols))}\x1b[0m` : "─".repeat(Math.max(0, cols));
   return ["", ctx.centerInWidth(heading, cols), divider, ""];
-}
-
-function rule(ctx: any, cols: number, max: number): string {
-  return ctx.centerInWidth(style("─".repeat(Math.min(cols - 4, max)), "muted"), cols);
 }
 
 const marker = (selected: boolean): string => (selected ? `${style("▸", "accent")} ` : "  ");
@@ -100,13 +97,9 @@ export function renderCoordinationScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "coordination");
   const filterThreads = ctx.coordinationFilter === "threads";
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const items = ctx.coordinationWorklist ?? [];
   const selectedItem = items[ctx.coordinationIndex];
-
-  // Footer reflects the selected row's available actions.
-  const footer = ctx.centerInWidth(footerHints(coordinationFooterHints(selectedItem, filterThreads)), cols);
 
   const listLines: string[] = [];
   let focusLine = 1;
@@ -142,15 +135,18 @@ export function renderCoordinationScreen(ctx: any): void {
     }
   }
 
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderCoordinationDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [footerHints(coordinationFooterHints(selectedItem, filterThreads))],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderCoordinationDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderCoordinationDetails(ctx: any, width: number, height: number): string[] {
@@ -242,11 +238,6 @@ const STORY_KIND_DOT: Record<string, Tone> = { task: "work", review: "info", not
 export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "project");
-  const footer = ctx.centerInWidth(
-    footerHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const obs = ctx.projectObservability ?? { summary: null, progress: null, story: [] };
   const listLines: string[] = [];
@@ -290,15 +281,20 @@ export function renderProjectScreen(ctx: any): void {
     }
   }
 
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderProjectDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [
+        footerHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
+      ],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderProjectDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderProjectDetails(ctx: any, width: number, height: number): string[] {
@@ -334,13 +330,6 @@ function topologyDot(health: string): string {
 export function renderTopologyScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "topology");
-  const footer = ctx.centerInWidth(
-    footerHints(
-      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const topology = ctx.topology ?? { projectName: "project", health: "idle", counts: null, rows: [] };
   const listLines: string[] = [];
@@ -375,15 +364,22 @@ export function renderTopologyScreen(ctx: any): void {
     }
   }
 
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderTopologyDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [
+        footerHints(
+          "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
+        ),
+      ],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderTopologyDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderTopologyDetails(ctx: any, width: number, height: number): string[] {
@@ -531,13 +527,6 @@ function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock
 export function renderGraveyardScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "graveyard");
-  const footer = ctx.centerInWidth(
-    footerHints(
-      "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const cardWidth = twoPane ? twoPaneLeftWidth(cols) : Math.max(40, cols - 2);
   const listLines: string[] = [];
@@ -583,15 +572,20 @@ export function renderGraveyardScreen(ctx: any): void {
     }
   }
   const focusLine = lineByItemIndex.get(ctx.graveyardIndex) ?? 1;
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderGraveyardDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+  let frame = composeScreenFrame({
     cols,
-    viewportHeight,
+    rows,
+    header,
+    content: listLines,
+    footerLines: [
+      footerHints(
+        "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+      ),
+    ],
     focusLine,
     twoPane,
-  );
-  let frame = "\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 52), footer].join("\r\n");
+    rightPanel: (width, height) => renderGraveyardDetails(ctx, width, height),
+  }).frame;
   if (ctx.graveyardWorktreeDeleteConfirm) {
     frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx, cols, rows);
   }
@@ -683,13 +677,6 @@ const LIBRARY_KIND_TONE: Record<string, Tone> = { doc: "info", plan: "work" };
 export function renderLibraryScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "library");
-  const footer = ctx.centerInWidth(
-    footerHints(
-      "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const entries = ctx.libraryEntries ?? [];
   const listLines: string[] = [];
@@ -711,15 +698,22 @@ export function renderLibraryScreen(ctx: any): void {
     }
   }
   const focusLine = entries.length === 0 ? 1 : ctx.libraryIndex + 2;
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderLibraryDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [
+        footerHints(
+          "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+        ),
+      ],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderLibraryDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderLibraryDetails(ctx: any, width: number, height: number): string[] {
