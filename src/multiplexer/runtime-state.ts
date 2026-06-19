@@ -160,6 +160,11 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
       if (now >= host.dashboardNextBackgroundRefreshAt) {
         host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
         void host.refreshDashboardModelFromService().then((refreshed: boolean) => {
+          // On the Coordination screen, refine the worklist from the service too (fire-and-forget
+          // so a slow service never stalls the heartbeat); it re-renders when it settles.
+          if (host.isDashboardScreen?.("coordination") && typeof host.refreshCoordinationFromService === "function") {
+            void host.refreshCoordinationFromService().then(() => host.renderCurrentDashboardView());
+          }
           if (refreshed || dashboardNeedsRender) {
             host.renderCurrentDashboardView();
           }
