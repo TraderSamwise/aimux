@@ -269,12 +269,19 @@ function notificationBucket(item: CoordinationItem): WorklistBucket {
 }
 
 // Bucket dominates the sort so each group renders as one contiguous run (no repeated headers).
+const BUCKET_STRIDE = 1_000_000;
 const BUCKET_RANK: Record<WorklistBucket, number> = { awake: 4, asleep: 3, handled: 2, unreachable: 1 };
+
+// Bucket-dominant urgency: rank is the high-order term; secondary breaks ties within a bucket.
+// Secondary is clamped below the stride so a bucket can never bleed into the next and fragment
+// the contiguous group rendering, no matter how large the unread/pending/attention totals get.
+function bucketUrgency(bucket: WorklistBucket, secondary: number): number {
+  return BUCKET_RANK[bucket] * BUCKET_STRIDE + Math.max(0, Math.min(BUCKET_STRIDE - 1, secondary));
+}
 
 // Unified urgency so notifications and threads interleave on one scale, bucket-first.
 function notificationUrgency(item: CoordinationItem, bucket: WorklistBucket): number {
-  const secondary = item.attentionScore * 100 + item.unreadCount * 10 + item.pendingDeliveries * 5;
-  return BUCKET_RANK[bucket] * 1_000_000 + secondary;
+  return bucketUrgency(bucket, item.attentionScore * 100 + item.unreadCount * 10 + item.pendingDeliveries * 5);
 }
 
 /**
@@ -321,7 +328,7 @@ export function buildCoordinationWorklist(
       type: threadType(entry.thread.kind),
       bucket,
       title: entry.displayTitle,
-      urgency: BUCKET_RANK[bucket] * 1_000_000 + (onYou ? 300 : pending ? 200 : 50),
+      urgency: bucketUrgency(bucket, onYou ? 300 : pending ? 200 : 50),
       reachability: "none",
       actionable,
       stale: false,
