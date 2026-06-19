@@ -67,7 +67,8 @@ import {
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
-import { buildWorkflowEntries } from "./workflow.js";
+import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow.js";
+import { buildCoordinationView } from "./coordination-model.js";
 import { markLastUsed } from "./last-used.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
@@ -1309,6 +1310,25 @@ export class MetadataServer {
         pendingInteractions: this.interactions.listPending(),
         ...this.options.desktop.getState(),
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/coordination-worklist") {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const participant = url.searchParams.get("participant")?.trim() || "user";
+      const state = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[]; services?: any[] };
+      const threads = buildCoordinationThreadEntries(participant);
+      const { model, worklist } = buildCoordinationView({
+        sessions: state.sessions ?? [],
+        teammates: state.teammates ?? [],
+        services: state.services ?? [],
+        notifications: listNotifications(),
+        threads,
+        currentParticipant: participant,
+      });
+      send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), worklist, model, threads });
       return;
     }
     if (req.method === "POST" && url.pathname === "/statusline/refresh") {

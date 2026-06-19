@@ -573,6 +573,53 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("serves a reconciled coordination worklist from desktop state + notifications", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            {
+              id: "live-1",
+              command: "claude",
+              status: "running",
+              semantic: { user: { label: "needs_input" }, presentation: { attentionScore: 4 } },
+            },
+          ],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    upsertNotification({ title: "Needs input", body: "live agent needs input", sessionId: "live-1", kind: "needs_input" });
+    upsertNotification({ title: "Gone", body: "vanished agent needs input", sessionId: "ghost-1", kind: "needs_input" });
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/coordination-worklist`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      worklist: { items: Array<{ key: string; sessionId?: string; bucket: string; reachability: string }> };
+      model: { items: Array<{ key: string }> };
+      threads: unknown[];
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    const live = body.worklist.items.find((item) => item.sessionId === "live-1");
+    const ghost = body.worklist.items.find((item) => item.sessionId === "ghost-1");
+    expect(live).toMatchObject({ bucket: "awake", reachability: "live" });
+    expect(ghost).toMatchObject({ bucket: "unreachable", reachability: "missing" });
+    // Awake (actionable) sorts ahead of the unreachable tail.
+    const keys = body.worklist.items.map((item) => item.key);
+    expect(keys.indexOf("n:live-1")).toBeLessThan(keys.indexOf("n:ghost-1"));
+    expect(Array.isArray(body.threads)).toBe(true);
+  });
+
   it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
     server?.stop();
     seedAgentTopology([
