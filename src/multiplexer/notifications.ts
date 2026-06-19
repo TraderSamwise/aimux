@@ -1,5 +1,6 @@
 import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
-import { buildCoordinationModel, type CoordinationReachability } from "../coordination-model.js";
+import { buildCoordinationModel, buildCoordinationWorklist, type CoordinationReachability, type WorklistItem } from "../coordination-model.js";
+import { buildCoordinationThreadEntries } from "../workflow.js";
 import { parseKeys } from "../key-parser.js";
 
 type NotificationHost = any;
@@ -85,16 +86,19 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
 }
 
 export function refreshNotificationEntries(host: NotificationHost): void {
-  // Reconcile the notification log against live agent state, then flatten the
-  // urgency-sorted, agent-keyed model back to a 1:1 notification list so existing
-  // navigation/actions keep working; the parallel meta carries the reconciliation.
-  const model = buildCoordinationModel({
+  // Single coordination refresh: rebuild genuine threads, reconcile notifications against live
+  // agent state, and merge both into the unified worklist that drives the screen. Called from
+  // every notification/thread mutation site (actions, cleanup, hydrate) so the screen stays
+  // coherent. The legacy notificationEntries/meta are kept for the open path + reply overlay.
+  host.threadEntries = buildCoordinationThreadEntries("user");
+  const modelInput = {
     sessions: host.getDashboardSessions?.() ?? [],
     teammates: host.dashboardTeammatesCache ?? [],
     services: host.getDashboardServices?.() ?? [],
     notifications: listNotifications(),
-    threads: host.threadEntries ?? [],
-  });
+    threads: host.threadEntries,
+  };
+  const model = buildCoordinationModel(modelInput);
   host.coordinationModel = model;
   host.notificationEntries = model.items.flatMap((item) => item.notifications);
   host.notificationRowMeta = model.items.flatMap((item) =>
@@ -106,6 +110,12 @@ export function refreshNotificationEntries(host: NotificationHost): void {
       }),
     ),
   );
+  const worklist = buildCoordinationWorklist(modelInput);
+  host.coordinationWorklist =
+    host.coordinationFilter === "threads" ? worklist.items.filter((item) => item.kind === "thread") : worklist.items;
+  if (host.coordinationIndex == null || host.coordinationIndex >= host.coordinationWorklist.length) {
+    host.coordinationIndex = Math.max(0, host.coordinationWorklist.length - 1);
+  }
   if (host.notificationIndex >= host.notificationEntries.length) {
     host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
   }
@@ -123,6 +133,15 @@ export function ensureNotificationState(host: NotificationHost): void {
   }
   if (!Array.isArray(host.notificationRowMeta)) {
     host.notificationRowMeta = [];
+  }
+  if (!Array.isArray(host.coordinationWorklist)) {
+    host.coordinationWorklist = [];
+  }
+  if (host.coordinationFilter !== "threads") {
+    host.coordinationFilter = "all";
+  }
+  if (typeof host.coordinationIndex !== "number" || Number.isNaN(host.coordinationIndex)) {
+    host.coordinationIndex = host.coordinationWorklist.length > 0 ? 0 : -1;
   }
   if (typeof host.notificationIndex !== "number" || Number.isNaN(host.notificationIndex)) {
     host.notificationIndex = host.notificationEntries.length > 0 ? 0 : -1;
@@ -169,43 +188,49 @@ export function notificationTargetState(
   return "missing";
 }
 
-export async function openSelectedNotification(host: NotificationHost): Promise<void> {
-  const entry = host.notificationEntries[host.notificationIndex];
-  if (!entry) return;
-  if (!entry.sessionId) {
-    if (entry.unread) {
-      markNotificationsRead({ id: entry.id });
+// Mark an agent's whole notification rollup read (by sessionId), or each sessionless record.
+function markCoordinationItemRead(item: WorklistItem): void {
+  const note = item.notification;
+  if (!note) return;
+  if (item.sessionId) markNotificationsRead({ sessionId: item.sessionId });
+  else for (const record of note.notifications) markNotificationsRead({ id: record.id });
+}
+
+export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
+  const note = item.notification;
+  if (!note) return;
+  const unread = note.unreadCount > 0;
+  const settle = () => {
+    if (unread) {
+      markCoordinationItemRead(item);
       refreshNotificationEntries(host);
     }
+  };
+  if (!item.sessionId) {
+    settle();
     host.renderCoordination();
     return;
   }
-  const targetState = notificationTargetState(host, entry.sessionId);
-  if (targetState === "missing") {
+  if (notificationTargetState(host, item.sessionId) === "missing") {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
     host.renderCoordination();
     return;
   }
-  const session = findNotificationSessionTarget(host, entry.sessionId);
+  const session = findNotificationSessionTarget(host, item.sessionId);
   if (session) {
     try {
-      await host.activateDashboardEntry(session, {
-        preserveDashboardSelection: Boolean(session.team),
-      });
+      await host.activateDashboardEntry(session, { preserveDashboardSelection: Boolean(session.team) });
     } catch {
       host.footerFlash = "Failed to open notification target";
       host.footerFlashTicks = 3;
       host.renderCoordination();
       return;
     }
-    if (entry.unread) {
-      markNotificationsRead({ id: entry.id });
-      refreshNotificationEntries(host);
-    }
+    settle();
     return;
   }
-  const service = findNotificationServiceTarget(host, entry.sessionId);
+  const service = findNotificationServiceTarget(host, item.sessionId);
   if (!service) {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
@@ -220,8 +245,5 @@ export async function openSelectedNotification(host: NotificationHost): Promise<
     host.renderCoordination();
     return;
   }
-  if (entry.unread) {
-    markNotificationsRead({ id: entry.id });
-    refreshNotificationEntries(host);
-  }
+  settle();
 }

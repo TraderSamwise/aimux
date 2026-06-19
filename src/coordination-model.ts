@@ -228,6 +228,8 @@ export interface WorklistItem {
   /** Unique across the merged stream ("n:<key>" for notifications, "t:<threadId>" for threads). */
   key: string;
   kind: "notification" | "thread";
+  /** Target session for notification rows (undefined for threads / sessionless notes). */
+  sessionId?: string;
   type: WorklistType;
   bucket: WorklistBucket;
   title: string;
@@ -287,6 +289,7 @@ export function buildCoordinationWorklist(
     items.push({
       key: `n:${item.key}`,
       kind: "notification",
+      sessionId: item.sessionId,
       type: item.sessionId ? "msg" : "note",
       bucket: notificationBucket(item),
       title: item.title,
