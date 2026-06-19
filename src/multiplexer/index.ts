@@ -227,6 +227,8 @@ export class Multiplexer {
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private graveyardCleanupInterval: ReturnType<typeof setInterval> | null = null;
   private graveyardCleanupRunning = false;
+  private inboxCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private inboxCleanupRunning = false;
   private dashboardViewportPollInterval: ReturnType<typeof setInterval> | null = null;
   private dashboardLastViewportKey: string | null = null;
   private dashboardLastViewportSize: { cols: number; rows: number } | null = null;
