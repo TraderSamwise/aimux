@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCoordinationModel,
+  buildCoordinationWorklist,
   isNotificationStale,
   type CoordinationSessionLike,
   type BuildCoordinationModelInput,
@@ -31,9 +32,27 @@ function session(id: string, label?: string, attentionScore = 0, status = "runni
   };
 }
 
-function threadEntry(over: { participants?: string[]; owner?: string; waitingOn?: string[]; urgency?: number; pendingDeliveries?: number }): WorkflowEntry {
+function threadEntry(over: {
+  id?: string;
+  kind?: string;
+  displayTitle?: string;
+  participants?: string[];
+  owner?: string;
+  waitingOn?: string[];
+  updatedAt?: string;
+  urgency?: number;
+  pendingDeliveries?: number;
+}): WorkflowEntry {
   return {
-    thread: { id: "t", participants: over.participants ?? [], owner: over.owner, waitingOn: over.waitingOn },
+    thread: {
+      id: over.id ?? "t",
+      kind: over.kind ?? "task",
+      participants: over.participants ?? [],
+      owner: over.owner,
+      waitingOn: over.waitingOn,
+      updatedAt: over.updatedAt ?? "2026-01-01T00:00:00.000Z",
+    },
+    displayTitle: over.displayTitle ?? "thread",
     urgency: over.urgency ?? 0,
     pendingDeliveries: over.pendingDeliveries ?? 0,
   } as unknown as WorkflowEntry;
@@ -154,5 +173,55 @@ describe("coordination model", () => {
     });
     expect(model.items[0]!.thread).toBe(entry);
     expect(model.items[0]!.pendingDeliveries).toBe(1);
+  });
+});
+
+describe("coordination worklist", () => {
+  function worklist(input: Partial<BuildCoordinationModelInput>) {
+    return buildCoordinationWorklist({ sessions: [], notifications: [], ...input });
+  }
+
+  it("interleaves notifications and threads on one urgency scale", () => {
+    const wl = worklist({
+      sessions: [session("live", "needs_input", 4), session("off", "offline", 0, "offline")],
+      notifications: [
+        notif({ id: "1", sessionId: "live", kind: "needs_input" }),
+        notif({ id: "2", sessionId: "off", kind: "needs_input" }),
+        notif({ id: "3", sessionId: "ghost", kind: "needs_input" }),
+      ],
+      threads: [threadEntry({ id: "task1", kind: "task", displayTitle: "ship release", waitingOn: ["user"] })],
+    });
+    expect(wl.items.map((i) => i.key)).toEqual(["n:live", "t:task1", "n:off", "n:ghost"]);
+  });
+
+  it("tags row types and buckets", () => {
+    const wl = worklist({
+      sessions: [session("live", "needs_input", 4)],
+      notifications: [
+        notif({ id: "1", sessionId: "live", kind: "needs_input" }),
+        notif({ id: "2", dedupeKey: "proj", kind: "info" }),
+        notif({ id: "3", sessionId: "ghost", kind: "needs_input" }),
+      ],
+      threads: [threadEntry({ id: "h1", kind: "handoff", waitingOn: ["user"] })],
+    });
+    const byKey = new Map(wl.items.map((i) => [i.key, i]));
+    expect(byKey.get("n:live")!.type).toBe("msg");
+    expect(byKey.get("n:proj")!.type).toBe("note");
+    expect(byKey.get("t:h1")!.type).toBe("handoff");
+    expect(byKey.get("n:live")!.bucket).toBe("needs-you");
+    expect(byKey.get("n:ghost")!.bucket).toBe("unreachable");
+    expect(wl.needsYou.every((i) => i.bucket === "needs-you")).toBe(true);
+    expect(wl.tail.some((i) => i.key === "n:ghost")).toBe(true);
+  });
+
+  it("lists a genuine thread exactly once even when its agent also has a notification", () => {
+    const wl = worklist({
+      sessions: [session("live", "needs_input", 4)],
+      notifications: [notif({ id: "1", sessionId: "live", kind: "needs_input" })],
+      threads: [threadEntry({ id: "task1", kind: "task", participants: ["aimux", "live"], waitingOn: ["user"] })],
+    });
+    expect(wl.items.filter((i) => i.kind === "thread")).toHaveLength(1);
+    expect(wl.items.filter((i) => i.key === "t:task1")).toHaveLength(1);
+    expect(wl.items.filter((i) => i.key === "n:live")).toHaveLength(1);
   });
 });
