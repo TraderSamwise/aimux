@@ -212,12 +212,17 @@ export async function openCoordinationNotification(host: NotificationHost, item:
     host.renderCoordination();
     return;
   }
-  if (notificationTargetState(host, item.sessionId) === "missing") {
+  const targetState = notificationTargetState(host, item.sessionId);
+  if (targetState === "missing") {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
     host.renderCoordination();
     return;
   }
+  // Waking an offline target resumes its tmux session, which renders the dashboard as it
+  // restores. Switch to the dashboard screen first so that render is coherent (instead of
+  // painting the dashboard while the screen-state still says "coordination").
+  if (targetState === "offline") host.setDashboardScreen("dashboard");
   const session = findNotificationSessionTarget(host, item.sessionId);
   if (session) {
     try {

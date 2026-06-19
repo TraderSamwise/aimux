@@ -1,18 +1,20 @@
+import { isDevelopmentRuntime } from "../../connection-targets.js";
 import type { GraveyardViewRow } from "../../multiplexer/graveyard-view-model.js";
 import { formatRelativeRecency } from "../../recency.js";
+import { AIMUX_VERSION } from "../../version.js";
 import { renderOverlayBox } from "../render/box.js";
 import { twoPaneLeftWidth } from "../render/text.js";
 import { card, chip, footerHints, keycapHint, statusDot, style, type ChipTone, type Tone } from "../render/theme.js";
 
-// Shared subscreen chrome built from the design-language tokens.
-function screenHeader(ctx: any, cols: number, title: string, suffix = ""): string[] {
-  const heading = `${style("aimux", "strong")} ${style(`— ${title}`, "muted")}${suffix}`;
-  return [
-    "",
-    ctx.centerInWidth(heading, cols),
-    ctx.centerInWidth(style("─".repeat(Math.min(50, cols - 4)), "muted"), cols),
-    "",
-  ];
+// Shared subscreen chrome — identical to the dashboard header (version tag, runtime dot, dev
+// badge, full-width rule) so every screen's top section is uniform; only the descriptor changes.
+function screenHeader(ctx: any, cols: number, title: string): string[] {
+  const dev = isDevelopmentRuntime();
+  const devBadge = dev ? "\x1b[1;30;43m DEV \x1b[0m " : "";
+  const versionTag = AIMUX_VERSION ? `${style(`v${AIMUX_VERSION}`, "muted")} ` : "";
+  const heading = `${devBadge}${style("aimux", "strong")} ${versionTag}— ${title}  ${style("● tmux", "done")}`;
+  const divider = dev ? `\x1b[33m${"─".repeat(Math.max(0, cols))}\x1b[0m` : "─".repeat(Math.max(0, cols));
+  return ["", ctx.centerInWidth(heading, cols), divider, ""];
 }
 
 function rule(ctx: any, cols: number, max: number): string {
@@ -32,18 +34,36 @@ const WORKLIST_TYPE_TONE: Record<string, ChipTone> = {
   conversation: "muted",
 };
 const WORKLIST_BUCKET_LABEL: Record<string, string> = {
-  "needs-you": "Needs you",
+  awake: "Awake · act now",
+  asleep: "Asleep · wake to act",
   handled: "Handled",
   unreachable: "Unreachable",
 };
+const WORKLIST_BUCKET_TONE: Record<string, Tone> = {
+  awake: "done",
+  asleep: "sleep",
+  handled: "muted",
+  unreachable: "muted",
+};
+
+// Reachability-encoding dot: ● awake (green) · ◐ asleep (slate) · ○ gone (red); threads/notes
+// fall back to the actionable/idle dot since they have no agent process to reach.
+function reachabilityDot(item: any): string {
+  if (item.kind === "notification") {
+    if (item.reachability === "live") return style("●", "done");
+    if (item.reachability === "offline") return style("◐", "sleep");
+    if (item.reachability === "missing") return style("○", "danger");
+  }
+  return item.actionable ? statusDot("needs") : statusDot("offline");
+}
 
 // Trailing reachability/state tags for a worklist row (reuse the inbox + thread vocabularies).
 function worklistTags(item: any): string {
   const parts: string[] = [];
   if (item.kind === "notification") {
     if (item.reachability === "live") parts.push(style("live", "done"));
-    else if (item.reachability === "offline") parts.push(style("offline", "attn"));
-    else if (item.reachability === "missing") parts.push(style("missing", "danger"));
+    else if (item.reachability === "offline") parts.push(style("asleep", "sleep"));
+    else if (item.reachability === "missing") parts.push(style("gone", "danger"));
     if (item.stale) parts.push(style("stale", "muted"));
   } else if (item.thread) {
     const thread = item.thread.thread;
@@ -54,22 +74,26 @@ function worklistTags(item: any): string {
   return parts.length ? ` ${style("·", "muted")} ${parts.join(` ${style("·", "muted")} `)}` : "";
 }
 
-// Titled bucket rule (dashboard-style): "Needs you ──── N", accent for the actionable bucket.
+// Titled bucket rule (dashboard-style): "Awake · act now ──── N", tinted by bucket urgency.
 function bucketRule(bucket: string, count: number): string {
   const label = WORKLIST_BUCKET_LABEL[bucket] ?? bucket;
-  const tone: Tone = bucket === "needs-you" ? "accent" : "muted";
-  const dashes = Math.max(2, 44 - label.length - String(count).length - 4);
+  const tone: Tone = WORKLIST_BUCKET_TONE[bucket] ?? "muted";
+  const dashes = Math.max(2, 46 - label.length - String(count).length - 4);
   return `  ${style(label, tone)} ${style("─".repeat(dashes), "muted")} ${style(String(count), tone)}`;
 }
 
-// Footer hints contextual to the selected row's kind.
+// Footer hints contextual to the selected row's kind — and, for asleep agents, honest that
+// Enter wakes (a slow resume) rather than opens instantly.
 function coordinationFooterHints(item: any, filterThreads: boolean): string {
   const tail = "[d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit";
   const filterHint = `[Tab] ${filterThreads ? "all" : "threads"}`;
   if (item?.kind === "thread") {
     return `[↑↓] select  ${filterHint}  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P/J/E] review  ${tail}`;
   }
-  return `[↑↓] select  ${filterHint}  [Enter] open  [r] read  [c] clear  [R] read all  [C] clear all  ${tail}`;
+  const enterVerb =
+    item?.reachability === "offline" ? "[Enter] wake" : item?.reachability === "missing" ? "" : "[Enter] open";
+  const enter = enterVerb ? `  ${enterVerb}` : "";
+  return `[↑↓] select  ${filterHint}${enter}  [r] read  [c] clear  [R] read all  [C] clear all  ${tail}`;
 }
 
 export function renderCoordinationScreen(ctx: any): void {
@@ -87,7 +111,7 @@ export function renderCoordinationScreen(ctx: any): void {
   const listLines: string[] = [];
   let focusLine = 1;
 
-  const needYou = items.filter((item: any) => item.bucket === "needs-you").length;
+  const needYou = items.filter((item: any) => item.bucket === "awake" || item.bucket === "asleep").length;
   const bucketCounts: Record<string, number> = {};
   for (const item of items) bucketCounts[item.bucket] = (bucketCounts[item.bucket] ?? 0) + 1;
 
@@ -95,18 +119,20 @@ export function renderCoordinationScreen(ctx: any): void {
     `  ${style("Coordination", "strong")} ${style(`(${needYou} need you · ${items.length})`, "muted")}${filterThreads ? ` ${style("· threads", "muted")}` : ""}`,
   );
   if (items.length === 0) {
+    listLines.push("");
     listLines.push(`    ${style(filterThreads ? "No threads." : "Nothing needs you.", "muted")}`);
   } else {
     let lastBucket = "";
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
       if (item.bucket !== lastBucket) {
+        listLines.push(""); // breathing room between groups (and below the header)
         listLines.push(bucketRule(item.bucket, bucketCounts[item.bucket] ?? 0));
         lastBucket = item.bucket;
       }
       const selected = i === ctx.coordinationIndex;
       if (selected) focusLine = listLines.length + 1;
-      const dot = item.actionable ? statusDot("needs") : statusDot("offline");
+      const dot = reachabilityDot(item);
       const typeChip = chip(item.type, WORKLIST_TYPE_TONE[item.type] ?? "muted");
       const titleTone = item.actionable ? "strong" : "muted";
       const when = item.when ? ` ${style(`· ${formatRelativeRecency(item.when)}`, "muted")}` : "";
