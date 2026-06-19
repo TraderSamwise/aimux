@@ -41,32 +41,45 @@ export function renderCoordinationScreen(ctx: any): void {
   let focusLine = 1;
 
   const notifs = ctx.notificationEntries ?? [];
+  const rowMeta = ctx.notificationRowMeta ?? [];
   const inboxActive = section === "notifications";
-  listLines.push(`  ${style("Inbox", inboxActive ? "strong" : "muted")} ${style(`(${notifs.length})`, "muted")}`);
+  const actionableCount =
+    rowMeta.length === notifs.length ? rowMeta.filter((m: any) => m?.actionable).length : notifs.length;
+  const inboxSummary = actionableCount === notifs.length ? `(${notifs.length})` : `(${actionableCount} of ${notifs.length})`;
+  listLines.push(`  ${style("Inbox", inboxActive ? "strong" : "muted")} ${style(inboxSummary, "muted")}`);
   if (notifs.length === 0) {
     listLines.push(`    ${style("No inbox items.", "muted")}`);
   } else {
+    let dividerEmitted = false;
     for (let i = 0; i < notifs.length; i++) {
       const entry = notifs[i]!;
+      const meta = rowMeta[i] as { reachability?: string; stale?: boolean; actionable?: boolean } | undefined;
+      // Model orders actionable items first; mark the boundary to the handled/unreachable tail.
+      if (meta && meta.actionable === false && !dividerEmitted) {
+        listLines.push(`  ${style("─ handled · unreachable ─", "muted")}`);
+        dividerEmitted = true;
+      }
       const selected = inboxActive && i === ctx.notificationIndex;
       if (selected) focusLine = listLines.length + 1;
-      const dot = entry.unread ? statusDot("needs") : statusDot("offline");
+      const actionable = meta ? meta.actionable !== false : entry.unread;
+      const dot = entry.unread && actionable ? statusDot("needs") : statusDot("offline");
       const target = entry.sessionId ? ctx.notificationTargetLabel(entry.sessionId) : null;
-      const targetState = entry.sessionId ? ctx.notificationTargetState(entry.sessionId) : "none";
-      const targetStateLabel =
-        targetState === "live"
+      const reach = meta?.reachability ?? (entry.sessionId ? ctx.notificationTargetState(entry.sessionId) : "none");
+      const reachLabel =
+        reach === "live"
           ? style("live", "done")
-          : targetState === "offline"
+          : reach === "offline"
             ? style("offline", "attn")
-            : targetState === "missing"
+            : reach === "missing"
               ? style("missing", "danger")
               : "";
+      const staleLabel = meta?.stale ? ` ${style("·", "muted")} ${style("stale", "muted")}` : "";
       const targetHint = target ? ` ${style(`· ${ctx.truncatePlain(target, 24)}`, "muted")}` : "";
       const kind = entry.kind ? ` ${style(`(${entry.kind})`, "muted")}` : "";
       const when = ` ${style(`· ${formatRelativeRecency(entry.createdAt)}`, "muted")}`;
-      const titleTone = entry.unread ? "strong" : "muted";
+      const titleTone = entry.unread && actionable ? "strong" : "muted";
       listLines.push(
-        `${marker(selected)}${itemNumber(i)} ${dot} ${style(ctx.truncatePlain(entry.title, 40), titleTone)}${kind}${targetStateLabel ? ` ${style("·", "muted")} ${targetStateLabel}` : ""}${targetHint}${when}${trailingMark(selected)}`,
+        `${marker(selected)}${itemNumber(i)} ${dot} ${style(ctx.truncatePlain(entry.title, 40), titleTone)}${kind}${reachLabel ? ` ${style("·", "muted")} ${reachLabel}` : ""}${staleLabel}${targetHint}${when}${trailingMark(selected)}`,
       );
     }
   }
