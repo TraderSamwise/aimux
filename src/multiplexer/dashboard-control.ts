@@ -1,6 +1,7 @@
 import { loadConfig } from "../config.js";
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
@@ -20,6 +21,7 @@ import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
   buildDashboardErrorOverlayOutput,
+  buildDashboardRuntimeGuardOverlayOutput,
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
   buildNotificationPanelOverlayOutput,
@@ -35,6 +37,7 @@ import { keycap, style } from "../tui/render/theme.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
 import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
+import { probeRuntimeGuard, runtimeGuardEquals, runtimeGuardKeyDisposition } from "./runtime-guard.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = {
@@ -132,6 +135,57 @@ export function setDashboardScreen(host: DashboardControlHost, screen: Dashboard
   host.writeDashboardClientStatuslineFile();
   host.persistDashboardUiState();
   host.tmuxRuntimeManager.refreshStatus();
+}
+
+// Intercept keys while the dashboard is stale/disconnected: reload on R, let safe nav keys
+// through, swallow everything that could mutate. Returns true when the key was consumed.
+export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer): boolean {
+  if (!host.runtimeGuardState || host.runtimeGuardState.kind === "ok") return false;
+  const events = parseKeys(data);
+  if (events.length === 0) return true;
+  const key = events[0].name || events[0].char;
+  const disposition = runtimeGuardKeyDisposition(key);
+  if (disposition === "reload") {
+    host.reloadDashboardFromGuard();
+    return true;
+  }
+  if (disposition === "passthrough") return false;
+  host.footerFlash = "Stale dashboard — press R to reload";
+  host.footerFlashTicks = 3;
+  host.renderCurrentDashboardView();
+  return true;
+}
+
+export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<void> {
+  if (host.mode !== "dashboard") return;
+  if (host.runtimeGuardProbing) return;
+  host.runtimeGuardProbing = true;
+  try {
+    const next = await probeRuntimeGuard(host.projectRoot ?? process.cwd());
+    if (!runtimeGuardEquals(host.runtimeGuardState ?? { kind: "ok" }, next)) {
+      host.runtimeGuardState = next;
+      host.renderCurrentDashboardView();
+    }
+  } finally {
+    host.runtimeGuardProbing = false;
+  }
+}
+
+// Recreate the dashboard window with the freshly-installed binary: a detached `dashboard-reload`
+// rebuilds this tmux window, which replaces (kills) the current stale process. PATH-resolved so
+// it picks up the new install, not this process's old entrypoint.
+export function reloadDashboardFromGuard(host: DashboardControlHost): void {
+  host.footerFlash = "Reloading dashboard…";
+  host.footerFlashTicks = 5;
+  host.renderCurrentDashboardView();
+  try {
+    const child = spawn("aimux", ["dashboard-reload", "--open"], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+    host.footerFlash = "Reload failed — run: aimux dashboard-reload --open";
+    host.footerFlashTicks = 6;
+    host.renderCurrentDashboardView();
+  }
 }
 
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {
@@ -258,7 +312,9 @@ export function buildActiveDashboardOverlayOutput(
   if (host.dashboardOverlayState.kind === "orchestration-route-picker") {
     return buildOrchestrationRoutePickerOverlayOutput(host, cols, rows);
   }
-  return null;
+  // Lowest precedence: a stale/disconnected guard claims the screen only when no real overlay
+  // is active, so transient dialogs keep working and the guard owns the bare dashboard.
+  return buildDashboardRuntimeGuardOverlayOutput(host, cols, rows);
 }
 
 export function handleDashboardSubscreenNavigationKey(

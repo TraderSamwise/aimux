@@ -4,6 +4,9 @@ import {
   getSelectedDashboardSessionForActions as getSelectedDashboardSessionForActionsImpl,
   getSelectedDashboardWorktreeEntry as getSelectedDashboardWorktreeEntryImpl,
   handleActiveDashboardOverlayKey as handleActiveDashboardOverlayKeyImpl,
+  handleRuntimeGuardKey as handleRuntimeGuardKeyImpl,
+  refreshRuntimeGuard as refreshRuntimeGuardImpl,
+  reloadDashboardFromGuard as reloadDashboardFromGuardImpl,
   handleDashboardSubscreenNavigationKey as handleDashboardSubscreenNavigationKeyImpl,
   handleOrchestrationInputKey as handleOrchestrationInputKeyImpl,
   handleOrchestrationRoutePickerKey as handleOrchestrationRoutePickerKeyImpl,
@@ -149,6 +152,15 @@ export const dashboardActionMethods = {
   },
   handleActiveDashboardOverlayKey(this: any, data: Buffer): boolean {
     return handleActiveDashboardOverlayKeyImpl(this, data);
+  },
+  handleRuntimeGuardKey(this: any, data: Buffer): boolean {
+    return handleRuntimeGuardKeyImpl(this, data);
+  },
+  refreshRuntimeGuard(this: any): Promise<void> {
+    return refreshRuntimeGuardImpl(this);
+  },
+  reloadDashboardFromGuard(this: any): void {
+    reloadDashboardFromGuardImpl(this);
   },
   renderActiveDashboardOverlay(this: any): boolean {
     return renderActiveDashboardOverlayImpl(this);

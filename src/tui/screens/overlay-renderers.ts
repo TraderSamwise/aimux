@@ -1,3 +1,4 @@
+import { runtimeGuardOverlayCopy } from "../../multiplexer/runtime-guard.js";
 import { renderOverlayBox } from "../render/box.js";
 import { keycap, keycapHint, modalBand, padVisible, statusDot, style } from "../render/theme.js";
 
@@ -130,6 +131,21 @@ export function renderDashboardErrorOverlay(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const output = buildDashboardErrorOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
+}
+
+export function buildDashboardRuntimeGuardOverlayOutput(ctx: any, cols: number, rows: number): string | null {
+  const guard = ctx.runtimeGuardState;
+  if (!guard || guard.kind === "ok") return null;
+  const copy = runtimeGuardOverlayCopy(guard);
+  const body = [
+    ...copy.lines.map((line: string) => `  ${style(line, "muted")}`),
+    "",
+    hints([
+      ["R", "reload"],
+      ["q", "quit"],
+    ]),
+  ];
+  return renderOverlayBox({ title: copy.title, body, cols, rows, variant: "red" });
 }
 
 export function buildNotificationPanelOverlayOutput(ctx: any, cols: number, rows: number): string | null {

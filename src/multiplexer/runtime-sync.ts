@@ -11,6 +11,7 @@ export class MultiplexerRuntimeSync {
       renderCurrentDashboardView: () => void;
       renderDashboard: () => void;
       writeStatuslineFile: () => void;
+      refreshRuntimeGuard?: () => void;
     },
   ) {}
 
@@ -24,6 +25,9 @@ export class MultiplexerRuntimeSync {
       const offlineChanged = this.deps.loadOfflineTopologySessions();
       if (offlineChanged && this.deps.getMode() === "dashboard") {
         this.deps.renderCurrentDashboardView();
+      }
+      if (this.deps.getMode() === "dashboard") {
+        this.deps.refreshRuntimeGuard?.();
       }
     }, 5000);
   }

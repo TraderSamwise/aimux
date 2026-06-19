@@ -42,6 +42,52 @@ export function evaluateRuntimeGuard(input: RuntimeGuardInput): RuntimeGuardStat
   return { kind: "ok" };
 }
 
+export function runtimeGuardEquals(a: RuntimeGuardState, b: RuntimeGuardState): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind === "stale" ? a.reason === (b as { reason: string }).reason : true;
+}
+
+// Keys that are non-mutating on EVERY screen (selection/scroll/quit/help). Screen-switch
+// letters (d/c/p/l/t/g) are excluded because they mutate on their target subscreen (e.g. "c"
+// is clear-all on Coordination), so under the guard you reload rather than browse.
+const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape", "q", "?"]);
+
+/** What a keystroke should do while the dashboard is guarded (stale/disconnected). */
+export function runtimeGuardKeyDisposition(key: string): "reload" | "passthrough" | "swallow" {
+  if (key === "R") return "reload";
+  if (GUARD_PASSTHROUGH_KEYS.has(key)) return "passthrough";
+  return "swallow";
+}
+
+/** Overlay title + body copy for a non-ok guard state. */
+export function runtimeGuardOverlayCopy(state: RuntimeGuardState): { title: string; lines: string[] } {
+  if (state.kind === "stale" && state.reason === "self-drift") {
+    return {
+      title: "aimux updated — reload required",
+      lines: [
+        "This dashboard is running an old binary (the install changed on disk).",
+        "Reload to pick up the new version before making any changes.",
+      ],
+    };
+  }
+  if (state.kind === "stale") {
+    return {
+      title: "Dashboard out of sync",
+      lines: [
+        "This dashboard disagrees with the project service version.",
+        "Reload to resync before making any changes.",
+      ],
+    };
+  }
+  if (state.kind === "disconnected") {
+    return {
+      title: "Project service unreachable",
+      lines: ["The dashboard can't reach the project service.", "Actions are paused until it reconnects."],
+    };
+  }
+  return { title: "", lines: [] };
+}
+
 /** Best-effort probe. Never throws; any failure gathering inputs resolves to a safe state. */
 export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Promise<RuntimeGuardState> {
   const selfDrift = hasProjectServiceBuildDrift();

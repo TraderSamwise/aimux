@@ -41,6 +41,7 @@ import {
   type DashboardErrorState,
 } from "../dashboard/feedback.js";
 import { MultiplexerRuntimeSync } from "./runtime-sync.js";
+import type { RuntimeGuardState } from "./runtime-guard.js";
 import { selectLinkedOrOpenTarget } from "../tmux/window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./dashboard-actions-methods.js";
 import { agentIoMethods, type AgentIoMethods } from "./agent-io-methods.js";
@@ -284,6 +285,8 @@ export class Multiplexer {
   private dashboardServiceRecovery: Promise<void> | null = null;
   private dashboardNextBackgroundRefreshAt = 0;
   private runtimeSync!: MultiplexerRuntimeSync;
+  private _runtimeGuard: RuntimeGuardState = { kind: "ok" };
+  private runtimeGuardProbing = false;
 
   constructor() {
     this.projectRoot = (() => {
@@ -304,6 +307,9 @@ export class Multiplexer {
       renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
       renderDashboard: () => this.renderDashboard(),
       writeStatuslineFile: () => this.writeStatuslineFile(),
+      refreshRuntimeGuard: () => {
+        void this.refreshRuntimeGuard();
+      },
     });
     this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
@@ -667,6 +673,14 @@ export class Multiplexer {
 
   private set dashboardErrorState(value: DashboardErrorState | null) {
     this.dashboardFeedback.errorState = value;
+  }
+
+  private get runtimeGuardState(): RuntimeGuardState {
+    return this._runtimeGuard;
+  }
+
+  private set runtimeGuardState(value: RuntimeGuardState) {
+    this._runtimeGuard = value;
   }
 
   private get footerFlash(): string | null {
