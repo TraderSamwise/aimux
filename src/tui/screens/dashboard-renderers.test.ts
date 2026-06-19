@@ -197,6 +197,60 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
   });
 
+  it("suppresses the unread chip when the needs-input state already conveys it", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "claude-1",
+        sessions: [
+          {
+            index: 0,
+            id: "claude-1",
+            command: "claude",
+            status: "running",
+            active: true,
+            attention: "needs_input",
+            notificationUnreadCount: 1,
+            notificationNeedsInputUnreadCount: 1,
+            semantic: deriveSessionSemantics({ status: "running", attention: "needs_input", notificationUnreadCount: 1 }),
+          },
+        ],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      120,
+      40,
+    );
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("NEEDS INPUT");
+    expect(plain).not.toContain("unread");
+  });
+
+  it("still shows non-needs-input unread alongside the needs-input state", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "claude-1",
+        sessions: [
+          {
+            index: 0,
+            id: "claude-1",
+            command: "claude",
+            status: "running",
+            active: true,
+            attention: "needs_input",
+            notificationUnreadCount: 2,
+            notificationNeedsInputUnreadCount: 1,
+            semantic: deriveSessionSemantics({ status: "running", attention: "needs_input", notificationUnreadCount: 2 }),
+          },
+        ],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      120,
+      40,
+    );
+    expect(stripAnsi(frame)).toContain("1 unread");
+  });
+
   it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
     try {

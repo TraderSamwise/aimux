@@ -782,9 +782,11 @@ export function computeDashboardSessions(
       workflowTopLabel: workflow?.topLabel,
       workflowNextAction: workflow?.nextAction,
       notificationUnreadCount: notifications?.unreadCount ?? 0,
+      notificationNeedsInputUnreadCount: notifications?.needsInputUnreadCount ?? 0,
       latestNotificationText: notifications?.latestUnread?.body || notifications?.latestUnread?.title,
       notificationStale:
-        semantic.runtime.isAlive && isNotificationStale(semantic.user.label, notifications?.hasNeedsInputUnread ?? false),
+        semantic.runtime.isAlive &&
+        isNotificationStale(semantic.user.label, (notifications?.needsInputUnreadCount ?? 0) > 0),
       semantic,
     };
   });
