@@ -54,23 +54,43 @@ function worklistTags(item: any): string {
   return parts.length ? ` ${style("·", "muted")} ${parts.join(` ${style("·", "muted")} `)}` : "";
 }
 
+// Titled bucket rule (dashboard-style): "Needs you ──── N", accent for the actionable bucket.
+function bucketRule(bucket: string, count: number): string {
+  const label = WORKLIST_BUCKET_LABEL[bucket] ?? bucket;
+  const tone: Tone = bucket === "needs-you" ? "accent" : "muted";
+  const dashes = Math.max(2, 44 - label.length - String(count).length - 4);
+  return `  ${style(label, tone)} ${style("─".repeat(dashes), "muted")} ${style(String(count), tone)}`;
+}
+
+// Footer hints contextual to the selected row's kind.
+function coordinationFooterHints(item: any, filterThreads: boolean): string {
+  const tail = "[d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit";
+  const filterHint = `[Tab] ${filterThreads ? "all" : "threads"}`;
+  if (item?.kind === "thread") {
+    return `[↑↓] select  ${filterHint}  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P/J/E] review  ${tail}`;
+  }
+  return `[↑↓] select  ${filterHint}  [Enter] open  [r] read  [c] clear  [R] read all  [C] clear all  ${tail}`;
+}
+
 export function renderCoordinationScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "coordination");
   const filterThreads = ctx.coordinationFilter === "threads";
-  const footer = ctx.centerInWidth(
-    footerHints(
-      `[↑↓] select  [Tab] ${filterThreads ? "all" : "threads"}  [Enter] open  [r] read  [c] clear/done  [s] reply  [A] accept  [R] read all  [C] clear all  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit`,
-    ),
-    cols,
-  );
   const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
+  const items = ctx.coordinationWorklist ?? [];
+  const selectedItem = items[ctx.coordinationIndex];
+
+  // Footer reflects the selected row's available actions.
+  const footer = ctx.centerInWidth(footerHints(coordinationFooterHints(selectedItem, filterThreads)), cols);
+
   const listLines: string[] = [];
   let focusLine = 1;
 
-  const items = ctx.coordinationWorklist ?? [];
   const needYou = items.filter((item: any) => item.bucket === "needs-you").length;
+  const bucketCounts: Record<string, number> = {};
+  for (const item of items) bucketCounts[item.bucket] = (bucketCounts[item.bucket] ?? 0) + 1;
+
   listLines.push(
     `  ${style("Coordination", "strong")} ${style(`(${needYou} need you · ${items.length})`, "muted")}${filterThreads ? ` ${style("· threads", "muted")}` : ""}`,
   );
@@ -81,7 +101,7 @@ export function renderCoordinationScreen(ctx: any): void {
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
       if (item.bucket !== lastBucket) {
-        listLines.push(`  ${style(`─ ${WORKLIST_BUCKET_LABEL[item.bucket] ?? item.bucket} ─`, "muted")}`);
+        listLines.push(bucketRule(item.bucket, bucketCounts[item.bucket] ?? 0));
         lastBucket = item.bucket;
       }
       const selected = i === ctx.coordinationIndex;
@@ -115,72 +135,80 @@ export function renderCoordinationDetails(ctx: any, width: number, height: numbe
     : renderCoordinationNotificationDetails(ctx, width, height, item.notification);
 }
 
-function renderCoordinationNotificationDetails(ctx: any, width: number, height: number, note: any): string[] {
-  if (!note) return new Array(height).fill("");
-  const latest = note.latestUnread ?? note.notifications[note.notifications.length - 1];
-  const lines: string[] = [];
-  lines.push(style("Inbox", "strong"));
-  lines.push(...ctx.wrapKeyValue("Title", note.title, width));
-  if (latest?.subtitle) lines.push(...ctx.wrapKeyValue("Subtitle", latest.subtitle, width));
-  lines.push(...ctx.wrapKeyValue("State", note.unreadCount > 0 ? `${note.unreadCount} unread` : "read", width));
-  if (latest?.createdAt) lines.push(...ctx.wrapKeyValue("Created", latest.createdAt, width));
-  if (latest?.kind) lines.push(...ctx.wrapKeyValue("Kind", latest.kind, width));
-  if (note.sessionId) {
-    lines.push(...ctx.wrapKeyValue("Session", note.sessionId, width));
-    lines.push(...ctx.wrapKeyValue("Reach", note.reachability, width));
-    const targetLabel = ctx.notificationTargetLabel(note.sessionId);
-    if (targetLabel) lines.push(...ctx.wrapKeyValue("Target", targetLabel, width));
-  }
-  lines.push("");
-  lines.push(style("Body", "strong"));
-  if (latest?.body) lines.push(...ctx.wrapKeyValue("", latest.body, width));
+function padDetail(lines: string[], height: number): string[] {
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
 }
 
+function renderCoordinationNotificationDetails(ctx: any, width: number, height: number, note: any): string[] {
+  if (!note) return new Array(height).fill("");
+  const inner = Math.max(8, width - 4);
+  const latest = note.latestUnread ?? note.notifications[note.notifications.length - 1];
+  const rows: string[] = [];
+  rows.push(...ctx.wrapKeyValue("Title", note.title, inner));
+  rows.push(...ctx.wrapKeyValue("State", note.unreadCount > 0 ? `${note.unreadCount} unread` : "read", inner));
+  if (note.sessionId) {
+    rows.push(...ctx.wrapKeyValue("Reach", note.reachability, inner));
+    rows.push(...ctx.wrapKeyValue("Session", note.sessionId, inner));
+    const targetLabel = ctx.notificationTargetLabel(note.sessionId);
+    if (targetLabel) rows.push(...ctx.wrapKeyValue("Target", targetLabel, inner));
+  }
+  if (latest?.kind) rows.push(...ctx.wrapKeyValue("Kind", latest.kind, inner));
+  if (latest?.createdAt) rows.push(...ctx.wrapKeyValue("Created", latest.createdAt, inner));
+  const bodyRows = latest?.body ? ctx.wrapKeyValue("", latest.body, inner) : [];
+  return padDetail(
+    [
+      ...card({ tone: "muted", title: style("Inbox", "strong"), rows, width }),
+      "",
+      ...card({ tone: "muted", title: style("Body", "strong"), rows: bodyRows, width }),
+    ],
+    height,
+  );
+}
+
 function renderCoordinationThreadDetails(ctx: any, width: number, height: number, entry: any): string[] {
   if (!entry) return new Array(height).fill("");
-  const lines: string[] = [];
-  lines.push(style("Thread", "strong"));
-  lines.push(...ctx.wrapKeyValue("Title", entry.displayTitle, width));
-  lines.push(...ctx.wrapKeyValue("Kind", entry.thread.kind, width));
-  lines.push(...ctx.wrapKeyValue("Status", entry.stateLabel ?? entry.thread.status, width));
-  lines.push(...ctx.wrapKeyValue("Created By", entry.thread.createdBy, width));
-  lines.push(...ctx.wrapKeyValue("Participants", entry.thread.participants.join(", "), width));
-  if (entry.thread.owner) lines.push(...ctx.wrapKeyValue("Owner", entry.thread.owner, width));
+  const inner = Math.max(8, width - 4);
+  const rows: string[] = [];
+  rows.push(...ctx.wrapKeyValue("Title", entry.displayTitle, inner));
+  rows.push(...ctx.wrapKeyValue("Kind", entry.thread.kind, inner));
+  rows.push(...ctx.wrapKeyValue("Status", entry.stateLabel ?? entry.thread.status, inner));
+  rows.push(...ctx.wrapKeyValue("Participants", entry.thread.participants.join(", "), inner));
+  if (entry.thread.owner) rows.push(...ctx.wrapKeyValue("Owner", entry.thread.owner, inner));
   if (entry.thread.kind === "handoff") {
-    lines.push(...ctx.wrapKeyValue("Handoff", ctx.describeHandoffState(entry.thread), width));
+    rows.push(...ctx.wrapKeyValue("Handoff", ctx.describeHandoffState(entry.thread), inner));
   }
   if ((entry.thread.waitingOn?.length ?? 0) > 0) {
-    lines.push(...ctx.wrapKeyValue("Waiting On", entry.thread.waitingOn!.join(", "), width));
-  }
-  if ((entry.thread.unreadBy?.length ?? 0) > 0) {
-    lines.push(...ctx.wrapKeyValue("Unread By", entry.thread.unreadBy!.join(", "), width));
+    rows.push(...ctx.wrapKeyValue("Waiting On", entry.thread.waitingOn.join(", "), inner));
   }
   if (entry.task) {
-    lines.push(...ctx.wrapKeyValue("Task Status", entry.task.status, width));
+    rows.push(...ctx.wrapKeyValue("Task", entry.task.status, inner));
     if (entry.task.type === "review" && entry.task.reviewStatus) {
-      lines.push(...ctx.wrapKeyValue("Review", entry.task.reviewStatus, width));
+      rows.push(...ctx.wrapKeyValue("Review", entry.task.reviewStatus, inner));
     }
-    if (entry.familyTaskIds.length > 1) {
-      lines.push(...ctx.wrapKeyValue("Chain", entry.familyTaskIds.join(" → "), width));
+    if ((entry.familyTaskIds?.length ?? 0) > 1) {
+      rows.push(...ctx.wrapKeyValue("Chain", entry.familyTaskIds.join(" → "), inner));
     }
-    lines.push(...ctx.wrapKeyValue("Prompt", entry.task.prompt, width));
-    if (entry.task.result) lines.push(...ctx.wrapKeyValue("Result", entry.task.result, width));
-    if (entry.task.error) lines.push(...ctx.wrapKeyValue("Error", entry.task.error, width));
+    if (entry.task.prompt) rows.push(...ctx.wrapKeyValue("Prompt", entry.task.prompt, inner));
+    if (entry.task.result) rows.push(...ctx.wrapKeyValue("Result", entry.task.result, inner));
+    if (entry.task.error) rows.push(...ctx.wrapKeyValue("Error", entry.task.error, inner));
   }
   if (entry.pendingDeliveries > 0) {
-    lines.push(...ctx.wrapKeyValue("Pending Delivery", entry.latestPendingRecipients.join(", "), width));
+    rows.push(...ctx.wrapKeyValue("Pending", entry.latestPendingRecipients.join(", "), inner));
   }
-  lines.push("");
-  lines.push(style("Messages", "strong"));
-  const messages = (entry.messages ?? []).slice(-Math.max(3, height - lines.length));
-  for (const message of messages) {
+  const msgRows: string[] = [];
+  for (const message of (entry.messages ?? []).slice(-6)) {
     const prefix = `${message.from}${message.to?.length ? ` → ${message.to.join(", ")}` : ""} [${message.kind}]`;
-    lines.push(...ctx.wrapKeyValue(prefix, message.body, width));
+    msgRows.push(...ctx.wrapKeyValue(prefix, message.body, inner));
   }
-  while (lines.length < height) lines.push("");
-  return lines.slice(0, height);
+  return padDetail(
+    [
+      ...card({ tone: "muted", title: style("Thread", "strong"), rows, width }),
+      "",
+      ...card({ tone: "muted", title: style("Messages", "strong"), rows: msgRows, width }),
+    ],
+    height,
+  );
 }
 
 const STORY_KIND_DOT: Record<string, Tone> = { task: "work", review: "info", notification: "attn" };
