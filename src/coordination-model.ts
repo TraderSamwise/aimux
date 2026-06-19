@@ -332,10 +332,9 @@ export function buildCoordinationWorklist(
 
   items.sort((a, b) => b.urgency - a.urgency || (b.when ?? "").localeCompare(a.when ?? ""));
 
-  const needsYou = items.filter((item) => item.bucket === "awake" || item.bucket === "asleep");
   return {
     items,
-    needsYou,
-    tail: items.filter((item) => !needsYou.includes(item)),
+    needsYou: items.filter((item) => item.bucket === "awake" || item.bucket === "asleep"),
+    tail: items.filter((item) => item.bucket === "handled" || item.bucket === "unreachable"),
   };
 }
