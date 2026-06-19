@@ -276,6 +276,18 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
         host.graveyardCleanupRunning = false;
       });
   }
+  host.startInboxCleanup?.();
+  if (host.cleanupInbox && !host.inboxCleanupRunning) {
+    host.inboxCleanupRunning = true;
+    void host
+      .cleanupInbox()
+      .catch((error: unknown) => {
+        debug(`inbox cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "notification");
+      })
+      .finally(() => {
+        host.inboxCleanupRunning = false;
+      });
+  }
   host.refreshDesktopStateSnapshot();
   host.writeStatuslineFile();
 

@@ -91,6 +91,17 @@ export interface GraveyardConfig {
   cleanupIntervalMs: number;
 }
 
+export interface InboxConfig {
+  /** Whether automatic notification-inbox cleanup is enabled for this project. */
+  cleanupEnabled: boolean;
+  /** How long read/handled notifications are kept before being archived (cleared). */
+  retentionDays: number;
+  /** How often the project service checks for cleanup-eligible notifications. */
+  cleanupIntervalMs: number;
+  /** Soft cap on retained notifications; overflow is archived, never unread-actionable rows. */
+  maxSize: number;
+}
+
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
@@ -98,6 +109,7 @@ export interface AimuxConfig {
   compactEveryNTurns: number;
   logging: LoggingConfig;
   graveyard: GraveyardConfig;
+  inbox: InboxConfig;
   notifications: NotificationConfig;
   statusline: StatuslineConfig;
   runtime: RuntimeConfig;
@@ -158,6 +170,12 @@ const DEFAULT_CONFIG: AimuxConfig = {
     cleanupEnabled: true,
     retentionDays: 14,
     cleanupIntervalMs: 86_400_000,
+  },
+  inbox: {
+    cleanupEnabled: true,
+    retentionDays: 14,
+    cleanupIntervalMs: 86_400_000,
+    maxSize: 10,
   },
   notifications: {
     enabled: true,
