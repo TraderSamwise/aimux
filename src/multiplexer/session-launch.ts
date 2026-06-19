@@ -181,6 +181,9 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     if (host.handleActiveDashboardOverlayKey(data)) {
       return;
     }
+    if (host.handleRuntimeGuardKey(data)) {
+      return;
+    }
     if (host.isDashboardScreen("coordination")) {
       host.handleCoordinationKey(data);
       return;

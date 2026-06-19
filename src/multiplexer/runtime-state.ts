@@ -693,6 +693,8 @@ export function recordSessionBackendSessionId(
 
 export function startHeartbeat(host: RuntimeStateHost): void {
   host.runtimeSync.startHeartbeat();
+  // Probe the guard immediately so drift/disconnect is caught at startup, not after the first tick.
+  void host.refreshRuntimeGuard?.();
 }
 
 export function stopHeartbeat(host: RuntimeStateHost): void {
