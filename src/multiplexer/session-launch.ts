@@ -777,6 +777,8 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "coordination":
       host.clearDashboardSubscreens();
       host.setDashboardScreen("coordination");
+      // Force a fresh load on next render since this path bypasses showCoordination.
+      host.coordinationLoaded = false;
       host.persistDashboardUiState();
       host.openTmuxDashboardTarget();
       break;

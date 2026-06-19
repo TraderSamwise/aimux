@@ -11,8 +11,10 @@ import {
   handleNotificationPanelKey,
   notificationTargetLabel,
   notificationTargetState,
+  refreshCoordinationFromService,
   refreshNotificationEntries,
 } from "./notifications.js";
+import { buildCoordinationView } from "../coordination-model.js";
 import { handleCoordinationKey } from "./coordination.js";
 
 function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
@@ -248,5 +250,64 @@ describe("notification panel mutations route through the service", () => {
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { id: note.id });
     handleNotificationPanelKey(host, Buffer.from("C"));
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/clear", {});
+  });
+});
+
+describe("coordination reads prefer the service", () => {
+  let repoRoot = "";
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-coordination-service-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+  });
+
+  afterEach(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("applies the service worklist to host state", async () => {
+    // Service authority: a payload the local stores do NOT contain, proving the host took it
+    // from the wire (the service-built reconciliation) rather than rebuilding locally.
+    const payload = buildCoordinationView({
+      sessions: [{ id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } }],
+      notifications: [
+        { id: "r1", title: "Remote", body: "remote agent needs input", sessionId: "remote-1", kind: "needs_input", unread: true, cleared: false, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      threads: [],
+    });
+    const host: any = {
+      coordinationFilter: "all",
+      getFromProjectService: vi.fn(async () => ({ ok: true, model: payload.model, worklist: payload.worklist, threads: [] })),
+    };
+
+    const ok = await refreshCoordinationFromService(host);
+
+    expect(ok).toBe(true);
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/coordination-worklist");
+    expect(host.coordinationLoaded).toBe(true);
+    expect(host.coordinationWorklist.map((item: any) => item.sessionId)).toContain("remote-1");
+    expect(host.notificationEntries.map((entry: any) => entry.id)).toContain("r1");
+  });
+
+  it("falls back to the local build when the service request fails", async () => {
+    addExchangeNotification("local-1", "local agent needs input");
+    const host: any = {
+      coordinationFilter: "all",
+      getFromProjectService: vi.fn(async () => {
+        throw new Error("service down");
+      }),
+      getDashboardSessions: () => [
+        { id: "local-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } },
+      ],
+      getDashboardServices: () => [],
+      dashboardTeammatesCache: [],
+    };
+
+    const ok = await refreshCoordinationFromService(host);
+
+    expect(ok).toBe(false);
+    expect(host.coordinationLoaded).toBe(true);
+    expect(host.coordinationWorklist.map((item: any) => item.sessionId)).toContain("local-1");
   });
 });
