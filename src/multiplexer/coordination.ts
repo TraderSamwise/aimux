@@ -57,6 +57,21 @@ function reloadCoordination(host: CoordinationHost): Promise<void> {
   return Promise.resolve();
 }
 
+// Push-driven liveness: a coordination-relevant project event (another agent needs you, a task
+// completed, …) refreshes the worklist and re-renders immediately when the screen is showing,
+// instead of waiting for the heartbeat poll. Coalesced so a burst of events does one refresh.
+export function scheduleCoordinationPush(host: CoordinationHost): void {
+  if (host.coordinationPushScheduled) return;
+  if (!host.isDashboardScreen?.("coordination")) return;
+  host.coordinationPushScheduled = true;
+  void reloadCoordination(host)
+    .then(() => renderCoordination(host))
+    .catch(() => {})
+    .finally(() => {
+      host.coordinationPushScheduled = false;
+    });
+}
+
 // Point the reply-overlay backing (host.threadEntries[threadIndex]) at a worklist thread item.
 function syncThreadIndex(host: CoordinationHost, item: WorklistItem): void {
   const threadId = item.thread?.thread.id;
