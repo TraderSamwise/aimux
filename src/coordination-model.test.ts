@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCoordinationModel,
+  isNotificationStale,
   type CoordinationSessionLike,
   type BuildCoordinationModelInput,
 } from "./coordination-model.js";
@@ -119,6 +120,15 @@ describe("coordination model", () => {
     expect(model.items[0]!.key).toBe("dk");
     expect(model.items[0]!.reachability).toBe("none");
     expect(model.items[0]!.actionable).toBe(true);
+  });
+
+  it("isNotificationStale: true only when a needs-input notice lingers past a waiting label", () => {
+    expect(isNotificationStale("working", true)).toBe(true);
+    expect(isNotificationStale("ready", true)).toBe(true);
+    expect(isNotificationStale("needs_input", true)).toBe(false);
+    expect(isNotificationStale("blocked", true)).toBe(false);
+    expect(isNotificationStale(undefined, true)).toBe(false);
+    expect(isNotificationStale("working", false)).toBe(false);
   });
 
   it("collapses sessionless notifications that share a dedupeKey into one item", () => {

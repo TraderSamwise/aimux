@@ -150,7 +150,16 @@ function sessionActivityChips(session: DashboardSession): string {
   const offline = isSessionOffline(session);
   const tone = (active: ChipTone): ChipTone => (offline ? "muted" : active);
 
-  if (notificationUnread > 0) chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, tone("work")));
+  // The live state label already announces a needs-input request, so don't double-show it as
+  // an unread chip; other unread kinds (and stale lingering notices) still surface. A lingering
+  // notice whose agent has moved on is de-emphasized (muted) to match Coordination.
+  const needsInputUnread = session.notificationNeedsInputUnreadCount ?? 0;
+  const label = session.semantic?.user.label;
+  const stateConveysNeedsInput = label === "needs_input" || label === "needs_response";
+  const shownUnread = notificationUnread - (stateConveysNeedsInput ? Math.min(needsInputUnread, notificationUnread) : 0);
+  if (shownUnread > 0) {
+    chips.push(chip(`${Math.min(shownUnread, 99)} unread`, session.notificationStale ? "muted" : tone("work")));
+  }
   if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, tone("info")));
   if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
     chips.push(chip(`thread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}`, "muted"));

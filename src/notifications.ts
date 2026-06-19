@@ -374,21 +374,26 @@ export function unreadNotificationCount(opts?: { sessionId?: string }): number {
 export interface SessionNotificationSummary {
   unreadCount: number;
   latestUnread?: NotificationRecord;
+  /** How many unread notifications for this session are needs-input requests. */
+  needsInputUnreadCount: number;
 }
 
 export function summarizeUnreadNotificationsBySession(): Map<string, SessionNotificationSummary> {
   const summaries = new Map<string, SessionNotificationSummary>();
   for (const notification of listNotifications({ unreadOnly: true })) {
     if (!notification.sessionId) continue;
+    const needsInput = notification.kind === "needs_input" ? 1 : 0;
     const current = summaries.get(notification.sessionId);
     if (!current) {
       summaries.set(notification.sessionId, {
         unreadCount: 1,
         latestUnread: notification,
+        needsInputUnreadCount: needsInput,
       });
       continue;
     }
     current.unreadCount += 1;
+    current.needsInputUnreadCount += needsInput;
     if (!current.latestUnread || Date.parse(notification.createdAt) > Date.parse(current.latestUnread.createdAt)) {
       current.latestUnread = notification;
     }
