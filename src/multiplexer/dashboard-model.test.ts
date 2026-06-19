@@ -7,14 +7,30 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
 import { initPaths } from "../paths.js";
 import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { addNotification } from "../notifications.js";
 import {
   applyDashboardModel,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
+  computeDashboardSessions,
   startProjectServices,
   withMetadataServicePending,
   withMetadataSessionPending,
 } from "./dashboard-model.js";
+
+function minimalDashboardHost(sessions: Array<{ id: string; command: string; status: string }>): any {
+  return {
+    sessions,
+    activeIndex: 0,
+    offlineSessions: [],
+    sessionWorktreePaths: new Map(),
+    sessionTmuxTargets: new Map(),
+    sessionRoles: new Map(),
+    getSessionLabel: () => undefined,
+    deriveHeadline: () => undefined,
+    tmuxRuntimeManager: { listProjectManagedWindows: () => [], isWindowAlive: () => false },
+  };
+}
 
 function deferred<T = void>(): {
   promise: Promise<T>;
@@ -1101,5 +1117,30 @@ describe("metadata pending actions", () => {
     secondSettle.resolve(true);
     await nextTick();
     expect(pending.getServiceAction("service-1")).toBeUndefined();
+  });
+});
+
+describe("computeDashboardSessions thread stats", () => {
+  it("does not count notification-tagged threads as session threads", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-threadstats-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({
+        title: "[Needs input] claude",
+        body: "Claude is waiting for your input",
+        sessionId: "claude-1",
+        kind: "needs_input",
+      });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+
+      expect(session?.notificationUnreadCount).toBe(1);
+      expect(session?.threadUnreadCount).toBe(0);
+      expect(session?.threadPendingCount).toBe(0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });
