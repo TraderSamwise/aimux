@@ -220,17 +220,22 @@ export async function openCoordinationNotification(host: NotificationHost, item:
     return;
   }
   // Waking an offline target resumes its tmux session, which renders the dashboard as it
-  // restores. Switch to the dashboard screen first so that render is coherent (instead of
-  // painting the dashboard while the screen-state still says "coordination").
-  if (targetState === "offline") host.setDashboardScreen("dashboard");
+  // restores; we switch to the dashboard screen first (just before activation) so that render —
+  // and any failure feedback — lands on the screen we actually end up on, not coordination.
+  const offline = targetState === "offline";
+  const failOpen = (): void => {
+    host.footerFlash = "Failed to open notification target";
+    host.footerFlashTicks = 3;
+    if (offline) host.renderDashboard();
+    else host.renderCoordination();
+  };
   const session = findNotificationSessionTarget(host, item.sessionId);
   if (session) {
+    if (offline) host.setDashboardScreen("dashboard");
     try {
       await host.activateDashboardEntry(session, { preserveDashboardSelection: Boolean(session.team) });
     } catch {
-      host.footerFlash = "Failed to open notification target";
-      host.footerFlashTicks = 3;
-      host.renderCoordination();
+      failOpen();
       return;
     }
     settle();
@@ -243,12 +248,11 @@ export async function openCoordinationNotification(host: NotificationHost, item:
     host.renderCoordination();
     return;
   }
+  if (offline) host.setDashboardScreen("dashboard");
   try {
     await host.activateDashboardService(service);
   } catch {
-    host.footerFlash = "Failed to open notification target";
-    host.footerFlashTicks = 3;
-    host.renderCoordination();
+    failOpen();
     return;
   }
   settle();
