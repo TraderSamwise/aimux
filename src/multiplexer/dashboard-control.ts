@@ -142,7 +142,9 @@ export function setDashboardScreen(host: DashboardControlHost, screen: Dashboard
 export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer): boolean {
   if (!host.runtimeGuardState || host.runtimeGuardState.kind === "ok") return false;
   const events = parseKeys(data);
-  if (events.length === 0) return true;
+  // Unrecognized/empty sequences can't mutate (no handler acts on them); let them fall through
+  // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
+  if (events.length === 0) return false;
   const key = events[0].name || events[0].char;
   const disposition = runtimeGuardKeyDisposition(key);
   if (disposition === "reload") {
