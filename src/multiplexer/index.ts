@@ -25,6 +25,8 @@ import {
 } from "../alert-display.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
+import { type CoordinationModel } from "../coordination-model.js";
+import { type NotificationRowMeta } from "./notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
 import { type ProjectObservability } from "../project-observability.js";
 import { type LibraryEntry } from "../library.js";
@@ -187,6 +189,8 @@ export class Multiplexer {
   private threadIndex = 0;
   private threadReplyBuffer = "";
   private notificationEntries: NotificationRecord[] = [];
+  private notificationRowMeta: NotificationRowMeta[] = [];
+  private coordinationModel: CoordinationModel | null = null;
   private notificationIndex = 0;
   private coordinationSection: "notifications" | "threads" = "notifications";
   private projectObservability: ProjectObservability | null = null;
@@ -223,6 +227,8 @@ export class Multiplexer {
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private graveyardCleanupInterval: ReturnType<typeof setInterval> | null = null;
   private graveyardCleanupRunning = false;
+  private inboxCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private inboxCleanupRunning = false;
   private dashboardViewportPollInterval: ReturnType<typeof setInterval> | null = null;
   private dashboardLastViewportKey: string | null = null;
   private dashboardLastViewportSize: { cols: number; rows: number } | null = null;

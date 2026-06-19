@@ -23,6 +23,10 @@ import {
   runGraveyardCleanup,
   type GraveyardCleanupRunResult,
 } from "../graveyard-cleanup.js";
+import { buildInboxCleanupPlan, runInboxCleanup, type InboxCleanupRunResult } from "../inbox-cleanup.js";
+import { buildCoordinationModel } from "../coordination-model.js";
+import { listNotifications } from "../notifications.js";
+import { refreshNotificationEntries } from "./notifications.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
@@ -64,6 +68,34 @@ function normalizeGraveyardCleanupIntervalMs(value: unknown): number {
   const intervalMs = Number(value);
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) return DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS;
   return Math.max(MIN_GRAVEYARD_CLEANUP_INTERVAL_MS, intervalMs);
+}
+
+const DEFAULT_INBOX_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MIN_INBOX_CLEANUP_INTERVAL_MS = 60_000;
+
+function normalizeInboxCleanupIntervalMs(value: unknown): number {
+  const intervalMs = Number(value);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return DEFAULT_INBOX_CLEANUP_INTERVAL_MS;
+  return Math.max(MIN_INBOX_CLEANUP_INTERVAL_MS, intervalMs);
+}
+
+// Unread notifications for agents that still genuinely want attention; the cleanup must
+// never archive these even when trimming to maxSize.
+function actionableUnreadNotificationIds(host: any): Set<string> {
+  const model = buildCoordinationModel({
+    sessions: host.getDashboardSessions?.() ?? [],
+    teammates: host.dashboardTeammatesCache ?? [],
+    services: host.getDashboardServices?.() ?? [],
+    notifications: listNotifications(),
+    threads: host.threadEntries ?? [],
+  });
+  const ids = new Set<string>();
+  for (const item of model.actionable) {
+    for (const notification of item.notifications) {
+      if (notification.unread) ids.add(notification.id);
+    }
+  }
+  return ids;
 }
 
 function refreshAfterGraveyardCleanup(host: any): void {
@@ -182,6 +214,38 @@ export const persistenceMethods = {
     if (!this.graveyardCleanupInterval) return;
     clearInterval(this.graveyardCleanupInterval);
     this.graveyardCleanupInterval = null;
+  },
+  async cleanupInbox(this: any, input?: { dryRun?: boolean; now?: Date | string }): Promise<InboxCleanupRunResult> {
+    const plan = buildInboxCleanupPlan({ now: input?.now, protectedIds: actionableUnreadNotificationIds(this) });
+    const result = runInboxCleanup(plan, {}, { dryRun: input?.dryRun === true });
+    const changed = result.results.some((item) => item.status === "cleared");
+    if (changed && input?.dryRun !== true) {
+      refreshNotificationEntries(this);
+      this.metadataServer?.notifyChange?.();
+    }
+    return result;
+  },
+  startInboxCleanup(this: any): void {
+    if (this.inboxCleanupInterval) return;
+    const inboxConfig = loadConfig().inbox;
+    if (inboxConfig.cleanupEnabled === false) return;
+    const intervalMs = normalizeInboxCleanupIntervalMs(inboxConfig.cleanupIntervalMs);
+    this.inboxCleanupInterval = setInterval(() => {
+      if (this.inboxCleanupRunning) return;
+      this.inboxCleanupRunning = true;
+      void this.cleanupInbox()
+        .catch((error: unknown) => {
+          debug(`inbox cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "notification");
+        })
+        .finally(() => {
+          this.inboxCleanupRunning = false;
+        });
+    }, intervalMs);
+  },
+  stopInboxCleanup(this: any): void {
+    if (!this.inboxCleanupInterval) return;
+    clearInterval(this.inboxCleanupInterval);
+    this.inboxCleanupInterval = null;
   },
   writeStatuslineFile(this: any, input?: { force?: boolean }): void {
     try {

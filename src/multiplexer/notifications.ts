@@ -1,7 +1,15 @@
 import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
+import { buildCoordinationModel, type CoordinationReachability } from "../coordination-model.js";
 import { parseKeys } from "../key-parser.js";
 
 type NotificationHost = any;
+
+/** Per-row reconciliation flags, index-aligned with host.notificationEntries. */
+export interface NotificationRowMeta {
+  reachability: CoordinationReachability;
+  stale: boolean;
+  actionable: boolean;
+}
 
 export function showNotificationPanel(host: NotificationHost): void {
   const entries = listNotifications().slice(0, 40);
@@ -77,7 +85,27 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
 }
 
 export function refreshNotificationEntries(host: NotificationHost): void {
-  host.notificationEntries = listNotifications();
+  // Reconcile the notification log against live agent state, then flatten the
+  // urgency-sorted, agent-keyed model back to a 1:1 notification list so existing
+  // navigation/actions keep working; the parallel meta carries the reconciliation.
+  const model = buildCoordinationModel({
+    sessions: host.getDashboardSessions?.() ?? [],
+    teammates: host.dashboardTeammatesCache ?? [],
+    services: host.getDashboardServices?.() ?? [],
+    notifications: listNotifications(),
+    threads: host.threadEntries ?? [],
+  });
+  host.coordinationModel = model;
+  host.notificationEntries = model.items.flatMap((item) => item.notifications);
+  host.notificationRowMeta = model.items.flatMap((item) =>
+    item.notifications.map(
+      (): NotificationRowMeta => ({
+        reachability: item.reachability,
+        stale: item.stale,
+        actionable: item.actionable,
+      }),
+    ),
+  );
   if (host.notificationIndex >= host.notificationEntries.length) {
     host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
   }
@@ -92,6 +120,9 @@ export function hydrateDashboardNotificationScreenState(host: NotificationHost):
 export function ensureNotificationState(host: NotificationHost): void {
   if (!Array.isArray(host.notificationEntries)) {
     host.notificationEntries = [];
+  }
+  if (!Array.isArray(host.notificationRowMeta)) {
+    host.notificationRowMeta = [];
   }
   if (typeof host.notificationIndex !== "number" || Number.isNaN(host.notificationIndex)) {
     host.notificationIndex = host.notificationEntries.length > 0 ? 0 : -1;
