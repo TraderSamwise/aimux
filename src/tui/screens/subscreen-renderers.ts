@@ -51,14 +51,17 @@ export function renderCoordinationScreen(ctx: any): void {
     listLines.push(`    ${style("No inbox items.", "muted")}`);
   } else {
     let dividerEmitted = false;
+    let anyActionable = false;
     for (let i = 0; i < notifs.length; i++) {
       const entry = notifs[i]!;
       const meta = rowMeta[i] as { reachability?: string; stale?: boolean; actionable?: boolean } | undefined;
-      // Model orders actionable items first; mark the boundary to the handled/unreachable tail.
-      if (meta && meta.actionable === false && !dividerEmitted) {
+      // Model orders actionable items first; mark the boundary to the handled/unreachable tail,
+      // but only once at least one actionable row has been shown above it.
+      if (meta && meta.actionable === false && anyActionable && !dividerEmitted) {
         listLines.push(`  ${style("─ handled · unreachable ─", "muted")}`);
         dividerEmitted = true;
       }
+      if (meta?.actionable) anyActionable = true;
       const selected = inboxActive && i === ctx.notificationIndex;
       if (selected) focusLine = listLines.length + 1;
       const actionable = meta ? meta.actionable !== false : entry.unread;

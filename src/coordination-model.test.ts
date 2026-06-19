@@ -121,6 +121,20 @@ describe("coordination model", () => {
     expect(model.items[0]!.actionable).toBe(true);
   });
 
+  it("collapses sessionless notifications that share a dedupeKey into one item", () => {
+    const model = build({
+      notifications: [
+        notif({ id: "1", dedupeKey: "proj-alert", kind: "info" }),
+        notif({ id: "2", dedupeKey: "proj-alert", kind: "info", createdAt: "2026-01-02T00:00:00.000Z" }),
+        notif({ id: "3", dedupeKey: "other", kind: "info" }),
+      ],
+    });
+    expect(model.items).toHaveLength(2);
+    const grouped = model.items.find((i) => i.key === "proj-alert")!;
+    expect(grouped.unreadCount).toBe(2);
+    expect(grouped.notifications).toHaveLength(2);
+  });
+
   it("annotates an agent item with its genuine thread and pending deliveries", () => {
     const entry = threadEntry({ participants: ["aimux", "a"], urgency: 5, pendingDeliveries: 1 });
     const model = build({
