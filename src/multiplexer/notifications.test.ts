@@ -5,13 +5,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import type { NotificationRecord } from "../notifications.js";
-import { upsertNotification } from "../notifications.js";
+import { clearNotifications, markNotificationsRead, upsertNotification } from "../notifications.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
-import { notificationTargetLabel, notificationTargetState, refreshNotificationEntries } from "./notifications.js";
+import {
+  handleNotificationPanelKey,
+  notificationTargetLabel,
+  notificationTargetState,
+  refreshNotificationEntries,
+} from "./notifications.js";
 import { handleCoordinationKey } from "./coordination.js";
 
 function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
   return upsertNotification({ title: "Needs input", body, sessionId, kind: "thread" });
+}
+
+// Faithful stand-in for the project service: applies the notification mutation to the local
+// store synchronously (so store assertions hold) the way the real service would.
+function notificationServiceDouble() {
+  return vi.fn(async (path: string, body: { id?: string; sessionId?: string }) => {
+    if (path === "/notifications/read") markNotificationsRead(body);
+    else if (path === "/notifications/clear") clearNotifications(body);
+    return { ok: true };
+  });
 }
 
 function unreadInboxEntries(sessionId: string) {
@@ -37,6 +52,7 @@ describe("notification target open", () => {
       getDashboardServices: vi.fn(() => [{ id: "service-1", status: "offline", label: "shell", command: "shell" }]),
       notificationTargetLabel: vi.fn(() => "shell [service]"),
       notificationTargetState: vi.fn(() => "offline"),
+      postToProjectService: notificationServiceDouble(),
       activateDashboardService: vi.fn(async () => undefined),
       resumeOfflineServiceWithFeedback: vi.fn(async () => undefined),
       resumeOfflineServiceById: vi.fn(),
@@ -180,6 +196,7 @@ describe("coordination inbox ordering", () => {
       truncatePlain: (text: string) => text,
       wrapKeyValue: (_key: string, value: string) => [value],
       notificationTargetLabel: () => null,
+      postToProjectService: notificationServiceDouble(),
       dashboardState: {},
       writeFrame: vi.fn(),
     };
@@ -195,11 +212,41 @@ describe("coordination inbox ordering", () => {
     handleCoordinationKey(host, Buffer.from("\t"));
     expect(host.coordinationFilter).toBe("threads");
 
-    // r on the selected live notification marks its session read
+    // r on the selected live notification marks its session read VIA the service (sole writer)
     host.coordinationFilter = "all";
     refreshNotificationEntries(host);
     host.coordinationIndex = 0;
     handleCoordinationKey(host, Buffer.from("r"));
+    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { sessionId: "live-1" });
     expect(unreadInboxEntries("live-1")).toHaveLength(0);
+  });
+});
+
+describe("notification panel mutations route through the service", () => {
+  let repoRoot = "";
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-notification-panel-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+  });
+
+  afterEach(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("posts read/clear via the service instead of writing the store directly", () => {
+    const note = addExchangeNotification("panel-1", "needs you");
+    const host: any = {
+      notificationPanelState: { entries: [note], index: 0 },
+      postToProjectService: notificationServiceDouble(),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+    handleNotificationPanelKey(host, Buffer.from("r"));
+    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { id: note.id });
+    handleNotificationPanelKey(host, Buffer.from("C"));
+    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/clear", {});
   });
 });

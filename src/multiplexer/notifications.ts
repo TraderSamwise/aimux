@@ -1,4 +1,4 @@
-import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
+import { listNotifications } from "../notifications.js";
 import { buildCoordinationModel, buildCoordinationWorklist, type CoordinationReachability, type WorklistItem } from "../coordination-model.js";
 import { buildCoordinationThreadEntries } from "../workflow.js";
 import { parseKeys } from "../key-parser.js";
@@ -62,27 +62,42 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
   if (key === "r") {
     const selected = panel.entries[panel.index];
     if (!selected) return;
-    markNotificationsRead({ id: selected.id });
-    panel.entries = listNotifications().slice(0, 40);
-    if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-    host.renderDashboard();
+    void mutateNotificationsViaService(host, "/notifications/read", { id: selected.id });
     return;
   }
   if (key === "c") {
     const selected = panel.entries[panel.index];
     if (!selected) return;
-    clearNotifications({ id: selected.id });
-    panel.entries = listNotifications().slice(0, 40);
-    if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-    host.renderDashboard();
+    void mutateNotificationsViaService(host, "/notifications/clear", { id: selected.id });
     return;
   }
   if (key === "C") {
-    clearNotifications();
-    panel.entries = listNotifications().slice(0, 40);
-    panel.index = panel.entries.length > 0 ? 0 : -1;
-    host.renderDashboard();
+    void mutateNotificationsViaService(host, "/notifications/clear", {}, { resetIndex: true });
   }
+}
+
+// Route a notification panel mutation through the service (sole writer), then reload the panel
+// from the freshly-written store. Failures flash rather than mutating the local store directly.
+async function mutateNotificationsViaService(
+  host: NotificationHost,
+  path: "/notifications/read" | "/notifications/clear",
+  selector: { id?: string; sessionId?: string },
+  opts: { resetIndex?: boolean } = {},
+): Promise<void> {
+  try {
+    await host.postToProjectService(path, selector);
+  } catch {
+    host.footerFlash = "Notification update failed";
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+    return;
+  }
+  const panel = host.notificationPanelState;
+  if (!panel) return;
+  panel.entries = listNotifications().slice(0, 40);
+  if (opts.resetIndex) panel.index = panel.entries.length > 0 ? 0 : -1;
+  else if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
+  host.renderDashboard();
 }
 
 export function refreshNotificationEntries(host: NotificationHost): void {
@@ -189,26 +204,32 @@ export function notificationTargetState(
   return "missing";
 }
 
-// Mark an agent's whole notification rollup read (by sessionId), or each sessionless record.
-export function markCoordinationItemRead(item: WorklistItem): void {
+// Mark an agent's whole notification rollup read (by sessionId), or each sessionless record —
+// routed through the service so it stays the sole writer of the notifications store.
+export async function markCoordinationItemRead(host: NotificationHost, item: WorklistItem): Promise<void> {
   const note = item.notification;
   if (!note) return;
-  if (item.sessionId) markNotificationsRead({ sessionId: item.sessionId });
-  else for (const record of note.notifications) markNotificationsRead({ id: record.id });
+  if (item.sessionId) {
+    await host.postToProjectService("/notifications/read", { sessionId: item.sessionId });
+  } else {
+    for (const record of note.notifications) {
+      await host.postToProjectService("/notifications/read", { id: record.id });
+    }
+  }
 }
 
 export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
   const note = item.notification;
   if (!note) return;
   const unread = note.unreadCount > 0;
-  const settle = () => {
+  const settle = async () => {
     if (unread) {
-      markCoordinationItemRead(item);
+      await markCoordinationItemRead(host, item);
       refreshNotificationEntries(host);
     }
   };
   if (!item.sessionId) {
-    settle();
+    await settle();
     host.renderCoordination();
     return;
   }
@@ -238,7 +259,7 @@ export async function openCoordinationNotification(host: NotificationHost, item:
       failOpen();
       return;
     }
-    settle();
+    await settle();
     return;
   }
   const service = findNotificationServiceTarget(host, item.sessionId);
@@ -255,5 +276,5 @@ export async function openCoordinationNotification(host: NotificationHost, item:
     failOpen();
     return;
   }
-  settle();
+  await settle();
 }
