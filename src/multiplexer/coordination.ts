@@ -22,9 +22,11 @@ function clampThreadIndex(host: CoordinationHost): void {
 export function showCoordination(host: CoordinationHost): void {
   host.clearDashboardSubscreens();
   ensureNotificationState(host);
+  // Build threads before the notification refresh so the coordination model can annotate
+  // agent items with their thread/pending on the first paint (avoids a reorder on re-render).
+  host.threadEntries = buildCoordinationThreadEntries("user");
   refreshNotificationEntries(host);
   host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
-  host.threadEntries = buildCoordinationThreadEntries("user");
   clampThreadIndex(host);
   if (host.coordinationSection !== "threads") host.coordinationSection = "notifications";
   host.setDashboardScreen("coordination");

@@ -280,6 +280,15 @@ describe("config", () => {
     }
   });
 
+  it("defaults inbox cleanup to a 14 day retention window and a 10-item cap", () => {
+    expect(loadConfig({ includeGlobal: false }).inbox).toEqual({
+      cleanupEnabled: true,
+      retentionDays: 14,
+      cleanupIntervalMs: 86_400_000,
+      maxSize: 10,
+    });
+  });
+
   it("defaults graveyard cleanup to a 14 day retention window", () => {
     expect(loadConfig({ includeGlobal: false }).graveyard).toEqual({
       cleanupEnabled: true,

@@ -7,7 +7,7 @@ import { initPaths } from "../paths.js";
 import type { NotificationRecord } from "../notifications.js";
 import { upsertNotification } from "../notifications.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
-import { notificationTargetLabel, notificationTargetState } from "./notifications.js";
+import { notificationTargetLabel, notificationTargetState, refreshNotificationEntries } from "./notifications.js";
 import { handleCoordinationKey } from "./coordination.js";
 
 function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
@@ -115,5 +115,46 @@ describe("notification target open", () => {
       preserveDashboardSelection: true,
     });
     expect(unreadInboxEntries("teammate-1")).toHaveLength(0);
+  });
+});
+
+describe("coordination inbox ordering", () => {
+  let repoRoot = "";
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-inbox-order-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+  });
+
+  afterEach(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("orders live-actionable first and sinks unreachable to the tail with meta flags", () => {
+    addExchangeNotification("ghost-1", "vanished agent needs input");
+    addExchangeNotification("live-1", "live agent needs input");
+    const host: any = {
+      notificationIndex: 0,
+      threadEntries: [],
+      dashboardTeammatesCache: [],
+      getDashboardServices: () => [],
+      getDashboardSessions: () => [
+        {
+          id: "live-1",
+          status: "running",
+          command: "claude",
+          semantic: { user: { label: "needs_input" }, presentation: { attentionScore: 4 } },
+        },
+      ],
+    };
+
+    refreshNotificationEntries(host);
+
+    expect(host.notificationEntries[0].sessionId).toBe("live-1");
+    expect(host.notificationRowMeta[0]).toMatchObject({ reachability: "live", actionable: true });
+    const last = host.notificationEntries.length - 1;
+    expect(host.notificationEntries[last].sessionId).toBe("ghost-1");
+    expect(host.notificationRowMeta[last]).toMatchObject({ reachability: "missing", actionable: false });
   });
 });
