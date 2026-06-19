@@ -217,8 +217,11 @@ export function buildCoordinationModel(input: BuildCoordinationModelInput): Coor
 
 /** Per-row record kind for the unified worklist. */
 export type WorklistType = "msg" | "note" | "task" | "review" | "handoff" | "conversation";
-/** Urgency grouping for the unified worklist. */
-export type WorklistBucket = "needs-you" | "handled" | "unreachable";
+/**
+ * Urgency grouping for the unified worklist. "Needs you" is split by reachability so the
+ * agents you can act on now (awake) are separated from ones you must wake first (asleep).
+ */
+export type WorklistBucket = "awake" | "asleep" | "handled" | "unreachable";
 
 /**
  * One row of the unified Coordination worklist — either an agent's notification rollup or a
@@ -260,17 +263,18 @@ function threadType(kind: string): WorklistType {
 function notificationBucket(item: CoordinationItem): WorklistBucket {
   // A stale notice belongs to a LIVE agent that moved on — handled, not unreachable.
   if (item.reachability === "missing") return "unreachable";
-  if (item.stale) return "handled";
-  return item.actionable ? "needs-you" : "handled";
+  if (item.stale || !item.actionable) return "handled";
+  // Reachable + actionable: offline agents must be woken first; live/sessionless can act now.
+  return item.reachability === "offline" ? "asleep" : "awake";
 }
 
-// Unified urgency so notifications and threads interleave on one scale.
-function notificationUrgency(item: CoordinationItem): number {
-  if (item.reachability === "missing") return 10;
-  if (item.stale) return 20;
-  if (!item.actionable) return 40;
-  if (item.reachability === "live") return 90 + item.attentionScore;
-  return 70; // offline / sessionless actionable
+// Bucket dominates the sort so each group renders as one contiguous run (no repeated headers).
+const BUCKET_RANK: Record<WorklistBucket, number> = { awake: 4, asleep: 3, handled: 2, unreachable: 1 };
+
+// Unified urgency so notifications and threads interleave on one scale, bucket-first.
+function notificationUrgency(item: CoordinationItem, bucket: WorklistBucket): number {
+  const secondary = item.attentionScore * 100 + item.unreadCount * 10 + item.pendingDeliveries * 5;
+  return BUCKET_RANK[bucket] * 1_000_000 + secondary;
 }
 
 /**
@@ -288,14 +292,15 @@ export function buildCoordinationWorklist(
   const items: WorklistItem[] = [];
 
   for (const item of model.items) {
+    const bucket = notificationBucket(item);
     items.push({
       key: `n:${item.key}`,
       kind: "notification",
       sessionId: item.sessionId,
       type: item.sessionId ? "msg" : "note",
-      bucket: notificationBucket(item),
+      bucket,
       title: item.title,
-      urgency: notificationUrgency(item),
+      urgency: notificationUrgency(item, bucket),
       reachability: item.reachability,
       actionable: item.actionable,
       stale: item.stale,
@@ -308,13 +313,15 @@ export function buildCoordinationWorklist(
     const onYou = (entry.thread.waitingOn ?? []).includes(participant);
     const pending = entry.pendingDeliveries > 0;
     const actionable = onYou || pending;
+    // Threads target the user directly (no agent to wake), so an actionable thread is "awake".
+    const bucket: WorklistBucket = actionable ? "awake" : "handled";
     items.push({
       key: `t:${entry.thread.id}`,
       kind: "thread",
       type: threadType(entry.thread.kind),
-      bucket: actionable ? "needs-you" : "handled",
+      bucket,
       title: entry.displayTitle,
-      urgency: onYou ? 80 : pending ? 75 : 50,
+      urgency: BUCKET_RANK[bucket] * 1_000_000 + (onYou ? 300 : pending ? 200 : 50),
       reachability: "none",
       actionable,
       stale: false,
@@ -325,9 +332,10 @@ export function buildCoordinationWorklist(
 
   items.sort((a, b) => b.urgency - a.urgency || (b.when ?? "").localeCompare(a.when ?? ""));
 
+  const needsYou = items.filter((item) => item.bucket === "awake" || item.bucket === "asleep");
   return {
     items,
-    needsYou: items.filter((item) => item.bucket === "needs-you"),
-    tail: items.filter((item) => item.bucket !== "needs-you"),
+    needsYou,
+    tail: items.filter((item) => !needsYou.includes(item)),
   };
 }
