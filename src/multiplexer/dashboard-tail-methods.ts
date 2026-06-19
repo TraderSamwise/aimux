@@ -32,8 +32,6 @@ import {
 import {
   basenameForHost,
   clearDashboardSubscreens as clearDashboardSubscreensImpl,
-  composeSplitScreen as composeSplitScreenImpl,
-  composeTwoPaneLines as composeTwoPaneLinesImpl,
   createDashboardServiceWithFeedback as createDashboardServiceWithFeedbackImpl,
   dashboardSessionActionDeps as dashboardSessionActionDepsImpl,
   graveyardSessionWithFeedback as graveyardSessionWithFeedbackImpl,
@@ -230,16 +228,6 @@ export type DashboardTailMethods = {
     width: number,
     height: number,
   ): string[];
-  composeSplitScreen(
-    this: Multiplexer,
-    leftLines: string[],
-    rightLines: string[],
-    cols: number,
-    viewportHeight: number,
-    focusLine: number,
-    twoPane: boolean,
-  ): string[];
-  composeTwoPaneLines(this: Multiplexer, left: string[], right: string[], cols: number): string[];
   wrapKeyValue(this: Multiplexer, key: string, value: string, width: number): string[];
   wrapText(this: Multiplexer, text: string, width: number): string[];
   truncatePlain(this: Multiplexer, text: string, max: number): string;
@@ -513,12 +501,6 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   renderSessionDetails(session, width, height) {
     return renderSessionDetailsImpl(this, session, width, height);
-  },
-  composeSplitScreen(leftLines, rightLines, cols, viewportHeight, focusLine, twoPane) {
-    return composeSplitScreenImpl(this, leftLines, rightLines, cols, viewportHeight, focusLine, twoPane);
-  },
-  composeTwoPaneLines(left, right, cols) {
-    return composeTwoPaneLinesImpl(left, right, cols);
   },
   wrapKeyValue(key, value, width) {
     return wrapKeyValueForHost(key, value, width);

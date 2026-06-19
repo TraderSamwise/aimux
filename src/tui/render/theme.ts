@@ -18,7 +18,8 @@ export type Tone =
   | "blocked"
   | "info"
   | "ready"
-  | "idle";
+  | "idle"
+  | "sleep";
 
 const TONE_SGR: Record<Tone, string> = {
   text: "",
@@ -33,6 +34,8 @@ const TONE_SGR: Record<Tone, string> = {
   info: "\x1b[34m",
   ready: "\x1b[38;5;75m",
   idle: "\x1b[2;32m",
+  // Dormant slate — distinct from the gold accent so "asleep/offline" never reads as selection.
+  sleep: "\x1b[38;5;103m",
 };
 
 export function style(text: string, tone: Tone): string {

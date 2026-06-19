@@ -14,7 +14,6 @@ function render(vm: ReturnType<typeof buildGraveyardViewModel>, graveyardIndex =
     graveyardIndex,
     dashboardState: { detailsSidebarVisible: true },
     centerInWidth: (s: string) => s,
-    composeSplitScreen: (left: string[], _r: string[], _c: number, vh: number) => left.slice(0, vh),
     wrapKeyValue: (k: string, v: string) => [`${k ? `${k}: ` : ""}${v ?? ""}`],
     truncatePlain: (s: string, n: number) => (s ?? "").slice(0, n),
     basename: (p: string) => p.split("/").pop(),
