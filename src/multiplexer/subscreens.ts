@@ -121,7 +121,10 @@ function refreshCoordinationThreads(host: SubscreenHost): void {
   if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
   host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
   host.renderCoordination();
-  void host.refreshCoordinationFromService?.().then(() => host.renderCoordination());
+  void host
+    .refreshCoordinationFromService?.()
+    .then(() => host.renderCoordination())
+    .catch(() => {});
 }
 
 export async function runThreadHandoffAction(

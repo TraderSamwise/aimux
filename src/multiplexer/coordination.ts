@@ -35,7 +35,10 @@ export function showCoordination(host: CoordinationHost): void {
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   renderCoordination(host);
-  void host.refreshCoordinationFromService?.().then(() => renderCoordination(host));
+  void host
+    .refreshCoordinationFromService?.()
+    .then(() => renderCoordination(host))
+    .catch(() => {});
 }
 
 export function renderCoordination(host: CoordinationHost): void {

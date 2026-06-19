@@ -144,8 +144,9 @@ export function applyCoordinationFilter(host: NotificationHost): void {
   if (host.coordinationIndex == null || host.coordinationIndex >= length) {
     host.coordinationIndex = length > 0 ? Math.max(0, length - 1) : -1;
   }
-  if (host.notificationIndex >= host.notificationEntries.length) {
-    host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
+  const notificationCount = Array.isArray(host.notificationEntries) ? host.notificationEntries.length : 0;
+  if (host.notificationIndex >= notificationCount) {
+    host.notificationIndex = Math.max(0, notificationCount - 1);
   }
 }
 
@@ -170,7 +171,11 @@ export function refreshNotificationEntries(host: NotificationHost): void {
 export async function refreshCoordinationFromService(host: NotificationHost): Promise<boolean> {
   try {
     const res = await host.getFromProjectService("/coordination-worklist");
-    if (!res?.ok || !res.model || !res.worklist) throw new Error("invalid coordination payload");
+    // Validate the shape before mutating host state so a malformed/version-skewed payload fails
+    // fast into the local fallback instead of half-applying and crashing a renderer downstream.
+    if (!res?.ok || !Array.isArray(res.model?.items) || !Array.isArray(res.worklist?.items)) {
+      throw new Error("invalid coordination payload");
+    }
     applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads: res.threads ?? [] });
     return true;
   } catch {
