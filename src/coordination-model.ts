@@ -214,3 +214,115 @@ export function buildCoordinationModel(input: BuildCoordinationModelInput): Coor
     unreachable: items.filter((item) => item.reachability === "missing"),
   };
 }
+
+/** Per-row record kind for the unified worklist. */
+export type WorklistType = "msg" | "note" | "task" | "review" | "handoff" | "conversation";
+/** Urgency grouping for the unified worklist. */
+export type WorklistBucket = "needs-you" | "handled" | "unreachable";
+
+/**
+ * One row of the unified Coordination worklist — either an agent's notification rollup or a
+ * genuine (non-notification) thread, merged into a single urgency-sorted stream.
+ */
+export interface WorklistItem {
+  /** Unique across the merged stream ("n:<key>" for notifications, "t:<threadId>" for threads). */
+  key: string;
+  kind: "notification" | "thread";
+  type: WorklistType;
+  bucket: WorklistBucket;
+  title: string;
+  /** Unified sort score (higher = more urgent); comparable across notifications and threads. */
+  urgency: number;
+  reachability: CoordinationReachability;
+  actionable: boolean;
+  stale: boolean;
+  /** Recency anchor for tie-breaking / display. */
+  when?: string;
+  notification?: CoordinationItem;
+  thread?: WorkflowEntry;
+}
+
+export interface CoordinationWorklist {
+  /** All rows, most-urgent first. */
+  items: WorklistItem[];
+  /** Rows that genuinely want attention now. */
+  needsYou: WorklistItem[];
+  /** Handled / stale / unreachable rows (the de-emphasized tail). */
+  tail: WorklistItem[];
+}
+
+function threadType(kind: string): WorklistType {
+  return kind === "task" || kind === "review" || kind === "handoff" || kind === "conversation" ? kind : "conversation";
+}
+
+function notificationBucket(item: CoordinationItem): WorklistBucket {
+  if (item.reachability === "missing" || item.stale) return "unreachable";
+  return item.actionable ? "needs-you" : "handled";
+}
+
+// Unified urgency so notifications and threads interleave on one scale.
+function notificationUrgency(item: CoordinationItem): number {
+  if (item.reachability === "missing") return 10;
+  if (item.stale) return 20;
+  if (!item.actionable) return 40;
+  if (item.reachability === "live") return 90 + item.attentionScore;
+  return 70; // offline / sessionless actionable
+}
+
+/**
+ * Merge the reconciled notification model and the genuine (non-notification) threads into one
+ * agent-keyed, urgency-sorted worklist. Threads are first-class rows (the model's per-item
+ * thread annotation is ignored here) so each thread appears exactly once. The caller must pass
+ * only genuine threads in `input.threads` (e.g. buildCoordinationThreadEntries output, which
+ * already excludes notification-tagged threads) — this function does not re-filter them.
+ */
+export function buildCoordinationWorklist(
+  input: BuildCoordinationModelInput & { currentParticipant?: string },
+): CoordinationWorklist {
+  const participant = input.currentParticipant ?? "user";
+  const model = buildCoordinationModel(input);
+  const items: WorklistItem[] = [];
+
+  for (const item of model.items) {
+    items.push({
+      key: `n:${item.key}`,
+      kind: "notification",
+      type: item.sessionId ? "msg" : "note",
+      bucket: notificationBucket(item),
+      title: item.title,
+      urgency: notificationUrgency(item),
+      reachability: item.reachability,
+      actionable: item.actionable,
+      stale: item.stale,
+      when: item.latestUnread?.createdAt,
+      notification: item,
+    });
+  }
+
+  for (const entry of input.threads ?? []) {
+    const onYou = (entry.thread.waitingOn ?? []).includes(participant);
+    const pending = entry.pendingDeliveries > 0;
+    const actionable = onYou || pending;
+    items.push({
+      key: `t:${entry.thread.id}`,
+      kind: "thread",
+      type: threadType(entry.thread.kind),
+      bucket: actionable ? "needs-you" : "handled",
+      title: entry.displayTitle,
+      urgency: onYou ? 80 : pending ? 75 : 50,
+      reachability: "none",
+      actionable,
+      stale: false,
+      when: entry.thread.updatedAt,
+      thread: entry,
+    });
+  }
+
+  items.sort((a, b) => b.urgency - a.urgency || (b.when ?? "").localeCompare(a.when ?? ""));
+
+  return {
+    items,
+    needsYou: items.filter((item) => item.bucket === "needs-you"),
+    tail: items.filter((item) => item.bucket !== "needs-you"),
+  };
+}
