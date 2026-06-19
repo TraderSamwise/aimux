@@ -15,7 +15,8 @@ import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
-import { summarizeUnreadNotificationsBySession } from "../notifications.js";
+import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
+import { isNotificationStale } from "../coordination-model.js";
 import { requestJson } from "../http-client.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
@@ -622,7 +623,10 @@ export function computeDashboardSessions(
 ): DashboardSession[] {
   const lastUsedState = loadLastUsedState(process.cwd());
   const metadata = loadMetadataState().sessions;
-  const threadSummaries = listThreadSummaries();
+  // Notification records are exchange threads tagged `notification`; they are surfaced by the
+  // per-session unread-notification count, so excluding them here keeps the dashboard's
+  // thread chips from double-counting the same needs-input record.
+  const threadSummaries = listThreadSummaries().filter((summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG));
   const threadStats = new Map<
     string,
     {
@@ -740,6 +744,23 @@ export function computeDashboardSessions(
     const target = host.sessionTmuxTargets.get(session.id) ?? metadata?.target;
     const notifications = notificationsBySessionId.get(session.id);
     const runtimeInfo = target ? readTmuxProcessInfo(host, target) : {};
+    const semantic = deriveSessionSemantics({
+      status: session.status,
+      pendingAction: session.pendingAction,
+      activity: session.activity,
+      attention: session.attention,
+      unseenCount: session.unseenCount,
+      notificationUnreadCount: notifications?.unreadCount ?? 0,
+      latestNotification: notifications?.latestUnread,
+      threadUnreadCount: stats?.unread ?? 0,
+      threadPendingCount: stats?.pending ?? 0,
+      threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
+      threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
+      workflowOnMeCount: workflow?.onMe ?? 0,
+      workflowBlockedCount: workflow?.blocked ?? 0,
+      workflowFamilyCount: workflow?.families.size ?? 0,
+      hasActiveTask: Boolean(session.taskDescription),
+    });
     return {
       ...session,
       tmuxWindowIndex: target?.windowIndex,
@@ -761,24 +782,12 @@ export function computeDashboardSessions(
       workflowTopLabel: workflow?.topLabel,
       workflowNextAction: workflow?.nextAction,
       notificationUnreadCount: notifications?.unreadCount ?? 0,
+      notificationNeedsInputUnreadCount: notifications?.needsInputUnreadCount ?? 0,
       latestNotificationText: notifications?.latestUnread?.body || notifications?.latestUnread?.title,
-      semantic: deriveSessionSemantics({
-        status: session.status,
-        pendingAction: session.pendingAction,
-        activity: session.activity,
-        attention: session.attention,
-        unseenCount: session.unseenCount,
-        notificationUnreadCount: notifications?.unreadCount ?? 0,
-        latestNotification: notifications?.latestUnread,
-        threadUnreadCount: stats?.unread ?? 0,
-        threadPendingCount: stats?.pending ?? 0,
-        threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
-        threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
-        workflowOnMeCount: workflow?.onMe ?? 0,
-        workflowBlockedCount: workflow?.blocked ?? 0,
-        workflowFamilyCount: workflow?.families.size ?? 0,
-        hasActiveTask: Boolean(session.taskDescription),
-      }),
+      notificationStale:
+        semantic.runtime.isAlive &&
+        isNotificationStale(semantic.user.label, (notifications?.needsInputUnreadCount ?? 0) > 0),
+      semantic,
     };
   });
 }

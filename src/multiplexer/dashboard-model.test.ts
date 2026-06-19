@@ -7,14 +7,30 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
 import { initPaths } from "../paths.js";
 import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { addNotification } from "../notifications.js";
 import {
   applyDashboardModel,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
+  computeDashboardSessions,
   startProjectServices,
   withMetadataServicePending,
   withMetadataSessionPending,
 } from "./dashboard-model.js";
+
+function minimalDashboardHost(sessions: Array<{ id: string; command: string; status: string }>): any {
+  return {
+    sessions,
+    activeIndex: 0,
+    offlineSessions: [],
+    sessionWorktreePaths: new Map(),
+    sessionTmuxTargets: new Map(),
+    sessionRoles: new Map(),
+    getSessionLabel: () => undefined,
+    deriveHeadline: () => undefined,
+    tmuxRuntimeManager: { listProjectManagedWindows: () => [], isWindowAlive: () => false },
+  };
+}
 
 function deferred<T = void>(): {
   promise: Promise<T>;
@@ -1101,5 +1117,77 @@ describe("metadata pending actions", () => {
     secondSettle.resolve(true);
     await nextTick();
     expect(pending.getServiceAction("service-1")).toBeUndefined();
+  });
+});
+
+describe("computeDashboardSessions thread stats", () => {
+  it("does not count notification-tagged threads as session threads", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-threadstats-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({
+        title: "[Needs input] claude",
+        body: "Claude is waiting for your input",
+        sessionId: "claude-1",
+        kind: "needs_input",
+      });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+
+      expect(session?.notificationUnreadCount).toBe(1);
+      expect(session?.threadUnreadCount).toBe(0);
+      expect(session?.threadPendingCount).toBe(0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("marks an unread needs-input notice stale when the live label has moved on", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-stale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "needs input", body: "waiting", sessionId: "claude-1", kind: "needs_input" });
+
+      // A running session with no activity/attention resolves to label "ready" (not waiting).
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.semantic?.user.label).toBe("ready");
+      expect(session?.notificationStale).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark an offline agent's needs-input notice stale (live guard)", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-stale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "needs input", body: "waiting", sessionId: "claude-1", kind: "needs_input" });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "offline" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.notificationStale).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark a non-needs-input unread notice stale", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-nonstale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "done", body: "completed", sessionId: "claude-1", kind: "complete" });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.notificationStale).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });
