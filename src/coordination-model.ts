@@ -258,7 +258,9 @@ function threadType(kind: string): WorklistType {
 }
 
 function notificationBucket(item: CoordinationItem): WorklistBucket {
-  if (item.reachability === "missing" || item.stale) return "unreachable";
+  // A stale notice belongs to a LIVE agent that moved on — handled, not unreachable.
+  if (item.reachability === "missing") return "unreachable";
+  if (item.stale) return "handled";
   return item.actionable ? "needs-you" : "handled";
 }
 
@@ -279,10 +281,10 @@ function notificationUrgency(item: CoordinationItem): number {
  * already excludes notification-tagged threads) — this function does not re-filter them.
  */
 export function buildCoordinationWorklist(
-  input: BuildCoordinationModelInput & { currentParticipant?: string },
+  input: BuildCoordinationModelInput & { currentParticipant?: string; model?: CoordinationModel },
 ): CoordinationWorklist {
   const participant = input.currentParticipant ?? "user";
-  const model = buildCoordinationModel(input);
+  const model = input.model ?? buildCoordinationModel(input);
   const items: WorklistItem[] = [];
 
   for (const item of model.items) {
