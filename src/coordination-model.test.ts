@@ -208,10 +208,42 @@ describe("coordination worklist", () => {
     expect(byKey.get("n:live")!.type).toBe("msg");
     expect(byKey.get("n:proj")!.type).toBe("note");
     expect(byKey.get("t:h1")!.type).toBe("handoff");
-    expect(byKey.get("n:live")!.bucket).toBe("needs-you");
+    expect(byKey.get("n:live")!.bucket).toBe("awake");
     expect(byKey.get("n:ghost")!.bucket).toBe("unreachable");
-    expect(wl.needsYou.every((i) => i.bucket === "needs-you")).toBe(true);
+    expect(wl.needsYou.every((i) => i.bucket === "awake" || i.bucket === "asleep")).toBe(true);
     expect(wl.tail.some((i) => i.key === "n:ghost")).toBe(true);
+  });
+
+  it("splits actionable agents into awake (live) and asleep (offline) buckets", () => {
+    const wl = worklist({
+      sessions: [session("live", "needs_input", 4), session("off", "needs_input", 0, "offline")],
+      notifications: [
+        notif({ id: "1", sessionId: "live", kind: "needs_input" }),
+        notif({ id: "2", sessionId: "off", kind: "needs_input" }),
+      ],
+    });
+    const byKey = new Map(wl.items.map((i) => [i.key, i]));
+    expect(byKey.get("n:live")!.bucket).toBe("awake");
+    expect(byKey.get("n:off")!.bucket).toBe("asleep");
+    // Both still "need you"; awake sorts above asleep.
+    expect(wl.needsYou.map((i) => i.key)).toEqual(["n:live", "n:off"]);
+  });
+
+  it("clamps secondary urgency so a busy lower bucket can't overtake a higher one", () => {
+    const wl = worklist({
+      sessions: [
+        session("awake", "needs_input", 0),
+        session("busy-asleep", "needs_input", 100_000, "offline"),
+      ],
+      notifications: [
+        notif({ id: "1", sessionId: "awake", kind: "needs_input" }),
+        notif({ id: "2", sessionId: "busy-asleep", kind: "needs_input" }),
+      ],
+    });
+    const keys = wl.items.map((i) => i.key);
+    // Despite a massive attention score, the asleep agent stays below the awake one.
+    expect(wl.items.find((i) => i.key === "n:busy-asleep")!.bucket).toBe("asleep");
+    expect(keys.indexOf("n:awake")).toBeLessThan(keys.indexOf("n:busy-asleep"));
   });
 
   it("lists a genuine thread exactly once even when its agent also has a notification", () => {

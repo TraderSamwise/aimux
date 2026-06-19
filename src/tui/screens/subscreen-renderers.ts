@@ -1,22 +1,21 @@
+import { isDevelopmentRuntime } from "../../connection-targets.js";
 import type { GraveyardViewRow } from "../../multiplexer/graveyard-view-model.js";
 import { formatRelativeRecency } from "../../recency.js";
+import { AIMUX_VERSION } from "../../version.js";
 import { renderOverlayBox } from "../render/box.js";
+import { composeScreenFrame } from "../render/screen-frame.js";
 import { twoPaneLeftWidth } from "../render/text.js";
 import { card, chip, footerHints, keycapHint, statusDot, style, type ChipTone, type Tone } from "../render/theme.js";
 
-// Shared subscreen chrome built from the design-language tokens.
-function screenHeader(ctx: any, cols: number, title: string, suffix = ""): string[] {
-  const heading = `${style("aimux", "strong")} ${style(`— ${title}`, "muted")}${suffix}`;
-  return [
-    "",
-    ctx.centerInWidth(heading, cols),
-    ctx.centerInWidth(style("─".repeat(Math.min(50, cols - 4)), "muted"), cols),
-    "",
-  ];
-}
-
-function rule(ctx: any, cols: number, max: number): string {
-  return ctx.centerInWidth(style("─".repeat(Math.min(cols - 4, max)), "muted"), cols);
+// Shared subscreen chrome — identical to the dashboard header (version tag, runtime dot, dev
+// badge, full-width rule) so every screen's top section is uniform; only the descriptor changes.
+function screenHeader(ctx: any, cols: number, title: string): string[] {
+  const dev = isDevelopmentRuntime();
+  const devBadge = dev ? "\x1b[1;30;43m DEV \x1b[0m " : "";
+  const versionTag = AIMUX_VERSION ? `${style(`v${AIMUX_VERSION}`, "muted")} ` : "";
+  const heading = `${devBadge}${style("aimux", "strong")} ${versionTag}— ${title}  ${style("● tmux", "done")}`;
+  const divider = dev ? `\x1b[33m${"─".repeat(Math.max(0, cols))}\x1b[0m` : "─".repeat(Math.max(0, cols));
+  return ["", ctx.centerInWidth(heading, cols), divider, ""];
 }
 
 const marker = (selected: boolean): string => (selected ? `${style("▸", "accent")} ` : "  ");
@@ -32,18 +31,36 @@ const WORKLIST_TYPE_TONE: Record<string, ChipTone> = {
   conversation: "muted",
 };
 const WORKLIST_BUCKET_LABEL: Record<string, string> = {
-  "needs-you": "Needs you",
+  awake: "Awake · act now",
+  asleep: "Asleep · wake to act",
   handled: "Handled",
   unreachable: "Unreachable",
 };
+const WORKLIST_BUCKET_TONE: Record<string, Tone> = {
+  awake: "done",
+  asleep: "sleep",
+  handled: "muted",
+  unreachable: "muted",
+};
+
+// Reachability-encoding dot: ● awake (green) · ◐ asleep (slate) · ○ gone (red); threads/notes
+// fall back to the actionable/idle dot since they have no agent process to reach.
+function reachabilityDot(item: any): string {
+  if (item.kind === "notification") {
+    if (item.reachability === "live") return style("●", "done");
+    if (item.reachability === "offline") return style("◐", "sleep");
+    if (item.reachability === "missing") return style("○", "danger");
+  }
+  return item.actionable ? statusDot("needs") : statusDot("offline");
+}
 
 // Trailing reachability/state tags for a worklist row (reuse the inbox + thread vocabularies).
 function worklistTags(item: any): string {
   const parts: string[] = [];
   if (item.kind === "notification") {
     if (item.reachability === "live") parts.push(style("live", "done"));
-    else if (item.reachability === "offline") parts.push(style("offline", "attn"));
-    else if (item.reachability === "missing") parts.push(style("missing", "danger"));
+    else if (item.reachability === "offline") parts.push(style("asleep", "sleep"));
+    else if (item.reachability === "missing") parts.push(style("gone", "danger"));
     if (item.stale) parts.push(style("stale", "muted"));
   } else if (item.thread) {
     const thread = item.thread.thread;
@@ -54,40 +71,40 @@ function worklistTags(item: any): string {
   return parts.length ? ` ${style("·", "muted")} ${parts.join(` ${style("·", "muted")} `)}` : "";
 }
 
-// Titled bucket rule (dashboard-style): "Needs you ──── N", accent for the actionable bucket.
+// Titled bucket rule (dashboard-style): "Awake · act now ──── N", tinted by bucket urgency.
 function bucketRule(bucket: string, count: number): string {
   const label = WORKLIST_BUCKET_LABEL[bucket] ?? bucket;
-  const tone: Tone = bucket === "needs-you" ? "accent" : "muted";
-  const dashes = Math.max(2, 44 - label.length - String(count).length - 4);
+  const tone: Tone = WORKLIST_BUCKET_TONE[bucket] ?? "muted";
+  const dashes = Math.max(2, 46 - label.length - String(count).length - 4);
   return `  ${style(label, tone)} ${style("─".repeat(dashes), "muted")} ${style(String(count), tone)}`;
 }
 
-// Footer hints contextual to the selected row's kind.
+// Footer hints contextual to the selected row's kind — and, for asleep agents, honest that
+// Enter wakes (a slow resume) rather than opens instantly.
 function coordinationFooterHints(item: any, filterThreads: boolean): string {
   const tail = "[d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit";
   const filterHint = `[Tab] ${filterThreads ? "all" : "threads"}`;
   if (item?.kind === "thread") {
     return `[↑↓] select  ${filterHint}  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P/J/E] review  ${tail}`;
   }
-  return `[↑↓] select  ${filterHint}  [Enter] open  [r] read  [c] clear  [R] read all  [C] clear all  ${tail}`;
+  const enterVerb =
+    item?.reachability === "offline" ? "[Enter] wake" : item?.reachability === "missing" ? "" : "[Enter] open";
+  const enter = enterVerb ? `  ${enterVerb}` : "";
+  return `[↑↓] select  ${filterHint}${enter}  [r] read  [c] clear  [R] read all  [C] clear all  ${tail}`;
 }
 
 export function renderCoordinationScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "coordination");
   const filterThreads = ctx.coordinationFilter === "threads";
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const items = ctx.coordinationWorklist ?? [];
   const selectedItem = items[ctx.coordinationIndex];
 
-  // Footer reflects the selected row's available actions.
-  const footer = ctx.centerInWidth(footerHints(coordinationFooterHints(selectedItem, filterThreads)), cols);
-
   const listLines: string[] = [];
   let focusLine = 1;
 
-  const needYou = items.filter((item: any) => item.bucket === "needs-you").length;
+  const needYou = items.filter((item: any) => item.bucket === "awake" || item.bucket === "asleep").length;
   const bucketCounts: Record<string, number> = {};
   for (const item of items) bucketCounts[item.bucket] = (bucketCounts[item.bucket] ?? 0) + 1;
 
@@ -95,18 +112,20 @@ export function renderCoordinationScreen(ctx: any): void {
     `  ${style("Coordination", "strong")} ${style(`(${needYou} need you · ${items.length})`, "muted")}${filterThreads ? ` ${style("· threads", "muted")}` : ""}`,
   );
   if (items.length === 0) {
+    listLines.push("");
     listLines.push(`    ${style(filterThreads ? "No threads." : "Nothing needs you.", "muted")}`);
   } else {
     let lastBucket = "";
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
       if (item.bucket !== lastBucket) {
+        listLines.push(""); // breathing room between groups (and below the header)
         listLines.push(bucketRule(item.bucket, bucketCounts[item.bucket] ?? 0));
         lastBucket = item.bucket;
       }
       const selected = i === ctx.coordinationIndex;
       if (selected) focusLine = listLines.length + 1;
-      const dot = item.actionable ? statusDot("needs") : statusDot("offline");
+      const dot = reachabilityDot(item);
       const typeChip = chip(item.type, WORKLIST_TYPE_TONE[item.type] ?? "muted");
       const titleTone = item.actionable ? "strong" : "muted";
       const when = item.when ? ` ${style(`· ${formatRelativeRecency(item.when)}`, "muted")}` : "";
@@ -116,15 +135,18 @@ export function renderCoordinationScreen(ctx: any): void {
     }
   }
 
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderCoordinationDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [footerHints(coordinationFooterHints(selectedItem, filterThreads))],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderCoordinationDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderCoordinationDetails(ctx: any, width: number, height: number): string[] {
@@ -216,11 +238,6 @@ const STORY_KIND_DOT: Record<string, Tone> = { task: "work", review: "info", not
 export function renderProjectScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "project");
-  const footer = ctx.centerInWidth(
-    footerHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const obs = ctx.projectObservability ?? { summary: null, progress: null, story: [] };
   const listLines: string[] = [];
@@ -264,15 +281,20 @@ export function renderProjectScreen(ctx: any): void {
     }
   }
 
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderProjectDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [
+        footerHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
+      ],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderProjectDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderProjectDetails(ctx: any, width: number, height: number): string[] {
@@ -308,13 +330,6 @@ function topologyDot(health: string): string {
 export function renderTopologyScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "topology");
-  const footer = ctx.centerInWidth(
-    footerHints(
-      "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const topology = ctx.topology ?? { projectName: "project", health: "idle", counts: null, rows: [] };
   const listLines: string[] = [];
@@ -349,15 +364,22 @@ export function renderTopologyScreen(ctx: any): void {
     }
   }
 
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderTopologyDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [
+        footerHints(
+          "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
+        ),
+      ],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderTopologyDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderTopologyDetails(ctx: any, width: number, height: number): string[] {
@@ -505,13 +527,6 @@ function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock
 export function renderGraveyardScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "graveyard");
-  const footer = ctx.centerInWidth(
-    footerHints(
-      "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const cardWidth = twoPane ? twoPaneLeftWidth(cols) : Math.max(40, cols - 2);
   const listLines: string[] = [];
@@ -557,15 +572,20 @@ export function renderGraveyardScreen(ctx: any): void {
     }
   }
   const focusLine = lineByItemIndex.get(ctx.graveyardIndex) ?? 1;
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderGraveyardDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+  let frame = composeScreenFrame({
     cols,
-    viewportHeight,
+    rows,
+    header,
+    content: listLines,
+    footerLines: [
+      footerHints(
+        "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+      ),
+    ],
     focusLine,
     twoPane,
-  );
-  let frame = "\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 52), footer].join("\r\n");
+    rightPanel: (width, height) => renderGraveyardDetails(ctx, width, height),
+  }).frame;
   if (ctx.graveyardWorktreeDeleteConfirm) {
     frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx, cols, rows);
   }
@@ -657,13 +677,6 @@ const LIBRARY_KIND_TONE: Record<string, Tone> = { doc: "info", plan: "work" };
 export function renderLibraryScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header = screenHeader(ctx, cols, "library");
-  const footer = ctx.centerInWidth(
-    footerHints(
-      "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
-    ),
-    cols,
-  );
-  const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const entries = ctx.libraryEntries ?? [];
   const listLines: string[] = [];
@@ -685,15 +698,22 @@ export function renderLibraryScreen(ctx: any): void {
     }
   }
   const focusLine = entries.length === 0 ? 1 : ctx.libraryIndex + 2;
-  const body = ctx.composeSplitScreen(
-    listLines,
-    renderLibraryDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-    cols,
-    viewportHeight,
-    focusLine,
-    twoPane,
+  ctx.writeFrame(
+    composeScreenFrame({
+      cols,
+      rows,
+      header,
+      content: listLines,
+      footerLines: [
+        footerHints(
+          "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+        ),
+      ],
+      focusLine,
+      twoPane,
+      rightPanel: (width, height) => renderLibraryDetails(ctx, width, height),
+    }).frame,
   );
-  ctx.writeFrame("\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 72), footer].join("\r\n"));
 }
 
 export function renderLibraryDetails(ctx: any, width: number, height: number): string[] {

@@ -3,7 +3,8 @@ import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionRecencyAnchor } from "../../session-recency.js";
-import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
+import { composeScreenFrame } from "../render/screen-frame.js";
+import { center, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
 import {
   card,
   chip,
@@ -430,7 +431,6 @@ export function renderDashboardFrame(
   const twoPane = cols >= 72 && state.detailsPaneVisible;
   const leftWidth = Math.max(32, Math.floor(contentWidth * 0.58));
   const cardWidth = twoPane ? leftWidth : contentWidth;
-  const padBlockLine = (line: string): string => line;
   const centerInBlock = (line: string): string => truncateAnsi(center(line, contentWidth), cols);
 
   const trailingHints = (parts: string[]): string => parts.filter(Boolean).join(" ");
@@ -820,56 +820,19 @@ export function renderDashboardFrame(
     });
   }
 
-  // Flat footer: every active key on one line that wraps naturally to width,
-  // left-aligned with a 2-space gutter to match the dashboard content.
-  const footerIndent = "  ";
+  // Flat footer: every active key on one line that wraps naturally to width.
   // Wrap to the real terminal width (not contentWidth's 72 floor) so keys wrap
   // instead of being truncated on narrow panes.
-  const footerWidth = Math.max(0, cols - footerIndent.length);
-  const helpLines = renderFooterHints(buildDashboardFooterHints(state), footerWidth);
-  const footer: string[] = [
-    "─".repeat(Math.max(0, cols)),
-    ...helpLines.map((line) => truncateAnsi(`${footerIndent}${line}`, cols)),
-  ];
-  const viewportHeight = rows - header.length - footer.length;
-  let scrollOffset = state.scrollOffset;
-  const focusLine = findFocusLine(content);
-  // The focused card spans from its marker line to the next blank separator;
-  // scroll to reveal its whole body, not just the marker line, so the bottom
-  // of the last (possibly tall) card is always reachable.
-  let focusEnd = focusLine;
-  while (focusEnd >= 0 && focusEnd + 1 < content.length && stripAnsi(content[focusEnd + 1]).trim() !== "") {
-    focusEnd++;
-  }
-  const maxScroll = Math.max(0, content.length - viewportHeight);
-  if (focusLine >= 0) {
-    if (focusLine < scrollOffset + 1) {
-      scrollOffset = Math.max(0, focusLine - 1);
-    } else if (focusEnd >= scrollOffset + viewportHeight - 1) {
-      scrollOffset = Math.min(maxScroll, focusEnd - viewportHeight + 2);
-      // If the card is taller than the viewport, keep its top edge in view.
-      if (focusLine < scrollOffset + 1) scrollOffset = Math.max(0, focusLine - 1);
-    }
-  }
-  scrollOffset = Math.min(scrollOffset, maxScroll);
-  const visibleContent = content.slice(scrollOffset, scrollOffset + viewportHeight);
-  const canScrollUp = scrollOffset > 0;
-  const canScrollDown = scrollOffset < maxScroll;
-  if (canScrollUp) visibleContent[0] = centerInBlock("\x1b[2m▲ more ▲\x1b[0m");
-  if (canScrollDown && visibleContent.length > 0)
-    visibleContent[visibleContent.length - 1] = centerInBlock("\x1b[2m▼ more ▼\x1b[0m");
-  while (visibleContent.length < viewportHeight) visibleContent.push("");
-
-  let bodyLines = visibleContent;
-  if (twoPane) {
-    const panelWidth = Math.max(20, contentWidth - leftWidth - 4);
-    const rightPanel = renderSelectedDetailsPanel(panelWidth, viewportHeight);
-    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth, "   ").map(padBlockLine);
-  } else {
-    bodyLines = visibleContent.map((line) => padBlockLine(line));
-  }
-  return {
-    frame: "\x1b[2J\x1b[H" + [...header, ...bodyLines, ...footer].join("\r\n"),
-    scrollOffset,
-  };
+  const footerLines = renderFooterHints(buildDashboardFooterHints(state), Math.max(0, cols - 2));
+  return composeScreenFrame({
+    cols,
+    rows,
+    header,
+    content,
+    footerLines,
+    focusLine: findFocusLine(content),
+    scrollOffset: state.scrollOffset,
+    twoPane,
+    rightPanel: twoPane ? (panelWidth, height) => renderSelectedDetailsPanel(panelWidth, height) : undefined,
+  });
 }

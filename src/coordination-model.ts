@@ -217,8 +217,11 @@ export function buildCoordinationModel(input: BuildCoordinationModelInput): Coor
 
 /** Per-row record kind for the unified worklist. */
 export type WorklistType = "msg" | "note" | "task" | "review" | "handoff" | "conversation";
-/** Urgency grouping for the unified worklist. */
-export type WorklistBucket = "needs-you" | "handled" | "unreachable";
+/**
+ * Urgency grouping for the unified worklist. "Needs you" is split by reachability so the
+ * agents you can act on now (awake) are separated from ones you must wake first (asleep).
+ */
+export type WorklistBucket = "awake" | "asleep" | "handled" | "unreachable";
 
 /**
  * One row of the unified Coordination worklist — either an agent's notification rollup or a
@@ -260,17 +263,25 @@ function threadType(kind: string): WorklistType {
 function notificationBucket(item: CoordinationItem): WorklistBucket {
   // A stale notice belongs to a LIVE agent that moved on — handled, not unreachable.
   if (item.reachability === "missing") return "unreachable";
-  if (item.stale) return "handled";
-  return item.actionable ? "needs-you" : "handled";
+  if (item.stale || !item.actionable) return "handled";
+  // Reachable + actionable: offline agents must be woken first; live/sessionless can act now.
+  return item.reachability === "offline" ? "asleep" : "awake";
 }
 
-// Unified urgency so notifications and threads interleave on one scale.
-function notificationUrgency(item: CoordinationItem): number {
-  if (item.reachability === "missing") return 10;
-  if (item.stale) return 20;
-  if (!item.actionable) return 40;
-  if (item.reachability === "live") return 90 + item.attentionScore;
-  return 70; // offline / sessionless actionable
+// Bucket dominates the sort so each group renders as one contiguous run (no repeated headers).
+const BUCKET_STRIDE = 1_000_000;
+const BUCKET_RANK: Record<WorklistBucket, number> = { awake: 4, asleep: 3, handled: 2, unreachable: 1 };
+
+// Bucket-dominant urgency: rank is the high-order term; secondary breaks ties within a bucket.
+// Secondary is clamped below the stride so a bucket can never bleed into the next and fragment
+// the contiguous group rendering, no matter how large the unread/pending/attention totals get.
+function bucketUrgency(bucket: WorklistBucket, secondary: number): number {
+  return BUCKET_RANK[bucket] * BUCKET_STRIDE + Math.max(0, Math.min(BUCKET_STRIDE - 1, secondary));
+}
+
+// Unified urgency so notifications and threads interleave on one scale, bucket-first.
+function notificationUrgency(item: CoordinationItem, bucket: WorklistBucket): number {
+  return bucketUrgency(bucket, item.attentionScore * 100 + item.unreadCount * 10 + item.pendingDeliveries * 5);
 }
 
 /**
@@ -288,14 +299,15 @@ export function buildCoordinationWorklist(
   const items: WorklistItem[] = [];
 
   for (const item of model.items) {
+    const bucket = notificationBucket(item);
     items.push({
       key: `n:${item.key}`,
       kind: "notification",
       sessionId: item.sessionId,
       type: item.sessionId ? "msg" : "note",
-      bucket: notificationBucket(item),
+      bucket,
       title: item.title,
-      urgency: notificationUrgency(item),
+      urgency: notificationUrgency(item, bucket),
       reachability: item.reachability,
       actionable: item.actionable,
       stale: item.stale,
@@ -308,13 +320,15 @@ export function buildCoordinationWorklist(
     const onYou = (entry.thread.waitingOn ?? []).includes(participant);
     const pending = entry.pendingDeliveries > 0;
     const actionable = onYou || pending;
+    // Threads target the user directly (no agent to wake), so an actionable thread is "awake".
+    const bucket: WorklistBucket = actionable ? "awake" : "handled";
     items.push({
       key: `t:${entry.thread.id}`,
       kind: "thread",
       type: threadType(entry.thread.kind),
-      bucket: actionable ? "needs-you" : "handled",
+      bucket,
       title: entry.displayTitle,
-      urgency: onYou ? 80 : pending ? 75 : 50,
+      urgency: bucketUrgency(bucket, onYou ? 300 : pending ? 200 : 50),
       reachability: "none",
       actionable,
       stale: false,
@@ -327,7 +341,7 @@ export function buildCoordinationWorklist(
 
   return {
     items,
-    needsYou: items.filter((item) => item.bucket === "needs-you"),
-    tail: items.filter((item) => item.bucket !== "needs-you"),
+    needsYou: items.filter((item) => item.bucket === "awake" || item.bucket === "asleep"),
+    tail: items.filter((item) => item.bucket === "handled" || item.bucket === "unreachable"),
   };
 }
