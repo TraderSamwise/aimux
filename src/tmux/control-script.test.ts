@@ -453,6 +453,53 @@ describe("tmux-control.sh", () => {
     expect(curlLog).toEqual([]);
   });
 
+  it("does not match sibling worktree path prefixes in host tmux metadata fallback", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@wrong", index: 2, name: "wrong" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@current", index: 1, name: "current" },
+        ],
+      },
+      windowMetadata: {
+        "@wrong": { sessionId: "wrong-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "current",
+      "--current-window-id",
+      "@current",
+      "--current-path",
+      "/repo/project/worktree2",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog.length).toBeGreaterThan(0);
+    expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
+  });
+
   it("skips dead host tmux metadata candidates for next", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
@@ -1333,6 +1380,60 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     expect(log).toContain("link-window -d -s @main-shell -t aimux-proj-client-live");
     expect(log).not.toContain("link-window -d -s @other-agent -t aimux-proj-client-live");
+  });
+
+  it("does not match sibling worktree path prefixes in statusline fallback", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@wrong", index: 2, name: "wrong" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@current", index: 1, name: "current" },
+        ],
+      },
+      windowMetadata: {},
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          { tmuxWindowId: "@wrong", tmuxWindowIndex: 2, kind: "agent", worktreePath: "/repo/project/worktree" },
+        ],
+      }),
+    );
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "current",
+      "--current-window-id",
+      "@current",
+      "--current-path",
+      "/repo/project/worktree2",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog.length).toBeGreaterThan(0);
+    expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
   });
 
   it("switches from a focused parent agent to its first teammate in statusline order", () => {
