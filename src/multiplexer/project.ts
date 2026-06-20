@@ -11,10 +11,15 @@ function emptyProjectObservability(): ProjectObservability {
 
 function applyProjectObservability(host: ProjectHost, project: ProjectObservability): void {
   host.projectObservability = project;
+  host.projectObservabilityLoaded = true;
   const storyLength = host.projectObservability.story.length;
   if (typeof host.projectIndex !== "number" || Number.isNaN(host.projectIndex)) host.projectIndex = 0;
   if (host.projectIndex < 0) host.projectIndex = 0;
   if (host.projectIndex >= storyLength) host.projectIndex = Math.max(0, storyLength - 1);
+}
+
+function ensureProjectObservability(host: ProjectHost): void {
+  if (!host.projectObservabilityLoaded) applyProjectObservability(host, emptyProjectObservability());
 }
 
 function isProjectSummary(value: any): boolean {
@@ -44,12 +49,26 @@ function isTaskProgress(value: any): boolean {
   );
 }
 
+function isProjectStoryItem(value: any): boolean {
+  return (
+    Boolean(value) &&
+    typeof value.id === "string" &&
+    (value.kind === "task" || value.kind === "review" || value.kind === "notification") &&
+    typeof value.title === "string" &&
+    typeof value.meta === "string" &&
+    typeof value.createdAt === "string" &&
+    (value.body === undefined || typeof value.body === "string") &&
+    (value.status === undefined || typeof value.status === "string")
+  );
+}
+
 function isProjectObservability(value: any): value is ProjectObservability {
   return (
     Boolean(value) &&
     isProjectSummary(value.summary) &&
     isTaskProgress(value.progress) &&
-    Array.isArray(value.story)
+    Array.isArray(value.story) &&
+    value.story.every(isProjectStoryItem)
   );
 }
 
@@ -60,14 +79,14 @@ export async function refreshProjectObservability(host: ProjectHost): Promise<bo
     applyProjectObservability(host, res.project);
     return true;
   } catch {
-    if (!host.projectObservability) applyProjectObservability(host, emptyProjectObservability());
+    ensureProjectObservability(host);
     return false;
   }
 }
 
 export function showProject(host: ProjectHost): void {
   host.clearDashboardSubscreens();
-  if (!host.projectObservability) applyProjectObservability(host, emptyProjectObservability());
+  ensureProjectObservability(host);
   host.setDashboardScreen("project");
   host.writeStatuslineFile();
   renderProject(host);
@@ -77,7 +96,7 @@ export function showProject(host: ProjectHost): void {
 }
 
 export function renderProject(host: ProjectHost): void {
-  if (!host.projectObservability) applyProjectObservability(host, emptyProjectObservability());
+  ensureProjectObservability(host);
   renderProjectScreen(host);
 }
 
