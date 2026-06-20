@@ -197,10 +197,13 @@ export class Multiplexer {
   private coordinationFilter: "all" | "threads" = "all";
   private notificationIndex = 0;
   private projectObservability: ProjectObservability | null = null;
+  private projectObservabilityLoaded = false;
   private projectIndex = 0;
   private topology: ProjectTopology | null = null;
+  private topologyLoaded = false;
   private topologyIndex = 0;
   private libraryEntries: LibraryEntry[] = [];
+  private libraryLoaded = false;
   private libraryIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
   private teammatePickerState: { parentSessionId: string; index: number } | null = null;
