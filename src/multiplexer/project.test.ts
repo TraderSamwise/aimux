@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { refreshProjectObservability } from "./project.js";
+const renderProjectScreen = vi.hoisted(() => vi.fn());
+
+vi.mock("../tui/screens/subscreen-renderers.js", () => ({
+  renderProjectScreen,
+}));
+
+import { handleProjectKey, refreshProjectObservability } from "./project.js";
 
 describe("refreshProjectObservability", () => {
   it("loads the project model from the project service", async () => {
@@ -40,5 +46,27 @@ describe("refreshProjectObservability", () => {
 
     expect(host.getDashboardSessions).not.toHaveBeenCalled();
     expect(host.projectObservability.story).toEqual([]);
+  });
+
+  it("does not redraw project after manual refresh when the user has navigated away", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      projectObservability: { story: [] },
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+    };
+
+    handleProjectKey(host, Buffer.from("r"));
+    resolveRefresh({ ok: true, project: { summary: {}, progress: {}, story: [] } });
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/project-observability"));
+    await Promise.resolve();
+
+    expect(renderProjectScreen).not.toHaveBeenCalled();
   });
 });

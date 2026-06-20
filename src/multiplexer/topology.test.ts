@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { refreshTopology } from "./topology.js";
+const renderTopologyScreen = vi.hoisted(() => vi.fn());
+
+vi.mock("../tui/screens/subscreen-renderers.js", () => ({
+  renderTopologyScreen,
+}));
+
+import { handleTopologyKey, refreshTopology } from "./topology.js";
 
 describe("refreshTopology", () => {
   it("loads the topology model from the project service", async () => {
@@ -33,5 +39,30 @@ describe("refreshTopology", () => {
 
     expect(host.topology.rows).toEqual([]);
     expect(host.topology.counts).toEqual({ worktrees: 0, agents: 0, services: 0 });
+  });
+
+  it("does not redraw topology after manual refresh when the user has navigated away", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      topology: { rows: [] },
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+    };
+
+    handleTopologyKey(host, Buffer.from("r"));
+    resolveRefresh({
+      ok: true,
+      topology: { projectName: "aimux", counts: {}, worktrees: [], rows: [] },
+    });
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/topology"));
+    await Promise.resolve();
+
+    expect(renderTopologyScreen).not.toHaveBeenCalled();
   });
 });
