@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
@@ -41,6 +45,39 @@ describe("dashboardInteractionMethods", () => {
     );
     expect(host.footerFlash).toBe("⧫ Review requested → reviewer");
     expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("captures review diffs from the project root for root sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-review-root-"));
+    try {
+      execFileSync("git", ["init"], { cwd: repoRoot });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, "demo.txt"), "before\n");
+      execFileSync("git", ["add", "demo.txt"], { cwd: repoRoot });
+      execFileSync("git", ["commit", "-m", "initial"], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, "demo.txt"), "after\n");
+      const host: any = {
+        activeSession: { id: "codex-1", command: "codex" },
+        projectRoot: repoRoot,
+        sessionRoles: new Map([["codex-1", "coder"]]),
+        sessionWorktreePaths: new Map(),
+        postToProjectService: vi.fn(async () => ({ ok: true, task: { assignee: "reviewer" } })),
+        renderDashboard: vi.fn(),
+      };
+
+      await dashboardInteractionMethods.handleReviewRequest.call(host);
+
+      expect(host.postToProjectService).toHaveBeenCalledWith(
+        "/tasks/assign",
+        expect.objectContaining({
+          diff: expect.stringContaining("+after"),
+          worktreePath: undefined,
+        }),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not locally create services from the dashboard input path", () => {
