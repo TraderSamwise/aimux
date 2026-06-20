@@ -9,12 +9,14 @@ import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
 import { getDesktopState } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { env } from "@/lib/env";
 import { singleRouteParam } from "@/lib/route-params";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
+import { relayStatusAtom } from "@/stores/relay";
 
 function findService(
   groups: WorktreeBucket[],
@@ -49,6 +51,7 @@ export default function ServiceDetailScreen() {
   const projectPath = project?.path ?? "";
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
   const setDesktopState = useSetAtom(desktopStateFamily(projectPath));
+  const relayStatus = useAtomValue(relayStatusAtom);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -73,15 +76,17 @@ export default function ServiceDetailScreen() {
 
   const found = useMemo(() => findService(groups, serviceId), [groups, serviceId]);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const relayReadyForRequests = !env.AIMUX_RELAY_URL || relayStatus === "connected";
 
   useEffect(() => {
     if (found || !endpoint || !endpointKey || !projectPath || !serviceId) return;
+    if (!relayReadyForRequests) return;
     const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
     if (missingServiceFetchKey === fetchKey) return;
     let cancelled = false;
-    setMissingServiceFetchKey(fetchKey);
-    setLoadingMissingService(true);
     (async () => {
+      setMissingServiceFetchKey(fetchKey);
+      setLoadingMissingService(true);
       try {
         const currentToken = await getToken();
         const state = await getDesktopState(endpoint, { token: currentToken });
@@ -102,6 +107,7 @@ export default function ServiceDetailScreen() {
     getToken,
     missingServiceFetchKey,
     projectPath,
+    relayReadyForRequests,
     serviceId,
     setDesktopState,
   ]);
