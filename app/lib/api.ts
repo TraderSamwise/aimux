@@ -43,10 +43,21 @@ import {
   type ResumeServiceResponse,
   type ResurrectAgentResponse,
   type ResurrectWorktreeResponse,
+  type HandoffSendInput,
   type StopServiceResponse,
   type SwitchAgentRequest,
+  type TaskAssignInput,
+  type TaskLifecycleInput,
+  type ThreadLifecycleInput,
   type ThreadMarkSeenInput,
   type ThreadMarkSeenResponse,
+  type ThreadOpenInput,
+  type ThreadOpenResponse,
+  type ThreadSendInput,
+  type ThreadSendResponse,
+  type ThreadStatusInput,
+  type ThreadStatusResponse,
+  type WorkflowMutationResponse,
   type WorktreePathInput,
 } from "../../src/project-api-contract";
 
@@ -909,7 +920,195 @@ export async function markThreadSeen(
   input: ThreadMarkSeenInput,
   opts?: ApiOpts,
 ): Promise<ThreadMarkSeenResponse> {
-  return callProjectJson<ThreadMarkSeenResponse>(endpoint, "POST", PROJECT_API_ROUTES.threads.markSeen, opts, input);
+  return callProjectJson<ThreadMarkSeenResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.markSeen,
+    opts,
+    input,
+  );
+}
+
+export async function openThread(
+  endpoint: ServiceEndpoint,
+  input: ThreadOpenInput,
+  opts?: ApiOpts,
+): Promise<ThreadOpenResponse> {
+  return callProjectJson<ThreadOpenResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.open,
+    opts,
+    input,
+  );
+}
+
+export async function sendThreadMessage(
+  endpoint: ServiceEndpoint,
+  input: ThreadSendInput,
+  opts?: ApiOpts,
+): Promise<ThreadSendResponse> {
+  return callProjectJson<ThreadSendResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.send,
+    opts,
+    input,
+  );
+}
+
+export async function updateThreadStatus(
+  endpoint: ServiceEndpoint,
+  input: ThreadStatusInput,
+  opts?: ApiOpts,
+): Promise<ThreadStatusResponse> {
+  return callProjectJson<ThreadStatusResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.status,
+    opts,
+    input,
+  );
+}
+
+export async function sendHandoff(
+  endpoint: ServiceEndpoint,
+  input: HandoffSendInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.handoff.send,
+    opts,
+    input,
+  );
+}
+
+export async function acceptHandoff(
+  endpoint: ServiceEndpoint,
+  input: ThreadLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.handoff.accept,
+    opts,
+    input,
+  );
+}
+
+export async function completeHandoff(
+  endpoint: ServiceEndpoint,
+  input: ThreadLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.handoff.complete,
+    opts,
+    input,
+  );
+}
+
+export async function assignTask(
+  endpoint: ServiceEndpoint,
+  input: TaskAssignInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.assign,
+    opts,
+    input,
+  );
+}
+
+export async function acceptTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.accept,
+    opts,
+    input,
+  );
+}
+
+export async function blockTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.block,
+    opts,
+    input,
+  );
+}
+
+export async function completeTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.complete,
+    opts,
+    input,
+  );
+}
+
+export async function reopenTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.reopen,
+    opts,
+    input,
+  );
+}
+
+export async function approveReview(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.reviews.approve,
+    opts,
+    input,
+  );
+}
+
+export async function requestReviewChanges(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.reviews.requestChanges,
+    opts,
+    input,
+  );
 }
 
 export async function listWorkflow(
