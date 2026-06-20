@@ -1529,6 +1529,7 @@ describe("runDashboard", () => {
       },
       isFocusInReport: vi.fn(() => false),
       handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
       isDashboardScreen: vi.fn(() => false),
       handleDashboardKey: vi.fn(),
       getViewportKey: vi.fn(() => "120x40"),
@@ -1560,5 +1561,49 @@ describe("runDashboard", () => {
     expect(host.renderDashboard).not.toHaveBeenCalled();
     expect(host.hydrateDashboardScreenState).toHaveBeenCalledOnce();
     expect(host.writeDashboardClientStatuslineFile).toHaveBeenCalledOnce();
+  });
+
+  it("lets the runtime guard swallow keys before active overlays see them", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => true),
+      handleActiveDashboardOverlayKey: vi.fn(() => true),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+    host.onStdinData(Buffer.from("n"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.handleRuntimeGuardKey).toHaveBeenCalledWith(Buffer.from("n"));
+    expect(host.handleActiveDashboardOverlayKey).not.toHaveBeenCalled();
   });
 });
