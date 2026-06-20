@@ -109,29 +109,72 @@ describe("restartAimuxControlPlane", () => {
   });
 
   it("scoped restart forces the scoped project service and dashboard", async () => {
+    const ensureProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+    const resolveDashboardTarget = vi.fn(() => ({
+      dashboardSession: { sessionName: "aimux-beta" },
+      dashboardTarget: { sessionName: "aimux-beta", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+    }));
+
     const result = await restartAimuxControlPlane({
       projectRoot: "/repo/beta",
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
       stopDaemon: vi.fn(async () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" })),
       ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
-      ensureProjectService: vi.fn(async () => ({
-        projectId: "beta",
-        projectRoot: "/repo/beta",
-        pid: 1004,
+      ensureProjectService,
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget,
+    });
+
+    expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/alpha", "/repo/beta"]);
+    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
+    expect(resolveDashboardTarget).toHaveBeenCalledOnce();
+    expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/beta", expect.any(Object), { forceReload: true });
+    expect(result.projects[0]?.dashboard.status).toBe("skipped");
+    expect(result.projects[1]?.dashboard.status).toBe("reloaded");
+    expect(renderRuntimeRestartResult(result)).toContain("dashboards reloaded: 1");
+  });
+
+  it("waits for the old daemon pid to exit before ensuring the new daemon", async () => {
+    const calls: string[] = [];
+    let aliveChecks = 0;
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => {
+        calls.push("stop");
+        return { pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" };
+      }),
+      ensureDaemonRunning: vi.fn(async () => {
+        calls.push("ensure-daemon");
+        return { pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" };
+      }),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
         startedAt: "after",
         updatedAt: "after",
       })),
       createTmux: () => ({ isAvailable: () => true }),
       resolveDashboardTarget: vi.fn(() => ({
-        dashboardSession: { sessionName: "aimux-beta" },
-        dashboardTarget: { sessionName: "aimux-beta", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
       })),
+      isPidAlive: vi.fn(() => ++aliveChecks < 2),
+      sleep: vi.fn(async () => {
+        calls.push("sleep");
+      }),
+      daemonExitTimeoutMs: 1000,
     });
 
-    expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/beta"]);
-    expect(result.projects[0]?.service.status).toBe("ensured");
-    expect(result.projects[0]?.dashboard.status).toBe("reloaded");
-    expect(renderRuntimeRestartResult(result)).toContain("dashboards reloaded: 1");
+    expect(calls).toEqual(["stop", "sleep", "ensure-daemon"]);
   });
 });

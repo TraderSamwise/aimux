@@ -922,7 +922,7 @@ program
 program
   .command("restart")
   .description("Restart local aimux control plane and reload all known dashboards")
-  .option("--project <path>", "Restrict restart to one project path")
+  .option("--project <path>", "Reload only one project's dashboard while preserving known services")
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     try {

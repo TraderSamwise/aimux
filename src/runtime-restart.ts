@@ -67,6 +67,9 @@ export interface RestartAimuxControlPlaneOptions {
     dashboardSession: { sessionName: string };
     dashboardTarget: TmuxTarget;
   };
+  isPidAlive?: (pid: number) => boolean;
+  sleep?: (ms: number) => Promise<void>;
+  daemonExitTimeoutMs?: number;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -95,8 +98,9 @@ function emptyProjectResult(projectRoot: string): RuntimeRestartProjectResult {
 }
 
 function selectProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string): string[] {
-  if (projectRoot) return [projectRoot];
-  return uniqueSorted(before.projects.map((project) => project.projectRoot));
+  const roots = before.projects.map((project) => project.projectRoot);
+  if (projectRoot) roots.push(projectRoot);
+  return uniqueSorted(roots);
 }
 
 function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string): Set<string> {
@@ -104,6 +108,31 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   return new Set(
     before.projects.filter((project) => project.dashboards.length > 0).map((project) => project.projectRoot),
   );
+}
+
+function defaultIsPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPidExit(input: {
+  pid: number;
+  timeoutMs: number;
+  isPidAlive: (pid: number) => boolean;
+  sleep: (ms: number) => Promise<void>;
+}): Promise<void> {
+  const deadline = Date.now() + input.timeoutMs;
+  while (Date.now() < deadline) {
+    if (!input.isPidAlive(input.pid)) return;
+    await input.sleep(100);
+  }
+  if (input.isPidAlive(input.pid)) {
+    throw new Error(`daemon pid ${input.pid} did not exit within ${input.timeoutMs}ms`);
+  }
 }
 
 export async function restartAimuxControlPlane(
@@ -114,6 +143,14 @@ export async function restartAimuxControlPlane(
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
+  if (previousDaemon) {
+    await waitForPidExit({
+      pid: previousDaemon.pid,
+      timeoutMs: options.daemonExitTimeoutMs ?? 5000,
+      isPidAlive: options.isPidAlive ?? defaultIsPidAlive,
+      sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    });
+  }
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
