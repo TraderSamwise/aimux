@@ -125,11 +125,6 @@ interface WorktreeCreateJob {
   startedAt: number;
 }
 
-interface NotificationPanelState {
-  entries: NotificationRecord[];
-  index: number;
-}
-
 interface DashboardOrchestrationTarget {
   label: string;
   sessionId?: string;
@@ -205,7 +200,6 @@ export class Multiplexer {
   private libraryEntries: LibraryEntry[] = [];
   private libraryLoaded = false;
   private libraryIndex = 0;
-  private notificationPanelState: NotificationPanelState | null = null;
   private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {

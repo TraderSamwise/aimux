@@ -32,7 +32,6 @@ import {
   notificationTargetLabel as notificationTargetLabelImpl,
   notificationTargetState as notificationTargetStateImpl,
   refreshCoordinationFromService as refreshCoordinationFromServiceImpl,
-  refreshNotificationPanelFromService as refreshNotificationPanelFromServiceImpl,
 } from "./notifications.js";
 import {
   handleCoordinationKey as handleCoordinationKeyImpl,
@@ -229,9 +228,6 @@ export const dashboardActionMethods = {
   },
   async refreshCoordinationFromService(this: any): Promise<boolean> {
     return refreshCoordinationFromServiceImpl(this);
-  },
-  async refreshNotificationPanelFromService(this: any): Promise<boolean> {
-    return refreshNotificationPanelFromServiceImpl(this);
   },
   async ensureDashboardControlPlane(this: any): Promise<void> {
     await ensureDashboardControlPlaneImpl(this);

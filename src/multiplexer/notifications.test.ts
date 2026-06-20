@@ -5,15 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import type { NotificationRecord } from "../notifications.js";
-import { clearNotifications, markNotificationsRead, upsertNotification } from "../notifications.js";
+import { clearNotifications, listNotifications, markNotificationsRead, upsertNotification } from "../notifications.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import {
-  handleNotificationPanelKey,
+  applyCoordinationModel,
   notificationTargetLabel,
   notificationTargetState,
   refreshCoordinationFromService,
-  refreshNotificationPanelFromService,
-  refreshNotificationEntries,
 } from "./notifications.js";
 import { buildCoordinationView } from "../coordination-model.js";
 import { handleCoordinationKey } from "./coordination.js";
@@ -36,6 +34,18 @@ function unreadInboxEntries(sessionId: string) {
   return createRuntimeExchangeStore()
     .read()
     .inbox.filter((entry) => entry.participantId === sessionId && entry.state !== "done");
+}
+
+function applyServiceLikeCoordinationPayload(host: any): void {
+  const threads: never[] = [];
+  const { model, worklist } = buildCoordinationView({
+    sessions: host.getDashboardSessions?.() ?? [],
+    teammates: host.dashboardTeammatesCache ?? [],
+    services: host.getDashboardServices?.() ?? [],
+    notifications: listNotifications(),
+    threads,
+  });
+  applyCoordinationModel(host, { model, worklist, threads });
 }
 
 describe("notification target open", () => {
@@ -75,7 +85,7 @@ describe("notification target open", () => {
       footerFlash: "",
       footerFlashTicks: 0,
     };
-    refreshNotificationEntries(host);
+    applyServiceLikeCoordinationPayload(host);
     host.coordinationIndex = 0;
   });
 
@@ -122,7 +132,7 @@ describe("notification target open", () => {
       },
     ];
     host.activateDashboardEntry = vi.fn(async () => undefined);
-    refreshNotificationEntries(host);
+    applyServiceLikeCoordinationPayload(host);
     host.coordinationIndex = host.coordinationWorklist.findIndex((item: any) => item.sessionId === "teammate-1");
 
     expect(notificationTargetLabel(host, "teammate-1")).toBe("reviewer · demo");
@@ -169,7 +179,7 @@ describe("coordination inbox ordering", () => {
       ],
     };
 
-    refreshNotificationEntries(host);
+    applyServiceLikeCoordinationPayload(host);
 
     expect(host.notificationEntries[0].sessionId).toBe("live-1");
     expect(host.notificationRowMeta[0]).toMatchObject({ reachability: "live", actionable: true });
@@ -203,7 +213,7 @@ describe("coordination inbox ordering", () => {
       dashboardState: {},
       writeFrame: vi.fn(),
     };
-    refreshNotificationEntries(host);
+    applyServiceLikeCoordinationPayload(host);
 
     expect(host.coordinationWorklist[0].sessionId).toBe("live-1");
 
@@ -217,55 +227,11 @@ describe("coordination inbox ordering", () => {
 
     // r on the selected live notification marks its session read VIA the service (sole writer)
     host.coordinationFilter = "all";
-    refreshNotificationEntries(host);
+    applyServiceLikeCoordinationPayload(host);
     host.coordinationIndex = 0;
     handleCoordinationKey(host, Buffer.from("r"));
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { sessionId: "live-1" });
     expect(unreadInboxEntries("live-1")).toHaveLength(0);
-  });
-});
-
-describe("notification panel mutations route through the service", () => {
-  let repoRoot = "";
-
-  beforeEach(async () => {
-    repoRoot = mkdtempSync(join(tmpdir(), "aimux-notification-panel-"));
-    mkdirSync(join(repoRoot, ".git"), { recursive: true });
-    await initPaths(repoRoot);
-  });
-
-  afterEach(() => {
-    rmSync(repoRoot, { recursive: true, force: true });
-  });
-
-  it("posts read/clear via the service instead of writing the store directly", () => {
-    const note = addExchangeNotification("panel-1", "needs you");
-    const host: any = {
-      notificationPanelState: { entries: [note], index: 0 },
-      postToProjectService: notificationServiceDouble(),
-      getFromProjectService: vi.fn(async () => ({ ok: true, notifications: [] })),
-      renderDashboard: vi.fn(),
-      footerFlash: "",
-      footerFlashTicks: 0,
-    };
-    handleNotificationPanelKey(host, Buffer.from("r"));
-    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { id: note.id });
-    handleNotificationPanelKey(host, Buffer.from("C"));
-    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/clear", {});
-  });
-
-  it("refreshes the panel from /notifications", async () => {
-    const note = addExchangeNotification("panel-1", "needs you");
-    const host: any = {
-      notificationPanelState: { entries: [], index: -1 },
-      getFromProjectService: vi.fn(async () => ({ ok: true, notifications: [note] })),
-    };
-
-    await expect(refreshNotificationPanelFromService(host)).resolves.toBe(true);
-
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/notifications");
-    expect(host.notificationPanelState.entries).toEqual([note]);
-    expect(host.notificationPanelState.index).toBe(0);
   });
 });
 
