@@ -81,4 +81,124 @@ describe("RelayClient runtime compatibility", () => {
 
     expect(notifyRemoteClientConnected).toHaveBeenCalledTimes(2);
   });
+
+  it("proxies project service SSE events over relay subscriptions", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWebSocket = globalThis.WebSocket;
+    const sent: string[] = [];
+    try {
+      vi.stubGlobal("WebSocket", { OPEN: 1 });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: project_update\ndata: {"type":"project_update","views":["desktop-state"],"projectId":"p1","ts":"now"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          });
+        }),
+      );
+      const daemon = {
+        routeRequest: vi.fn(),
+        resolveProjectEventStream: vi.fn(() => ({
+          ok: true,
+          url: "http://127.0.0.1:4321/events",
+        })),
+      } as unknown as AimuxDaemon;
+      const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
+      (client as unknown as { ws: { readyState: number; send: (data: string) => void } | null }).ws = {
+        readyState: 1,
+        send: (data: string) => sent.push(data),
+      };
+
+      await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(
+        JSON.stringify({
+          id: "sub-1",
+          type: "project_events_subscribe",
+          path: "/proxy/127.0.0.1/4321/events",
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(sent.some((data) => data.includes('"type":"project_event"'))).toBe(true);
+      });
+
+      expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:4321/events", expect.objectContaining({ method: "GET" }));
+      expect(sent.map((data) => JSON.parse(data) as { type: string })).toEqual([
+        { id: "sub-1", type: "project_events_subscribed" },
+        {
+          id: "sub-1",
+          type: "project_event",
+          event: "project_update",
+          data: {
+            type: "project_update",
+            views: ["desktop-state"],
+            projectId: "p1",
+            ts: "now",
+          },
+        },
+        {
+          id: "sub-1",
+          type: "project_events_error",
+          status: 502,
+          message: "Project event stream closed",
+        },
+      ]);
+    } finally {
+      vi.stubGlobal("fetch", originalFetch);
+      vi.stubGlobal("WebSocket", originalWebSocket);
+    }
+  });
+
+  it("rejects shared guest project event subscriptions without the authorized session id", async () => {
+    const originalWebSocket = globalThis.WebSocket;
+    const sent: string[] = [];
+    try {
+      vi.stubGlobal("WebSocket", { OPEN: 1 });
+      const daemon = {
+        routeRequest: vi.fn(),
+        resolveProjectEventStream: vi.fn(() => ({
+          ok: false,
+          status: 403,
+          error: "shared session route requires a session id",
+        })),
+      } as unknown as AimuxDaemon;
+      const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
+      (client as unknown as { ws: { readyState: number; send: (data: string) => void } | null }).ws = {
+        readyState: 1,
+        send: (data: string) => sent.push(data),
+      };
+
+      await (client as unknown as { handleMessage(data: string): Promise<void> }).handleMessage(
+        JSON.stringify({
+          id: "sub-guest",
+          type: "project_events_subscribe",
+          path: "/proxy/127.0.0.1/4321/events",
+          headers: {
+            "X-Aimux-Actor-Role": "guest",
+            "X-Aimux-Share-Session-Id": "shared-1",
+          },
+        }),
+      );
+
+      expect(sent.map((data) => JSON.parse(data) as { type: string; status: number })).toEqual([
+        {
+          id: "sub-guest",
+          type: "project_events_error",
+          status: 403,
+          message: "shared session route requires a session id",
+        },
+      ]);
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+    }
+  });
 });

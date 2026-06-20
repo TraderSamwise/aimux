@@ -83,7 +83,9 @@ export default function ServiceDetailScreen() {
   const relayReadyForRequests = !env.AIMUX_RELAY_URL || relayStatus === "connected";
 
   useEffect(() => {
-    if (found || !endpointHost || !endpointPort || !endpointKey || !projectPath || !serviceId) return;
+    if (found || !endpointHost || !endpointPort || !endpointKey || !projectPath || !serviceId) {
+      return;
+    }
     if (!relayReadyForRequests) return;
     const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
     if (missingServiceFetchKeyRef.current === fetchKey) return;
@@ -99,7 +101,9 @@ export default function ServiceDetailScreen() {
       } catch (err) {
         console.warn("service detail desktop-state refresh failed:", err);
         if (!cancelled) {
-          if (missingServiceRetryTimerRef.current) clearTimeout(missingServiceRetryTimerRef.current);
+          if (missingServiceRetryTimerRef.current) {
+            clearTimeout(missingServiceRetryTimerRef.current);
+          }
           missingServiceRetryTimerRef.current = setTimeout(() => {
             missingServiceRetryTimerRef.current = null;
             if (missingServiceFetchKeyRef.current === fetchKey) {

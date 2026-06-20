@@ -18,6 +18,7 @@ import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } fro
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -815,6 +816,35 @@ export class AimuxDaemon {
     }
 
     return { status: 404, body: { ok: false, error: "not found" } };
+  }
+
+  resolveProjectEventStream(
+    path: string,
+    headers?: Record<string, string>,
+  ): { ok: true; url: string; headers?: Record<string, string> } | { ok: false; status: number; error: string } {
+    this.refreshState();
+    const routeUrl = new URL(path, getDaemonBaseUrl());
+    const pathname = routeUrl.pathname;
+    const actor = parseRemoteActor(headers);
+    const access = assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
+    if (!access.ok) {
+      return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
+    }
+
+    const proxyMatch = pathname.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
+    if (!proxyMatch) return { ok: false, status: 404, error: "project event stream not found" };
+    const [, host, portStr, subPath] = proxyMatch;
+    if (!PROXY_ALLOWED_HOSTS.has(host)) {
+      return { ok: false, status: 403, error: "proxy host not allowed" };
+    }
+    if (subPath !== PROJECT_API_ROUTES.events) {
+      return { ok: false, status: 403, error: "route is not a project event stream" };
+    }
+    return {
+      ok: true,
+      url: `http://${host}:${portStr}${subPath}${routeUrl.search}`,
+      headers,
+    };
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {

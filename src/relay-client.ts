@@ -10,6 +10,18 @@ interface RelayRequest {
   body?: unknown;
 }
 
+interface RelayProjectEventsSubscribe {
+  id: string;
+  type: "project_events_subscribe";
+  path: string;
+  headers?: Record<string, string>;
+}
+
+interface RelayProjectEventsUnsubscribe {
+  id: string;
+  type: "project_events_unsubscribe";
+}
+
 interface RelayControl {
   type: "ping" | "pong" | "connected" | "error" | "daemon_status" | "security_event";
   message?: string;
@@ -39,7 +51,7 @@ export interface RelayNotificationPush {
   dedupeKey?: string;
 }
 
-type RelayMessage = RelayRequest | RelayControl;
+type RelayMessage = RelayRequest | RelayProjectEventsSubscribe | RelayProjectEventsUnsubscribe | RelayControl;
 
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
@@ -67,6 +79,7 @@ export class RelayClient {
   private readonly relayUrl: string;
   private handshakeFailures = 0;
   private readonly recentRemoteClientNotifications = new Map<string, number>();
+  private readonly projectEventSubscriptions = new Map<string, AbortController>();
 
   constructor(
     relayUrl: string,
@@ -122,6 +135,7 @@ export class RelayClient {
 
     this.ws.addEventListener("close", (event) => {
       this.ws = null;
+      this.abortProjectEventSubscriptions();
       const code = (event as unknown as { code?: number }).code;
       // 1008/4001 = auth rejected by relay; don't hammer with retries.
       if (code === 1008 || code === 4001) {
@@ -166,6 +180,7 @@ export class RelayClient {
     this.stopped = true;
     this.status = "disconnected";
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.abortProjectEventSubscriptions();
     if (this.ws) {
       try {
         this.ws.close(1000, "Daemon shutting down");
@@ -210,6 +225,16 @@ export class RelayClient {
       return;
     }
 
+    if (msg.type === "project_events_subscribe") {
+      this.startProjectEventSubscription(msg);
+      return;
+    }
+
+    if (msg.type === "project_events_unsubscribe") {
+      this.stopProjectEventSubscription(msg.id);
+      return;
+    }
+
     if (msg.type === "request") {
       try {
         const result = await this.daemon.routeRequest(msg.method, msg.path, msg.body, msg.headers);
@@ -225,6 +250,157 @@ export class RelayClient {
         );
       }
     }
+  }
+
+  private startProjectEventSubscription(message: RelayProjectEventsSubscribe): void {
+    this.stopProjectEventSubscription(message.id);
+    const controller = new AbortController();
+    this.projectEventSubscriptions.set(message.id, controller);
+    void this.runProjectEventSubscription(message, controller).finally(() => {
+      if (this.projectEventSubscriptions.get(message.id) === controller) {
+        this.projectEventSubscriptions.delete(message.id);
+      }
+    });
+  }
+
+  private async runProjectEventSubscription(
+    message: RelayProjectEventsSubscribe,
+    controller: AbortController,
+  ): Promise<void> {
+    const routed = this.daemon.resolveProjectEventStream(message.path, message.headers);
+    if (!routed.ok) {
+      this.sendRaw(
+        JSON.stringify({
+          id: message.id,
+          type: "project_events_error",
+          status: routed.status,
+          message: routed.error,
+        }),
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(routed.url, {
+        method: "GET",
+        headers: routed.headers,
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        this.sendRaw(
+          JSON.stringify({
+            id: message.id,
+            type: "project_events_error",
+            status: response.status,
+            message: response.statusText || `HTTP ${response.status}`,
+          }),
+        );
+        return;
+      }
+      this.sendRaw(JSON.stringify({ id: message.id, type: "project_events_subscribed" }));
+      await this.readProjectEventStream(message.id, response.body, controller.signal);
+      if (!controller.signal.aborted) {
+        this.sendRaw(
+          JSON.stringify({
+            id: message.id,
+            type: "project_events_error",
+            status: 502,
+            message: "Project event stream closed",
+          }),
+        );
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      this.sendRaw(
+        JSON.stringify({
+          id: message.id,
+          type: "project_events_error",
+          status: 502,
+          message: err instanceof Error ? err.message : "Project event stream failed",
+        }),
+      );
+    }
+  }
+
+  private async readProjectEventStream(
+    subscriptionId: string,
+    body: ReadableStream<Uint8Array>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (!signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = this.flushProjectEventFrames(subscriptionId, buffer);
+      }
+      buffer += decoder.decode();
+      this.flushProjectEventFrames(subscriptionId, `${buffer}\n\n`);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+  }
+
+  private flushProjectEventFrames(subscriptionId: string, buffer: string): string {
+    const normalized = buffer.replace(/\r\n/g, "\n");
+    const frames = normalized.split("\n\n");
+    const remainder = frames.pop() ?? "";
+    for (const frame of frames) {
+      this.forwardProjectEventFrame(subscriptionId, frame);
+    }
+    return remainder;
+  }
+
+  private forwardProjectEventFrame(subscriptionId: string, frame: string): void {
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const line of frame.split("\n")) {
+      if (!line || line.startsWith(":")) continue;
+      if (line.startsWith("event:")) {
+        event = line.slice("event:".length).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice("data:".length).trimStart());
+      }
+    }
+    if (dataLines.length === 0) return;
+    try {
+      this.sendRaw(
+        JSON.stringify({
+          id: subscriptionId,
+          type: "project_event",
+          event,
+          data: JSON.parse(dataLines.join("\n")),
+        }),
+      );
+    } catch (err) {
+      this.sendRaw(
+        JSON.stringify({
+          id: subscriptionId,
+          type: "project_events_error",
+          status: 502,
+          message: err instanceof Error ? err.message : "Invalid project event payload",
+        }),
+      );
+    }
+  }
+
+  private stopProjectEventSubscription(id: string): void {
+    const controller = this.projectEventSubscriptions.get(id);
+    if (!controller) return;
+    controller.abort();
+    this.projectEventSubscriptions.delete(id);
+  }
+
+  private abortProjectEventSubscriptions(): void {
+    for (const controller of this.projectEventSubscriptions.values()) {
+      controller.abort();
+    }
+    this.projectEventSubscriptions.clear();
   }
 
   private sendRaw(data: string): void {
