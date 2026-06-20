@@ -928,13 +928,11 @@ export const dashboardInteractionMethods = {
       return;
     }
     const worktreePath = this.sessionWorktreePaths?.get?.(session.id);
+    const reviewCwd = worktreePath ?? this.projectRoot ?? process.cwd();
     let diff: string | undefined;
     try {
-      if (worktreePath) {
-        diff =
-          execSync("git diff HEAD", { cwd: worktreePath, encoding: "utf-8", timeout: 5000 }).slice(0, 5000) ||
-          undefined;
-      }
+      diff =
+        execSync("git diff HEAD", { cwd: reviewCwd, encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
     } catch {}
 
     try {
