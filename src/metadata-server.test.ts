@@ -6,6 +6,7 @@ import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.j
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
 import { listNotifications, upsertNotification } from "./notifications.js";
+import { addDashboardOperationFailure, listDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
@@ -618,6 +619,34 @@ describe("MetadataServer threads API", () => {
     const keys = body.worklist.items.map((item) => item.key);
     expect(keys.indexOf("n:live-1")).toBeLessThan(keys.indexOf("n:ghost-1"));
     expect(Array.isArray(body.threads)).toBe(true);
+  });
+
+  it("clears dashboard operation failures over HTTP", async () => {
+    const failure = addDashboardOperationFailure({
+      targetKind: "worktree",
+      operation: "create",
+      title: "Failed to create worktree",
+      message: "boom",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    });
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/operation-failures/clear`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        targetKind: "worktree",
+        operation: "create",
+        worktreePath: failure.worktreePath,
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; cleared: number };
+
+    expect(res.ok).toBe(true);
+    expect(body).toEqual({ ok: true, cleared: 1 });
+    expect(listDashboardOperationFailures()).toHaveLength(0);
   });
 
   it("serves project observability from desktop state, tasks, and notifications", async () => {

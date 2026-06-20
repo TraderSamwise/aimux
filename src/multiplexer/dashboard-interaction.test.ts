@@ -342,6 +342,73 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
 
+  it("refreshes from the service after opening an offline row that is already live", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("dismisses failed worktree rows through the project service", async () => {
+    const path = "/repo/.aimux/worktrees/demo";
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: path,
+        worktreeNavOrder: [undefined, path],
+        worktreeEntries: [],
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path,
+          sessions: [],
+          services: [],
+          operationFailure: { operation: "create", message: "boom" },
+        },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      sessions: [],
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true));
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/operation-failures/clear", {
+      targetKind: "worktree",
+      operation: "create",
+      worktreePath: path,
+    });
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("opens a teammate picker only for selected agents with teammates", () => {
     const parent = { id: "parent-1", command: "claude", status: "running" };
     const host: any = {
