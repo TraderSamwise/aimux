@@ -69,7 +69,10 @@ export interface RestartAimuxControlPlaneOptions {
   };
   isPidAlive?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
+  killPid?: (pid: number, signal: NodeJS.Signals) => void;
   daemonExitTimeoutMs?: number;
+  serviceExitTimeoutMs?: number;
+  killGraceMs?: number;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -122,17 +125,49 @@ function defaultIsPidAlive(pid: number): boolean {
 async function waitForPidExit(input: {
   pid: number;
   timeoutMs: number;
+  killGraceMs: number;
   isPidAlive: (pid: number) => boolean;
   sleep: (ms: number) => Promise<void>;
+  killPid: (pid: number, signal: NodeJS.Signals) => void;
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
   while (Date.now() < deadline) {
     if (!input.isPidAlive(input.pid)) return;
     await input.sleep(100);
   }
-  if (input.isPidAlive(input.pid)) {
-    throw new Error(`daemon pid ${input.pid} did not exit within ${input.timeoutMs}ms`);
+  if (!input.isPidAlive(input.pid)) return;
+  input.killPid(input.pid, "SIGKILL");
+  const killDeadline = Date.now() + input.killGraceMs;
+  while (Date.now() < killDeadline) {
+    if (!input.isPidAlive(input.pid)) return;
+    await input.sleep(100);
   }
+  if (input.isPidAlive(input.pid)) {
+    throw new Error(`pid ${input.pid} did not exit within ${input.timeoutMs + input.killGraceMs}ms`);
+  }
+}
+
+function defaultKillPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch {}
+}
+
+async function waitForPidsExit(input: {
+  pids: number[];
+  timeoutMs: number;
+  killGraceMs: number;
+  isPidAlive: (pid: number) => boolean;
+  sleep: (ms: number) => Promise<void>;
+  killPid: (pid: number, signal: NodeJS.Signals) => void;
+}): Promise<void> {
+  for (const pid of [...new Set(input.pids)].filter((pid) => Number.isInteger(pid) && pid > 0)) {
+    await waitForPidExit({ ...input, pid });
+  }
+}
+
+function priorProjectServicePids(before: RuntimeCoherenceReport): number[] {
+  return before.projects.flatMap((project) => [project.service.daemonState?.pid ?? 0, project.service.pid ?? 0]);
 }
 
 export async function restartAimuxControlPlane(
@@ -143,14 +178,27 @@ export async function restartAimuxControlPlane(
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
+  const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const killPid = options.killPid ?? defaultKillPid;
   if (previousDaemon) {
     await waitForPidExit({
       pid: previousDaemon.pid,
       timeoutMs: options.daemonExitTimeoutMs ?? 5000,
-      isPidAlive: options.isPidAlive ?? defaultIsPidAlive,
-      sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      killGraceMs: options.killGraceMs ?? 2000,
+      isPidAlive,
+      sleep,
+      killPid,
     });
   }
+  await waitForPidsExit({
+    pids: priorProjectServicePids(before),
+    timeoutMs: options.serviceExitTimeoutMs ?? 5000,
+    killGraceMs: options.killGraceMs ?? 2000,
+    isPidAlive,
+    sleep,
+    killPid,
+  });
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();

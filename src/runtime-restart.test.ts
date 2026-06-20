@@ -27,7 +27,13 @@ function coherenceReport(): RuntimeCoherenceReport {
         expectedDashboardBuildStamp: "dashboard-new",
         service: {
           status: "ok",
-          daemonState: null,
+          daemonState: {
+            projectId: "alpha",
+            projectRoot: "/repo/alpha",
+            pid: 1001,
+            startedAt: "then",
+            updatedAt: "now",
+          },
           endpoint: null,
           pid: 1001,
           serviceInfo: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
@@ -54,7 +60,13 @@ function coherenceReport(): RuntimeCoherenceReport {
         expectedDashboardBuildStamp: "dashboard-new",
         service: {
           status: "ok",
-          daemonState: null,
+          daemonState: {
+            projectId: "beta",
+            projectRoot: "/repo/beta",
+            pid: 1002,
+            startedAt: "then",
+            updatedAt: "now",
+          },
           endpoint: null,
           pid: 1002,
           serviceInfo: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
@@ -99,6 +111,7 @@ describe("restartAimuxControlPlane", () => {
       ensureProjectService,
       createTmux: () => ({ isAvailable: () => true }),
       resolveDashboardTarget,
+      isPidAlive: () => false,
     });
 
     expect(result.summary).toEqual({ projects: 2, servicesEnsured: 2, dashboardsReloaded: 1, failures: 0 });
@@ -130,6 +143,7 @@ describe("restartAimuxControlPlane", () => {
       ensureProjectService,
       createTmux: () => ({ isAvailable: () => true }),
       resolveDashboardTarget,
+      isPidAlive: () => false,
     });
 
     expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/alpha", "/repo/beta"]);
@@ -176,5 +190,55 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(calls).toEqual(["stop", "sleep", "ensure-daemon"]);
+  });
+
+  it("waits for old project service pids before ensuring services", async () => {
+    const calls: string[] = [];
+    const alive = new Map<number, number>([
+      [1001, 1],
+      [1002, 0],
+      [9001, 0],
+    ]);
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => {
+        calls.push("stop");
+        return { pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" };
+      }),
+      ensureDaemonRunning: vi.fn(async () => {
+        calls.push("ensure-daemon");
+        return { pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" };
+      }),
+      ensureProjectService: vi.fn(async (projectRoot: string) => {
+        calls.push(`ensure-service:${projectRoot}`);
+        return {
+          projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+          projectRoot,
+          pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+          startedAt: "after",
+          updatedAt: "after",
+        };
+      }),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: vi.fn((pid: number) => {
+        const remaining = alive.get(pid) ?? 0;
+        calls.push(`pid:${pid}:${remaining > 0 ? "alive" : "dead"}`);
+        if (remaining > 0) alive.set(pid, remaining - 1);
+        return remaining > 0;
+      }),
+      sleep: vi.fn(async () => {
+        calls.push("sleep");
+      }),
+      serviceExitTimeoutMs: 1000,
+    });
+
+    expect(calls.indexOf("pid:1001:dead")).toBeLessThan(calls.indexOf("ensure-daemon"));
+    expect(calls.indexOf("ensure-daemon")).toBeLessThan(calls.indexOf("ensure-service:/repo/alpha"));
   });
 });
