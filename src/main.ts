@@ -487,6 +487,21 @@ async function postHookProjectServiceJsonOrLocal(
   return postLiveProjectServiceJsonOrLocal(projectRoot, path, body, fallback, { fallbackOnRequestError: true });
 }
 
+async function clearHookNotificationsViaService(projectRoot: string, sessionId: string): Promise<void> {
+  try {
+    await postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => {
+      throw new Error("project service unavailable");
+    });
+  } catch (error) {
+    debug(
+      `failed to clear notifications via project service for ${sessionId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "session",
+    );
+  }
+}
+
 async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
   let endpoint;
   try {
@@ -3825,11 +3840,7 @@ program
         { session: sessionId, event: { kind, message, tone } },
         () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
       );
-    const clearSessionNotifications = async () =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
-        ok: true,
-        cleared: 0,
-      }));
+    const clearSessionNotifications = async () => clearHookNotificationsViaService(projectRoot, sessionId);
     const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
     if (transcriptPath) {
       const context: SessionContextMetadata = { transcriptPath };
@@ -3921,11 +3932,7 @@ program
         { session: sessionId, event: { kind, message, tone } },
         () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
       );
-    const clearSessionNotifications = async () =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
-        ok: true,
-        cleared: 0,
-      }));
+    const clearSessionNotifications = async () => clearHookNotificationsViaService(projectRoot, sessionId);
 
     const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
     if (backendSessionId) {
