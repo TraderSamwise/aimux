@@ -911,17 +911,60 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost) {
   if (mainWorktree) {
     mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
   }
+  const sessions = computeDashboardSessions(host);
+  const teammates = computeDashboardSessions(host, { includeTeammates: true }).filter((session) =>
+    isTeammateSession(session),
+  );
+  const services = computeDashboardServices(host, worktrees);
+  const worktreeGroups = buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath);
   return {
-    sessions: computeDashboardSessions(host),
-    teammates: computeDashboardSessions(host, { includeTeammates: true }).filter((session) =>
-      isTeammateSession(session),
-    ),
-    services: computeDashboardServices(host, worktrees),
+    sessions,
+    teammates,
+    services,
     worktrees,
+    worktreeGroups,
     operationFailures,
     mainCheckoutInfo,
     mainCheckoutPath,
   };
+}
+
+function isMainCheckoutInfo(value: any): value is { name: string; branch: string } {
+  return Boolean(value) && typeof value.name === "string" && typeof value.branch === "string";
+}
+
+function isDashboardWorktreeGroup(value: any): value is WorktreeGroup {
+  return (
+    Boolean(value) &&
+    typeof value.name === "string" &&
+    typeof value.branch === "string" &&
+    (value.path === undefined || typeof value.path === "string") &&
+    (value.status === "active" || value.status === "offline") &&
+    Array.isArray(value.sessions) &&
+    Array.isArray(value.services)
+  );
+}
+
+function isDesktopStateDashboardModel(value: any): value is {
+  ok?: boolean;
+  sessions: DashboardSession[];
+  teammates: DashboardSession[];
+  services: DashboardService[];
+  worktreeGroups: WorktreeGroup[];
+  operationFailures?: DashboardOperationFailure[];
+  mainCheckoutInfo: { name: string; branch: string };
+} {
+  return (
+    Boolean(value) &&
+    value.ok === true &&
+    Array.isArray(value.sessions) &&
+    Array.isArray(value.teammates) &&
+    Array.isArray(value.services) &&
+    Array.isArray(value.worktreeGroups) &&
+    value.worktreeGroups.every(isDashboardWorktreeGroup) &&
+    (value.operationFailures === undefined || Array.isArray(value.operationFailures)) &&
+    isMainCheckoutInfo(value.mainCheckoutInfo)
+  );
 }
 
 export async function refreshDashboardModelFromService(host: DashboardModelHost, force = false): Promise<boolean> {
@@ -941,44 +984,15 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
             timeoutMs: force ? 2000 : 750,
           });
           if (status >= 200 && status < 300) {
-            const body = json as {
-              ok?: boolean;
-              sessions?: DashboardSession[];
-              teammates?: DashboardSession[];
-              services?: DashboardService[];
-              worktrees?: Array<{
-                name: string;
-                path: string;
-                branch: string;
-                isBare: boolean;
-                pending?: boolean;
-                removing?: boolean;
-                pendingAction?: Extract<PendingWorktreeActionKind, "creating" | "removing" | "graveyarding">;
-                operationFailure?: DashboardOperationFailure;
-              }>;
-              operationFailures?: DashboardOperationFailure[];
-              mainCheckoutInfo?: { name: string; branch: string };
-              mainCheckoutPath?: string;
-            };
-            const dashSessions = body.sessions ?? [];
-            const dashTeammates = body.teammates ?? [];
-            const dashServices = body.services ?? [];
-            const worktrees = body.worktrees ?? [];
-            const worktreeGroups = buildDashboardWorktreeGroups(
-              host,
-              dashSessions,
-              dashServices,
-              worktrees,
-              body.mainCheckoutPath,
-            );
+            if (!isDesktopStateDashboardModel(json)) return false;
             return applyDashboardModel(
               host,
-              dashSessions,
-              dashTeammates,
-              dashServices,
-              worktreeGroups,
-              body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
-              body.operationFailures ?? [],
+              json.sessions,
+              json.teammates,
+              json.services,
+              json.worktreeGroups,
+              json.mainCheckoutInfo,
+              json.operationFailures ?? [],
             );
           }
         } catch {
