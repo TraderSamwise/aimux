@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
+import { isExitedProcessState, restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
 import type { RuntimeCoherenceReport } from "./runtime-coherence.js";
 
 function coherenceReport(): RuntimeCoherenceReport {
@@ -91,6 +91,14 @@ function stoppedDaemon(
 }
 
 describe("restartAimuxControlPlane", () => {
+  it("treats zombie ps states as exited", () => {
+    expect(isExitedProcessState("Z")).toBe(true);
+    expect(isExitedProcessState("Z+")).toBe(true);
+    expect(isExitedProcessState("Zs")).toBe(true);
+    expect(isExitedProcessState("S")).toBe(false);
+    expect(isExitedProcessState("R+")).toBe(false);
+  });
+
   it("restarts the daemon, ensures known services, and reloads only existing dashboards by default", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",

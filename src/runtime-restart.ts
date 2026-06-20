@@ -114,6 +114,10 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   );
 }
 
+export function isExitedProcessState(state: string): boolean {
+  return state.trim().startsWith("Z");
+}
+
 function defaultIsPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -122,7 +126,7 @@ function defaultIsPidAlive(pid: number): boolean {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
-      if (state.startsWith("Z")) return false;
+      if (isExitedProcessState(state)) return false;
     }
     return true;
   } catch {
