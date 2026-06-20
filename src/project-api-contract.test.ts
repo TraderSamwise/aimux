@@ -23,7 +23,10 @@ describe("project api contract", () => {
     expect(PROJECT_API_ROUTES.library).toBe("/library");
     expect(PROJECT_API_ROUTES.graveyardActions.resurrectWorktree).toBe("/graveyard/worktrees/resurrect");
     expect(PROJECT_API_ROUTES.livePane.output).toBe("/live-pane/output");
+    expect(PROJECT_API_ROUTES.livePane.outputStream).toBe("/live-pane/output/stream");
     expect(PROJECT_API_ROUTES.livePane.input).toBe("/live-pane/input");
+    expect(PROJECT_API_ROUTES.livePane.interrupt).toBe("/live-pane/interrupt");
+    expect(PROJECT_API_ROUTES.livePane.resize).toBe("/live-pane/resize");
     expect(PROJECT_API_ROUTES.livePane.attach).toBe("/live-pane/attach");
   });
 

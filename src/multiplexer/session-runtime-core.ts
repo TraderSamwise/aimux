@@ -185,6 +185,9 @@ export async function resizeAgentPane(
   cols: number,
   rows: number,
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
+  if (!Number.isInteger(cols) || cols <= 0) throw new Error("cols must be a positive integer");
+  if (!Number.isInteger(rows) || rows <= 0) throw new Error("rows must be a positive integer");
+
   const session = resolveRunningSession(host, sessionId);
   if (session.transport instanceof TmuxSessionTransport) {
     const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
