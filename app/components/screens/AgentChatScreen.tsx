@@ -122,12 +122,14 @@ export default function ChatScreen() {
   }, [getToken]);
 
   const serviceEndpoint = project?.serviceEndpoint ?? null;
+  const endpointKey = serviceEndpoint ? `${serviceEndpoint.host}:${serviceEndpoint.port}` : null;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
 
   useEffect(() => {
     if (!serviceEndpoint || !sessionId || !heartbeatReady) return;
+    const endpoint = serviceEndpoint;
     const handle = startHeartbeat({
-      serviceEndpoint,
+      serviceEndpoint: endpoint,
       sessionId,
       token,
       onEvent: (event) => {
@@ -138,7 +140,9 @@ export default function ChatScreen() {
       },
     });
     return () => handle.stop();
-  }, [serviceEndpoint, sessionId, token, ingestEvent, heartbeatReady]);
+    // serviceEndpoint object identity changes during project-list reconciles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpointKey, sessionId, token, ingestEvent, heartbeatReady]);
 
   const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
