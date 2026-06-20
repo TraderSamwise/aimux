@@ -10,7 +10,10 @@ import { Text } from "@/components/ui/text";
 import { StatusDot, StatusPill } from "@/components/status-dot";
 import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
+import {
+  useProjectApiRelayPolling,
+  useSerializedProjectApiRefresh,
+} from "@/lib/project-api-relay-polling";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -268,15 +271,16 @@ export default function TopologyScreen() {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
   }, []);
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refresh();
+      void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, refresh]);
+  }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
 
-  useProjectApiRelayPolling(endpointKey, refresh);
+  useProjectApiRelayPolling(endpointKey, serializedRefresh);
 
   const visibleTopology = topologyKey === viewKey ? topology : null;
   const leafRows = useMemo(
@@ -353,7 +357,18 @@ export default function TopologyScreen() {
             />
           </View>
 
-          {mode === "map" ? <WorktreeCards topology={visibleTopology} /> : null}
+          {mode === "map" ? (
+            <View>
+              <WorktreeCards topology={visibleTopology} />
+              <View className="mt-4">
+                <RowsList
+                  rows={leafRows}
+                  onPickAgent={handlePickAgent}
+                  onPickService={handlePickService}
+                />
+              </View>
+            </View>
+          ) : null}
           {mode === "tree" ? (
             <RowsList
               rows={visibleTopology.rows}

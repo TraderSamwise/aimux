@@ -11,7 +11,10 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { listProjectLibrary, type LibraryDocument } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
+import {
+  useProjectApiRelayPolling,
+  useSerializedProjectApiRefresh,
+} from "@/lib/project-api-relay-polling";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
@@ -119,15 +122,16 @@ export default function LibraryScreen() {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
   }, []);
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refresh();
+      void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, refresh]);
+  }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
 
-  useProjectApiRelayPolling(endpointKey, refresh);
+  useProjectApiRelayPolling(endpointKey, serializedRefresh);
 
   return (
     <Page>
@@ -144,7 +148,7 @@ export default function LibraryScreen() {
             variant="outline"
             size="icon"
             disabled={!endpoint || loading}
-            onPress={() => void refresh()}
+            onPress={() => void serializedRefresh()}
             accessibilityLabel="Refresh library"
           >
             <RefreshCw size={18} color={foregroundIconColor} />

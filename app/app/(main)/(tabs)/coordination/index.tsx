@@ -15,7 +15,10 @@ import {
   type CoordinationWorklistItem,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
+import {
+  useProjectApiRelayPolling,
+  useSerializedProjectApiRefresh,
+} from "@/lib/project-api-relay-polling";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -166,15 +169,16 @@ export default function CoordinationScreen() {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
   }, []);
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refresh();
+      void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, refreshNonce, refresh]);
+  }, [endpointKey, refreshNonce, serializedRefresh]);
 
-  useProjectApiRelayPolling(endpointKey, refresh);
+  useProjectApiRelayPolling(endpointKey, serializedRefresh);
 
   const visibleItems = useMemo(
     () => (itemsKey === viewKey ? items : []),
@@ -212,7 +216,7 @@ export default function CoordinationScreen() {
             variant="outline"
             size="icon"
             disabled={!endpoint || loading}
-            onPress={() => void refresh()}
+            onPress={() => void serializedRefresh()}
             accessibilityLabel="Refresh coordination"
           >
             <RefreshCw size={18} color={foregroundIconColor} />
