@@ -71,7 +71,12 @@ import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
-import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES, type ProjectApiView } from "./project-api-contract.js";
+import {
+  PROJECT_API_EVENT_NAMES,
+  PROJECT_API_ROUTES,
+  type OrchestrationRouteOption,
+  type ProjectApiView,
+} from "./project-api-contract.js";
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
@@ -87,7 +92,8 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
-import { isTeammateSession, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
+import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
+import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,
@@ -141,6 +147,86 @@ function buildTopologyWorktreesFromDesktopState(state: {
       services: worktreeServices,
     };
   });
+}
+
+function formatRoutePreview(recipientIds: string[]): string {
+  if (recipientIds.length === 0) return "";
+  const preview = recipientIds.slice(0, 2).join(", ");
+  const remainder = recipientIds.length > 2 ? `, +${recipientIds.length - 2}` : "";
+  return ` [${recipientIds.length}: ${preview}${remainder}]`;
+}
+
+function orchestrationCandidateFromSession(session: any): RoutingCandidate {
+  const status = session.semantic?.user?.label ?? session.status;
+  const runtime = session.semantic?.runtime;
+  return {
+    id: session.id,
+    tool: session.tool ?? session.toolConfigKey ?? session.command,
+    role: session.role ?? session.team?.role,
+    worktreePath: session.worktreePath,
+    status,
+    canReceiveInput:
+      runtime?.canReceiveInput ?? (status === "running" || status === "idle" || status === "waiting"),
+    isAlive: runtime?.isAlive ?? (status !== "exited" && status !== "offline"),
+    workflowPressure:
+      (session.workflowOnMeCount ?? 0) * 5 +
+      (session.workflowBlockedCount ?? 0) * 6 +
+      (session.threadPendingCount ?? 0) * 3 +
+      (session.notificationUnreadCount ?? 0) * 2 +
+      (session.threadWaitingOnThemCount ?? 0),
+    exited: Boolean(session.exited) || status === "exited",
+  };
+}
+
+function buildOrchestrationRouteOptions(input: {
+  state: { sessions?: any[]; teammates?: any[] };
+  selectedSessionId?: string;
+  worktreePath?: string;
+}): OrchestrationRouteOption[] {
+  const sessions = [...(input.state.sessions ?? []), ...(input.state.teammates ?? [])];
+  const candidates = sessions.map(orchestrationCandidateFromSession);
+  const options: OrchestrationRouteOption[] = [];
+  const selected = input.selectedSessionId ? sessions.find((session) => session.id === input.selectedSessionId) : null;
+  if (selected) {
+    options.push({
+      label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
+      sessionId: selected.id,
+    });
+  }
+
+  const team = loadTeamConfig();
+  for (const [role, cfg] of Object.entries(team.roles as Record<string, { description?: string }>)) {
+    const recipientIds = resolveOrchestrationRecipients({
+      candidates,
+      assignee: role,
+      worktreePath: input.worktreePath,
+    });
+    if (recipientIds.length === 0) continue;
+    options.push({
+      label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${formatRoutePreview(recipientIds)}`,
+      assignee: role,
+      worktreePath: input.worktreePath,
+      recipientIds,
+    });
+  }
+
+  const config = loadConfig();
+  for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
+    if (!toolCfg.enabled) continue;
+    const recipientIds = resolveOrchestrationRecipients({
+      candidates,
+      tool: toolKey,
+      worktreePath: input.worktreePath,
+    });
+    if (recipientIds.length === 0) continue;
+    options.push({
+      label: `Tool: ${toolKey}${formatRoutePreview(recipientIds)}`,
+      tool: toolKey,
+      worktreePath: input.worktreePath,
+      recipientIds,
+    });
+  }
+  return options;
 }
 
 function isLibraryPathExposed(path: string): boolean {
@@ -1484,6 +1570,22 @@ export class MetadataServer {
         ok: true,
         notifications,
         unreadCount: unreadNotificationCount({ sessionId }),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.orchestration.routes) {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const selectedSessionId = url.searchParams.get("selectedSessionId")?.trim() || undefined;
+      const worktreePath = url.searchParams.get("worktreePath")?.trim() || undefined;
+      const state = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[] };
+      send(res, 200, {
+        ok: true,
+        serviceInfo: getProjectServiceManifest(),
+        options: buildOrchestrationRouteOptions({ state, selectedSessionId, worktreePath }),
       });
       return;
     }

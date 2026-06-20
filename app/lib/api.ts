@@ -36,6 +36,8 @@ import {
   type OpenDashboardRequest,
   type OpenInboxRequest,
   type OpenNotificationTargetRequest,
+  type OrchestrationRouteMode,
+  type OrchestrationRouteOptionsResponse,
   type RemoveServiceResponse,
   type RemoveWorktreeResponse,
   type ResumeServiceResponse,
@@ -678,6 +680,24 @@ export async function clearNotifications(
     input,
   );
   return { ok: response.ok, cleared: response.cleared ?? response.updated ?? 0 };
+}
+
+export async function getOrchestrationRouteOptions(
+  endpoint: ServiceEndpoint,
+  input: { mode?: OrchestrationRouteMode; selectedSessionId?: string; worktreePath?: string } = {},
+  opts?: ApiOpts,
+): Promise<OrchestrationRouteOptionsResponse> {
+  const params = new URLSearchParams();
+  if (input.mode) params.set("mode", input.mode);
+  if (input.selectedSessionId) params.set("selectedSessionId", input.selectedSessionId);
+  if (input.worktreePath) params.set("worktreePath", input.worktreePath);
+  const query = params.toString();
+  return callProjectJson<OrchestrationRouteOptionsResponse>(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.orchestration.routes}${query ? `?${query}` : ""}`,
+    opts,
+  );
 }
 
 // ── Service actions ──────────────────────────────────────────────────────

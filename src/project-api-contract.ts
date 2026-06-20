@@ -100,6 +100,9 @@ export const PROJECT_API_ROUTES = {
     approve: "/reviews/approve",
     requestChanges: "/reviews/request-changes",
   },
+  orchestration: {
+    routes: "/orchestration/routes",
+  },
   attachments: "/attachments",
   controls: {
     switchableAgents: "/control/switchable-agents",
@@ -296,6 +299,21 @@ export type SwitchAgentRequest = ControlClientContext;
 
 export interface ProjectServiceInfoResponse extends ProjectApiOk {
   serviceInfo?: unknown;
+}
+
+export type OrchestrationRouteMode = "message" | "handoff" | "task";
+
+export interface OrchestrationRouteOption {
+  label: string;
+  sessionId?: string;
+  assignee?: string;
+  tool?: string;
+  worktreePath?: string;
+  recipientIds?: string[];
+}
+
+export interface OrchestrationRouteOptionsResponse extends ProjectApiOk {
+  options: OrchestrationRouteOption[];
 }
 
 export interface NotificationMutationInput {

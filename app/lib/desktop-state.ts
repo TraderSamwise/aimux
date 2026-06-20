@@ -8,6 +8,7 @@ export type DesktopServiceStatus = "running" | "exited" | "offline";
 export interface DesktopSession {
   id: string;
   command?: string;
+  toolConfigKey?: string;
   status: DesktopSessionStatus;
   active?: boolean;
   worktreePath?: string;

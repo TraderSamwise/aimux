@@ -17,7 +17,6 @@ import { PluginRuntime } from "../plugin-runtime.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
-import { PROJECT_API_EVENT_NAMES } from "../project-api-contract.js";
 import {
   contextualizeAlertInput,
   mergeDisplayContext,
@@ -27,7 +26,6 @@ import {
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { type CoordinationModel, type WorklistItem } from "../coordination-model.js";
-import { scheduleCoordinationPush } from "./coordination.js";
 import { type NotificationRowMeta } from "./notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
 import { type ProjectObservability } from "../project-observability.js";
@@ -312,35 +310,6 @@ export class Multiplexer {
       refreshRuntimeGuard: () => {
         void this.refreshRuntimeGuard();
       },
-    });
-    this.eventBus.subscribe((event) => {
-      if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
-        if (event.views.includes("coordination-worklist")) scheduleCoordinationPush(this);
-        return;
-      }
-      if (event.type !== PROJECT_API_EVENT_NAMES.alert) return;
-      if (event.kind === "notification") {
-        this.footerFlash = `◌ ${event.title}`;
-      } else if (event.kind === "needs_input") {
-        this.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
-      } else if (event.kind === "next_step") {
-        this.footerFlash = `◉ ${event.sessionId ?? "agent"} ready for next step`;
-      } else if (event.kind === "message_waiting") {
-        this.footerFlash = `✉ Message waiting → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "handoff_waiting") {
-        this.footerFlash = `⇢ Handoff waiting → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "task_assigned") {
-        this.footerFlash = `⧫ Task assigned → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "review_waiting") {
-        this.footerFlash = `◌ Review waiting → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "blocked") {
-        this.footerFlash = `⧗ ${event.title}`;
-      } else if (event.kind === "task_done") {
-        this.footerFlash = `✓ ${event.title}`;
-      } else if (event.kind === "task_failed") {
-        this.footerFlash = `✗ ${event.title}`;
-      }
-      this.footerFlashTicks = 4;
     });
   }
 
