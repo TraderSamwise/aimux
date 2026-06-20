@@ -1364,11 +1364,12 @@ export class MetadataServer {
       }
       const state = this.options.desktop.getState() as {
         sessions?: any[];
+        teammates?: any[];
         services?: any[];
         worktrees?: any[];
       };
       const project = buildProjectObservability({
-        sessions: state.sessions ?? [],
+        sessions: [...(state.sessions ?? []), ...(state.teammates ?? [])],
         services: state.services ?? [],
         worktrees: state.worktrees ?? [],
         tasks: readAllTasks(),

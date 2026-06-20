@@ -12,14 +12,42 @@ function applyProjectObservability(host: ProjectHost, project: ProjectObservabil
   host.projectObservability = project;
   const storyLength = host.projectObservability.story.length;
   if (typeof host.projectIndex !== "number" || Number.isNaN(host.projectIndex)) host.projectIndex = 0;
+  if (host.projectIndex < 0) host.projectIndex = 0;
   if (host.projectIndex >= storyLength) host.projectIndex = Math.max(0, storyLength - 1);
+}
+
+function isProjectSummary(value: any): boolean {
+  return (
+    value &&
+    typeof value.agentsRunning === "number" &&
+    typeof value.agentsWaiting === "number" &&
+    typeof value.agentsOffline === "number" &&
+    typeof value.services === "number" &&
+    typeof value.worktrees === "number" &&
+    typeof value.openTasks === "number" &&
+    typeof value.doneTasks === "number" &&
+    typeof value.unreadNotifications === "number"
+  );
+}
+
+function isTaskProgress(value: any): boolean {
+  return (
+    value &&
+    typeof value.pending === "number" &&
+    typeof value.assigned === "number" &&
+    typeof value.in_progress === "number" &&
+    typeof value.blocked === "number" &&
+    typeof value.done === "number" &&
+    typeof value.failed === "number" &&
+    typeof value.total === "number"
+  );
 }
 
 function isProjectObservability(value: any): value is ProjectObservability {
   return (
-    value &&
-    typeof value.summary === "object" &&
-    typeof value.progress === "object" &&
+    Boolean(value) &&
+    isProjectSummary(value.summary) &&
+    isTaskProgress(value.progress) &&
     Array.isArray(value.story)
   );
 }
