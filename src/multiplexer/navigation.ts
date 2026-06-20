@@ -183,12 +183,25 @@ export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
 
 export function showMigratePicker(host: NavigationHost, sessionId?: string): void {
   try {
-    const worktrees = listAllWorktrees();
-    const mainRepo = findMainRepo();
-    host.migratePickerWorktrees = [
-      { name: "(main)", path: mainRepo },
-      ...worktrees.filter((wt) => wt.path !== mainRepo).map((wt) => ({ name: wt.name, path: wt.path })),
-    ];
+    if (host.mode === "dashboard" && Array.isArray(host.dashboardWorktreeGroupsCache)) {
+      const mainRepo = host.projectRoot ?? findMainRepo();
+      host.migratePickerWorktrees = host.dashboardWorktreeGroupsCache
+        .map((group: any) => ({
+          name: group.path === undefined ? "(main)" : group.name,
+          path: group.path ?? mainRepo,
+        }))
+        .filter(
+          (entry: any, index: number, entries: any[]) =>
+            entries.findIndex((item) => item.path === entry.path) === index,
+        );
+    } else {
+      const worktrees = listAllWorktrees();
+      const mainRepo = findMainRepo();
+      host.migratePickerWorktrees = [
+        { name: "(main)", path: mainRepo },
+        ...worktrees.filter((wt) => wt.path !== mainRepo).map((wt) => ({ name: wt.name, path: wt.path })),
+      ];
+    }
   } catch {
     host.migratePickerWorktrees = [];
   }
