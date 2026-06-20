@@ -612,7 +612,14 @@ for session in sessions:
     elif length == best_len:
         matched.append(session)
 items = []
-for session in matched if matched else sessions:
+if matched:
+    candidate_sessions = matched
+elif current_worktree or current_path:
+    log("no statusline candidates after worktree filtering")
+    raise SystemExit(1)
+else:
+    candidate_sessions = sessions
+for session in candidate_sessions:
     alive = is_live_window(session.get("tmuxWindowId"))
     if not alive and session.get("tmuxWindowId") != current_window_id:
         continue

@@ -455,22 +455,18 @@ describe("tmux-control.sh", () => {
 
   it("does not match sibling worktree path prefixes in host tmux metadata fallback", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
       windows: {
         "aimux-proj": [
-          { id: "@claude", index: 1, name: "claude" },
           { id: "@wrong", index: 2, name: "wrong" },
-          { id: "@codex", index: 6, name: "codex" },
         ],
         "aimux-proj-client-live": [
           { id: "@dash", index: 0, name: "dashboard-live" },
-          { id: "@claude", index: 1, name: "claude" },
+          { id: "@current", index: 1, name: "current" },
         ],
       },
       windowMetadata: {
-        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
-        "@wrong": { sessionId: "wrong-1", kind: "agent", worktreePath: "/repo/project/worktree2" },
-        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@wrong": { sessionId: "wrong-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
         "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
@@ -491,15 +487,16 @@ describe("tmux-control.sh", () => {
       "--client-tty",
       "/dev/live",
       "--current-window",
-      "claude",
+      "current",
       "--current-window-id",
-      "@claude",
+      "@current",
       "--current-path",
-      "/repo/project/worktree",
+      "/repo/project/worktree2",
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog.length).toBeGreaterThan(0);
     expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
   });
 
@@ -1387,16 +1384,14 @@ describe("tmux-control.sh", () => {
 
   it("does not match sibling worktree path prefixes in statusline fallback", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
       windows: {
         "aimux-proj": [
-          { id: "@claude", index: 1, name: "claude" },
           { id: "@wrong", index: 2, name: "wrong" },
-          { id: "@codex", index: 6, name: "codex" },
         ],
         "aimux-proj-client-live": [
           { id: "@dash", index: 0, name: "dashboard-live" },
-          { id: "@claude", index: 1, name: "claude" },
+          { id: "@current", index: 1, name: "current" },
         ],
       },
       windowMetadata: {},
@@ -1410,9 +1405,7 @@ describe("tmux-control.sh", () => {
       join(envRoot.projectStateDir, "statusline.json"),
       JSON.stringify({
         sessions: [
-          { tmuxWindowId: "@claude", tmuxWindowIndex: 1, kind: "agent", worktreePath: "/repo/project/worktree" },
-          { tmuxWindowId: "@wrong", tmuxWindowIndex: 2, kind: "agent", worktreePath: "/repo/project/worktree2" },
-          { tmuxWindowId: "@codex", tmuxWindowIndex: 6, kind: "agent", worktreePath: "/repo/project/worktree" },
+          { tmuxWindowId: "@wrong", tmuxWindowIndex: 2, kind: "agent", worktreePath: "/repo/project/worktree" },
         ],
       }),
     );
@@ -1430,15 +1423,16 @@ describe("tmux-control.sh", () => {
       "--client-tty",
       "/dev/live",
       "--current-window",
-      "claude",
+      "current",
       "--current-window-id",
-      "@claude",
+      "@current",
       "--current-path",
-      "/repo/project/worktree",
+      "/repo/project/worktree2",
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog.length).toBeGreaterThan(0);
     expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
   });
 
