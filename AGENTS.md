@@ -15,6 +15,26 @@ Aimux is an agent multiplexer. It runs long-lived Claude, Codex, and shell sessi
 
 Agents inside aimux coordinate through aimux task, handoff, and thread commands backed by the runtime exchange, not by directly spawning each other unless the user gives an explicit CLI command. Use explicit aimux CLI/API task or handoff operations only when the user explicitly asks for delegation or handoff. Do not proactively write `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks.
 
+## Runtime Architecture
+
+Aimux separates local execution from the shared control plane.
+
+- The global daemon owns project discovery, project activation, and supervision of per-project services.
+- The per-project service (`src/metadata-server.ts`) is the single writer/authority for shared project control-plane state.
+- The managed tmux runtime owns local execution: agent/service/dashboard windows, PTYs, scrollback, attach/detach, and same-machine focus/open behavior.
+- Clients include the terminal TUI dashboard, Expo web/mobile app, CLI helpers, scripts, and plugins. They should use daemon/project-service APIs for shared reads and mutations.
+
+Shared control-plane state includes notifications, threads, tasks, handoffs, reviews, Coordination, project/topology/library views, graveyard/worktree state, and lifecycle mutations. TUI-local state is limited to presentation concerns such as selection, filters, current screen, overlays, text buffers, and terminal render timing.
+
+When changing dashboard behavior, preserve the API-backed boundary:
+
+- Use `src/multiplexer/dashboard-control.ts` request helpers for TUI reads/mutations that affect shared project state.
+- Keep shared response contracts aligned with `src/project-api-contract.ts` and app wrappers in `app/lib/api.ts`.
+- Do not add direct dashboard writes to runtime-exchange, notification stores, thread/task/review state, topology, or worktree/graveyard state.
+- `statusline.json` is a derived/debug/status artifact, not the primary transport for TUI or app state.
+
+Remote-only is not the goal. Execution and service composition remain local by design; web/mobile parity comes from API-backed control-plane routes plus remote equivalents for tmux-specific behavior such as pane streaming or deep-link/focus actions.
+
 ## Stable vs Dev CLI
 
 - `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is for real project work and production remote auth, so defaults should point at `https://aimux.app` and the production relay unless explicitly overridden.
@@ -83,6 +103,9 @@ yarn build
 ```
 
 - If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; restart or reload the relevant runtime after the build.
+- Use `aimux restart` as the normal post-build coherence repair. It restarts the daemon, re-ensures known project services, and reloads existing dashboards without killing agent tmux windows.
+- Use `aimux doctor versions` to inspect daemon/project-service/dashboard build coherence.
+- Use `aimux restart-runtime --open` only when the current project's managed tmux runtime itself must be torn down and rebuilt.
 - Do not send a user to test behavior changes against stale `dist/`.
 
 ### Navigation Layer Rule
@@ -144,3 +167,10 @@ The browser/mobile client calls daemon and project-service HTTP directly. The sa
 - `aimux worktree list --project <path> --json`: list worktrees.
 - `aimux graveyard list --project <path> --json`: list dead agents.
 - `aimux graveyard resurrect <id> --project <path>`: revive agent.
+- `aimux message send <body> --project <path>`: send a thread message or direct coordination message.
+- `aimux handoff send|accept|complete ... --project <path>`: create and resolve handoff workflow records.
+- `aimux task assign|accept|block|complete|reopen ... --project <path>`: create and resolve task workflow records.
+- `aimux review approve|request-changes ... --project <path>`: resolve review workflow records.
+- `aimux thread list --project <path> --json`: inspect project thread/workflow state.
+- `aimux host agent-read <sessionId> --project <path>`: read a tmux pane snapshot through the project service.
+- `aimux host agent-stream <sessionId> --project <path>`: stream live pane output through project-service SSE.
