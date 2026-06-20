@@ -117,6 +117,18 @@ describe("reloadDashboardFromGuard", () => {
       else process.env.AIMUX_ENV = originalEnv;
     }
   });
+
+  it("uses PATH aimux instead of a versioned stable install path", async () => {
+    const { resolveDashboardReloadCommand } = await import("./dashboard-control.js");
+    const originalArgv = process.argv[1];
+    process.argv[1] = "/Users/sam/.aimux/native/1.2.3/bin/aimux";
+
+    try {
+      expect(resolveDashboardReloadCommand()).toBe("aimux");
+    } finally {
+      process.argv[1] = originalArgv;
+    }
+  });
 });
 
 describe("handleDashboardSubscreenNavigationKey", () => {
