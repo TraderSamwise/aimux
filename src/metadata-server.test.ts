@@ -965,7 +965,9 @@ describe("MetadataServer threads API", () => {
     const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
     const listWindows = TmuxRuntimeManager.prototype.listWindows;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
 
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
     TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
@@ -973,6 +975,11 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
       sessionName === "aimux-test-client-123" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
+    TmuxRuntimeManager.prototype.listManagedWindows = vi.fn(() => {
+      throw new Error("switch resolver should not run for invalid client sessions");
+    });
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
         {
@@ -1001,20 +1008,40 @@ describe("MetadataServer threads API", () => {
       expect(missingSessionRes.status).toBe(400);
       expect(missingSessionBody).toEqual({ ok: false, error: "currentClientSession is required" });
 
+      const missingTtyRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentClientSession: "aimux-test-client-123", currentWindowId: "@99" }),
+      });
+      const missingTtyBody = (await missingTtyRes.json()) as { ok: boolean; error?: string };
+      expect(missingTtyRes.status).toBe(400);
+      expect(missingTtyBody).toEqual({ ok: false, error: "clientTty is required" });
+
       const invalidSessionRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ currentClientSession: "other-client", currentWindowId: "@7" }),
+        body: JSON.stringify({ currentClientSession: "other-client", clientTty: "/dev/ttys001", currentWindowId: "@7" }),
       });
       const invalidSessionBody = (await invalidSessionRes.json()) as { ok: boolean; error?: string };
       expect(invalidSessionRes.status).toBe(400);
       expect(invalidSessionBody).toEqual({ ok: false, error: "currentClientSession is not a project client" });
+
+      const invalidSwitchRes = await fetch(`${base}/control/switch-next`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentClientSession: "other-client", focus: false }),
+      });
+      const invalidSwitchBody = (await invalidSwitchRes.json()) as { ok: boolean; error?: string };
+      expect(invalidSwitchRes.status).toBe(400);
+      expect(invalidSwitchBody).toEqual({ ok: false, error: "currentClientSession is not a project client" });
+      expect(TmuxRuntimeManager.prototype.listManagedWindows).not.toHaveBeenCalled();
 
       const spoofedDashboardRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           currentClientSession: "aimux-test-client-123",
+          clientTty: "/dev/ttys001",
           currentWindow: "dashboard-123",
           currentWindowId: "@7",
         }),
@@ -1029,6 +1056,7 @@ describe("MetadataServer threads API", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           currentClientSession: "aimux-test-client-123",
+          clientTty: "/dev/ttys001",
           currentWindow: "dashboard-123",
           currentWindowId: "@99",
         }),
@@ -1041,7 +1069,9 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
       TmuxRuntimeManager.prototype.listWindows = listWindows;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
     }
   });
 

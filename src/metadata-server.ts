@@ -2203,12 +2203,14 @@ export class MetadataServer {
           req.method === "POST"
             ? ((await readJson(req)) as {
                 currentClientSession?: string;
+                clientTty?: string;
                 currentWindow?: string;
                 currentWindowId?: string;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
+        const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const currentWindow = body.currentWindow?.trim() || url.searchParams.get("currentWindow")?.trim() || undefined;
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
@@ -2221,9 +2223,9 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "currentWindowId is required" });
           return;
         }
-        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
-        if (sessionError) {
-          send(res, 400, { ok: false, error: sessionError });
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, true);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
           return;
         }
         const activeWindow = tmux.listWindows(currentClientSession).find((window) => window.active);
@@ -2263,6 +2265,12 @@ export class MetadataServer {
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const item = resolveNextAgent(
           {
             projectRoot: process.cwd(),
@@ -2272,13 +2280,12 @@ export class MetadataServer {
               body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined,
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
-          new TmuxRuntimeManager(),
+          tmux,
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no switchable agent found" });
           return;
         }
-        const tmux = new TmuxRuntimeManager();
         const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
         if (focusError) {
           send(res, 400, { ok: false, error: focusError });
@@ -2309,6 +2316,12 @@ export class MetadataServer {
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const item = resolvePrevAgent(
           {
             projectRoot: process.cwd(),
@@ -2318,13 +2331,12 @@ export class MetadataServer {
               body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined,
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
-          new TmuxRuntimeManager(),
+          tmux,
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no switchable agent found" });
           return;
         }
-        const tmux = new TmuxRuntimeManager();
         const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
         if (focusError) {
           send(res, 400, { ok: false, error: focusError });
@@ -2358,6 +2370,12 @@ export class MetadataServer {
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const item = resolveAttentionAgent(
           {
             projectRoot: process.cwd(),
@@ -2367,13 +2385,12 @@ export class MetadataServer {
               body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined,
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
-          new TmuxRuntimeManager(),
+          tmux,
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no attention target found" });
           return;
         }
-        const tmux = new TmuxRuntimeManager();
         const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
         if (focusError) {
           send(res, 400, { ok: false, error: focusError });
