@@ -270,7 +270,7 @@ describe("api relay routing", () => {
     await switchNextAgent(endpoint, { currentClientSession: "client-1" });
     await switchPrevAgent(endpoint, { currentClientSession: "client-1" });
     await switchAttentionAgent(endpoint, { currentClientSession: "client-1" });
-    await focusWindow(endpoint, { windowId: "@8", focus: true, currentClientSession: "client-1" });
+    await focusWindow(endpoint, { windowId: "@8", focus: true, currentClientSession: "client-1", clientTty: "/dev/ttys001" });
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/control/open-dashboard", {
@@ -305,6 +305,7 @@ describe("api relay routing", () => {
       windowId: "@8",
       focus: true,
       currentClientSession: "client-1",
+      clientTty: "/dev/ttys001",
     });
   });
 

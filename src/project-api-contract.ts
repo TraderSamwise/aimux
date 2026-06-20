@@ -243,14 +243,22 @@ export interface LivePaneAttachResponse extends LivePaneOutputResponse {
   };
 }
 
-export interface ControlClientContext {
+export interface ControlClientBaseContext {
   currentClientSession?: string;
-  clientTty?: string;
   currentWindow?: string;
   currentWindowId?: string;
   currentPath?: string;
-  focus?: boolean;
 }
+
+export type ControlClientContext =
+  | (ControlClientBaseContext & {
+      focus?: false;
+      clientTty?: string;
+    })
+  | (ControlClientBaseContext & {
+      focus: true;
+      clientTty: string;
+    });
 
 export interface ControlTargetRef {
   sessionName: string;
@@ -270,16 +278,16 @@ export interface ControlActionResponse extends ProjectApiOk {
 export type OpenDashboardRequest = ControlClientContext;
 export type OpenInboxRequest = ControlClientContext;
 
-export interface OpenNotificationTargetRequest extends ControlClientContext {
+export type OpenNotificationTargetRequest = ControlClientContext & {
   sessionId: string;
-}
+};
 
-export interface FocusWindowRequest extends ControlClientContext {
+export type FocusWindowRequest = ControlClientContext & {
   windowId: string;
-}
+};
 
 export type ActiveWindowRequest = Pick<
-  ControlClientContext,
+  ControlClientBaseContext,
   "currentClientSession" | "currentWindow" | "currentWindowId"
 >;
 export type SwitchAgentRequest = ControlClientContext;

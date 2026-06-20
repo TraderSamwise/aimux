@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
+import { loadNotificationContexts } from "./notification-context.js";
 import { listNotifications, upsertNotification } from "./notifications.js";
 import { addDashboardOperationFailure, listDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { readTask } from "./tasks.js";
@@ -955,6 +956,83 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
       TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
       TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
+    }
+  });
+
+  it("validates active-window reports before mutating notification context", async () => {
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test", "aimux-test-client-123"];
+    TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+      sessionName === "aimux-test-client-123" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const invalidSessionRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentClientSession: "other-client", currentWindowId: "@7" }),
+      });
+      const invalidSessionBody = (await invalidSessionRes.json()) as { ok: boolean; error?: string };
+      expect(invalidSessionRes.status).toBe(400);
+      expect(invalidSessionBody).toEqual({ ok: false, error: "currentClientSession is not a project client" });
+
+      const spoofedDashboardRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-test-client-123",
+          currentWindow: "dashboard-123",
+          currentWindowId: "@7",
+        }),
+      });
+      const spoofedDashboardBody = (await spoofedDashboardRes.json()) as { ok: boolean; error?: string };
+      expect(spoofedDashboardRes.status).toBe(404);
+      expect(spoofedDashboardBody).toEqual({ ok: false, error: "window not found" });
+      expect(loadNotificationContexts().contexts.tui).toBeUndefined();
+
+      const dashboardRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-test-client-123",
+          currentWindow: "dashboard-123",
+          currentWindowId: "@99",
+        }),
+      });
+      expect(dashboardRes.ok).toBe(true);
+      expect(loadNotificationContexts().contexts.tui).toMatchObject({ focused: true, screen: "dashboard" });
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
     }
   });
 
