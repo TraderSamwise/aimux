@@ -52,11 +52,22 @@ export interface DesktopWorktree {
   removing?: boolean;
 }
 
+export interface DesktopWorktreeGroup {
+  name: string;
+  branch: string;
+  path?: string;
+  status: "active" | "offline";
+  sessions: DesktopSession[];
+  services: DesktopService[];
+}
+
 export interface DesktopState {
   ok: boolean;
   sessions: DesktopSession[];
+  teammates?: DesktopSession[];
   services: DesktopService[];
   worktrees: DesktopWorktree[];
+  worktreeGroups?: DesktopWorktreeGroup[];
   mainCheckoutInfo?: { name: string; branch: string };
   mainCheckoutPath?: string;
 }

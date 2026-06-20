@@ -12,7 +12,7 @@ import {
 import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
-import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
+import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
 import { writeJsonAtomic, writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
@@ -486,6 +486,7 @@ export const persistenceMethods = {
     services: DashboardService[];
     statusline: ReturnType<any["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    worktreeGroups: WorktreeGroup[];
     operationFailures: DashboardOperationFailure[];
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
@@ -494,14 +495,24 @@ export const persistenceMethods = {
       this.refreshDesktopStateSnapshot();
     }
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
+    const sessions = this.dashboardPendingActions.applyToSessions(desktopState.sessions);
+    const teammates = this.dashboardPendingActions
+      .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
+      .filter((session: DashboardSession) => isTeammateSession(session));
+    const services = this.dashboardPendingActions.applyToServices(desktopState.services);
+    const worktrees = this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees);
+    const worktreeGroups = composeDashboardWorktreeGroups(
+      this.dashboardPendingActions.applyToWorktrees(desktopState.worktreeGroups ?? desktopState.worktrees),
+      sessions,
+      services,
+    );
     return {
-      sessions: this.dashboardPendingActions.applyToSessions(desktopState.sessions),
-      teammates: this.dashboardPendingActions
-        .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
-        .filter((session: DashboardSession) => isTeammateSession(session)),
-      services: this.dashboardPendingActions.applyToServices(desktopState.services),
+      sessions,
+      teammates,
+      services,
       statusline: this.buildStatuslineSnapshot(),
-      worktrees: this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees),
+      worktrees,
+      worktreeGroups,
       operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
