@@ -96,7 +96,7 @@ import {
   serializeFastControlItem,
 } from "./fast-control.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
-import type { TmuxTarget } from "./tmux/runtime-manager.js";
+import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
@@ -613,6 +613,53 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
 function controlFocusRequested(body: Record<string, unknown>, url: URL): boolean {
   const raw = body.focus ?? url.searchParams.get("focus");
   return raw !== false && raw !== "false" && raw !== "0";
+}
+
+function isProjectClientSession(tmux: TmuxRuntimeManager, projectRoot: string, sessionName: string): boolean {
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  return sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`);
+}
+
+function validateControlFocusContext(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+  clientTty: string | undefined,
+  focus: boolean,
+): string | undefined {
+  if (!focus) return undefined;
+  if (
+    currentClientSession &&
+    (!isProjectClientSession(tmux, projectRoot, currentClientSession) || !tmux.hasSession(currentClientSession))
+  ) {
+    return "currentClientSession is not a project client";
+  }
+  if (!clientTty) return undefined;
+  const client = tmux.findClientByTty(clientTty);
+  if (!client) return "clientTty is not attached";
+  if (!isProjectClientSession(tmux, projectRoot, client.sessionName)) {
+    return "clientTty is not attached to this project";
+  }
+  if (currentClientSession && client.sessionName !== currentClientSession) {
+    return "clientTty does not match currentClientSession";
+  }
+  return undefined;
+}
+
+function findProjectManagedWindow(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  matcher: { windowId?: string; sessionId?: string },
+): { target: TmuxTarget; metadata: TmuxWindowMetadata } | null {
+  return (
+    tmux
+      .listProjectManagedWindows(projectRoot)
+      .find(
+        (entry) =>
+          (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
+          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true),
+      ) ?? null
+  );
 }
 
 function serializeControlTarget(target: TmuxTarget): Record<string, unknown> {
@@ -1879,6 +1926,11 @@ export class MetadataServer {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
         return;
@@ -1919,6 +1971,11 @@ export class MetadataServer {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
         sendControlAction(res, "open-inbox", target, focusResult);
         return;
@@ -1956,22 +2013,26 @@ export class MetadataServer {
         );
         const service = (desktop.services ?? []).find((entry) => entry.id === sessionId);
         const tmux = new TmuxRuntimeManager();
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
 
         const openWindowId = (windowId: string, itemId?: string) => {
-          const sessionName = currentClientSession || tmux.getProjectSession(process.cwd()).sessionName;
-          const target =
-            tmux.getTargetByWindowId(sessionName, windowId) ??
-            tmux.getTargetByWindowId(tmux.getProjectSession(process.cwd()).sessionName, windowId);
-          if (!target) {
+          const match = findProjectManagedWindow(tmux, process.cwd(), { windowId, sessionId: itemId });
+          if (!match) {
             send(res, 404, { ok: false, error: "window not found" });
             return;
           }
-          const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
-          if (itemId && session?.id === itemId) {
+          const focusResult = focusControlTarget(tmux, match.target, currentClientSession, clientTty, focus);
+          if (focus && itemId && session?.id === itemId) {
             markSessionViewed(itemId);
           }
-          markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
-          sendControlAction(res, "open-notification-target", target, focusResult, itemId);
+          if (focus) {
+            markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, itemId);
+          }
+          sendControlAction(res, "open-notification-target", match.target, focusResult, itemId);
         };
 
         if (session?.tmuxWindowId) {
@@ -1983,6 +2044,10 @@ export class MetadataServer {
           return;
         }
         if (service && service.status !== "running") {
+          if (!focus) {
+            send(res, 409, { ok: false, error: "service is offline", itemId: service.id });
+            return;
+          }
           if (!this.options.desktop.resumeService) {
             send(res, 409, { ok: false, error: "service is offline" });
             return;
@@ -2001,6 +2066,10 @@ export class MetadataServer {
           return;
         }
         if (session && session.status === "offline") {
+          if (!focus) {
+            send(res, 409, { ok: false, error: "agent is offline", itemId: session.id });
+            return;
+          }
           if (!this.options.desktop.resumeAgent) {
             send(res, 409, { ok: false, error: "agent is offline" });
             return;
@@ -2043,25 +2112,26 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        const sessionName = currentClientSession || tmux.getProjectSession(process.cwd()).sessionName;
-        const target =
-          tmux.getTargetByWindowId(sessionName, windowId) ??
-          tmux.getTargetByWindowId(tmux.getProjectSession(process.cwd()).sessionName, windowId);
-        if (!target) {
+        const match = findProjectManagedWindow(tmux, process.cwd(), { windowId });
+        if (!match) {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
-        const match = tmux
-          .listProjectManagedWindows(process.cwd())
-          .find((entry) => entry.target.windowId === target.windowId);
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusResult = focusControlTarget(tmux, match.target, currentClientSession, clientTty, focus);
         const itemId =
           match?.metadata.kind === "agent" || match?.metadata.kind === "service" ? match.metadata.sessionId : undefined;
-        if (match?.metadata.kind === "agent") {
+        if (focus && match?.metadata.kind === "agent") {
           markSessionViewed(match.metadata.sessionId);
         }
-        markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
-        sendControlAction(res, "focus-window", target, focusResult, itemId);
+        if (focus) {
+          markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, itemId);
+        }
+        sendControlAction(res, "focus-window", match.target, focusResult, itemId);
         return;
       }
 
@@ -2125,9 +2195,16 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
-        markSessionViewed(item.metadata.sessionId);
-        markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+        if (focus) {
+          markSessionViewed(item.metadata.sessionId);
+          markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+        }
         sendControlAction(res, "switch-next", item.target, focusResult, item.metadata.sessionId);
         return;
       }
@@ -2164,9 +2241,16 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
-        markSessionViewed(item.metadata.sessionId);
-        markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+        if (focus) {
+          markSessionViewed(item.metadata.sessionId);
+          markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+        }
         sendControlAction(res, "switch-prev", item.target, focusResult, item.metadata.sessionId);
         return;
       }
@@ -2206,9 +2290,16 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
-        markSessionViewed(item.metadata.sessionId);
-        markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+        if (focus) {
+          markSessionViewed(item.metadata.sessionId);
+          markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+        }
         sendControlAction(res, "switch-attention", item.target, focusResult, item.metadata.sessionId);
         return;
       }
