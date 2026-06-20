@@ -698,7 +698,8 @@ function findProjectManagedWindow(
       .find(
         (entry) =>
           (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
-          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true),
+          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true) &&
+          tmux.isWindowAlive(entry.target),
       ) ?? null
   );
 }
