@@ -145,10 +145,9 @@ export function listSwitchableAgentItems(
   const scope = opts.scope ?? "worktree";
   const tmuxSession = tmux.getProjectSession(context.projectRoot);
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
-  const managedWindows = tmux
-    .listManagedWindows(tmuxSession.sessionName)
-    .filter((entry) => tmux.isWindowAlive(entry.target));
-  const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, managedWindows);
+  const allManagedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
+  const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, allManagedWindows);
+  const managedWindows = allManagedWindows.filter((entry) => tmux.isWindowAlive(entry.target));
   const teammateParentSessionId = currentManagedWindow?.metadata.team?.parentSessionId;
   const scopedWorktreePath = resolveContextWorktreePath(context, currentManagedWindow);
   let managed = managedWindows
