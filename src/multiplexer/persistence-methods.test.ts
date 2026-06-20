@@ -85,6 +85,7 @@ import {
   moveTopologyWorktreeToGraveyard,
   upsertTopologyWorktree,
 } from "../runtime-core/topology-worktrees.js";
+import { addDashboardOperationFailure } from "../dashboard/operation-failures.js";
 
 describe("persistenceMethods", () => {
   let pathsRoot = "";
@@ -172,6 +173,48 @@ describe("persistenceMethods", () => {
       expect.objectContaining({ name: "Main Checkout", path: undefined }),
     ]);
     expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("records duplicate worktree create failures through the service owner", () => {
+    const addFailureMock = vi.mocked(addDashboardOperationFailure);
+    addFailureMock.mockClear();
+    const pending = new DashboardPendingActions(() => {});
+    const host = {
+      dashboardPendingActions: pending,
+      listDesktopWorktrees: vi.fn(() => [
+        {
+          name: "demo",
+          branch: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          status: "offline",
+          sessions: [],
+          services: [],
+        },
+      ]),
+      mode: "project-service",
+      pendingWorktreeCreates: new Map(),
+      publishAlert: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    expect(() => persistenceMethods.createDesktopWorktree.call(host, "demo")).toThrow(
+      'Worktree "demo" already exists',
+    );
+
+    expect(addFailureMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetKind: "worktree",
+        operation: "create",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+        message: 'Worktree "demo" already exists',
+      }),
+    );
+    expect(host.publishAlert).toHaveBeenCalledWith(expect.objectContaining({ kind: "task_failed" }));
+    expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
+    expect(host.refreshLocalDashboardModel).toHaveBeenCalledOnce();
+    expect(host.metadataServer.notifyChange).toHaveBeenCalledOnce();
   });
 
   it("cleans up expired standalone graveyard agents and refreshes projections", async () => {

@@ -734,7 +734,17 @@ export const persistenceMethods = {
         (worktree: any) => worktree.path === targetPath && !worktree.pending && !worktree.operationFailure,
       )
     ) {
-      throw new Error(`Worktree "${name}" already exists`);
+      const message = `Worktree "${name}" already exists`;
+      recordDashboardFailure(this, {
+        targetKind: "worktree",
+        operation: "create",
+        title: `Failed to create worktree "${name}"`,
+        message,
+        worktreePath: targetPath,
+        worktreeName: name,
+      });
+      refreshDashboardWorktreeProjection(this);
+      throw new Error(message);
     }
     clearDashboardOperationFailures({ targetKind: "worktree", operation: "create", worktreePath: targetPath });
 
