@@ -132,6 +132,7 @@ export default function CoordinationScreen() {
   const [itemsKey, setItemsKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
   const endpointRef = useRef(endpoint);
   const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
@@ -151,6 +152,7 @@ export default function CoordinationScreen() {
       setItems([]);
       setItemsKey(null);
       setError(null);
+      setErrorKey(null);
       setLoading(false);
       return;
     }
@@ -162,9 +164,11 @@ export default function CoordinationScreen() {
       setItems(response.worklist.items);
       setItemsKey(currentViewKey);
       setError(null);
+      setErrorKey(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
+      setErrorKey(currentViewKey);
     } finally {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
@@ -184,6 +188,7 @@ export default function CoordinationScreen() {
     () => (itemsKey === viewKey ? items : []),
     [items, itemsKey, viewKey],
   );
+  const visibleError = errorKey === viewKey ? error : null;
   const needsYou = useMemo(() => visibleItems.filter((item) => item.actionable), [visibleItems]);
   const tail = useMemo(() => visibleItems.filter((item) => !item.actionable), [visibleItems]);
 
@@ -231,8 +236,8 @@ export default function CoordinationScreen() {
           title="Project host offline"
           body="Start the project host to load coordination."
         />
-      ) : error ? (
-        <PageStateCard title="Coordination failed" body={error} tone="danger" />
+      ) : visibleError ? (
+        <PageStateCard title="Coordination failed" body={visibleError} tone="danger" />
       ) : visibleItems.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading coordination..." : "Nothing needs you"}

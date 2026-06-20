@@ -70,6 +70,7 @@ export default function LibraryScreen() {
   const [documentsKey, setDocumentsKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
@@ -104,6 +105,7 @@ export default function LibraryScreen() {
       setDocuments([]);
       setDocumentsKey(null);
       setError(null);
+      setErrorKey(null);
       setLoading(false);
       return;
     }
@@ -115,9 +117,11 @@ export default function LibraryScreen() {
       setDocuments(response.documents);
       setDocumentsKey(currentViewKey);
       setError(null);
+      setErrorKey(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
+      setErrorKey(currentViewKey);
     } finally {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
@@ -132,6 +136,7 @@ export default function LibraryScreen() {
   }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
 
   useProjectApiRelayPolling(endpointKey, serializedRefresh);
+  const visibleError = errorKey === viewKey ? error : null;
 
   return (
     <Page>
@@ -163,8 +168,8 @@ export default function LibraryScreen() {
           title="Project host offline"
           body="Start the project host to load library documents."
         />
-      ) : error ? (
-        <PageStateCard title="Library failed" body={error} tone="danger" />
+      ) : visibleError ? (
+        <PageStateCard title="Library failed" body={visibleError} tone="danger" />
       ) : visibleDocuments.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading library..." : "No library documents"}

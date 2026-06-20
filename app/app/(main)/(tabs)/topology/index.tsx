@@ -234,6 +234,7 @@ export default function TopologyScreen() {
   const [topologyKey, setTopologyKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
   const getTokenRef = useRef(getToken);
   const endpointRef = useRef(endpoint);
   const viewKeyRef = useRef(viewKey);
@@ -253,6 +254,7 @@ export default function TopologyScreen() {
       setTopology(null);
       setTopologyKey(null);
       setError(null);
+      setErrorKey(null);
       setLoading(false);
       return;
     }
@@ -264,9 +266,11 @@ export default function TopologyScreen() {
       setTopology(response.topology);
       setTopologyKey(currentViewKey);
       setError(null);
+      setErrorKey(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
+      setErrorKey(currentViewKey);
     } finally {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
@@ -283,6 +287,7 @@ export default function TopologyScreen() {
   useProjectApiRelayPolling(endpointKey, serializedRefresh);
 
   const visibleTopology = topologyKey === viewKey ? topology : null;
+  const visibleError = errorKey === viewKey ? error : null;
   const leafRows = useMemo(
     () => visibleTopology?.rows.filter((row) => row.kind !== "worktree") ?? [],
     [visibleTopology],
@@ -312,8 +317,8 @@ export default function TopologyScreen() {
           title="Project host not running"
           body="Start the host to see worktree and agent topology."
         />
-      ) : error ? (
-        <PageStateCard title="Unable to load topology" body={error} tone="danger" />
+      ) : visibleError ? (
+        <PageStateCard title="Unable to load topology" body={visibleError} tone="danger" />
       ) : !visibleTopology ? (
         <PageStateCard
           title={loading ? "Loading topology..." : "No topology"}
