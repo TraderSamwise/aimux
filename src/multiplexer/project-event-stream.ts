@@ -5,6 +5,7 @@ import { removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metada
 import {
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
+  PROJECT_API_VIEWS,
   type ProjectApiView,
   type ProjectUpdateEvent,
 } from "../project-api-contract.js";
@@ -121,8 +122,12 @@ function processEventStreamLine(
   return { eventName, dataLines };
 }
 
-function handleProjectEvent(host: ProjectEventStreamHost, name: string, payload: unknown): void {
+export function handleProjectEvent(host: ProjectEventStreamHost, name: string, payload: unknown): void {
   if (!payload || typeof payload !== "object") return;
+  if (name === PROJECT_API_EVENT_NAMES.ready) {
+    scheduleProjectViewRefresh(host, PROJECT_API_VIEWS);
+    return;
+  }
   if (name === PROJECT_API_EVENT_NAMES.projectUpdate) {
     const event = payload as ProjectUpdateEvent;
     if (Array.isArray(event.views)) {
