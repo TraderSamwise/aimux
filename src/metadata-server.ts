@@ -534,7 +534,7 @@ function markActiveWindowFocused(
     return true;
   }
   if (!currentWindowId) return false;
-  const match = tmux.listProjectManagedWindows(projectRoot).find((entry) => entry.target.windowId === currentWindowId);
+  const match = findProjectManagedWindow(tmux, projectRoot, { windowId: currentWindowId });
   if (!match) return false;
   updateNotificationContext("tui", {
     focused: true,
@@ -698,7 +698,8 @@ function findProjectManagedWindow(
       .find(
         (entry) =>
           (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
-          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true),
+          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true) &&
+          tmux.isWindowAlive(entry.target),
       ) ?? null
   );
 }
@@ -2106,7 +2107,7 @@ export class MetadataServer {
             return;
           }
           await this.options.desktop.resumeService({ serviceId: service.id });
-          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
+          const match = findProjectManagedWindow(tmux, process.cwd(), {
             sessionId: service.id,
           });
           if (!match) {
@@ -2129,7 +2130,7 @@ export class MetadataServer {
             return;
           }
           await this.options.desktop.resumeAgent({ sessionId: session.id });
-          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
+          const match = findProjectManagedWindow(tmux, process.cwd(), {
             sessionId: session.id,
           });
           if (!match) {

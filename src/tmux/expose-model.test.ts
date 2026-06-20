@@ -40,6 +40,7 @@ function tmuxWithAgentsInTwoWorktrees(): TmuxRuntimeManager {
       { id: "@1", index: 1, name: "claude", active: false },
       { id: "@2", index: 2, name: "codex", active: true },
     ]),
+    isWindowAlive: vi.fn(() => true),
   } as unknown as TmuxRuntimeManager;
 }
 
@@ -123,6 +124,7 @@ describe("listExposeAgentItems", () => {
         { id: "@2", index: 2, name: "codex", active: false },
         { id: "@3", index: 3, name: "claude", active: true },
       ]),
+      isWindowAlive: vi.fn(() => true),
     } as unknown as TmuxRuntimeManager;
 
     const result = listExposeAgentItems(
@@ -132,6 +134,20 @@ describe("listExposeAgentItems", () => {
     );
     expect(result.scope).toBe("all");
     expect(result.items.map((item) => item.id).sort()).toEqual(["main-agent", "wt-agent"]);
+  });
+
+  it("excludes dead managed windows from expose items", () => {
+    const tmux = tmuxWithAgentsInTwoWorktrees();
+    vi.mocked(tmux.isWindowAlive).mockImplementation((target) => target.windowId !== "@2");
+
+    const result = listExposeAgentItems(
+      { projectRoot: "/repo", currentWindow: "codex", currentWindowId: "@2" },
+      config(true),
+      tmux,
+    );
+
+    expect(result.scope).toBe("all");
+    expect(result.items.map((item) => item.id)).toEqual(["main-agent"]);
   });
 });
 
