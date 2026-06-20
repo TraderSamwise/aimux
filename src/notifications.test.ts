@@ -140,6 +140,29 @@ describe("notifications store", () => {
     });
   });
 
+  it("publishes project_update invalidation after live alert events", () => {
+    const bus = new ProjectEventBus();
+    const events: unknown[] = [];
+    const unsubscribe = bus.subscribe((event) => events.push(event));
+
+    bus.publishAlert({
+      kind: "message_waiting",
+      sessionId: "codex-1",
+      title: "Message waiting",
+      message: "Please review",
+    });
+    unsubscribe();
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "alert", sessionId: "codex-1" }),
+      expect.objectContaining({
+        type: "project_update",
+        sessionId: "codex-1",
+        views: expect.arrayContaining(["coordination-worklist", "inbox", "notifications"]),
+      }),
+    ]);
+  });
+
   it("does not treat dashboard row selection as direct session focus", () => {
     updateNotificationContext("tui", {
       focused: true,
