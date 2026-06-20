@@ -1,14 +1,11 @@
-import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
-  buildCoordinationView,
   type CoordinationModel,
   type CoordinationReachability,
   type CoordinationWorklist,
   type WorklistItem,
 } from "../coordination-model.js";
-import { buildCoordinationThreadEntries, type WorkflowEntry } from "../workflow.js";
-import { parseKeys } from "../key-parser.js";
+import { type WorkflowEntry } from "../workflow.js";
 
 type NotificationHost = any;
 
@@ -19,112 +16,6 @@ export interface NotificationRowMeta {
   actionable: boolean;
 }
 
-export function showNotificationPanel(host: NotificationHost): void {
-  const entries = host.notificationPanelState?.entries ?? [];
-  host.notificationPanelState = {
-    entries,
-    index: entries.length > 0 ? 0 : -1,
-  };
-  host.openDashboardOverlay("notification-panel");
-  host.syncTuiNotificationContext(true);
-  host.renderDashboard();
-  void refreshNotificationPanelFromService(host).then(() => host.renderDashboard()).catch(() => {
-    host.footerFlash = "Notification refresh failed";
-    host.footerFlashTicks = 3;
-    host.renderDashboard();
-  });
-}
-
-export function closeNotificationPanel(host: NotificationHost): void {
-  host.notificationPanelState = null;
-  host.clearDashboardOverlay();
-  host.syncTuiNotificationContext(false);
-  host.renderDashboard();
-}
-
-export function renderNotificationPanel(host: NotificationHost): void {
-  host.renderNotificationPanel();
-}
-
-export function handleNotificationPanelKey(host: NotificationHost, data: Buffer): void {
-  const panel = host.notificationPanelState;
-  if (!panel) return;
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const key = events[0].name || events[0].char;
-
-  if (key === "escape" || key === "enter" || key === "return") {
-    closeNotificationPanel(host);
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (panel.entries.length > 1) {
-      panel.index = (panel.index + 1) % panel.entries.length;
-      host.renderDashboard();
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (panel.entries.length > 1) {
-      panel.index = (panel.index - 1 + panel.entries.length) % panel.entries.length;
-      host.renderDashboard();
-    }
-    return;
-  }
-  if (key === "r") {
-    const selected = panel.entries[panel.index];
-    if (!selected) return;
-    void mutateNotificationsViaService(host, PROJECT_API_ROUTES.notifications.read, { id: selected.id });
-    return;
-  }
-  if (key === "c") {
-    const selected = panel.entries[panel.index];
-    if (!selected) return;
-    void mutateNotificationsViaService(host, PROJECT_API_ROUTES.notifications.clear, { id: selected.id });
-    return;
-  }
-  if (key === "C") {
-    void mutateNotificationsViaService(host, PROJECT_API_ROUTES.notifications.clear, {}, { resetIndex: true });
-  }
-}
-
-// Route a notification panel mutation through the service (sole writer), then reload the panel
-// from the service. Failures flash rather than mutating local notification state directly.
-async function mutateNotificationsViaService(
-  host: NotificationHost,
-  path: typeof PROJECT_API_ROUTES.notifications.read | typeof PROJECT_API_ROUTES.notifications.clear,
-  selector: { id?: string; sessionId?: string },
-  opts: { resetIndex?: boolean } = {},
-): Promise<void> {
-  try {
-    await host.postToProjectService(path, selector);
-    const panel = host.notificationPanelState;
-    if (!panel) return;
-    await refreshNotificationPanelFromService(host);
-    if (opts.resetIndex) panel.index = panel.entries.length > 0 ? 0 : -1;
-  } catch {
-    host.footerFlash = "Notification update failed";
-    host.footerFlashTicks = 3;
-    host.renderDashboard();
-    return;
-  }
-  host.renderDashboard();
-}
-
-export async function refreshNotificationPanelFromService(host: NotificationHost): Promise<boolean> {
-  const panel = host.notificationPanelState;
-  if (!panel) return false;
-  const res = await host.getFromProjectService(PROJECT_API_ROUTES.notifications.list);
-  if (!res?.ok || !Array.isArray(res.notifications)) {
-    throw new Error("invalid notifications payload");
-  }
-  panel.entries = (res.notifications as NotificationRecord[]).slice(0, 40);
-  if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-  if (panel.index < 0 && panel.entries.length > 0) panel.index = 0;
-  if (panel.entries.length === 0) panel.index = -1;
-  return true;
-}
-
 /** Reconciled coordination payload. */
 interface CoordinationPayload {
   model: CoordinationModel;
@@ -132,9 +23,8 @@ interface CoordinationPayload {
   threads: WorkflowEntry[];
 }
 
-// Apply a reconciled coordination payload to the host: legacy notificationEntries/meta (open path
-// + reply overlay), the full unfiltered worklist, then the filtered view. Shared by the local
-// build and the service refresh so both produce identical host state.
+// Apply a reconciled service payload to the host: legacy notificationEntries/meta (open path
+// + reply overlay), the full unfiltered worklist, then the filtered view.
 export function applyCoordinationModel(host: NotificationHost, payload: CoordinationPayload): void {
   host.threadEntries = payload.threads;
   host.coordinationModel = payload.model;
@@ -167,20 +57,6 @@ export function applyCoordinationFilter(host: NotificationHost): void {
   if (host.notificationIndex >= notificationCount) {
     host.notificationIndex = Math.max(0, notificationCount - 1);
   }
-}
-
-export function refreshNotificationEntries(host: NotificationHost): void {
-  // Local build used by non-dashboard internals and tests; the dashboard reads this via the
-  // project-service coordination endpoint.
-  const threads = buildCoordinationThreadEntries("user");
-  const { model, worklist } = buildCoordinationView({
-    sessions: host.getDashboardSessions?.() ?? [],
-    teammates: host.dashboardTeammatesCache ?? [],
-    services: host.getDashboardServices?.() ?? [],
-    notifications: listNotifications(),
-    threads,
-  });
-  applyCoordinationModel(host, { model, worklist, threads });
 }
 
 // Prefer the service's reconciled worklist (the single authority, shared with the app). On

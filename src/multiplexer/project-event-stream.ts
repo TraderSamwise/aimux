@@ -205,9 +205,6 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
   if (host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
     work.push(refreshGraveyardEntriesFromService(host));
   }
-  if (host.notificationPanelState && touches(views, ["notifications", "inbox", "coordination-worklist"])) {
-    work.push(host.refreshNotificationPanelFromService?.());
-  }
   await Promise.all(work.filter(Boolean));
   host.renderCurrentDashboardView?.();
 }

@@ -1,9 +1,4 @@
 import {
-  closeNotificationPanel as closeNotificationPanelImpl,
-  handleNotificationPanelKey as handleNotificationPanelKeyImpl,
-  showNotificationPanel as showNotificationPanelImpl,
-} from "./notifications.js";
-import {
   beginWorktreeRemoval as beginWorktreeRemovalImpl,
   finishWorktreeRemoval as finishWorktreeRemovalImpl,
   handleWorktreeInputKey as handleWorktreeInputKeyImpl,
@@ -171,7 +166,7 @@ export const dashboardViewMethods = {
           : undefined,
         derivedStatusLabel,
       });
-      this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
+      this.syncTuiNotificationContext(false);
       this.writeFrame(this.dashboard.render(cols, rows));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -228,22 +223,6 @@ export const dashboardViewMethods = {
 
   renderDashboardErrorOverlay(this: any): void {
     this.redrawDashboardWithOverlay();
-  },
-
-  showNotificationPanel(this: any): void {
-    showNotificationPanelImpl(this);
-  },
-
-  closeNotificationPanel(this: any): void {
-    closeNotificationPanelImpl(this);
-  },
-
-  renderNotificationPanel(this: any): void {
-    this.redrawDashboardWithOverlay();
-  },
-
-  handleNotificationPanelKey(this: any, data: Buffer): void {
-    handleNotificationPanelKeyImpl(this, data);
   },
 
   startDashboardBusy(this: any, title: string, lines: string[]): void {
