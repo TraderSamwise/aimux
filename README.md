@@ -179,6 +179,14 @@ Terminal clients are isolated from each other:
 - dashboard tab, pointer, filter, and load state are terminal-local
 - orchestration, metadata, notifications, and workflow state are project-scoped through the daemon-managed project service
 
+Cross-project terminal surfaces follow the same split:
+
+- semantic product state belongs to daemon/project-service APIs
+- tmux owns terminal mechanics: pane capture, window focus, client switching, window linking, and same-machine open behavior
+- tmux metadata is a bridge for identity only: project root, worktree path, session id, window id, tool, label, and lightweight status hints
+- Exposé and the meta dashboard may use local tmux metadata for live previews and jumps, but they must not become a second writer or second source of truth for notifications, threads, workflow state, health, or lifecycle
+- web/mobile parity for terminal actions requires pane streaming or deep links; it does not mean remote clients should learn raw tmux switching
+
 Runtime lifecycle:
 
 ```bash
@@ -470,9 +478,12 @@ Dashboard hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A 1-9` | Focus agent by number from the dashboard |
 | `Ctrl+A d` | Return to dashboard window |
 | `Ctrl+A g` | Exposé: tile live previews of agents; press `1`-`9` to jump, `g` to zoom out |
+| `Ctrl+A m` | Meta dashboard: cross-project tmux dashboard for running projects |
 | `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
 
 When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` (Exposé) also works inside an agent window, where it scopes to that agent's worktree by default; set `expose.initialScope` to `worktree`, `project`, or `global` to choose the starting scope. With Exposé open, pressing `g` zooms the scope out one level — worktree → project (all worktrees) → all projects — so you can widen the view without leaving the overlay; the zoom is per-session and resets next time you open it.
+
+The meta dashboard is a local tmux window named `meta-dashboard`. It lists registered projects for the current `AIMUX_HOME`, groups running projects by worktree, refreshes from local tmux state, and jumps by switching the real terminal client into the target project's per-client session. Opening Exposé from the meta dashboard starts in `global` scope, showing live tiles across all running projects.
 
 Main dashboard orchestration shortcuts:
 
