@@ -643,12 +643,14 @@ describe("TmuxRuntimeManager", () => {
     manager.sendText(target, "hello");
     manager.sendEnter(target);
     manager.sendKey(target, "C-j");
+    manager.resizeTarget(target, 100, 32);
 
-    expect(exec.calls.slice(-4).map((call) => call.args)).toEqual([
+    expect(exec.calls.slice(-5).map((call) => call.args)).toEqual([
       ["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"],
       ["send-keys", "-t", "@3", "-l", "hello"],
       ["send-keys", "-t", "@3", "Enter"],
       ["send-keys", "-t", "@3", "C-j"],
+      ["resize-window", "-t", "@3", "-x", "100", "-y", "32"],
     ]);
   });
 

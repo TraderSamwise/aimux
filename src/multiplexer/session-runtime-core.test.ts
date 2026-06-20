@@ -9,6 +9,7 @@ import {
   handleSessionRuntimeEvent,
   registerManagedSession,
   resolveLiveSessionTmuxTarget,
+  resizeAgentPane,
   sendAgentInput,
   updateSessionLabel,
 } from "./session-runtime-core.js";
@@ -48,13 +49,7 @@ describe("session runtime prompt submission", () => {
   it("submits tmux-backed chat input through the carriage-return prompt path", async () => {
     vi.useFakeTimers();
     const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
-    const captures = [
-      "› line one line two",
-      "› line one line two",
-      "› line one line two",
-      "› line one line two",
-      "",
-    ];
+    const captures = ["› line one line two", "› line one line two", "› line one line two", "› line one line two", ""];
     const tmuxRuntimeManager = {
       sendText: vi.fn(),
       sendKey: vi.fn(),
@@ -88,6 +83,52 @@ describe("session runtime prompt submission", () => {
     } finally {
       transport.destroy();
     }
+  });
+
+  it("retargets tmux-backed sessions before resizing", async () => {
+    const staleTarget = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const liveTarget = { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "codex" };
+    const tmuxRuntimeManager = {
+      sendText: vi.fn(),
+      sendKey: vi.fn(),
+      sendEnter: vi.fn(),
+      resizeTarget: vi.fn(),
+      getTargetByWindowId: vi.fn(() => liveTarget),
+      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
+      isWindowAlive: vi.fn(() => true),
+    };
+    const transport = new TmuxSessionTransport("codex-1", "codex", staleTarget, tmuxRuntimeManager as any, 80, 24);
+    const runtime = {
+      id: "codex-1",
+      command: "codex",
+      transport,
+      resize: vi.fn((cols: number, rows: number) => transport.resize(cols, rows)),
+    };
+    const host: any = {
+      sessions: [runtime],
+      sessionTmuxTargets: new Map([["codex-1", staleTarget]]),
+      tmuxRuntimeManager,
+    };
+
+    try {
+      await expect(resizeAgentPane(host, "codex-1", 100, 32)).resolves.toEqual({
+        sessionId: "codex-1",
+        cols: 100,
+        rows: 32,
+      });
+      expect(runtime.resize).toHaveBeenCalledWith(100, 32);
+      expect(tmuxRuntimeManager.resizeTarget).toHaveBeenCalledWith(liveTarget, 100, 32);
+      expect(host.sessionTmuxTargets.get("codex-1")).toEqual(liveTarget);
+    } finally {
+      transport.destroy();
+    }
+  });
+
+  it("rejects invalid resize dimensions before resolving sessions", async () => {
+    const host: any = { sessions: [] };
+
+    await expect(resizeAgentPane(host, "codex-1", 0, 32)).rejects.toThrow("cols must be a positive integer");
+    await expect(resizeAgentPane(host, "codex-1", 100, 10.5)).rejects.toThrow("rows must be a positive integer");
   });
 
   it("does not re-add graveyarded live sessions as offline when their process exits", () => {

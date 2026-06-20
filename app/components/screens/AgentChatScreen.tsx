@@ -20,12 +20,12 @@ import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import {
   createShareInvite,
-  getAgentOutput,
+  getLivePaneOutput,
   getShare,
   leaveShare,
   listShares,
   removeShareParticipant,
-  sendAgentInput,
+  sendLivePaneInput,
   uploadImageAttachment,
   type SharedSessionSummary,
 } from "@/lib/api";
@@ -158,7 +158,7 @@ export default function ChatScreen() {
     async function poll() {
       if (cancelled) return;
       try {
-        const outputResult = await getAgentOutput(serviceEndpoint!, sessionId!, undefined, {
+        const outputResult = await getLivePaneOutput(serviceEndpoint!, sessionId!, undefined, {
           token,
         });
         if (cancelled) return;
@@ -319,7 +319,7 @@ export default function ChatScreen() {
           uploadedAttachmentId: uploaded.attachment.id,
         };
       }
-      await sendAgentInput(serviceEndpoint, sessionId, text, {
+      await sendLivePaneInput(serviceEndpoint, sessionId, text, {
         token,
         attachmentIds: attachments
           .map((attachment) => attachment.uploadedAttachmentId)

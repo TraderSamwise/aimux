@@ -558,6 +558,10 @@ export class TmuxRuntimeManager {
     return this.exec(args);
   }
 
+  resizeTarget(target: TmuxTarget, cols: number, rows: number): void {
+    this.exec(["resize-window", "-t", target.windowId, "-x", String(cols), "-y", String(rows)]);
+  }
+
   listClients(): TmuxClientInfo[] {
     const raw = this.exec(["list-clients", "-F", "#{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}"]);
     if (!raw) return [];
