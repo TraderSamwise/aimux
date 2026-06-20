@@ -45,6 +45,8 @@ import {
   type ResurrectWorktreeResponse,
   type StopServiceResponse,
   type SwitchAgentRequest,
+  type ThreadMarkSeenInput,
+  type ThreadMarkSeenResponse,
   type WorktreePathInput,
 } from "../../src/project-api-contract";
 
@@ -900,6 +902,14 @@ export async function listThreads(
     ? `${PROJECT_API_ROUTES.threads.list}?session=${encodeURIComponent(sessionId)}`
     : PROJECT_API_ROUTES.threads.list;
   return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
+}
+
+export async function markThreadSeen(
+  endpoint: ServiceEndpoint,
+  input: ThreadMarkSeenInput,
+  opts?: ApiOpts,
+): Promise<ThreadMarkSeenResponse> {
+  return callProjectJson<ThreadMarkSeenResponse>(endpoint, "POST", PROJECT_API_ROUTES.threads.markSeen, opts, input);
 }
 
 export async function listWorkflow(

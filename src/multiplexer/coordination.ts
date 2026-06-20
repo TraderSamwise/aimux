@@ -1,6 +1,5 @@
 import { parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
-import { markThreadSeen } from "../threads.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
 import type { WorklistItem } from "../coordination-model.js";
 import {
@@ -149,7 +148,12 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
   if (key === "enter" || key === "return") {
     const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
     if (!targetSessionId) return;
-    markThreadSeen(entry.thread.id, targetSessionId);
+    void host
+      .postToProjectService(PROJECT_API_ROUTES.threads.markSeen, {
+        threadId: entry.thread.id,
+        sessionId: targetSessionId,
+      })
+      .catch(() => {});
     const dashEntry = findNotificationSessionTarget(host, targetSessionId);
     if (dashEntry) {
       void host.activateDashboardEntry(dashEntry, { preserveDashboardSelection: Boolean(dashEntry.team) });
