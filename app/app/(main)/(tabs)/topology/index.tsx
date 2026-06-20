@@ -10,10 +10,7 @@ import { Text } from "@/components/ui/text";
 import { StatusDot, StatusPill } from "@/components/status-dot";
 import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import {
-  useProjectApiRelayPolling,
-  useSerializedProjectApiRefresh,
-} from "@/lib/project-api-relay-polling";
+import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -283,8 +280,6 @@ export default function TopologyScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
-
-  useProjectApiRelayPolling(endpointKey, serializedRefresh);
 
   const visibleTopology = topologyKey === viewKey ? topology : null;
   const visibleError = errorKey === viewKey ? error : null;

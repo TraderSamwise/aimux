@@ -15,10 +15,7 @@ import {
   type CoordinationWorklistItem,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import {
-  useProjectApiRelayPolling,
-  useSerializedProjectApiRefresh,
-} from "@/lib/project-api-relay-polling";
+import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -181,8 +178,6 @@ export default function CoordinationScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [endpointKey, refreshNonce, serializedRefresh]);
-
-  useProjectApiRelayPolling(endpointKey, serializedRefresh);
 
   const visibleItems = useMemo(
     () => (itemsKey === viewKey ? items : []),

@@ -18,10 +18,7 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
-import {
-  useProjectApiRelayPolling,
-  useSerializedProjectApiRefresh,
-} from "@/lib/project-api-relay-polling";
+import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
@@ -303,8 +300,6 @@ export default function ProjectScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [endpointKey, projectViewRefreshNonce, serializedRefreshProjectView]);
-
-  useProjectApiRelayPolling(endpointKey, serializedRefreshProjectView);
 
   const artifactHints = useMemo(
     () =>
