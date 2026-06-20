@@ -129,6 +129,20 @@ describe("MetadataServer threads API", () => {
     expect(showRes.ok).toBe(true);
     expect(detail.thread.id).toBe(opened.thread.id);
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
+
+    const routedRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "user",
+        assignee: "codex-1",
+        kind: "request",
+        body: "Please inspect the routed message path.",
+      }),
+    });
+    const routed = (await routedRes.json()) as { message: { to?: string[] } };
+    expect(routedRes.ok).toBe(true);
+    expect(routed.message.to).toEqual(["codex-1"]);
   });
 
   it("lists agents with loop state and toggles the loop flag over HTTP", async () => {
@@ -3175,6 +3189,55 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain("event: alert");
     expect(text).toContain('"kind":"message_waiting"');
     expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("emits routed thread alerts to resolved callback recipients", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      threads: {
+        sendMessage: (input) => ({
+          thread: { id: "thread-1", worktreePath: input.worktreePath },
+          message: {
+            id: "message-1",
+            threadId: "thread-1",
+            ts: new Date().toISOString(),
+            from: input.from ?? "user",
+            to: ["codex-1"],
+            kind: input.kind ?? "request",
+            body: input.body,
+          },
+          threadCreated: true,
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"message_waiting"'));
+
+    const sendRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "user",
+        assignee: "reviewer",
+        kind: "request",
+        body: "Please inspect the role-routed branch.",
+      }),
+    });
+    expect(sendRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain('"kind":"message_waiting"');
+    expect(text).toContain('"sessionId":"codex-1"');
+    expect(text).not.toContain('"sessionId":"reviewer"');
   });
 
   it("emits handoff waiting alerts for handoffs", async () => {
