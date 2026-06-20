@@ -10,9 +10,12 @@ import {
   createShareInvite,
   deleteGraveyardWorktree,
   getShare,
+  attachLivePane,
   getAgentOutput,
+  getLivePaneOutput,
   getTask,
   graveyardWorktree,
+  interruptLivePane,
   leaveShare,
   listShares,
   listProjects,
@@ -26,8 +29,10 @@ import {
   removeShareParticipant,
   putPlan,
   resurrectGraveyardWorktree,
+  resizeLivePane,
   resumeService,
   sendAgentInput,
+  sendLivePaneInput,
   setApiRelay,
   stopService,
   uploadImageAttachment,
@@ -75,11 +80,11 @@ describe("api relay routing", () => {
   it("uses direct project HTTP when no relay transport is connected", async () => {
     const fetchMock = installFetchMock({ sessionId: "session/a b", output: "" });
 
-    await getAgentOutput(endpoint, "session/a b", -25, { token: "local-token" });
+    await getLivePaneOutput(endpoint, "session/a b", -25, { token: "local-token" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://127.0.0.1:43210/agents/output?sessionId=session%2Fa+b&startLine=-25");
+    expect(url).toBe("http://127.0.0.1:43210/live-pane/output?sessionId=session%2Fa+b&startLine=-25");
     expect(init.method).toBe("GET");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
   });
@@ -93,7 +98,7 @@ describe("api relay routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledWith(
       "GET",
-      "/proxy/127.0.0.1/43210/agents/output?sessionId=s%2F1&startLine=7",
+      "/proxy/127.0.0.1/43210/live-pane/output?sessionId=s%2F1&startLine=7",
       undefined,
     );
   });
@@ -117,6 +122,10 @@ describe("api relay routing", () => {
     await resurrectGraveyardWorktree(endpoint, "/repo/feature/a");
     await deleteGraveyardWorktree(endpoint, "/repo/feature/a");
     await sendAgentInput(endpoint, "agent-1", "hello", { attachmentIds: ["att_one"] });
+    await sendLivePaneInput(endpoint, "agent-1", "again");
+    await interruptLivePane(endpoint, "agent-1");
+    await resizeLivePane(endpoint, "agent-1", 100, 32);
+    await attachLivePane(endpoint, { sessionId: "agent-1", startLine: -90, cols: 100, rows: 32 });
     await uploadImageAttachment(endpoint, {
       filename: "shot.png",
       mimeType: "image/png",
@@ -171,12 +180,30 @@ describe("api relay routing", () => {
         path: "/repo/feature/a",
       },
     );
-    expect(request).toHaveBeenNthCalledWith(11, "POST", "/proxy/127.0.0.1/43210/agents/input", {
+    expect(request).toHaveBeenNthCalledWith(11, "POST", "/proxy/127.0.0.1/43210/live-pane/input", {
       sessionId: "agent-1",
       text: "hello",
       attachmentIds: ["att_one"],
     });
-    expect(request).toHaveBeenNthCalledWith(12, "POST", "/proxy/127.0.0.1/43210/attachments", {
+    expect(request).toHaveBeenNthCalledWith(12, "POST", "/proxy/127.0.0.1/43210/live-pane/input", {
+      sessionId: "agent-1",
+      text: "again",
+    });
+    expect(request).toHaveBeenNthCalledWith(13, "POST", "/proxy/127.0.0.1/43210/live-pane/interrupt", {
+      sessionId: "agent-1",
+    });
+    expect(request).toHaveBeenNthCalledWith(14, "POST", "/proxy/127.0.0.1/43210/live-pane/resize", {
+      sessionId: "agent-1",
+      cols: 100,
+      rows: 32,
+    });
+    expect(request).toHaveBeenNthCalledWith(15, "POST", "/proxy/127.0.0.1/43210/live-pane/attach", {
+      sessionId: "agent-1",
+      startLine: -90,
+      cols: 100,
+      rows: 32,
+    });
+    expect(request).toHaveBeenNthCalledWith(16, "POST", "/proxy/127.0.0.1/43210/attachments", {
       kind: "image",
       filename: "shot.png",
       mimeType: "image/png",

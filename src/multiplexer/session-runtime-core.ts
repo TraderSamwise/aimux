@@ -179,6 +179,17 @@ export async function interruptAgent(host: SessionRuntimeHost, sessionId: string
   return { sessionId };
 }
 
+export async function resizeAgentPane(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<{ sessionId: string; cols: number; rows: number }> {
+  const session = resolveRunningSession(host, sessionId);
+  session.resize(cols, rows);
+  return { sessionId, cols, rows };
+}
+
 export async function sendAgentInput(
   host: SessionRuntimeHost,
   sessionId: string,

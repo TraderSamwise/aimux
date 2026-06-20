@@ -1206,6 +1206,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           findDashboardSessionSeed(host, input.sessionId),
         ),
       interruptAgent: (input: any) => host.interruptAgent(input.sessionId),
+      resizeAgentPane: (input: any) => host.resizeAgentPane(input.sessionId, input.cols, input.rows),
       renameAgent: (input: any) => host.renameAgent(input.sessionId, input.label),
       migrateAgent: (input: any) =>
         withMetadataSessionPending(

@@ -337,6 +337,85 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
   });
 
+  it("drives live pane control endpoints over HTTP", async () => {
+    const calls: Array<{ kind: string; sessionId: string; cols?: number; rows?: number; text?: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => ({
+          sessionId,
+          startLine: startLine ?? -120,
+          output: `output for ${sessionId}`,
+          parsed: { blocks: [{ type: "response", text: `output for ${sessionId}` }] },
+        }),
+        sendAgentInput: ({ sessionId, text }) => {
+          calls.push({ kind: "input", sessionId, text });
+          return { sessionId, accepted: true };
+        },
+        interruptAgent: ({ sessionId }) => {
+          calls.push({ kind: "interrupt", sessionId });
+          return { sessionId };
+        },
+        resizeAgentPane: ({ sessionId, cols, rows }) => {
+          calls.push({ kind: "resize", sessionId, cols, rows });
+          return { sessionId, cols, rows };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const outputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=-80`);
+    const output = (await outputRes.json()) as { ok: boolean; sessionId: string; startLine: number; output: string };
+    expect(outputRes.ok).toBe(true);
+    expect(output).toMatchObject({ ok: true, sessionId: "codex-1", startLine: -80, output: "output for codex-1" });
+
+    const attachRes = await fetch(`${base}/live-pane/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", startLine: -90, cols: 100, rows: 32 }),
+    });
+    const attach = (await attachRes.json()) as {
+      ok: boolean;
+      sessionId: string;
+      stream: { route: string; sessionId: string; startLine: number };
+      resize?: { cols: number; rows: number };
+    };
+    expect(attachRes.ok).toBe(true);
+    expect(attach.stream).toEqual({ route: "/events", sessionId: "codex-1", startLine: -90 });
+    expect(attach.resize).toEqual({ cols: 100, rows: 32 });
+
+    const inputRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "hello" }),
+    });
+    expect(inputRes.ok).toBe(true);
+
+    const interruptRes = await fetch(`${base}/live-pane/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1" }),
+    });
+    expect(interruptRes.ok).toBe(true);
+
+    const resizeRes = await fetch(`${base}/live-pane/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: 120, rows: 40 }),
+    });
+    expect(resizeRes.ok).toBe(true);
+    expect(calls).toEqual([
+      { kind: "resize", sessionId: "codex-1", cols: 100, rows: 32 },
+      { kind: "input", sessionId: "codex-1", text: "hello" },
+      { kind: "interrupt", sessionId: "codex-1" },
+      { kind: "resize", sessionId: "codex-1", cols: 120, rows: 40 },
+    ]);
+  });
+
   it("records backend session ids over HTTP so crashed panes stay resumable", async () => {
     server?.stop();
     const calls: Array<{ sessionId: string; backendSessionId: string }> = [];
