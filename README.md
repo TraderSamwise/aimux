@@ -64,7 +64,8 @@ To install a frozen local build from the current checkout:
 
 ```bash
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
-scripts/install.sh release/aimux-darwin-arm64.tar.gz
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
 ```
 
 That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository. The installer updates `~/.local/bin/aimux` to point at the installed bundle.
@@ -86,7 +87,8 @@ yarn build
 
 # Install this checkout as the plain `aimux` command
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
-scripts/install.sh release/aimux-darwin-arm64.tar.gz
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
 aimux restart
 aimux doctor versions
 ```

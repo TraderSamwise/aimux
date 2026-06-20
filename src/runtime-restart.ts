@@ -121,17 +121,21 @@ export function isExitedProcessState(state: string): boolean {
 function defaultIsPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    if (process.platform !== "win32") {
+  } catch {
+    return false;
+  }
+  if (process.platform !== "win32") {
+    try {
       const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
       if (isExitedProcessState(state)) return false;
+    } catch {
+      return true;
     }
-    return true;
-  } catch {
-    return false;
   }
+  return true;
 }
 
 async function waitForPidExit(input: {
