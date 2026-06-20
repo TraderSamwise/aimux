@@ -1245,12 +1245,12 @@ export class MetadataServer {
       const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
-      const startLine =
-        startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
-      if (startLineRaw !== null && Number.isNaN(startLine)) {
-        send(res, 400, { ok: false, error: "startLine must be an integer" });
+      const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
+      if (!parsedStartLine.ok) {
+        send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
+      const startLine = parsedStartLine.value;
       const parsedIntervalMs =
         intervalMsRaw === null || intervalMsRaw.trim() === ""
           ? ({ ok: true, value: 500 } as const)

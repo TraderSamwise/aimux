@@ -186,6 +186,11 @@ export async function resizeAgentPane(
   rows: number,
 ): Promise<{ sessionId: string; cols: number; rows: number }> {
   const session = resolveRunningSession(host, sessionId);
+  if (session.transport instanceof TmuxSessionTransport) {
+    const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+    if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+    session.transport.retarget(target);
+  }
   session.resize(cols, rows);
   return { sessionId, cols, rows };
 }

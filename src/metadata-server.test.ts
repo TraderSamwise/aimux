@@ -2161,6 +2161,18 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"codex-1"');
   });
 
+  it("rejects malformed events stream startLine values", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/events?sessionId=codex-1&startLine=10.5`);
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "startLine must be an integer" });
+  });
+
   it("streams project_update invalidations over SSE after API mutations", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
