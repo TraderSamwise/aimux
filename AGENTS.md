@@ -35,6 +35,14 @@ When changing dashboard behavior, preserve the API-backed boundary:
 
 Remote-only is not the goal. Execution and service composition remain local by design; web/mobile parity comes from API-backed control-plane routes plus remote equivalents for tmux-specific behavior such as pane streaming or deep-link/focus actions.
 
+For cross-project terminal features, keep the boundary explicit:
+
+- API owns semantic product state: project health, lifecycle, Coordination, notifications, threads, tasks, handoffs, reviews, worktrees, and graveyard state.
+- tmux owns terminal mechanics: pane capture, live preview, window focus, window linking, client switching, and same-machine open behavior.
+- tmux metadata may bridge identity only: project root, worktree path, session id, window id, tool, label, and lightweight status hints.
+- Exposé and the meta dashboard are tmux-native local surfaces. They can use tmux metadata for previews and jumps, but must not become independent writers or alternate sources of truth for product state.
+- Future web/mobile parity for terminal actions should be pane streaming or deep-link/focus APIs, not raw tmux mechanics in remote clients.
+
 ## Stable vs Dev CLI
 
 - `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is for real project work and production remote auth, so defaults should point at `https://aimux.app` and the production relay unless explicitly overridden.
