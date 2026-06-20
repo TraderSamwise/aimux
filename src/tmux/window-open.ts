@@ -81,7 +81,8 @@ export function openManagedSessionWindow(
         (candidate) =>
           candidate.metadata.kind === "agent" &&
           ((entry.tmuxWindowId && candidate.target.windowId === entry.tmuxWindowId) ||
-            candidate.metadata.sessionId === entry.id),
+            candidate.metadata.sessionId === entry.id ||
+            (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId)),
       ) ?? null;
   if (!match) return null;
   selectLinkedOrOpenTarget(tmux, match.target);
