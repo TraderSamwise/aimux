@@ -329,6 +329,15 @@ export interface NotificationClearResponse extends ProjectApiOk {
   cleared: number;
 }
 
+export interface ThreadMarkSeenInput {
+  threadId: string;
+  sessionId: string;
+}
+
+export interface ThreadMarkSeenResponse extends ProjectApiOk {
+  thread?: unknown;
+}
+
 export interface CreateServiceInput {
   command?: string;
   worktreePath?: string;

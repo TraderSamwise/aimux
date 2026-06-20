@@ -43,6 +43,7 @@ describe("thread subscreen navigation", () => {
       threadIndex: 0,
       getDashboardSessions: vi.fn(() => []),
       dashboardTeammatesCache: [teammate],
+      postToProjectService: vi.fn(async () => ({ ok: true })),
       activateDashboardEntry: vi.fn(),
       dashboardState: { toggleDetailsSidebar: vi.fn() },
       handleDashboardSubscreenNavigationKey: vi.fn(() => false),
@@ -54,6 +55,10 @@ describe("thread subscreen navigation", () => {
 
     handleCoordinationKey(host, Buffer.from("\r"));
 
+    expect(host.postToProjectService).toHaveBeenCalledWith("/threads/mark-seen", {
+      threadId: "thread-1",
+      sessionId: "teammate-1",
+    });
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(teammate, { preserveDashboardSelection: true });
   });
 

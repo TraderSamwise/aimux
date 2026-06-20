@@ -28,6 +28,7 @@ import {
   listTasks,
   listThreads,
   listWorkflow,
+  markThreadSeen,
   markNotificationsRead,
   markActiveWindow,
   openDashboard,
@@ -157,6 +158,7 @@ describe("api relay routing", () => {
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
     });
+    await markThreadSeen(endpoint, { threadId: "thread-1", sessionId: "agent-1" });
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
@@ -312,6 +314,10 @@ describe("api relay routing", () => {
       filename: "shot.png",
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
+    });
+    expect(request).toHaveBeenNthCalledWith(25, "POST", "/proxy/127.0.0.1/43210/threads/mark-seen", {
+      threadId: "thread-1",
+      sessionId: "agent-1",
     });
   });
 
