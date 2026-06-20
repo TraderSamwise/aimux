@@ -12,14 +12,19 @@ function applyTopology(host: TopologyHost, topology: ProjectTopology): void {
   host.topology = topology;
   const len = host.topology.rows.length;
   if (typeof host.topologyIndex !== "number" || Number.isNaN(host.topologyIndex)) host.topologyIndex = 0;
+  if (host.topologyIndex < 0) host.topologyIndex = 0;
   if (host.topologyIndex >= len) host.topologyIndex = Math.max(0, len - 1);
 }
 
 function isProjectTopology(value: any): value is ProjectTopology {
   return (
-    value &&
+    Boolean(value) &&
     typeof value.projectName === "string" &&
-    typeof value.counts === "object" &&
+    typeof value.health === "string" &&
+    value.counts &&
+    typeof value.counts.worktrees === "number" &&
+    typeof value.counts.agents === "number" &&
+    typeof value.counts.services === "number" &&
     Array.isArray(value.worktrees) &&
     Array.isArray(value.rows)
   );

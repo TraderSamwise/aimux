@@ -25,7 +25,7 @@ describe("refreshProjectObservability", () => {
       story: [{ id: "notif:1", kind: "notification", title: "Needs input", meta: "needs_input", createdAt: "now" }],
     };
     const host: any = {
-      projectIndex: 9,
+      projectIndex: -1,
       getFromProjectService: vi.fn(async () => ({ ok: true, project })),
     };
 
@@ -39,7 +39,7 @@ describe("refreshProjectObservability", () => {
   it("initializes an empty model instead of building from local stores on failure", async () => {
     const host: any = {
       getDashboardSessions: vi.fn(() => [{ status: "running" }]),
-      getFromProjectService: vi.fn(async () => ({ ok: true, project: { summary: {}, progress: {} } })),
+      getFromProjectService: vi.fn(async () => ({ ok: true, project: { summary: {}, progress: {}, story: [] } })),
     };
 
     await expect(refreshProjectObservability(host)).resolves.toBe(false);

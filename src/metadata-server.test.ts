@@ -626,6 +626,7 @@ describe("MetadataServer threads API", () => {
       desktop: {
         getState: () => ({
           sessions: [{ id: "live-1", command: "claude", status: "running" }],
+          teammates: [{ id: "team-1", command: "codex", status: "waiting" }],
           services: [{ id: "svc-1", command: "yarn dev", status: "running" }],
           worktrees: [{ name: "main", path: repoRoot, branch: "main" }],
         }),
@@ -642,13 +643,22 @@ describe("MetadataServer threads API", () => {
     const res = await fetch(`${base}/project-observability`);
     const body = (await res.json()) as {
       ok: boolean;
-      project: { summary: { agentsRunning: number; services: number; worktrees: number; unreadNotifications: number } };
+      project: {
+        summary: {
+          agentsRunning: number;
+          agentsWaiting: number;
+          services: number;
+          worktrees: number;
+          unreadNotifications: number;
+        };
+      };
     };
 
     expect(res.ok).toBe(true);
     expect(body.ok).toBe(true);
     expect(body.project.summary).toMatchObject({
       agentsRunning: 1,
+      agentsWaiting: 1,
       services: 1,
       worktrees: 1,
       unreadNotifications: 1,
