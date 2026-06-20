@@ -129,6 +129,20 @@ describe("MetadataServer threads API", () => {
     expect(showRes.ok).toBe(true);
     expect(detail.thread.id).toBe(opened.thread.id);
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
+
+    const routedRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "user",
+        assignee: "codex-1",
+        kind: "request",
+        body: "Please inspect the routed message path.",
+      }),
+    });
+    const routed = (await routedRes.json()) as { message: { to?: string[] } };
+    expect(routedRes.ok).toBe(true);
+    expect(routed.message.to).toEqual(["codex-1"]);
   });
 
   it("lists agents with loop state and toggles the loop flag over HTTP", async () => {
