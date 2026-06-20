@@ -18,7 +18,10 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
-import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
+import {
+  useProjectApiRelayPolling,
+  useSerializedProjectApiRefresh,
+} from "@/lib/project-api-relay-polling";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
@@ -284,15 +287,16 @@ export default function ProjectScreen() {
   const refreshProjectView = useCallback(async () => {
     await Promise.all([refreshProject(), refreshTasks()]);
   }, [refreshProject, refreshTasks]);
+  const serializedRefreshProjectView = useSerializedProjectApiRefresh(refreshProjectView);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refreshProjectView();
+      void serializedRefreshProjectView();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, refreshProjectView]);
+  }, [endpointKey, projectViewRefreshNonce, serializedRefreshProjectView]);
 
-  useProjectApiRelayPolling(endpointKey, refreshProjectView);
+  useProjectApiRelayPolling(endpointKey, serializedRefreshProjectView);
 
   const artifactHints = useMemo(
     () =>
@@ -330,7 +334,7 @@ export default function ProjectScreen() {
             size="icon"
             disabled={!endpoint || loadingTasks || loadingProject}
             onPress={() => {
-              void refreshProjectView();
+              void serializedRefreshProjectView();
             }}
             accessibilityLabel="Refresh project"
           >

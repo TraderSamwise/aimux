@@ -29,3 +29,28 @@ export function startProjectApiRelayPoll(
     },
   };
 }
+
+export function createSerializedProjectApiRefresh(
+  refresh: () => Promise<void> | void,
+): () => Promise<void> {
+  let inFlight: Promise<void> | null = null;
+  let rerunRequested = false;
+
+  const run = async (): Promise<void> => {
+    do {
+      rerunRequested = false;
+      await refresh();
+    } while (rerunRequested);
+  };
+
+  return async () => {
+    if (inFlight) {
+      rerunRequested = true;
+      return inFlight;
+    }
+    inFlight = run().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+}
