@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { applyDashboardAlert, scheduleProjectViewRefresh, stopDashboardProjectEventStream } from "./project-event-stream.js";
+import {
+  applyDashboardAlert,
+  handleProjectEvent,
+  scheduleProjectViewRefresh,
+  stopDashboardProjectEventStream,
+} from "./project-event-stream.js";
 
 describe("dashboard project event refresh", () => {
   beforeEach(() => {
@@ -42,6 +47,21 @@ describe("dashboard project event refresh", () => {
 
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("resyncs API-backed dashboard state when the SSE stream reconnects", async () => {
+    const host: any = {
+      mode: "dashboard",
+      isDashboardScreen: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    handleProjectEvent(host, "ready", { ok: true });
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("applies SSE alert flashes that used to come from the in-process bus", () => {
