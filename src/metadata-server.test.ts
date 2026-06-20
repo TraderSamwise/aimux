@@ -594,8 +594,18 @@ describe("MetadataServer threads API", () => {
     });
     await server.start();
 
-    upsertNotification({ title: "Needs input", body: "live agent needs input", sessionId: "live-1", kind: "needs_input" });
-    upsertNotification({ title: "Gone", body: "vanished agent needs input", sessionId: "ghost-1", kind: "needs_input" });
+    upsertNotification({
+      title: "Needs input",
+      body: "live agent needs input",
+      sessionId: "live-1",
+      kind: "needs_input",
+    });
+    upsertNotification({
+      title: "Gone",
+      body: "vanished agent needs input",
+      sessionId: "ghost-1",
+      kind: "needs_input",
+    });
 
     const endpoint = server.getAddress();
     expect(endpoint).toBeTruthy();
@@ -2035,6 +2045,31 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain("event: alert");
     expect(text).toContain('"kind":"needs_input"');
     expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("streams project_update invalidations over SSE after API mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    upsertNotification({ title: "Needs review", body: "Please inspect", sessionId: "codex-1" });
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+    const readRes = await fetch(`${base}/notifications/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1" }),
+    });
+    expect(readRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: project_update");
+    expect(text).toContain('"views":');
+    expect(text).toContain('"coordination-worklist"');
+    expect(text).toContain('"notifications"');
   });
 
   it("updates shell service state over HTTP", async () => {
