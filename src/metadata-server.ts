@@ -165,8 +165,7 @@ function orchestrationCandidateFromSession(session: any): RoutingCandidate {
     role: session.role ?? session.team?.role,
     worktreePath: session.worktreePath,
     status,
-    canReceiveInput:
-      runtime?.canReceiveInput ?? (status === "running" || status === "idle" || status === "waiting"),
+    canReceiveInput: runtime?.canReceiveInput ?? (status === "running" || status === "idle" || status === "waiting"),
     isAlive: runtime?.isAlive ?? (status !== "exited" && status !== "offline"),
     workflowPressure:
       (session.workflowOnMeCount ?? 0) * 5 +
@@ -3137,6 +3136,7 @@ export class MetadataServer {
           title?: string;
         };
         const recipients = routeRecipients(body);
+        const explicitRecipients = optionalStringArray(body.to);
         const result = this.options.threads?.sendMessage
           ? this.options.threads.sendMessage(body)
           : body.threadId
@@ -3157,7 +3157,11 @@ export class MetadataServer {
               });
         const messageKind = body.kind ?? "request";
         if (messageKind === "handoff") {
-          const alertRecipients = this.resolveAlertRecipients(recipients, result.message, recipients);
+          const alertRecipients = this.resolveAlertRecipients(
+            explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            result.message,
+            recipients,
+          );
           this.emitThreadWaitingAlert({
             kind: "handoff_waiting",
             threadId: (result.thread as { id: string }).id,
@@ -3168,7 +3172,11 @@ export class MetadataServer {
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         } else if (messageKind === "request" || messageKind === "reply" || messageKind === "note") {
-          const alertRecipients = this.resolveAlertRecipients(recipients, result.message, recipients);
+          const alertRecipients = this.resolveAlertRecipients(
+            explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            result.message,
+            recipients,
+          );
           this.emitThreadWaitingAlert({
             kind: "message_waiting",
             threadId: (result.thread as { id: string }).id,
