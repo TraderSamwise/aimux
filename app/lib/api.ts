@@ -779,6 +779,40 @@ export async function getCoordinationWorklist(
   );
 }
 
+export interface ProjectObservabilityResponse {
+  ok: boolean;
+  project: {
+    summary: Record<string, number>;
+    progress: Record<string, number>;
+    story: Array<Record<string, unknown>>;
+  };
+}
+
+export async function getProjectObservability(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectObservabilityResponse> {
+  return callProjectJson<ProjectObservabilityResponse>(endpoint, "GET", "/project-observability", opts);
+}
+
+export interface ProjectTopologyResponse {
+  ok: boolean;
+  topology: {
+    projectName: string;
+    health: string;
+    counts: Record<string, number>;
+    worktrees: Array<Record<string, unknown>>;
+    rows: Array<Record<string, unknown>>;
+  };
+}
+
+export async function getProjectTopology(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectTopologyResponse> {
+  return callProjectJson<ProjectTopologyResponse>(endpoint, "GET", "/topology", opts);
+}
+
 export interface LibraryDocument {
   id: string;
   title: string;

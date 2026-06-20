@@ -1,39 +1,82 @@
-import { listNotifications } from "../notifications.js";
-import { buildProjectObservability } from "../project-observability.js";
-import { readAllTasks } from "../tasks.js";
+import { buildProjectObservability, type ProjectObservability } from "../project-observability.js";
 import { renderProjectScreen } from "../tui/screens/subscreen-renderers.js";
 import { parseKeys } from "../key-parser.js";
 
 type ProjectHost = any;
 
-function refreshProjectObservability(host: ProjectHost): void {
-  const sessions = host.getDashboardSessions?.() ?? [];
-  const services = host.getDashboardServices?.() ?? [];
-  const worktrees = host.dashboardWorktreeGroupsCache ?? [];
-  host.projectObservability = buildProjectObservability({
-    sessions,
-    services,
-    worktrees,
-    tasks: readAllTasks(),
-    notifications: listNotifications(),
-  });
+function emptyProjectObservability(): ProjectObservability {
+  return buildProjectObservability({ sessions: [], services: [], worktrees: [], tasks: [], notifications: [] });
+}
+
+function applyProjectObservability(host: ProjectHost, project: ProjectObservability): void {
+  host.projectObservability = project;
   const storyLength = host.projectObservability.story.length;
   if (typeof host.projectIndex !== "number" || Number.isNaN(host.projectIndex)) host.projectIndex = 0;
+  if (host.projectIndex < 0) host.projectIndex = 0;
   if (host.projectIndex >= storyLength) host.projectIndex = Math.max(0, storyLength - 1);
+}
+
+function isProjectSummary(value: any): boolean {
+  return (
+    value &&
+    typeof value.agentsRunning === "number" &&
+    typeof value.agentsWaiting === "number" &&
+    typeof value.agentsOffline === "number" &&
+    typeof value.services === "number" &&
+    typeof value.worktrees === "number" &&
+    typeof value.openTasks === "number" &&
+    typeof value.doneTasks === "number" &&
+    typeof value.unreadNotifications === "number"
+  );
+}
+
+function isTaskProgress(value: any): boolean {
+  return (
+    value &&
+    typeof value.pending === "number" &&
+    typeof value.assigned === "number" &&
+    typeof value.in_progress === "number" &&
+    typeof value.blocked === "number" &&
+    typeof value.done === "number" &&
+    typeof value.failed === "number" &&
+    typeof value.total === "number"
+  );
+}
+
+function isProjectObservability(value: any): value is ProjectObservability {
+  return (
+    Boolean(value) &&
+    isProjectSummary(value.summary) &&
+    isTaskProgress(value.progress) &&
+    Array.isArray(value.story)
+  );
+}
+
+export async function refreshProjectObservability(host: ProjectHost): Promise<boolean> {
+  try {
+    const res = await host.getFromProjectService("/project-observability");
+    if (!res?.ok || !isProjectObservability(res.project)) throw new Error("invalid project payload");
+    applyProjectObservability(host, res.project);
+    return true;
+  } catch {
+    if (!host.projectObservability) applyProjectObservability(host, emptyProjectObservability());
+    return false;
+  }
 }
 
 export function showProject(host: ProjectHost): void {
   host.clearDashboardSubscreens();
-  refreshProjectObservability(host);
+  if (!host.projectObservability) applyProjectObservability(host, emptyProjectObservability());
   host.setDashboardScreen("project");
   host.writeStatuslineFile();
   renderProject(host);
+  void refreshProjectObservability(host).then((refreshed) => {
+    if (refreshed && host.isDashboardScreen?.("project")) renderProject(host);
+  });
 }
 
 export function renderProject(host: ProjectHost): void {
-  // Pure render — navigation keystrokes and live re-renders reuse the snapshot
-  // built on entry / explicit refresh, so cursor moves don't re-read the store.
-  if (!host.projectObservability) refreshProjectObservability(host);
+  if (!host.projectObservability) applyProjectObservability(host, emptyProjectObservability());
   renderProjectScreen(host);
 }
 
@@ -65,8 +108,9 @@ export function handleProjectKey(host: ProjectHost, data: Buffer): void {
   }
   const story = host.projectObservability?.story ?? [];
   if (key === "r") {
-    refreshProjectObservability(host);
-    renderProject(host);
+    void refreshProjectObservability(host).then(() => {
+      if (host.isDashboardScreen?.("project")) renderProject(host);
+    });
     return;
   }
   if (key === "down" || key === "j") {
