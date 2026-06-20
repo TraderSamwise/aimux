@@ -95,7 +95,7 @@ import {
   resolvePrevAgent,
   serializeFastControlItem,
 } from "./fast-control.js";
-import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
@@ -620,6 +620,18 @@ function isProjectClientSession(tmux: TmuxRuntimeManager, projectRoot: string, s
   return sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`);
 }
 
+function validateProjectClientSession(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+): string | undefined {
+  if (!currentClientSession) return undefined;
+  if (!isProjectClientSession(tmux, projectRoot, currentClientSession) || !tmux.hasSession(currentClientSession)) {
+    return "currentClientSession is not a project client";
+  }
+  return undefined;
+}
+
 function validateControlFocusContext(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
@@ -628,12 +640,8 @@ function validateControlFocusContext(
   focus: boolean,
 ): string | undefined {
   if (!focus) return undefined;
-  if (
-    currentClientSession &&
-    (!isProjectClientSession(tmux, projectRoot, currentClientSession) || !tmux.hasSession(currentClientSession))
-  ) {
-    return "currentClientSession is not a project client";
-  }
+  const sessionError = validateProjectClientSession(tmux, projectRoot, currentClientSession);
+  if (sessionError) return sessionError;
   if (!clientTty) return undefined;
   const client = tmux.findClientByTty(clientTty);
   if (!client) return "clientTty is not attached";
@@ -644,6 +652,36 @@ function validateControlFocusContext(
     return "clientTty does not match currentClientSession";
   }
   return undefined;
+}
+
+function findExistingDashboardTarget(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+): TmuxTarget | null {
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  const sessionNames = tmux
+    .listSessionNames()
+    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`));
+  const orderedSessionNames = [
+    ...(currentClientSession && sessionNames.includes(currentClientSession) ? [currentClientSession] : []),
+    ...sessionNames,
+  ].filter((sessionName, index, array) => array.indexOf(sessionName) === index);
+
+  for (const sessionName of orderedSessionNames) {
+    for (const window of tmux.listWindows(sessionName)) {
+      if (!isDashboardWindowName(window.name)) continue;
+      const target = {
+        sessionName,
+        windowId: window.id,
+        windowIndex: window.index,
+        windowName: window.name,
+      };
+      if (!tmux.isWindowAlive(target)) continue;
+      return target;
+    }
+  }
+  return null;
 }
 
 function findProjectManagedWindow(
@@ -1905,15 +1943,29 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "currentClientSession is required" });
           return;
         }
-        if (currentClientSession) {
-          persistDashboardReturnSelection(
-            new TmuxRuntimeManager(),
-            process.cwd(),
-            currentClientSession,
-            currentWindowId,
-          );
-        }
         const tmux = new TmuxRuntimeManager();
+        if (!focus) {
+          const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+          if (sessionError) {
+            send(res, 400, { ok: false, error: sessionError });
+            return;
+          }
+          const target = findExistingDashboardTarget(tmux, process.cwd(), currentClientSession);
+          if (!target) {
+            send(res, 404, { ok: false, error: "dashboard window not found" });
+            return;
+          }
+          sendControlAction(res, "open-dashboard", target, { focused: false });
+          return;
+        }
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        if (currentClientSession) {
+          persistDashboardReturnSelection(tmux, process.cwd(), currentClientSession, currentWindowId);
+        }
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
         const openSessionName =
@@ -1925,11 +1977,6 @@ export class MetadataServer {
         if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
-        }
-        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
-        if (focusError) {
-          send(res, 400, { ok: false, error: focusError });
-          return;
         }
         const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
@@ -1953,12 +2000,31 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "currentClientSession is required" });
           return;
         }
+        const tmux = new TmuxRuntimeManager();
+        if (!focus) {
+          const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+          if (sessionError) {
+            send(res, 400, { ok: false, error: sessionError });
+            return;
+          }
+          const target = findExistingDashboardTarget(tmux, process.cwd(), currentClientSession);
+          if (!target) {
+            send(res, 404, { ok: false, error: "dashboard window not found" });
+            return;
+          }
+          sendControlAction(res, "open-inbox", target, { focused: false });
+          return;
+        }
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
         if (currentClientSession) {
           persistDashboardClientPreference(currentClientSession, (snapshot) => {
             snapshot.screen = "coordination";
           });
         }
-        const tmux = new TmuxRuntimeManager();
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
         const openSessionName =
@@ -1970,11 +2036,6 @@ export class MetadataServer {
         if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
-        }
-        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
-        if (focusError) {
-          send(res, 400, { ok: false, error: focusError });
-          return;
         }
         const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
         sendControlAction(res, "open-inbox", target, focusResult);
