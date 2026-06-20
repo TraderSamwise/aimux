@@ -103,6 +103,9 @@ yarn build
 ```
 
 - If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; restart or reload the relevant runtime after the build.
+- Use `aimux restart` as the normal post-build coherence repair. It restarts the daemon, re-ensures known project services, and reloads existing dashboards without killing agent tmux windows.
+- Use `aimux doctor versions` to inspect daemon/project-service/dashboard build coherence.
+- Use `aimux restart-runtime --open` only when the current project's managed tmux runtime itself must be torn down and rebuilt.
 - Do not send a user to test behavior changes against stale `dist/`.
 
 ### Navigation Layer Rule

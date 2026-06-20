@@ -172,8 +172,10 @@ Runtime lifecycle:
 
 ```bash
 aimux                         # open or attach to the current project runtime
-aimux dashboard-reload --open # recreate/reopen the dashboard window only
+aimux restart                 # restart daemon/services and reload all known dashboards
+aimux doctor versions         # inspect daemon/service/dashboard build coherence
 aimux repair                  # repair the current project runtime in place
+aimux dashboard-reload --open # advanced: recreate/reopen one dashboard window only
 aimux restart-runtime --open  # hard restart the current project runtime
 aimux stop                    # stop the current project runtime
 ```
@@ -282,6 +284,13 @@ aimux logs clear
 - Manual recovery is now:
 
 ```bash
+aimux restart
+aimux doctor versions
+```
+
+- Project-scoped repair remains available when the tmux topology, statusline, or a single project runtime needs attention:
+
+```bash
 aimux repair
 # or, for a full project-scoped rebuild
 aimux restart-runtime --open
@@ -293,15 +302,14 @@ Daemon rebuild quirk:
 - If you change project-service HTTP behavior, rebuild first with `yarn build`.
 - More generally: if you change any `src/*.ts` runtime or CLI behavior, rebuild before testing or asking someone else to test.
 - `yarn vitest` / `yarn typecheck` validate source, but they do not update the runtime artifact that `aimux` actually executes.
-- If a daemon is already running, restart the project runtime first.
-- If a build mismatch persists after `aimux restart-runtime --open`, use the advanced daemon path.
+- If a daemon or project dashboard is already running, run the coherent restart after rebuilding.
+- `aimux restart` restarts the daemon, re-ensures known project services, and reloads existing dashboard windows without killing agent tmux windows.
+- `aimux restart-runtime --open` is the destructive project-scoped reset; use it when the managed tmux runtime itself must be rebuilt.
 
 ```bash
 yarn build
-aimux restart-runtime --open
-
-# Advanced fallback if the daemon itself is stale
-aimux daemon restart
+aimux restart
+aimux doctor versions
 ```
 
 Navigation ownership rule:
