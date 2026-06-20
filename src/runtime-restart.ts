@@ -132,7 +132,11 @@ function defaultIsPidAlive(pid: number): boolean {
       }).trim();
       if (isExitedProcessState(state)) return false;
     } catch {
-      return true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return false;
+      }
     }
   }
   return true;
