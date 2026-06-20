@@ -33,11 +33,12 @@ Stable `aimux` uses port `43190`. `aimux-dev` uses port `43191`.
 Useful commands:
 
 ```bash
+aimux restart
+aimux doctor versions
 aimux daemon ensure
 aimux daemon status --json
 aimux daemon projects --json
 aimux daemon project-ensure --project /abs/path/repo
-aimux daemon restart
 aimux daemon stop
 aimux daemon kill
 ```
