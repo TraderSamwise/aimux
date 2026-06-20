@@ -1942,10 +1942,6 @@ export class MetadataServer {
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         const focus = controlFocusRequested(body as Record<string, unknown>, url);
-        if (focus && !currentClientSession) {
-          send(res, 400, { ok: false, error: "currentClientSession is required" });
-          return;
-        }
         const tmux = new TmuxRuntimeManager();
         if (!focus) {
           const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
@@ -1966,14 +1962,16 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: focusError });
           return;
         }
-        if (currentClientSession) {
-          persistDashboardReturnSelection(tmux, process.cwd(), currentClientSession, currentWindowId);
+        const focusClientSession =
+          currentClientSession ?? (clientTty ? tmux.findClientByTty(clientTty)?.sessionName : undefined);
+        if (focusClientSession) {
+          persistDashboardReturnSelection(tmux, process.cwd(), focusClientSession, currentWindowId);
         }
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
         const openSessionName =
-          currentClientSession && tmux.hasSession(currentClientSession)
-            ? currentClientSession
+          focusClientSession && tmux.hasSession(focusClientSession)
+            ? focusClientSession
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
@@ -1981,7 +1979,7 @@ export class MetadataServer {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
-        const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
+        const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
         return;
       }
@@ -1999,10 +1997,6 @@ export class MetadataServer {
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const focus = controlFocusRequested(body as Record<string, unknown>, url);
-        if (focus && !currentClientSession) {
-          send(res, 400, { ok: false, error: "currentClientSession is required" });
-          return;
-        }
         const tmux = new TmuxRuntimeManager();
         if (!focus) {
           const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
@@ -2023,16 +2017,18 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: focusError });
           return;
         }
-        if (currentClientSession) {
-          persistDashboardClientPreference(currentClientSession, (snapshot) => {
+        const focusClientSession =
+          currentClientSession ?? (clientTty ? tmux.findClientByTty(clientTty)?.sessionName : undefined);
+        if (focusClientSession) {
+          persistDashboardClientPreference(focusClientSession, (snapshot) => {
             snapshot.screen = "coordination";
           });
         }
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
         const openSessionName =
-          currentClientSession && tmux.hasSession(currentClientSession)
-            ? currentClientSession
+          focusClientSession && tmux.hasSession(focusClientSession)
+            ? focusClientSession
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
@@ -2040,7 +2036,7 @@ export class MetadataServer {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
-        const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
+        const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-inbox", target, focusResult);
         return;
       }
@@ -2217,12 +2213,31 @@ export class MetadataServer {
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         const tmux = new TmuxRuntimeManager();
+        if (!currentClientSession) {
+          send(res, 400, { ok: false, error: "currentClientSession is required" });
+          return;
+        }
+        if (!currentWindowId) {
+          send(res, 400, { ok: false, error: "currentWindowId is required" });
+          return;
+        }
         const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
         if (sessionError) {
           send(res, 400, { ok: false, error: sessionError });
           return;
         }
-        const ok = markActiveWindowFocused(tmux, process.cwd(), currentClientSession, currentWindow, currentWindowId);
+        const activeWindow = tmux.listWindows(currentClientSession).find((window) => window.active);
+        if (activeWindow?.id !== currentWindowId || (currentWindow && activeWindow.name !== currentWindow)) {
+          send(res, 404, { ok: false, error: "window not found" });
+          return;
+        }
+        const ok = markActiveWindowFocused(
+          tmux,
+          process.cwd(),
+          currentClientSession,
+          activeWindow.name,
+          currentWindowId,
+        );
         if (!ok) {
           send(res, 404, { ok: false, error: "window not found" });
           return;
