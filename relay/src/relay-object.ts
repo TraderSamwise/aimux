@@ -44,6 +44,7 @@ export class RelayObject extends DurableObject<Env> {
   private clientSockets = new Set<WebSocket>();
   private clientDeviceIds = new Map<WebSocket, string>();
   private pendingRequests = new Map<string, { client: WebSocket; clientRequestId: string; expiresAt: number }>();
+  private eventSubscriptions = new Map<string, { client: WebSocket; clientSubscriptionId: string }>();
   private requestCounter = 0;
 
   async fetch(request: Request): Promise<Response> {
@@ -190,6 +191,16 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
 
+    if (isDaemon && parsed.type === "project_event") {
+      this.forwardProjectEvent(parsed);
+      return;
+    }
+
+    if (isDaemon && (parsed.type === "project_events_subscribed" || parsed.type === "project_events_error")) {
+      this.forwardProjectEventControl(parsed);
+      return;
+    }
+
     if (isDaemon && parsed.type === "response") {
       this.sweepExpiredPending();
       const pending = this.pendingRequests.get(parsed.id);
@@ -201,6 +212,10 @@ export class RelayObject extends DurableObject<Env> {
           // client has gone away — drop silently
         }
       }
+    } else if (!isDaemon && parsed.type === "project_events_subscribe") {
+      await this.handleClientProjectEventsSubscribe(ws, parsed);
+    } else if (!isDaemon && parsed.type === "project_events_unsubscribe") {
+      this.handleClientProjectEventsUnsubscribe(ws, parsed.id);
     } else if (!isDaemon && parsed.type === "request") {
       const sharedResult = await this.prepareSharedClientRequest(ws, parsed);
       if (!sharedResult.ok) {
@@ -248,6 +263,100 @@ export class RelayObject extends DurableObject<Env> {
           body: { ok: false, error: "Daemon not connected" },
         });
       }
+    }
+  }
+
+  private async handleClientProjectEventsSubscribe(
+    ws: WebSocket,
+    message: Extract<RelayMessage, { type: "project_events_subscribe" }>,
+  ): Promise<void> {
+    const sharedResult = await this.prepareSharedClientRequest(ws, {
+      id: message.id,
+      type: "request",
+      method: "GET",
+      path: message.path,
+      headers: message.headers,
+    });
+    if (!sharedResult.ok) {
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: sharedResult.status,
+        message: sharedResult.error,
+      });
+      return;
+    }
+    if (await this.shouldRejectClientRequest(ws)) {
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: 403,
+        message: "Remote client pending security approval",
+      });
+      return;
+    }
+    if (!this.daemonWs) {
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: 503,
+        message: "Daemon not connected",
+      });
+      return;
+    }
+
+    const relaySubscriptionId = this.nextRelayRequestId();
+    this.eventSubscriptions.set(relaySubscriptionId, { client: ws, clientSubscriptionId: message.id });
+    try {
+      this.daemonWs.send(
+        JSON.stringify({
+          id: relaySubscriptionId,
+          type: "project_events_subscribe",
+          path: message.path,
+          headers: sharedResult.requestPatch?.headers ?? message.headers,
+        }),
+      );
+    } catch {
+      this.eventSubscriptions.delete(relaySubscriptionId);
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: 502,
+        message: "Daemon connection lost",
+      });
+    }
+  }
+
+  private handleClientProjectEventsUnsubscribe(ws: WebSocket, clientSubscriptionId: string): void {
+    for (const [relaySubscriptionId, entry] of this.eventSubscriptions) {
+      if (entry.client !== ws || entry.clientSubscriptionId !== clientSubscriptionId) continue;
+      this.eventSubscriptions.delete(relaySubscriptionId);
+      this.sendDaemonProjectEventsUnsubscribe(relaySubscriptionId);
+    }
+  }
+
+  private forwardProjectEvent(message: Extract<RelayMessage, { type: "project_event" }>): void {
+    const subscription = this.eventSubscriptions.get(message.id);
+    if (!subscription) return;
+    try {
+      subscription.client.send(JSON.stringify({ ...message, id: subscription.clientSubscriptionId }));
+    } catch {
+      this.eventSubscriptions.delete(message.id);
+      this.sendDaemonProjectEventsUnsubscribe(message.id);
+    }
+  }
+
+  private forwardProjectEventControl(
+    message: Extract<RelayMessage, { type: "project_events_subscribed" | "project_events_error" }>,
+  ): void {
+    const subscription = this.eventSubscriptions.get(message.id);
+    if (!subscription) return;
+    if (message.type === "project_events_error") this.eventSubscriptions.delete(message.id);
+    try {
+      subscription.client.send(JSON.stringify({ ...message, id: subscription.clientSubscriptionId }));
+    } catch {
+      this.eventSubscriptions.delete(message.id);
+      this.sendDaemonProjectEventsUnsubscribe(message.id);
     }
   }
 
@@ -370,12 +479,18 @@ export class RelayObject extends DurableObject<Env> {
       // Fail every in-flight request immediately instead of waiting for
       // the TTL — the daemon that was going to answer just disappeared.
       this.failPendingRequests("Daemon connection lost", 502);
+      this.failProjectEventSubscriptions("Daemon connection lost", 502);
       this.broadcastToClients({ type: "daemon_status", online: false });
     } else {
       this.clientSockets.delete(ws);
       this.clientDeviceIds.delete(ws);
       for (const [id, entry] of this.pendingRequests) {
         if (entry.client === ws) this.pendingRequests.delete(id);
+      }
+      for (const [id, entry] of this.eventSubscriptions) {
+        if (entry.client !== ws) continue;
+        this.eventSubscriptions.delete(id);
+        this.sendDaemonProjectEventsUnsubscribe(id);
       }
     }
     try {
@@ -857,8 +972,32 @@ export class RelayObject extends DurableObject<Env> {
     this.pendingRequests.clear();
   }
 
+  private failProjectEventSubscriptions(message: string, status: number): void {
+    for (const [, entry] of this.eventSubscriptions) {
+      try {
+        entry.client.send(
+          JSON.stringify({
+            id: entry.clientSubscriptionId,
+            type: "project_events_error",
+            status,
+            message,
+          }),
+        );
+      } catch {}
+    }
+    this.eventSubscriptions.clear();
+  }
+
+  private sendDaemonProjectEventsUnsubscribe(id: string): void {
+    if (!this.daemonWs) return;
+    try {
+      this.send(this.daemonWs, { id, type: "project_events_unsubscribe" });
+    } catch {}
+  }
+
   private closeAllSockets(reason: string): void {
     this.failPendingRequests(reason, 423);
+    this.failProjectEventSubscriptions(reason, 423);
     for (const ws of this.ctx.getWebSockets()) {
       try {
         ws.close(1008, reason);
