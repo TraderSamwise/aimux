@@ -956,6 +956,23 @@ function optionalStringOrFirst(value: unknown): string | undefined {
   return value.map(optionalString).find(Boolean);
 }
 
+function optionalStringArray(value: unknown): string[] {
+  if (typeof value === "string") {
+    const entry = optionalString(value);
+    return entry ? [entry] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value.map(optionalString).filter((entry): entry is string => Boolean(entry));
+}
+
+function routeRecipients(input: { to?: unknown; assignee?: unknown; tool?: unknown }): string[] {
+  const explicit = optionalStringArray(input.to);
+  if (explicit.length > 0) return explicit;
+  return [optionalString(input.assignee), optionalString(input.tool)].filter((entry): entry is string =>
+    Boolean(entry),
+  );
+}
+
 function runtimeInboxEntries(
   input: { unreadOnly?: boolean; participantId?: string; includeDone?: boolean; includeNotifications?: boolean } = {},
 ): Array<Record<string, unknown>> {
@@ -3119,19 +3136,20 @@ export class MetadataServer {
           body: string;
           title?: string;
         };
+        const recipients = routeRecipients(body);
         const result = this.options.threads?.sendMessage
           ? this.options.threads.sendMessage(body)
           : body.threadId
             ? sendThreadMessage({
                 threadId: body.threadId,
                 from: body.from ?? "user",
-                to: body.to,
+                to: recipients,
                 kind: body.kind,
                 body: body.body,
               })
             : sendDirectMessage({
                 from: body.from ?? "user",
-                to: body.to ?? [],
+                to: recipients,
                 kind: body.kind as any,
                 body: body.body,
                 title: body.title,
@@ -3139,24 +3157,24 @@ export class MetadataServer {
               });
         const messageKind = body.kind ?? "request";
         if (messageKind === "handoff") {
-          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          const alertRecipients = this.resolveAlertRecipients(recipients, result.message, recipients);
           this.emitThreadWaitingAlert({
             kind: "handoff_waiting",
             threadId: (result.thread as { id: string }).id,
             from: body.from ?? "user",
-            recipients,
-            title: `Handoff for ${recipients.join(", ") || "agent"}`,
+            recipients: alertRecipients,
+            title: `Handoff for ${alertRecipients.join(", ") || "agent"}`,
             message: body.body.trim() || "A handoff is waiting for you.",
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         } else if (messageKind === "request" || messageKind === "reply" || messageKind === "note") {
-          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          const alertRecipients = this.resolveAlertRecipients(recipients, result.message, recipients);
           this.emitThreadWaitingAlert({
             kind: "message_waiting",
             threadId: (result.thread as { id: string }).id,
             from: body.from ?? "user",
-            recipients,
-            title: `Message for ${recipients.join(", ") || "agent"}`,
+            recipients: alertRecipients,
+            title: `Message for ${alertRecipients.join(", ") || "agent"}`,
             message: body.body.trim() || "A new message is waiting.",
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });

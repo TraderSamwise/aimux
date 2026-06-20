@@ -400,7 +400,7 @@ export interface ThreadLifecycleInput {
 
 export interface TaskAssignInput {
   from?: string;
-  to?: string | string[];
+  to?: string;
   assignee?: string;
   tool?: string;
   description: string;
@@ -420,6 +420,7 @@ export interface WorkflowMutationResponse extends ProjectApiOk {
   thread?: unknown;
   message?: unknown;
   task?: unknown;
+  followUpTask?: unknown;
 }
 
 export interface CreateServiceInput {

@@ -133,7 +133,11 @@ describe("api relay routing", () => {
 
   it("routes project POST and PUT bodies through the relay proxy when connected", async () => {
     const fetchMock = installFetchMock();
-    const request = installRelayMock({ ok: true, sessionId: "agent-1" });
+    const request = installRelayMock({
+      ok: true,
+      sessionId: "agent-1",
+      followUpTask: { id: "task-2" },
+    });
 
     await putPlan(endpoint, "agent-1", "ship it");
     await createService(endpoint, {
@@ -203,9 +207,14 @@ describe("api relay routing", () => {
     await completeTask(endpoint, { taskId: "task-1", from: "user", body: "Finished." });
     await reopenTask(endpoint, { taskId: "task-1", from: "user" });
     await approveReview(endpoint, { taskId: "task-1", from: "user", body: "Looks good." });
-    await requestReviewChanges(endpoint, { taskId: "task-1", from: "user", body: "Needs tests." });
+    const changes = await requestReviewChanges(endpoint, {
+      taskId: "task-1",
+      from: "user",
+      body: "Needs tests.",
+    });
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(changes.followUpTask).toEqual({ id: "task-2" });
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
       content: "ship it",
     });
