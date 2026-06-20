@@ -288,7 +288,7 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
   });
 
-  it("recovers dashboard switching locally when the endpoint is stale", () => {
+  it("tries the control API before recovering dashboard switching locally when the endpoint is stale", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
       windows: {
@@ -314,6 +314,46 @@ describe("tmux-control.sh", () => {
       "aimux-proj-client-stale",
       "--client-tty",
       "/dev/stale",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(curlLog.length).toBeGreaterThan(0);
+    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/open-dashboard");
+  });
+
+  it("keeps dashboard switching local when no endpoint is available", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "dashboard",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
       "--current-window",
       "shell",
       "--current-window-id",
