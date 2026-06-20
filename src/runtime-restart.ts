@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   ensureDaemonRunning,
   ensureProjectService,
@@ -116,6 +117,13 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
 function defaultIsPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
+    if (process.platform !== "win32") {
+      const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (state.startsWith("Z")) return false;
+    }
     return true;
   } catch {
     return false;
