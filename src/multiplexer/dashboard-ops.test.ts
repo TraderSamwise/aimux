@@ -523,7 +523,8 @@ describe("dashboard-ops", () => {
     await resumeOfflineSessionWithFeedback(host, session);
 
     expect(host.waitForSessionStart).not.toHaveBeenCalled();
-    expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored codex");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -615,7 +616,8 @@ describe("dashboard-ops", () => {
     await resumeOfflineSessionWithFeedback(host, session);
 
     expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalled();
-    expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
