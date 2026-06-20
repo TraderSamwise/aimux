@@ -408,6 +408,31 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ sessionId: "codex-1", cols: 120, rows: 40 }),
     });
     expect(resizeRes.ok).toBe(true);
+
+    const malformedColsRes = await fetch(`${base}/live-pane/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: "100px", rows: 40 }),
+    });
+    expect(malformedColsRes.status).toBe(400);
+
+    const malformedRowsRes = await fetch(`${base}/live-pane/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: 100, rows: "10.5" }),
+    });
+    expect(malformedRowsRes.status).toBe(400);
+
+    const malformedAttachRes = await fetch(`${base}/live-pane/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", startLine: "10px" }),
+    });
+    expect(malformedAttachRes.status).toBe(400);
+
+    const malformedOutputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=10.5`);
+    expect(malformedOutputRes.status).toBe(400);
+
     expect(calls).toEqual([
       { kind: "resize", sessionId: "codex-1", cols: 100, rows: 32 },
       { kind: "input", sessionId: "codex-1", text: "hello" },

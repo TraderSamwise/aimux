@@ -537,6 +537,28 @@ describe("daemon routing (relay + proxy)", () => {
     );
   });
 
+  it("allows shared guest relay requests to read canonical live pane output", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/live-pane/output?sessionId=claude-1",
+      undefined,
+      {
+        "x-aimux-actor-role": "guest",
+        "x-aimux-share-id": "share_1",
+        "x-aimux-share-session-id": "claude-1",
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(requestJson)).toHaveBeenCalledWith(
+      "http://127.0.0.1:4321/live-pane/output?sessionId=claude-1",
+      expect.objectContaining({ method: "GET", timeoutMs: expect.any(Number) }),
+    );
+  });
+
   it("returns 504 when the proxied target times out", async () => {
     vi.mocked(requestJson).mockRejectedValueOnce(new Error("request timed out after 10000ms"));
     const { AimuxDaemon } = await import("./daemon.js");
