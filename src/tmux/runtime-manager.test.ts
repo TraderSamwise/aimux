@@ -282,7 +282,7 @@ describe("TmuxRuntimeManager", () => {
 
   it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
     const prev = process.env.AIMUX_HOME;
-    process.env.AIMUX_HOME = "/home/user/.aimux-dev";
+    process.env.AIMUX_HOME = "/home/user/.aimux-custom";
     try {
       const exec = createExecMock();
       const manager = new TmuxRuntimeManager(exec);
@@ -290,8 +290,8 @@ describe("TmuxRuntimeManager", () => {
       const bindings = exec.calls.filter((c) => c.args[0] === "bind-key" && c.args[2] === "prefix");
       const g = bindings.find((c) => c.args[3] === "g")?.args.join(" ") ?? "";
       const m = bindings.find((c) => c.args[3] === "m")?.args.join(" ") ?? "";
-      expect(g.includes("--aimux-home") && g.includes("/home/user/.aimux-dev")).toBe(true);
-      expect(m.includes("--aimux-home") && m.includes("/home/user/.aimux-dev")).toBe(true);
+      expect(g.includes("--aimux-home") && g.includes("/home/user/.aimux-custom")).toBe(true);
+      expect(m.includes("--aimux-home") && m.includes("/home/user/.aimux-custom")).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.AIMUX_HOME;
       else process.env.AIMUX_HOME = prev;

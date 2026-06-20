@@ -31,10 +31,7 @@ function isPidAlive(pid: number): boolean {
 }
 
 function knownOwners(): OtherOwner[] {
-  return [
-    { home: join(homedir(), ".aimux"), port: 43190 },
-    { home: join(homedir(), ".aimux-dev"), port: 43191 },
-  ];
+  return [{ home: join(homedir(), ".aimux"), port: 43190 }];
 }
 
 function readJson<T>(path: string): T | null {
