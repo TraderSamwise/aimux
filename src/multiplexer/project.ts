@@ -1,4 +1,5 @@
 import { buildProjectObservability, type ProjectObservability } from "../project-observability.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderProjectScreen } from "../tui/screens/subscreen-renderers.js";
 import { parseKeys } from "../key-parser.js";
 
@@ -54,7 +55,7 @@ function isProjectObservability(value: any): value is ProjectObservability {
 
 export async function refreshProjectObservability(host: ProjectHost): Promise<boolean> {
   try {
-    const res = await host.getFromProjectService("/project-observability");
+    const res = await host.getFromProjectService(PROJECT_API_ROUTES.projectObservability);
     if (!res?.ok || !isProjectObservability(res.project)) throw new Error("invalid project payload");
     applyProjectObservability(host, res.project);
     return true;

@@ -1,4 +1,5 @@
 import { parseKeys } from "../key-parser.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
 
@@ -32,7 +33,7 @@ function isProjectTopology(value: any): value is ProjectTopology {
 
 export async function refreshTopology(host: TopologyHost): Promise<boolean> {
   try {
-    const res = await host.getFromProjectService("/topology");
+    const res = await host.getFromProjectService(PROJECT_API_ROUTES.topology);
     if (!res?.ok || !isProjectTopology(res.topology)) throw new Error("invalid topology payload");
     applyTopology(host, res.topology);
     return true;

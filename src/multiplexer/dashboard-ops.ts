@@ -10,6 +10,7 @@ import {
 } from "../dashboard/session-actions.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   isAttachableDashboardSessionEntry,
   isLiveDashboardServiceRuntimeEntry,
@@ -378,7 +379,7 @@ export async function spawnDashboardAgentWithFeedback(
     },
     request: async () => {
       await host.postToProjectService(
-        "/agents/spawn",
+        PROJECT_API_ROUTES.agents.spawn,
         {
           tool: input.tool,
           sessionId: input.sessionId,
@@ -422,7 +423,7 @@ export async function forkDashboardAgentWithFeedback(
     },
     request: async () => {
       await host.postToProjectService(
-        "/agents/fork",
+        PROJECT_API_ROUTES.agents.fork,
         {
           sourceSessionId: input.sourceSessionId,
           targetSessionId: input.targetSessionId,
@@ -500,7 +501,7 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/agents/stop", { sessionId: session.id }, { timeoutMs: 10_000 });
+        await host.postToProjectService(PROJECT_API_ROUTES.agents.stop, { sessionId: session.id }, { timeoutMs: 10_000 });
       },
       settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
       successFlash: { message: `Stopped ${label}` },
@@ -627,7 +628,7 @@ export async function graveyardSessionWithFeedback(
       pendingAction: "graveyarding",
       sessionSeed,
       request: async () => {
-        await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
+        await host.postToProjectService(PROJECT_API_ROUTES.agents.kill, { sessionId }, { timeoutMs: 10_000 });
       },
       settle: () => waitForStableDashboardSessionAbsence(host, sessionId),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
@@ -677,7 +678,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         },
         request: async () => {
           resumeResult = await host.postToProjectService(
-            "/agents/resume",
+            PROJECT_API_ROUTES.agents.resume,
             { sessionId: session.id },
             { timeoutMs: 60_000 },
           );
@@ -722,7 +723,7 @@ export async function resumeOfflineServiceWithFeedback(
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/services/resume", { serviceId: service.id }, { timeoutMs: 10_000 });
+        await host.postToProjectService(PROJECT_API_ROUTES.services.resume, { serviceId: service.id }, { timeoutMs: 10_000 });
       },
       settle: () =>
         waitForRenderedDashboardServiceState(host, service.id, (entry) => isLiveDashboardServiceEntry(entry)),
@@ -779,7 +780,7 @@ export async function createDashboardServiceWithFeedback(
     },
     request: async () => {
       await host.postToProjectService(
-        "/services/create",
+        PROJECT_API_ROUTES.services.create,
         { serviceId, command: commandLine, worktreePath },
         { timeoutMs: 10_000 },
       );
@@ -812,7 +813,7 @@ export async function stopDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService("/services/stop", { serviceId: service.id }, { timeoutMs: 10_000 });
+      await host.postToProjectService(PROJECT_API_ROUTES.services.stop, { serviceId: service.id }, { timeoutMs: 10_000 });
     },
     settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
@@ -829,7 +830,7 @@ export async function removeDashboardServiceWithFeedback(
     serviceId: service.id,
     pendingAction: "removing",
     request: async () => {
-      await host.postToProjectService("/services/remove", { serviceId: service.id }, { timeoutMs: 10_000 });
+      await host.postToProjectService(PROJECT_API_ROUTES.services.remove, { serviceId: service.id }, { timeoutMs: 10_000 });
     },
     settle: () => waitForStableDashboardServiceAbsence(host, service.id),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
@@ -861,7 +862,7 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         return;
       }
       const result = await host.postToProjectService(
-        "/agents/resume",
+        PROJECT_API_ROUTES.agents.resume,
         { sessionId: session.id },
         { timeoutMs: 10_000 },
       );
@@ -923,7 +924,7 @@ export async function migrateSessionWithFeedback(
     sessionSeed,
     request: async () => {
       await host.postToProjectService(
-        "/agents/migrate",
+        PROJECT_API_ROUTES.agents.migrate,
         { sessionId: session.id, worktreePath: targetPath },
         { timeoutMs: 10_000 },
       );

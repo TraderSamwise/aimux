@@ -14,6 +14,24 @@ import { env } from "@/lib/env";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
+import {
+  PROJECT_API_ROUTES,
+  type CreateServiceInput,
+  type CreateServiceResponse,
+  type CreateWorktreeInput,
+  type DeleteWorktreeResponse,
+  type GraveyardWorktreeResponse,
+  type NotificationClearResponse,
+  type NotificationMutationInput,
+  type NotificationReadResponse,
+  type RemoveServiceResponse,
+  type ResumeServiceResponse,
+  type ResurrectAgentResponse,
+  type ResurrectWorktreeResponse,
+  type StopServiceResponse,
+  type WorktreePathInput,
+  type WorktreePathResponse,
+} from "../../src/project-api-contract.js";
 
 let _relay: RelayTransport | null = null;
 export function setApiRelay(relay: RelayTransport | null): void {
@@ -167,7 +185,7 @@ export async function getProjectState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectStateResponse> {
-  return callProjectJson<ProjectStateResponse>(endpoint, "GET", "/state", opts);
+  return callProjectJson<ProjectStateResponse>(endpoint, "GET", PROJECT_API_ROUTES.state, opts);
 }
 
 export interface AgentOutputResponse {
@@ -188,7 +206,7 @@ export async function getAgentOutput(
   return callProjectJson<AgentOutputResponse>(
     endpoint,
     "GET",
-    `/agents/output?${params.toString()}`,
+    `${PROJECT_API_ROUTES.agents.output}?${params.toString()}`,
     opts,
   );
 }
@@ -209,7 +227,7 @@ export async function sendAgentInput(
   text: string,
   opts?: SendAgentInputOptions,
 ): Promise<SendAgentInputResponse> {
-  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", "/agents/input", opts, {
+  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", PROJECT_API_ROUTES.agents.input, opts, {
     sessionId,
     text,
     ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
@@ -242,7 +260,7 @@ export async function uploadImageAttachment(
   input: UploadImageAttachmentInput,
   opts?: ApiOpts,
 ): Promise<UploadImageAttachmentResponse> {
-  return callProjectJson<UploadImageAttachmentResponse>(endpoint, "POST", "/attachments", opts, {
+  return callProjectJson<UploadImageAttachmentResponse>(endpoint, "POST", PROJECT_API_ROUTES.attachments, opts, {
     kind: "image",
     filename: input.filename,
     mimeType: input.mimeType,
@@ -408,7 +426,7 @@ export async function getPlan(
   return callProjectJson<PlanResponse>(
     endpoint,
     "GET",
-    `/plans/${encodeURIComponent(sessionId)}`,
+    `${PROJECT_API_ROUTES.plans}/${encodeURIComponent(sessionId)}`,
     opts,
   );
 }
@@ -422,7 +440,7 @@ export async function putPlan(
   return callProjectJson<{ ok: boolean; sessionId: string }>(
     endpoint,
     "PUT",
-    `/plans/${encodeURIComponent(sessionId)}`,
+    `${PROJECT_API_ROUTES.plans}/${encodeURIComponent(sessionId)}`,
     opts,
     { content },
   );
@@ -434,7 +452,7 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<DesktopState> {
-  return callProjectJson<DesktopState>(endpoint, "GET", "/desktop-state", opts);
+  return callProjectJson<DesktopState>(endpoint, "GET", PROJECT_API_ROUTES.desktopState, opts);
 }
 
 // ── Notifications ────────────────────────────────────────────────────────
@@ -487,28 +505,28 @@ export async function listNotifications(
   return callProjectJson<NotificationsResponse>(
     endpoint,
     "GET",
-    `/notifications${query ? `?${query}` : ""}`,
+    `${PROJECT_API_ROUTES.notifications.list}${query ? `?${query}` : ""}`,
     opts,
   );
 }
 
 export async function markNotificationsRead(
   endpoint: ServiceEndpoint,
-  input: { id?: string; sessionId?: string } = {},
+  input: NotificationMutationInput = {},
   opts?: ApiOpts,
-): Promise<{ ok: boolean; updated: number }> {
-  return callProjectJson(endpoint, "POST", "/notifications/read", opts, input);
+): Promise<NotificationReadResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.notifications.read, opts, input);
 }
 
 export async function clearNotifications(
   endpoint: ServiceEndpoint,
-  input: { id?: string; sessionId?: string } = {},
+  input: NotificationMutationInput = {},
   opts?: ApiOpts,
-): Promise<{ ok: boolean; cleared: number }> {
+): Promise<NotificationClearResponse> {
   const response = await callProjectJson<{ ok: boolean; cleared?: number; updated?: number }>(
     endpoint,
     "POST",
-    "/notifications/clear",
+    PROJECT_API_ROUTES.notifications.clear,
     opts,
     input,
   );
@@ -519,34 +537,34 @@ export async function clearNotifications(
 
 export async function createService(
   endpoint: ServiceEndpoint,
-  input: { command?: string; worktreePath?: string; serviceId?: string },
+  input: CreateServiceInput,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string }> {
-  return callProjectJson(endpoint, "POST", "/services/create", opts, input);
+): Promise<CreateServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.create, opts, input);
 }
 
 export async function stopService(
   endpoint: ServiceEndpoint,
   serviceId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
-  return callProjectJson(endpoint, "POST", "/services/stop", opts, { serviceId });
+): Promise<StopServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.stop, opts, { serviceId });
 }
 
 export async function resumeService(
   endpoint: ServiceEndpoint,
   serviceId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
-  return callProjectJson(endpoint, "POST", "/services/resume", opts, { serviceId });
+): Promise<ResumeServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.resume, opts, { serviceId });
 }
 
 export async function removeService(
   endpoint: ServiceEndpoint,
   serviceId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
-  return callProjectJson(endpoint, "POST", "/services/remove", opts, { serviceId });
+): Promise<RemoveServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.remove, opts, { serviceId });
 }
 
 // ── Worktree actions ─────────────────────────────────────────────────────
@@ -555,24 +573,27 @@ export async function createWorktree(
   endpoint: ServiceEndpoint,
   name: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string }> {
-  return callProjectJson(endpoint, "POST", "/worktrees/create", opts, { name });
+): Promise<WorktreePathResponse> {
+  const input: CreateWorktreeInput = { name };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.create, opts, input);
 }
 
 export async function removeWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string }> {
-  return callProjectJson(endpoint, "POST", "/worktrees/remove", opts, { path });
+): Promise<WorktreePathResponse> {
+  const input: WorktreePathInput = { path };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.remove, opts, input);
 }
 
 export async function graveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "graveyarded" }> {
-  return callProjectJson(endpoint, "POST", "/worktrees/graveyard", opts, { path });
+): Promise<GraveyardWorktreeResponse> {
+  const input: WorktreePathInput = { path };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.graveyard, opts, input);
 }
 
 // ── Worktrees, graveyard, threads ───────────────────────────────────────
@@ -645,38 +666,38 @@ export async function listWorktrees(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<WorktreesResponse> {
-  return callProjectJson<WorktreesResponse>(endpoint, "GET", "/worktrees", opts);
+  return callProjectJson<WorktreesResponse>(endpoint, "GET", PROJECT_API_ROUTES.worktrees, opts);
 }
 
 export async function listGraveyard(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<GraveyardResponse> {
-  return callProjectJson<GraveyardResponse>(endpoint, "GET", "/graveyard", opts);
+  return callProjectJson<GraveyardResponse>(endpoint, "GET", PROJECT_API_ROUTES.graveyard, opts);
 }
 
 export async function resurrectGraveyardAgent(
   endpoint: ServiceEndpoint,
   sessionId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; sessionId: string; status: "offline" }> {
-  return callProjectJson(endpoint, "POST", "/graveyard/resurrect", opts, { sessionId });
+): Promise<ResurrectAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.graveyardActions.resurrectAgent, opts, { sessionId });
 }
 
 export async function resurrectGraveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "active" }> {
-  return callProjectJson(endpoint, "POST", "/graveyard/worktrees/resurrect", opts, { path });
+): Promise<ResurrectWorktreeResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.graveyardActions.resurrectWorktree, opts, { path });
 }
 
 export async function deleteGraveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "removed" }> {
-  return callProjectJson(endpoint, "POST", "/graveyard/worktrees/delete", opts, { path });
+): Promise<DeleteWorktreeResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.graveyardActions.deleteWorktree, opts, { path });
 }
 
 export async function listThreads(
@@ -684,7 +705,9 @@ export async function listThreads(
   sessionId?: string,
   opts?: ApiOpts,
 ): Promise<ThreadSummaryResponse[]> {
-  const path = sessionId ? `/threads?session=${encodeURIComponent(sessionId)}` : "/threads";
+  const path = sessionId
+    ? `${PROJECT_API_ROUTES.threads.list}?session=${encodeURIComponent(sessionId)}`
+    : PROJECT_API_ROUTES.threads.list;
   return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
 }
 
@@ -696,7 +719,7 @@ export async function listWorkflow(
   return callProjectJson<Array<Record<string, unknown>>>(
     endpoint,
     "GET",
-    `/workflow?participant=${encodeURIComponent(participant)}`,
+    `${PROJECT_API_ROUTES.workflow}?participant=${encodeURIComponent(participant)}`,
     opts,
   );
 }
@@ -713,7 +736,7 @@ export async function listTasks(
   return callProjectJson<TaskListResponse>(
     endpoint,
     "GET",
-    `/tasks${query ? `?${query}` : ""}`,
+    `${PROJECT_API_ROUTES.tasks.list}${query ? `?${query}` : ""}`,
     opts,
   );
 }
@@ -792,7 +815,7 @@ export async function getProjectObservability(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectObservabilityResponse> {
-  return callProjectJson<ProjectObservabilityResponse>(endpoint, "GET", "/project-observability", opts);
+  return callProjectJson<ProjectObservabilityResponse>(endpoint, "GET", PROJECT_API_ROUTES.projectObservability, opts);
 }
 
 export interface ProjectTopologyResponse {
@@ -810,7 +833,7 @@ export async function getProjectTopology(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectTopologyResponse> {
-  return callProjectJson<ProjectTopologyResponse>(endpoint, "GET", "/topology", opts);
+  return callProjectJson<ProjectTopologyResponse>(endpoint, "GET", PROJECT_API_ROUTES.topology, opts);
 }
 
 export interface LibraryDocument {
@@ -845,7 +868,7 @@ export async function listProjectLibrary(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<LibraryResponse> {
-  return callProjectJson<LibraryResponse>(endpoint, "GET", "/library", opts);
+  return callProjectJson<LibraryResponse>(endpoint, "GET", PROJECT_API_ROUTES.library, opts);
 }
 
 export async function getTask(
@@ -856,7 +879,7 @@ export async function getTask(
   return callProjectJson<TaskDetailResponse>(
     endpoint,
     "GET",
-    `/tasks/${encodeURIComponent(taskId)}`,
+    `${PROJECT_API_ROUTES.tasks.list}/${encodeURIComponent(taskId)}`,
     opts,
   );
 }
