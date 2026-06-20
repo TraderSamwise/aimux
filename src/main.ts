@@ -141,6 +141,7 @@ import {
   startLocalUiServer,
 } from "./local-ui-server.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
+import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -922,6 +923,29 @@ program
   .action(() => {
     initProject();
     console.log("Initialized .aimux/ with config.json and .gitignore");
+  });
+
+program
+  .command("restart")
+  .description("Restart local aimux control plane and reload all known dashboards")
+  .option("--project <path>", "Restrict restart to one project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = opts.project ? resolveProjectRoot(pathResolve(opts.project)) : undefined;
+      const result = await restartAimuxControlPlane({ projectRoot });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (result.summary.failures > 0) process.exitCode = 1;
+        return;
+      }
+      console.log(renderRuntimeRestartResult(result));
+      if (result.summary.failures > 0) process.exitCode = 1;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
   });
 
 program
