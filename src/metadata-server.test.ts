@@ -2532,10 +2532,21 @@ describe("MetadataServer threads API", () => {
         to: "codex-1",
         description: "Review the parser timeout patch",
         type: "review",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 1,
       }),
     });
-    const review = (await reviewRes.json()) as { task: { id: string } };
+    const review = (await reviewRes.json()) as {
+      task: { id: string; assigner?: string; reviewStatus?: string; reviewOf?: string; iteration?: number };
+    };
     expect(reviewRes.ok).toBe(true);
+    expect(review.task).toMatchObject({
+      assigner: "coder",
+      reviewStatus: "pending",
+      reviewOf: "codex-1",
+      iteration: 1,
+    });
 
     const approveRes = await fetch(`${base}/reviews/approve`, {
       method: "POST",
@@ -2555,19 +2566,27 @@ describe("MetadataServer threads API", () => {
         to: "codex-1",
         description: "Review the parser timeout follow-up",
         type: "review",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 0,
       }),
     });
-    const review2 = (await reviewRes2.json()) as { task: { id: string } };
+    const review2 = (await reviewRes2.json()) as { task: { id: string; iteration?: number } };
+    expect(review2.task.iteration).toBe(1);
 
     const changesRes = await fetch(`${base}/reviews/request-changes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskId: review2.task.id, from: "codex-1", body: "Please tighten the tests." }),
     });
-    const changes = (await changesRes.json()) as { task: { reviewStatus: string }; followUpTask?: { id: string } };
+    const changes = (await changesRes.json()) as {
+      task: { reviewStatus: string };
+      followUpTask?: { id: string; assignee?: string };
+    };
     expect(changesRes.ok).toBe(true);
     expect(changes.task.reviewStatus).toBe("changes_requested");
     expect(changes.followUpTask?.id).toBeTruthy();
+    expect(changes.followUpTask?.assignee).toBe("coder");
 
     const reopenRes = await fetch(`${base}/tasks/reopen`, {
       method: "POST",

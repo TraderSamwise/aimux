@@ -21,6 +21,9 @@ export interface AssignTaskInput {
   type?: "task" | "review";
   diff?: string;
   worktreePath?: string;
+  assigner?: string;
+  reviewOf?: string;
+  iteration?: number;
 }
 
 export interface AssignTaskResult {
@@ -64,6 +67,15 @@ export async function assignTask(input: AssignTaskInput): Promise<AssignTaskResu
     type: input.type ?? "task",
     diff: input.diff,
   };
+  if (task.type === "review") {
+    task.assigner = input.assigner;
+    task.reviewStatus = "pending";
+    task.reviewOf = input.reviewOf;
+    task.iteration =
+      typeof input.iteration === "number" && Number.isInteger(input.iteration) && input.iteration > 0
+        ? input.iteration
+        : 1;
+  }
 
   let thread: OrchestrationThread | undefined;
   const participants = unique([input.from, input.to]);

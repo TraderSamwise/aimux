@@ -1,9 +1,104 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
+vi.mock("../team.js", async () => {
+  const actual = await vi.importActual<typeof import("../team.js")>("../team.js");
+  return {
+    ...actual,
+    loadTeamConfig: vi.fn(() => actual.getDefaultTeamConfig()),
+  };
+});
+
 describe("dashboardInteractionMethods", () => {
+  it("requests reviews through the project service", async () => {
+    const host: any = {
+      activeSession: { id: "codex-1", command: "codex" },
+      sessionRoles: new Map([["codex-1", "coder"]]),
+      sessionWorktreePaths: new Map([["codex-1", "/repo/.aimux/worktrees/demo"]]),
+      postToProjectService: vi.fn(async () => ({ ok: true, task: { assignee: "reviewer" } })),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await dashboardInteractionMethods.handleReviewRequest.call(host);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/tasks/assign",
+      expect.objectContaining({
+        from: "codex-1",
+        assignee: "reviewer",
+        description: "Review: Review codex agent's recent work",
+        prompt: "Review codex agent's recent work",
+        type: "review",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 1,
+      }),
+    );
+    expect(host.footerFlash).toBe("⧫ Review requested → reviewer");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("captures review diffs from the project root for root sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-review-root-"));
+    try {
+      execFileSync("git", ["init"], { cwd: repoRoot });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, "demo.txt"), "before\n");
+      execFileSync("git", ["add", "demo.txt"], { cwd: repoRoot });
+      execFileSync("git", ["commit", "-m", "initial"], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, "demo.txt"), "after\n");
+      const host: any = {
+        activeSession: { id: "codex-1", command: "codex" },
+        projectRoot: repoRoot,
+        sessionRoles: new Map([["codex-1", "coder"]]),
+        sessionWorktreePaths: new Map(),
+        postToProjectService: vi.fn(async () => ({ ok: true, task: { assignee: "reviewer" } })),
+        renderDashboard: vi.fn(),
+      };
+
+      await dashboardInteractionMethods.handleReviewRequest.call(host);
+
+      expect(host.postToProjectService).toHaveBeenCalledWith(
+        "/tasks/assign",
+        expect.objectContaining({
+          diff: expect.stringContaining("+after"),
+          worktreePath: undefined,
+        }),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not locally create services from the dashboard input path", () => {
+    const host: any = {
+      mode: "terminal",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      showDashboardError: vi.fn(),
+      createService: vi.fn(),
+      serviceInputBuffer: "yarn dev",
+      dashboardState: {},
+    };
+
+    dashboardInteractionMethods.handleServiceInputKey.call(host, Buffer.from("\r"));
+
+    expect(host.createService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
+      "Service creation requires the project service.",
+    ]);
+  });
+
   it("blocks stepping into a removing worktree", () => {
     const host: any = {
       dashboardState: {

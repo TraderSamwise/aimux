@@ -1,4 +1,3 @@
-import { loadConfig } from "../config.js";
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import { spawn } from "node:child_process";
@@ -9,14 +8,13 @@ import { updateNotificationContext } from "../notification-context.js";
 import { markSessionViewed } from "../session-viewed.js";
 import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
-import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
 import { parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
-import { loadTeamConfig, isOverseerSession } from "../team.js";
+import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
-import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
@@ -571,74 +569,15 @@ async function showOrchestrationRoutePickerFromService(
 }
 
 export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "message" | "handoff" | "task"): void {
-  const selected = getSelectedDashboardSessionForActions(host);
-  const focusedWorktreePath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
-  if (host.mode === "dashboard" && typeof host.getFromProjectService === "function") {
-    void showOrchestrationRoutePickerFromService(host, mode, selected?.id, focusedWorktreePath);
+  if (host.mode !== "dashboard" || typeof host.getFromProjectService !== "function") {
+    host.showDashboardError("Failed to load orchestration targets", [
+      "Orchestration routing requires the project service.",
+    ]);
     return;
   }
-
-  const options: DashboardOrchestrationTarget[] = [];
-  const metadataState = loadMetadataState().sessions;
-  const candidates = host.sessions.map((session: any) => {
-    const derivedActivity = metadataState[session.id]?.derived?.activity;
-    const semanticStatus =
-      derivedActivity === "running" ? "running" : derivedActivity === "waiting" ? "waiting" : session.status;
-    const semantic = host.deriveSessionSemanticState(session.id, semanticStatus);
-    return {
-      id: session.id,
-      tool: host.sessionToolKeys.get(session.id) ?? session.command,
-      role: host.sessionRoles.get(session.id),
-      worktreePath: host.sessionWorktreePaths.get(session.id),
-      status: semantic.user.label,
-      canReceiveInput: semantic.runtime.canReceiveInput,
-      isAlive: semantic.runtime.isAlive,
-      workflowPressure: host.orchestrationWorkflowPressure(session.id, semanticStatus),
-      exited: session.exited,
-    };
-  });
-
-  if (selected) {
-    options.push({
-      label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
-      sessionId: selected.id,
-    });
-  }
-
-  const team = loadTeamConfig();
-  for (const [role, cfg] of Object.entries(team.roles as Record<string, { description?: string }>)) {
-    const recipientIds = resolveOrchestrationRecipients({
-      candidates,
-      assignee: role,
-      worktreePath: focusedWorktreePath,
-    });
-    if (recipientIds.length === 0) continue;
-    options.push({
-      label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${host.formatRoutePreview(recipientIds)}`,
-      assignee: role,
-      worktreePath: focusedWorktreePath,
-      recipientIds,
-    });
-  }
-
-  const config = loadConfig();
-  for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
-    if (!toolCfg.enabled) continue;
-    const recipientIds = resolveOrchestrationRecipients({
-      candidates,
-      tool: toolKey,
-      worktreePath: focusedWorktreePath,
-    });
-    if (recipientIds.length === 0) continue;
-    options.push({
-      label: `Tool: ${toolKey}${host.formatRoutePreview(recipientIds)}`,
-      tool: toolKey,
-      worktreePath: focusedWorktreePath,
-      recipientIds,
-    });
-  }
-
-  applyOrchestrationRouteOptions(host, mode, options);
+  const selected = getSelectedDashboardSessionForActions(host);
+  const focusedWorktreePath = host.dashboardState.focusedWorktreePath;
+  void showOrchestrationRoutePickerFromService(host, mode, selected?.id, focusedWorktreePath);
 }
 
 export function showOrchestrationInput(
