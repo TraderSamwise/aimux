@@ -992,6 +992,15 @@ describe("MetadataServer threads API", () => {
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
+      const missingSessionRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentWindowId: "@99" }),
+      });
+      const missingSessionBody = (await missingSessionRes.json()) as { ok: boolean; error?: string };
+      expect(missingSessionRes.status).toBe(400);
+      expect(missingSessionBody).toEqual({ ok: false, error: "currentClientSession is required" });
+
       const invalidSessionRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1985,6 +1994,15 @@ describe("MetadataServer threads API", () => {
         selectedEntryKind: "session",
         selectedEntryId: "codex-1",
       });
+
+      const inboxRes = await fetch(`${base}/control/open-inbox?clientTty=%2Fdev%2Fttys001`);
+      const inboxBody = (await inboxRes.json()) as { ok: boolean };
+      expect(inboxRes.ok).toBe(true);
+      expect(inboxBody.ok).toBe(true);
+      const inboxSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(inboxSnapshot.screen).toBe("coordination");
     } finally {
       TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
