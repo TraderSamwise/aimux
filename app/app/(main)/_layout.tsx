@@ -281,13 +281,9 @@ export default function MainLayout() {
     store,
   ]);
 
-  // Realtime alert delivery for local projects. The durable notification poll
-  // above keeps the inbox current, but browser notifications should use live
-  // events when the browser can reach the project service directly. Relay mode
-  // cannot open this EventSource, so it stays on the relay-aware polling path.
+  // Realtime project updates and alerts. In local mode this opens EventSource
+  // directly; in relay mode startHeartbeat uses the relay project-events channel.
   useEffect(() => {
-    if (activeShare) return;
-    if (relayUrl) return;
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) return;
@@ -312,9 +308,15 @@ export default function MainLayout() {
         if (cancelled) return;
         handle = startHeartbeat({
           serviceEndpoint: endpoint!,
-          sessionId: null,
+          sessionId: activeShare?.sessionId ?? null,
           token,
           onEvent: (event) => {
+            if (event.type === PROJECT_API_EVENT_NAMES.ready) {
+              kickProjectApiViewRefresh();
+              kickDesktopStateRefresh();
+              kickNotificationFeedRefresh();
+              return;
+            }
             if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
               if (projectUpdateTouchesServiceView(event.views)) {
                 kickProjectApiViewRefresh();

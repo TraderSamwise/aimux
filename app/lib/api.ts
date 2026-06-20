@@ -51,6 +51,10 @@ export function setApiRelay(relay: RelayTransport | null): void {
   _relay = relay;
 }
 
+export function getApiRelay(): RelayTransport | null {
+  return _relay;
+}
+
 export interface ApiOpts {
   token?: string | null;
   signal?: AbortSignal;
@@ -106,7 +110,7 @@ async function callServiceViaRelay<T>(
   return callDaemonViaRelay<T>(method, proxyPath, body);
 }
 
-function shouldRouteViaRelay(): boolean {
+export function shouldRouteViaRelay(): boolean {
   return _relay !== null || env.AIMUX_CONNECTION_MODE === "relay";
 }
 
