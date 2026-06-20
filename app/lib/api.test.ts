@@ -34,7 +34,6 @@ import {
   listNotifications,
   listTasks,
   listThreads,
-  listWorkflow,
   markThreadSeen,
   markNotificationsRead,
   markActiveWindow,
@@ -590,7 +589,6 @@ describe("api relay routing", () => {
 
     await listThreads(endpoint, "agent/1");
     await listNotifications(endpoint, { unreadOnly: true, sessionId: "agent/1" });
-    await listWorkflow(endpoint, "codex/1");
     await listTasks(endpoint, { sessionId: "agent/1", status: "pending" });
     await getTask(endpoint, "task/1");
     await getCoordinationWorklist(endpoint, "codex/1");
@@ -614,35 +612,29 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(
       3,
       "GET",
-      "/proxy/127.0.0.1/43210/workflow?participant=codex%2F1",
+      "/proxy/127.0.0.1/43210/tasks?session=agent%2F1&status=pending",
       undefined,
     );
     expect(request).toHaveBeenNthCalledWith(
       4,
       "GET",
-      "/proxy/127.0.0.1/43210/tasks?session=agent%2F1&status=pending",
+      "/proxy/127.0.0.1/43210/tasks/task%2F1",
       undefined,
     );
     expect(request).toHaveBeenNthCalledWith(
       5,
       "GET",
-      "/proxy/127.0.0.1/43210/tasks/task%2F1",
+      "/proxy/127.0.0.1/43210/coordination-worklist?participant=codex%2F1",
       undefined,
     );
     expect(request).toHaveBeenNthCalledWith(
       6,
       "GET",
-      "/proxy/127.0.0.1/43210/coordination-worklist?participant=codex%2F1",
-      undefined,
-    );
-    expect(request).toHaveBeenNthCalledWith(
-      7,
-      "GET",
       "/proxy/127.0.0.1/43210/project-observability",
       undefined,
     );
-    expect(request).toHaveBeenNthCalledWith(8, "GET", "/proxy/127.0.0.1/43210/topology", undefined);
-    expect(request).toHaveBeenNthCalledWith(9, "GET", "/proxy/127.0.0.1/43210/library", undefined);
+    expect(request).toHaveBeenNthCalledWith(7, "GET", "/proxy/127.0.0.1/43210/topology", undefined);
+    expect(request).toHaveBeenNthCalledWith(8, "GET", "/proxy/127.0.0.1/43210/library", undefined);
   });
 
   it("routes notification mutations through the relay proxy", async () => {

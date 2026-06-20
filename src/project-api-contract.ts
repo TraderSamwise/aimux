@@ -8,7 +8,6 @@ export const PROJECT_API_ROUTES = {
   topology: "/topology",
   library: "/library",
   inbox: "/inbox",
-  workflow: "/workflow",
   worktrees: "/worktrees",
   graveyard: "/graveyard",
   plans: "/plans",
@@ -159,7 +158,6 @@ export const PROJECT_API_VIEWS = [
   "tasks",
   "threads",
   "topology",
-  "workflow",
   "worktrees",
 ] as const;
 

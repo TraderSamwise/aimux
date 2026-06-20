@@ -1111,19 +1111,6 @@ export async function requestReviewChanges(
   );
 }
 
-export async function listWorkflow(
-  endpoint: ServiceEndpoint,
-  participant = "user",
-  opts?: ApiOpts,
-): Promise<Array<Record<string, unknown>>> {
-  return callProjectJson<Array<Record<string, unknown>>>(
-    endpoint,
-    "GET",
-    `${PROJECT_API_ROUTES.workflow}?participant=${encodeURIComponent(participant)}`,
-    opts,
-  );
-}
-
 export async function listTasks(
   endpoint: ServiceEndpoint,
   filters?: { sessionId?: string; status?: string },

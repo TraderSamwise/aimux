@@ -25,7 +25,10 @@ export function startDashboardProjectEventStream(host: ProjectEventStreamHost): 
   host.dashboardProjectEventStreamAbort = controller;
   void runDashboardProjectEventLoop(host, controller.signal).catch((error) => {
     if (!controller.signal.aborted) {
-      debug(`dashboard project event stream stopped: ${error instanceof Error ? error.message : String(error)}`, "dashboard");
+      debug(
+        `dashboard project event stream stopped: ${error instanceof Error ? error.message : String(error)}`,
+        "dashboard",
+      );
     }
   });
 }
@@ -64,7 +67,10 @@ async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal
       }
     } catch (error) {
       if (signal.aborted || host.mode !== "dashboard") return;
-      debug(`dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`, "dashboard");
+      debug(
+        `dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`,
+        "dashboard",
+      );
       removeMetadataEndpoint(process.cwd());
       await sleep(RETRY_MS, signal);
     }
@@ -112,7 +118,10 @@ function processEventStreamLine(
       try {
         onEvent(eventName, JSON.parse(data));
       } catch (error) {
-        debug(`ignored malformed dashboard SSE payload: ${error instanceof Error ? error.message : String(error)}`, "dashboard");
+        debug(
+          `ignored malformed dashboard SSE payload: ${error instanceof Error ? error.message : String(error)}`,
+          "dashboard",
+        );
       }
     }
     return { eventName: "message", dataLines: [] };
@@ -171,15 +180,20 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
       "notifications",
       "tasks",
       "threads",
-      "workflow",
     ])
   ) {
     work.push(host.refreshDashboardModelFromService?.(true));
   }
-  if (host.isDashboardScreen?.("coordination") && touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads", "workflow"])) {
+  if (
+    host.isDashboardScreen?.("coordination") &&
+    touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
+  ) {
     work.push(host.refreshCoordinationFromService?.());
   }
-  if (host.isDashboardScreen?.("project") && touches(views, ["project-observability", "tasks", "notifications", "worktrees", "agents", "services"])) {
+  if (
+    host.isDashboardScreen?.("project") &&
+    touches(views, ["project-observability", "tasks", "notifications", "worktrees", "agents", "services"])
+  ) {
     work.push(refreshProjectObservability(host));
   }
   if (host.isDashboardScreen?.("topology") && touches(views, ["topology", "agents", "services", "worktrees"])) {

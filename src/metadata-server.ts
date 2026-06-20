@@ -67,7 +67,7 @@ import {
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
-import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow.js";
+import { buildCoordinationThreadEntries } from "./workflow.js";
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
@@ -1793,10 +1793,6 @@ export class MetadataServer {
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.threads.list) {
       send(res, 200, listThreadSummaries(url.searchParams.get("session") ?? undefined));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.workflow) {
-      send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.tasks.list) {
