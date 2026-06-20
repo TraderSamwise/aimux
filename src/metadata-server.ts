@@ -3304,6 +3304,9 @@ export class MetadataServer {
           type?: "task" | "review";
           diff?: string;
           worktreePath?: string;
+          assigner?: string;
+          reviewOf?: string;
+          iteration?: number;
         };
         const result = await assignTask({
           from: body.from?.trim() || "user",
@@ -3315,6 +3318,9 @@ export class MetadataServer {
           type: body.type,
           diff: body.diff,
           worktreePath: body.worktreePath,
+          assigner: body.assigner?.trim(),
+          reviewOf: body.reviewOf?.trim(),
+          iteration: body.iteration,
         });
         this.emitAssignedTaskAlert(result);
         this.notifyChange();

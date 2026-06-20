@@ -50,7 +50,7 @@ describe("cleanupInbox runtime", () => {
     expect(result.results.some((item: any) => item.status === "cleared")).toBe(true);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
     await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce());
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce());
   });
 
   it("does not refresh or notify when nothing is eligible", async () => {

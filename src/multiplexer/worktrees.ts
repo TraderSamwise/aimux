@@ -343,7 +343,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     stderr: "",
   };
   if (host.mode !== "dashboard") {
-    host.showDashboardError("Failed to graveyard worktree", ["Worktree graveyard requires the project service."]);
+    host.worktreeRemovalJob.stderr = "Worktree graveyard requires the project service.";
     finishWorktreeRemoval(host, 1);
     return;
   }
@@ -389,7 +389,7 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
     host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
     if (job.oldIdx >= 0 && job.oldIdx < host.dashboardState.worktreeNavOrder.length) {
       host.dashboardState.focusedWorktreePath = host.dashboardState.worktreeNavOrder[job.oldIdx];
-    } else if (host.dashboardState.worktreeNavOrder.length > 1) {
+    } else if (host.dashboardState.worktreeNavOrder.length > 0) {
       host.dashboardState.focusedWorktreePath =
         host.dashboardState.worktreeNavOrder[host.dashboardState.worktreeNavOrder.length - 1];
     } else {

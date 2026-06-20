@@ -408,6 +408,9 @@ export interface TaskAssignInput {
   type?: "task" | "review";
   diff?: string;
   worktreePath?: string;
+  assigner?: string;
+  reviewOf?: string;
+  iteration?: number;
 }
 
 export interface TaskLifecycleInput {

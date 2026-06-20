@@ -9,7 +9,13 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
-import { getDefaultTeamConfig, isTeammateSession, isOverseerSession, loadTeamConfig } from "../team.js";
+import {
+  getDefaultTeamConfig,
+  isTeammateSession,
+  isOverseerSession,
+  loadTeamConfig,
+  type TeamConfig,
+} from "../team.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -36,6 +42,29 @@ function flashPendingDashboardItem(
 
 function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined): any | undefined {
   return host.dashboardWorktreeGroupsCache.find((group: any) => group.path === worktreePath);
+}
+
+function isTeamConfig(value: unknown): value is TeamConfig {
+  if (!value || typeof value !== "object") return false;
+  const config = value as TeamConfig;
+  if (!config.roles || typeof config.roles !== "object") return false;
+  return Object.values(config.roles).every(
+    (role) =>
+      role &&
+      typeof role === "object" &&
+      typeof role.description === "string" &&
+      (role.canEdit === undefined || typeof role.canEdit === "boolean") &&
+      (role.reviewedBy === undefined || typeof role.reviewedBy === "string"),
+  );
+}
+
+function loadDashboardTeamConfig(): TeamConfig {
+  try {
+    const team = loadTeamConfig();
+    return isTeamConfig(team) ? team : getDefaultTeamConfig();
+  } catch {
+    return getDefaultTeamConfig();
+  }
 }
 
 function isRemovingDashboardWorktree(group: any | undefined): boolean {
@@ -882,13 +911,7 @@ export const dashboardInteractionMethods = {
     if (!session) return;
 
     const role = this.sessionRoles.get(session.id) ?? "coder";
-    const team = (() => {
-      try {
-        return loadTeamConfig();
-      } catch {
-        return getDefaultTeamConfig();
-      }
-    })();
+    const team = loadDashboardTeamConfig();
     const roleConfig = team.roles[role];
     let reviewerRole = roleConfig?.reviewedBy;
     if (!reviewerRole || reviewerRole === role) {
@@ -904,9 +927,14 @@ export const dashboardInteractionMethods = {
       this.renderDashboard();
       return;
     }
+    const worktreePath = this.sessionWorktreePaths?.get?.(session.id);
     let diff: string | undefined;
     try {
-      diff = execSync("git diff HEAD", { encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
+      if (worktreePath) {
+        diff =
+          execSync("git diff HEAD", { cwd: worktreePath, encoding: "utf-8", timeout: 5000 }).slice(0, 5000) ||
+          undefined;
+      }
     } catch {}
 
     try {
@@ -917,7 +945,10 @@ export const dashboardInteractionMethods = {
         prompt: `Review ${session.command} agent's recent work`,
         type: "review",
         diff,
-        worktreePath: this.sessionWorktreePaths?.get?.(session.id),
+        worktreePath,
+        assigner: role,
+        reviewOf: session.id,
+        iteration: 1,
       });
       const assignee = result?.task?.assignee ?? reviewerRole;
       this.footerFlash = `⧫ Review requested → ${assignee}`;
