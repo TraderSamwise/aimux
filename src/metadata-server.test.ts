@@ -784,9 +784,8 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
       throw new Error("stale offline window id should not be resolved");
     });
-    await server.start();
-
     try {
+      await server.start();
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -824,9 +823,8 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
       throw new Error("stale exited window id should not be resolved");
     });
-    await server.start();
-
     try {
+      await server.start();
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -886,9 +884,8 @@ describe("MetadataServer threads API", () => {
           },
         },
       ] as any;
-    await server.start();
-
     try {
+      await server.start();
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
