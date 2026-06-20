@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 
 const renderTopologyScreen = vi.hoisted(() => vi.fn());
 
@@ -9,7 +10,7 @@ vi.mock("../tui/screens/subscreen-renderers.js", () => ({
 import { handleTopologyKey, refreshTopology } from "./topology.js";
 
 describe("refreshTopology", () => {
-  function topologyModel(rows: any[] = []) {
+  function topologyModel(rows: ProjectTopology["rows"] = []) {
     return {
       projectName: "aimux",
       health: "active",
@@ -56,7 +57,7 @@ describe("refreshTopology", () => {
     const topology = topologyModel([
       { kind: "agent", depth: 1, label: "codex", health: "active", sessionId: "codex-1" },
     ]);
-    const invalidTopology = topologyModel([{ kind: "agent", depth: 1, label: "bad", health: "unknown" }]);
+    const invalidTopology = topologyModel([{ kind: "agent", depth: 1, label: "bad", health: "unknown" } as any]);
     const host: any = {
       topology,
       topologyLoaded: true,
@@ -89,13 +90,7 @@ describe("refreshTopology", () => {
 
   it("applies a valid empty topology over previously loaded state", async () => {
     const topology = topologyModel([{ kind: "agent", depth: 1, label: "old", health: "active", sessionId: "old-1" }]);
-    const emptyTopology = {
-      projectName: "aimux",
-      health: "idle",
-      counts: { worktrees: 0, agents: 0, services: 0 },
-      worktrees: [],
-      rows: [],
-    };
+    const emptyTopology = buildProjectTopology({ projectName: "aimux", worktrees: [] });
     const host: any = {
       topology,
       topologyLoaded: true,
