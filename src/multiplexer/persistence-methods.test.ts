@@ -116,6 +116,16 @@ describe("persistenceMethods", () => {
         sessions: [],
         services: [],
         worktrees: [],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "master",
+            path: undefined,
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+        ],
         operationFailures: [],
         mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
         mainCheckoutPath: "/repo",
@@ -151,6 +161,15 @@ describe("persistenceMethods", () => {
         pendingAction: "creating",
         optimistic: true,
       }),
+    ]);
+    expect(state.worktreeGroups).toEqual([
+      expect.objectContaining({
+        name: "demo",
+        path: "/repo/.aimux/worktrees/demo",
+        pending: true,
+        pendingAction: "creating",
+      }),
+      expect.objectContaining({ name: "Main Checkout", path: undefined }),
     ]);
     expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
   });
@@ -243,6 +262,9 @@ describe("persistenceMethods", () => {
         pendingAction: "creating",
         optimistic: true,
       }),
+    ]);
+    expect(state.worktreeGroups).toEqual([
+      expect.objectContaining({ name: "demo", path: worktreePath, pending: true, pendingAction: "creating" }),
     ]);
     expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
   });
@@ -350,7 +372,17 @@ describe("persistenceMethods", () => {
       desktopStateSnapshot: {
         sessions: [session],
         services: [service],
-        worktrees: [],
+        worktrees: [{ name: "demo", branch: "demo", path: "/repo/.aimux/worktrees/demo", isBare: false }],
+        worktreeGroups: [
+          {
+            name: "demo",
+            branch: "demo",
+            path: "/repo/.aimux/worktrees/demo",
+            status: "active",
+            sessions: [session],
+            services: [service],
+          },
+        ],
         operationFailures: [],
         mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
         mainCheckoutPath: "/repo",
@@ -378,6 +410,12 @@ describe("persistenceMethods", () => {
         pendingAction: "removing",
         optimistic: true,
       }),
+    ]);
+    expect(state.worktreeGroups[0]?.sessions).toEqual([
+      expect.objectContaining({ id: session.id, pending: true, pendingAction: "stopping" }),
+    ]);
+    expect(state.worktreeGroups[0]?.services).toEqual([
+      expect.objectContaining({ id: service.id, pending: true, pendingAction: "removing" }),
     ]);
   });
 
