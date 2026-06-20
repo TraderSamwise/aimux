@@ -141,6 +141,7 @@ export class RelayObject extends DurableObject<Env> {
     );
 
     if (role === "daemon") {
+      this.rehydrateSockets(server);
       if (this.daemonWs) {
         this.failPendingRequests("Daemon connection replaced", 502);
         this.failProjectEventSubscriptions("Daemon connection replaced", 502);
