@@ -154,12 +154,65 @@ describe("worktrees dashboard mutation protocol", () => {
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
 
-    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled(), { timeout: 2000 });
 
     expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({
       name: "demo",
       branch: "(failed)",
       path: "/repo/.aimux/worktrees/demo",
+      operationFailure: expect.objectContaining({ message: "branch already exists" }),
+    });
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
+  });
+
+  it("waits for service-projected create failures after overlapping refreshes", async () => {
+    postToProjectService.mockRejectedValueOnce(new Error("branch already exists"));
+    const pending = createPendingActionsStore();
+    let refreshCount = 0;
+    const host: any = {
+      mode: "dashboard",
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount === 1) return false;
+        applyRawWorktrees(host, pending, [
+          {
+            name: "demo",
+            branch: "(failed)",
+            path: "/repo/.aimux/worktrees/demo",
+            sessions: [],
+            services: [],
+            operationFailure: {
+              targetKind: "worktree",
+              operation: "create",
+              message: "branch already exists",
+              worktreePath: "/repo/.aimux/worktrees/demo",
+            },
+          },
+        ]);
+        return true;
+      }),
+      settleDashboardCreatePending: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled(), { timeout: 2000 });
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledTimes(2);
+    expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({
+      name: "demo",
+      branch: "(failed)",
       operationFailure: expect.objectContaining({ message: "branch already exists" }),
     });
     expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
@@ -187,7 +240,7 @@ describe("worktrees dashboard mutation protocol", () => {
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
 
-    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled(), { timeout: 2000 });
 
     expect(host.dashboardWorktreeGroupsCache).toEqual([]);
     expect(host.dashboardOperationFailuresCache).toEqual([]);
