@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -58,7 +58,9 @@ export default function ServiceDetailScreen() {
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | null>(null);
   const [loadingMissingService, setLoadingMissingService] = useState(false);
-  const [missingServiceFetchKey, setMissingServiceFetchKey] = useState<string | null>(null);
+  const missingServiceFetchKeyRef = useRef<string | null>(null);
+  const missingServiceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [missingServiceRetryNonce, setMissingServiceRetryNonce] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -81,15 +83,16 @@ export default function ServiceDetailScreen() {
   const relayReadyForRequests = !env.AIMUX_RELAY_URL || relayStatus === "connected";
 
   useEffect(() => {
-    if (found || !endpointHost || !endpointPort || !endpointKey || !projectPath || !serviceId) return;
+    if (found || !endpointHost || !endpointPort || !endpointKey || !projectPath || !serviceId) {
+      return;
+    }
     if (!relayReadyForRequests) return;
     const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
-    if (missingServiceFetchKey === fetchKey) return;
+    if (missingServiceFetchKeyRef.current === fetchKey) return;
     let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const endpointForRequest = { host: endpointHost, port: endpointPort };
     (async () => {
-      setMissingServiceFetchKey(fetchKey);
+      missingServiceFetchKeyRef.current = fetchKey;
       setLoadingMissingService(true);
       try {
         const currentToken = await getToken();
@@ -98,8 +101,15 @@ export default function ServiceDetailScreen() {
       } catch (err) {
         console.warn("service detail desktop-state refresh failed:", err);
         if (!cancelled) {
-          retryTimer = setTimeout(() => {
-            setMissingServiceFetchKey((current) => (current === fetchKey ? null : current));
+          if (missingServiceRetryTimerRef.current) {
+            clearTimeout(missingServiceRetryTimerRef.current);
+          }
+          missingServiceRetryTimerRef.current = setTimeout(() => {
+            missingServiceRetryTimerRef.current = null;
+            if (missingServiceFetchKeyRef.current === fetchKey) {
+              missingServiceFetchKeyRef.current = null;
+              setMissingServiceRetryNonce((current) => current + 1);
+            }
           }, 2000);
         }
       } finally {
@@ -108,9 +118,13 @@ export default function ServiceDetailScreen() {
     })();
     return () => {
       cancelled = true;
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-        setMissingServiceFetchKey((current) => (current === fetchKey ? null : current));
+      if (missingServiceRetryTimerRef.current) {
+        clearTimeout(missingServiceRetryTimerRef.current);
+        missingServiceRetryTimerRef.current = null;
+      }
+      if (missingServiceFetchKeyRef.current === fetchKey) {
+        missingServiceFetchKeyRef.current = null;
+        setLoadingMissingService(false);
       }
     };
   }, [
@@ -119,7 +133,7 @@ export default function ServiceDetailScreen() {
     endpointPort,
     found,
     getToken,
-    missingServiceFetchKey,
+    missingServiceRetryNonce,
     projectPath,
     relayReadyForRequests,
     serviceId,
