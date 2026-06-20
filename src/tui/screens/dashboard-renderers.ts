@@ -166,9 +166,9 @@ function sessionActivityChips(session: DashboardSession): string {
     chips.push(chip(`thread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}`, "muted"));
   }
   if (threadPending > 0) chips.push(chip(`${threadPending} pending`, tone("danger")));
-  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("workflow on you", tone("attn")));
-  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("workflow blocked", tone("danger")));
-  if ((session.workflowFamilyCount ?? 0) > 0) chips.push(chip(`workflow ${session.workflowFamilyCount}`, "muted"));
+  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("coordination on you", tone("attn")));
+  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("coordination blocked", tone("danger")));
+  if ((session.workflowFamilyCount ?? 0) > 0) chips.push(chip(`coordination ${session.workflowFamilyCount}`, "muted"));
 
   return chips.join(" ");
 }
@@ -755,7 +755,7 @@ export function renderDashboardFrame(
       ]
         .filter(Boolean)
         .join(" · ");
-      lines.push(...wrapKeyValue("Workflow", summary, width));
+      lines.push(...wrapKeyValue("Coordination", summary, width));
     }
     if ((selected.services?.length ?? 0) > 0) {
       lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));
