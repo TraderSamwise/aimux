@@ -80,7 +80,10 @@ export default function LibraryScreen() {
     getTokenRef.current = getToken;
   }, [endpoint, getToken, viewKey]);
 
-  const visibleDocuments = documentsKey === viewKey ? documents : [];
+  const visibleDocuments = useMemo(
+    () => (documentsKey === viewKey ? documents : []),
+    [documents, documentsKey, viewKey],
+  );
 
   const selectedDocument = useMemo(
     () =>

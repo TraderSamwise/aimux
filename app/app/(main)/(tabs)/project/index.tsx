@@ -222,7 +222,10 @@ export default function ProjectScreen() {
   }, [endpoint, getToken, viewKey]);
 
   const visibleModel = modelKey === viewKey ? model : emptyProjectObservability();
-  const visibleTasks = tasksKey === viewKey ? tasks : [];
+  const visibleTasks = useMemo(
+    () => (tasksKey === viewKey ? tasks : []),
+    [tasks, tasksKey, viewKey],
+  );
 
   const refreshProject = useCallback(async () => {
     const seq = ++projectRefreshSeqRef.current;

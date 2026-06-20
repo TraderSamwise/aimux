@@ -176,7 +176,10 @@ export default function CoordinationScreen() {
 
   useProjectApiRelayPolling(endpointKey, refresh);
 
-  const visibleItems = itemsKey === viewKey ? items : [];
+  const visibleItems = useMemo(
+    () => (itemsKey === viewKey ? items : []),
+    [items, itemsKey, viewKey],
+  );
   const needsYou = useMemo(() => visibleItems.filter((item) => item.actionable), [visibleItems]);
   const tail = useMemo(() => visibleItems.filter((item) => !item.actionable), [visibleItems]);
 

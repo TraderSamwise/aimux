@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startProjectApiRelayPoll } from "./project-api-relay-polling";
+import { startProjectApiRelayPoll } from "./project-api-relay-polling-scheduler";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
