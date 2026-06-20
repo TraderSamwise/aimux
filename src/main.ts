@@ -105,13 +105,7 @@ import { registerExposeCommand } from "./popup-expose.js";
 import { runTmuxMetaDashboard } from "./tmux/meta-dashboard.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
-import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
-import {
-  findLiveDashboardTarget,
-  openDashboardTarget,
-  pruneDashboardArtifacts,
-  resolveDashboardTarget,
-} from "./dashboard/targets.js";
+import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
@@ -164,11 +158,11 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
     `Expected build: ${error.expected.buildStamp}`,
     `Running build: ${error.actual?.buildStamp ?? "unknown"}`,
     "",
-    "Restart the project runtime, then retry:",
-    "  aimux restart-runtime --open",
+    "Restart the local aimux control plane, then retry:",
+    "  aimux restart",
     "",
-    "If the mismatch persists, use the advanced daemon restart path:",
-    "  aimux daemon restart",
+    "Inspect the local version inventory with:",
+    "  aimux doctor versions",
   ];
   return lines.join("\n");
 }
@@ -176,12 +170,12 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
 async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   console.error(`aimux: restarting stale daemon-managed control plane for ${projectRoot}...`);
   log.warn("restarting stale control plane", "runtime", { projectRoot });
-  await stopDaemon();
   removeMetadataEndpoint(projectRoot);
-  await ensureDaemonRunning();
-  await ensureProjectService(projectRoot);
-  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, new TmuxRuntimeManager());
+  const result = await restartAimuxControlPlane({ projectRoot });
+  const project = result.projects.find((entry) => entry.projectRoot === projectRoot);
+  if (project?.service.status === "failed") {
+    throw new Error(project.service.error ?? "failed to restart project service");
+  }
 }
 
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
@@ -1447,21 +1441,17 @@ daemonCmd
 
 daemonCmd
   .command("restart")
-  .description("Restart the global aimux daemon")
-  .action(async () => {
-    const priorProjects = Object.values(loadDaemonState().projects)
-      .map((project) => project.projectRoot)
-      .filter((projectRoot, index, items) => items.indexOf(projectRoot) === index);
-    await stopDaemon("SIGTERM");
-    const info = await ensureDaemonRunning();
-    for (const projectRoot of priorProjects) {
-      await ensureProjectService(projectRoot);
+  .description("Compatibility alias for aimux restart")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const result = await restartAimuxControlPlane();
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.summary.failures > 0) process.exitCode = 1;
+      return;
     }
-    const restoredSuffix =
-      priorProjects.length > 0
-        ? ` and restored ${priorProjects.length} project service${priorProjects.length === 1 ? "" : "s"}`
-        : "";
-    console.log(`Restarted daemon pid ${info.pid} on http://127.0.0.1:${info.port}${restoredSuffix}`);
+    console.log(renderRuntimeRestartResult(result));
+    if (result.summary.failures > 0) process.exitCode = 1;
   });
 
 daemonCmd
