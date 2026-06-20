@@ -171,7 +171,7 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshDashboardModelFromService: vi.fn(async () => false),
       getDashboardServices: vi.fn(() => services[0]),
       showDashboardError: vi.fn(),
     };
@@ -236,7 +236,7 @@ describe("dashboard-ops", () => {
       renderDashboard: vi.fn(),
       getSessionLabel: vi.fn(() => "claude"),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshDashboardModelFromService: vi.fn(async () => false),
       getDashboardSessions: vi.fn(() => sessions[0]),
       showDashboardError: vi.fn(),
     };

@@ -129,7 +129,8 @@ function assertDashboardMutationSettled(settled: boolean, action: string): void 
 
 async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOpsHost): Promise<boolean> {
   if (typeof host.refreshDashboardModelFromService === "function") {
-    return host.refreshDashboardModelFromService(true);
+    await host.refreshDashboardModelFromService(true);
+    return true;
   }
   return false;
 }
