@@ -632,18 +632,34 @@ function parseOptionalInteger(
   field: string,
 ): { ok: true; value?: number } | { ok: false; error: string } {
   if (raw === null || raw.trim() === "") return { ok: true };
-  const value = Number.parseInt(raw, 10);
-  if (Number.isNaN(value)) return { ok: false, error: `${field} must be an integer` };
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) return { ok: false, error: `${field} must be an integer` };
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value)) return { ok: false, error: `${field} must be a safe integer` };
   return { ok: true, value };
+}
+
+function parseIntegerValue(value: unknown, field: string): { ok: true; value: number } | { ok: false; error: string } {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) return { ok: false, error: `${field} must be an integer` };
+    return { ok: true, value };
+  }
+  if (typeof value !== "string") return { ok: false, error: `${field} must be an integer` };
+  const trimmed = value.trim();
+  if (!/^-?\d+$/.test(trimmed)) return { ok: false, error: `${field} must be an integer` };
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) return { ok: false, error: `${field} must be a safe integer` };
+  return { ok: true, value: parsed };
 }
 
 function parsePositiveInteger(
   value: unknown,
   field: string,
 ): { ok: true; value: number } | { ok: false; error: string } {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
-  if (!Number.isInteger(parsed) || parsed < 1) return { ok: false, error: `${field} must be an integer >= 1` };
-  return { ok: true, value: parsed };
+  const parsed = parseIntegerValue(value, field);
+  if (!parsed.ok) return parsed;
+  if (parsed.value < 1) return { ok: false, error: `${field} must be an integer >= 1` };
+  return parsed;
 }
 
 type DesktopSessionRecord = Record<string, unknown> & {
@@ -3530,18 +3546,15 @@ export class MetadataServer {
           return;
         }
 
-        const startLine =
+        const parsedStartLine =
           body.startLine === undefined
-            ? -120
-            : typeof body.startLine === "number"
-              ? body.startLine
-              : typeof body.startLine === "string"
-                ? Number.parseInt(body.startLine, 10)
-                : NaN;
-        if (!Number.isInteger(startLine)) {
-          send(res, 400, { ok: false, error: "startLine must be an integer" });
+            ? ({ ok: true, value: -120 } as const)
+            : parseIntegerValue(body.startLine, "startLine");
+        if (!parsedStartLine.ok) {
+          send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
+        const startLine = parsedStartLine.value;
 
         let resize: { cols: number; rows: number } | undefined;
         if (body.cols !== undefined || body.rows !== undefined) {
