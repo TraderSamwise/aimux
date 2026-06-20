@@ -84,6 +84,12 @@ function coherenceReport(): RuntimeCoherenceReport {
   };
 }
 
+function stoppedDaemon(
+  stoppedProjectServices: NonNullable<RuntimeCoherenceReport["projects"][number]["service"]["daemonState"]>[] = [],
+) {
+  return { pid: 9001, port: 43190, startedAt: "then", updatedAt: "now", stoppedProjectServices };
+}
+
 describe("restartAimuxControlPlane", () => {
   it("restarts the daemon, ensures known services, and reloads only existing dashboards by default", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
@@ -106,7 +112,7 @@ describe("restartAimuxControlPlane", () => {
     const result = await restartAimuxControlPlane({
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
-      stopDaemon: vi.fn(async () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" })),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
       ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
       ensureProjectService,
       createTmux: () => ({ isAvailable: () => true }),
@@ -138,7 +144,7 @@ describe("restartAimuxControlPlane", () => {
       projectRoot: "/repo/beta",
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
-      stopDaemon: vi.fn(async () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" })),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
       ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
       ensureProjectService,
       createTmux: () => ({ isAvailable: () => true }),
@@ -164,7 +170,7 @@ describe("restartAimuxControlPlane", () => {
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
       stopDaemon: vi.fn(async () => {
         calls.push("stop");
-        return { pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" };
+        return stoppedDaemon();
       }),
       ensureDaemonRunning: vi.fn(async () => {
         calls.push("ensure-daemon");
@@ -205,7 +211,7 @@ describe("restartAimuxControlPlane", () => {
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
       stopDaemon: vi.fn(async () => {
         calls.push("stop");
-        return { pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" };
+        return stoppedDaemon(coherenceReport().projects.flatMap((project) => project.service.daemonState ?? []));
       }),
       ensureDaemonRunning: vi.fn(async () => {
         calls.push("ensure-daemon");
@@ -270,6 +276,38 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(isPidAlive).not.toHaveBeenCalled();
+    expect(killPid).not.toHaveBeenCalled();
+  });
+
+  it("does not wait pids that were not signaled by stopDaemon", async () => {
+    const isPidAlive = vi.fn((pid: number) => {
+      if (pid === 9001) return false;
+      throw new Error(`should not inspect unsignaled service pid ${pid}`);
+    });
+    const killPid = vi.fn();
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon([])),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive,
+      killPid,
+    });
+
+    expect(isPidAlive).toHaveBeenCalledWith(9001);
     expect(killPid).not.toHaveBeenCalled();
   });
 });

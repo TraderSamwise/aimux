@@ -166,10 +166,6 @@ async function waitForPidsExit(input: {
   }
 }
 
-function priorProjectServicePids(before: RuntimeCoherenceReport): number[] {
-  return before.projects.map((project) => project.service.daemonState?.pid ?? 0);
-}
-
 export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
@@ -191,7 +187,7 @@ export async function restartAimuxControlPlane(
       killPid,
     });
     await waitForPidsExit({
-      pids: priorProjectServicePids(before),
+      pids: previousDaemon.stoppedProjectServices.map((service) => service.pid),
       timeoutMs: options.serviceExitTimeoutMs ?? 5000,
       killGraceMs: options.killGraceMs ?? 2000,
       isPidAlive,

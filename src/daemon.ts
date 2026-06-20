@@ -82,6 +82,10 @@ export interface ProjectServiceState {
   updatedAt: string;
 }
 
+export interface StoppedDaemonInfo extends AimuxDaemonInfo {
+  stoppedProjectServices: ProjectServiceState[];
+}
+
 interface DaemonState {
   version: 1;
   updatedAt: string;
@@ -206,16 +210,17 @@ export function loadDaemonInfo(): AimuxDaemonInfo | null {
   return isPidAlive(info.pid) ? info : null;
 }
 
-export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<AimuxDaemonInfo | null> {
+export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<StoppedDaemonInfo | null> {
   const info = loadDaemonInfo();
   if (!info) return null;
   const state = loadDaemonState();
+  const stoppedProjectServices = Object.values(state.projects);
   log.info("stopping daemon", "daemon", {
     pid: info.pid,
     signal,
     projectCount: Object.keys(state.projects).length,
   });
-  for (const entry of Object.values(state.projects)) {
+  for (const entry of stoppedProjectServices) {
     try {
       process.kill(entry.pid, signal);
     } catch {}
@@ -229,7 +234,7 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<Ai
     projects: {},
   } satisfies DaemonState);
   clearFile(getDaemonInfoPath());
-  return info;
+  return { ...info, stoppedProjectServices };
 }
 
 export function loadDaemonState(): DaemonState {
