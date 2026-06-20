@@ -2,6 +2,7 @@ import { getWorktreeCreatePath, isToolInternalWorktree, listWorktrees as listAll
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
 import { addDashboardOperationFailure } from "../dashboard/operation-failures.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
@@ -255,7 +256,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
         host.renderDashboard();
         void (async () => {
           try {
-            await postToProjectService(host, "/worktrees/create", { name }, { timeoutMs: 180_000 });
+            await postToProjectService(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
             const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath);
             if (!result.ok) {
               throw result.error;
@@ -350,7 +351,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
       pendingPath: path,
       pendingAction: "graveyarding",
       request: async () => {
-        await postToProjectService(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
+        await postToProjectService(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
       },
       settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group),
       onSuccess: () => {

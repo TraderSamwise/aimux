@@ -1,4 +1,5 @@
 import { parseKeys } from "../key-parser.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { markThreadSeen } from "../threads.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
 import type { WorklistItem } from "../coordination-model.js";
@@ -88,10 +89,10 @@ async function clearNotificationItem(host: CoordinationHost, item: WorklistItem)
   const note = item.notification;
   if (!note) return;
   if (item.sessionId) {
-    await host.postToProjectService("/notifications/clear", { sessionId: item.sessionId });
+    await host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, { sessionId: item.sessionId });
   } else {
     for (const record of note.notifications) {
-      await host.postToProjectService("/notifications/clear", { id: record.id });
+      await host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, { id: record.id });
     }
   }
 }
@@ -232,11 +233,11 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
     return;
   }
   if (key === "R") {
-    applyNotificationMutation(host, host.postToProjectService("/notifications/read", {}));
+    applyNotificationMutation(host, host.postToProjectService(PROJECT_API_ROUTES.notifications.read, {}));
     return;
   }
   if (key === "C") {
-    applyNotificationMutation(host, host.postToProjectService("/notifications/clear", {}));
+    applyNotificationMutation(host, host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, {}));
     return;
   }
 

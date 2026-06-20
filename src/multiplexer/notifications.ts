@@ -1,4 +1,5 @@
 import { listNotifications } from "../notifications.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   buildCoordinationView,
   type CoordinationModel,
@@ -68,17 +69,17 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
   if (key === "r") {
     const selected = panel.entries[panel.index];
     if (!selected) return;
-    void mutateNotificationsViaService(host, "/notifications/read", { id: selected.id });
+    void mutateNotificationsViaService(host, PROJECT_API_ROUTES.notifications.read, { id: selected.id });
     return;
   }
   if (key === "c") {
     const selected = panel.entries[panel.index];
     if (!selected) return;
-    void mutateNotificationsViaService(host, "/notifications/clear", { id: selected.id });
+    void mutateNotificationsViaService(host, PROJECT_API_ROUTES.notifications.clear, { id: selected.id });
     return;
   }
   if (key === "C") {
-    void mutateNotificationsViaService(host, "/notifications/clear", {}, { resetIndex: true });
+    void mutateNotificationsViaService(host, PROJECT_API_ROUTES.notifications.clear, {}, { resetIndex: true });
   }
 }
 
@@ -86,7 +87,7 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
 // from the freshly-written store. Failures flash rather than mutating the local store directly.
 async function mutateNotificationsViaService(
   host: NotificationHost,
-  path: "/notifications/read" | "/notifications/clear",
+  path: typeof PROJECT_API_ROUTES.notifications.read | typeof PROJECT_API_ROUTES.notifications.clear,
   selector: { id?: string; sessionId?: string },
   opts: { resetIndex?: boolean } = {},
 ): Promise<void> {
@@ -170,7 +171,7 @@ export function refreshNotificationEntries(host: NotificationHost): void {
 // failure fall back to the local build so a disconnected dashboard still shows last-known state.
 export async function refreshCoordinationFromService(host: NotificationHost): Promise<boolean> {
   try {
-    const res = await host.getFromProjectService("/coordination-worklist");
+    const res = await host.getFromProjectService(PROJECT_API_ROUTES.coordinationWorklist);
     // Validate the shape before mutating host state so a malformed/version-skewed payload fails
     // fast into the local fallback instead of half-applying and crashing a renderer downstream.
     if (!res?.ok || !Array.isArray(res.model?.items) || !Array.isArray(res.worklist?.items)) {
@@ -260,10 +261,10 @@ export async function markCoordinationItemRead(host: NotificationHost, item: Wor
   const note = item.notification;
   if (!note) return;
   if (item.sessionId) {
-    await host.postToProjectService("/notifications/read", { sessionId: item.sessionId });
+    await host.postToProjectService(PROJECT_API_ROUTES.notifications.read, { sessionId: item.sessionId });
   } else {
     for (const record of note.notifications) {
-      await host.postToProjectService("/notifications/read", { id: record.id });
+      await host.postToProjectService(PROJECT_API_ROUTES.notifications.read, { id: record.id });
     }
   }
 }

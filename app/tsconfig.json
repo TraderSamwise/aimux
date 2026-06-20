@@ -12,6 +12,7 @@
     ".expo/types/**/*.ts",
     "environment.d.ts",
     "expo-env.d.ts",
-    "nativewind-env.d.ts"
+    "nativewind-env.d.ts",
+    "../src/project-api-contract.ts"
   ]
 }

@@ -1,5 +1,6 @@
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
@@ -115,10 +116,10 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
   const promise =
     item.kind === "worktree"
       ? host.mode === "dashboard"
-        ? postToProjectService(host, "/graveyard/worktrees/resurrect", { path: item.entry.path }, { timeoutMs: 10_000 })
+        ? postToProjectService(host, PROJECT_API_ROUTES.graveyardActions.resurrectWorktree, { path: item.entry.path }, { timeoutMs: 10_000 })
         : host.resurrectGraveyardWorktree(item.entry.path)
       : host.mode === "dashboard"
-        ? postToProjectService(host, "/graveyard/resurrect", { sessionId: item.entry.id }, { timeoutMs: 10_000 })
+        ? postToProjectService(host, PROJECT_API_ROUTES.graveyardActions.resurrectAgent, { sessionId: item.entry.id }, { timeoutMs: 10_000 })
         : host.resurrectGraveyardSession(item.entry.id);
   void promise
     .then(async () => {
@@ -170,7 +171,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   if (!entry) return;
   try {
     if (host.mode === "dashboard") {
-      await postToProjectService(host, "/graveyard/worktrees/delete", { path: entry.path }, { timeoutMs: 10_000 });
+      await postToProjectService(host, PROJECT_API_ROUTES.graveyardActions.deleteWorktree, { path: entry.path }, { timeoutMs: 10_000 });
     } else {
       await host.deleteGraveyardWorktree(entry.path);
     }
@@ -227,7 +228,7 @@ export async function refreshGraveyardEntriesFromService(host: ArchivesHost): Pr
     return false;
   }
   try {
-    const res = await host.getFromProjectService("/graveyard", { timeoutMs: 3000 });
+    const res = await host.getFromProjectService(PROJECT_API_ROUTES.graveyard, { timeoutMs: 3000 });
     if (!isGraveyardPayload(res)) throw new Error("invalid graveyard payload");
     applyGraveyardPayload(host, res);
     if (host.isDashboardScreen?.("graveyard")) {
