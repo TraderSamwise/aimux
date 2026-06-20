@@ -2362,6 +2362,27 @@ describe("MetadataServer threads API", () => {
       expect(deadSnapshot.level).toBeUndefined();
       expect(deadSnapshot.selectedEntryKind).toBeUndefined();
       expect(deadSnapshot.selectedEntryId).toBeUndefined();
+
+      TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+      const liveAgainRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+      );
+      expect(liveAgainRes.ok).toBe(true);
+      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      const dashboardWindowRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4099&focus=true`,
+      );
+      expect(dashboardWindowRes.ok).toBe(true);
+      const dashboardWindowSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(dashboardWindowSnapshot).toMatchObject({
+        screen: "dashboard",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        level: "sessions",
+        selectedEntryKind: "session",
+        selectedEntryId: "codex-1",
+      });
     } finally {
       TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
