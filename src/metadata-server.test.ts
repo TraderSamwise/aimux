@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
@@ -810,6 +810,81 @@ describe("MetadataServer threads API", () => {
     } finally {
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
+    }
+  });
+
+  it("resolves dashboard locations without mutating tmux state when focus is false", async () => {
+    const target = {
+      sessionName: "aimux-repo-abc-client-123",
+      windowId: "@99",
+      windowIndex: 0,
+      windowName: "dashboard-123",
+    } as any;
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const ensureProjectSession = TmuxRuntimeManager.prototype.ensureProjectSession;
+    const ensureDashboardWindow = TmuxRuntimeManager.prototype.ensureDashboardWindow;
+    const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-repo-abc-client-123";
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-repo-abc", "aimux-repo-abc-client-123"];
+    TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+      sessionName === "aimux-repo-abc-client-123"
+        ? [{ id: target.windowId, index: target.windowIndex, name: target.windowName, active: true }]
+        : [];
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.ensureProjectSession = vi.fn();
+    TmuxRuntimeManager.prototype.ensureDashboardWindow = vi.fn();
+    TmuxRuntimeManager.prototype.respawnWindow = vi.fn();
+    TmuxRuntimeManager.prototype.setWindowOption = vi.fn();
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const dashboardRes = await fetch(`${base}/control/open-dashboard`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-repo-abc-client-123",
+          currentWindowId: "@42",
+          focus: false,
+        }),
+      });
+      const dashboardBody = (await dashboardRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
+
+      const inboxRes = await fetch(`${base}/control/open-inbox`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentClientSession: "aimux-repo-abc-client-123", focus: false }),
+      });
+      const inboxBody = (await inboxRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
+
+      expect(dashboardRes.ok).toBe(true);
+      expect(dashboardBody).toMatchObject({ ok: true, focused: false, target });
+      expect(inboxRes.ok).toBe(true);
+      expect(inboxBody).toMatchObject({ ok: true, focused: false, target });
+      expect(TmuxRuntimeManager.prototype.ensureProjectSession).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.ensureDashboardWindow).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.respawnWindow).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.setWindowOption).not.toHaveBeenCalled();
+      expect(existsSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"))).toBe(false);
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
+      TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
+      TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
     }
   });
 
