@@ -620,6 +620,101 @@ describe("MetadataServer threads API", () => {
     expect(Array.isArray(body.threads)).toBe(true);
   });
 
+  it("serves project observability from desktop state, tasks, and notifications", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "live-1", command: "claude", status: "running" }],
+          teammates: [{ id: "team-1", command: "codex", status: "waiting" }],
+          services: [{ id: "svc-1", command: "yarn dev", status: "running" }],
+          worktrees: [{ name: "main", path: repoRoot, branch: "main" }],
+        }),
+      },
+    });
+    await server.start();
+
+    upsertNotification({ title: "Needs input", body: "body", sessionId: "live-1", kind: "needs_input" });
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/project-observability`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      project: {
+        summary: {
+          agentsRunning: number;
+          agentsWaiting: number;
+          services: number;
+          worktrees: number;
+          unreadNotifications: number;
+        };
+      };
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.project.summary).toMatchObject({
+      agentsRunning: 1,
+      agentsWaiting: 1,
+      services: 1,
+      worktrees: 1,
+      unreadNotifications: 1,
+    });
+  });
+
+  it("serves topology from grouped desktop worktree state", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          mainCheckoutInfo: { name: "aimux" },
+          sessions: [
+            { id: "live-1", command: "claude", status: "running", worktreePath: "/repo" },
+            { id: "main-1", command: "shell", status: "idle" },
+          ],
+          teammates: [{ id: "team-1", command: "codex", status: "waiting", worktreePath: "/repo" }],
+          services: [{ id: "svc-1", command: "yarn dev", status: "running", worktreePath: "/repo" }],
+          worktrees: [
+            { name: "main", path: "/repo", branch: "main" },
+            { name: "empty", path: "/empty", branch: "empty" },
+          ],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/topology`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      topology: {
+        projectName: string;
+        counts: { worktrees: number; agents: number; services: number };
+        rows: Array<{ kind: string; label?: string; status?: string; sessionId?: string; serviceId?: string }>;
+      };
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.topology.projectName).toBe("aimux");
+    expect(body.topology.counts).toEqual({ worktrees: 2, agents: 3, services: 1 });
+    expect(body.topology.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "worktree", label: "empty", status: "offline" }),
+        expect.objectContaining({ kind: "agent", sessionId: "live-1" }),
+        expect.objectContaining({ kind: "agent", sessionId: "main-1" }),
+        expect.objectContaining({ kind: "agent", sessionId: "team-1" }),
+        expect.objectContaining({ kind: "service", serviceId: "svc-1" }),
+      ]),
+    );
+  });
+
   it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
     server?.stop();
     seedAgentTopology([

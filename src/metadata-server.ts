@@ -69,6 +69,8 @@ import {
 import { readAllTasks, readTask } from "./tasks.js";
 import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow.js";
 import { buildCoordinationView } from "./coordination-model.js";
+import { buildProjectObservability } from "./project-observability.js";
+import { buildProjectTopology } from "./project-topology.js";
 import { markLastUsed } from "./last-used.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
@@ -112,6 +114,30 @@ const LIBRARY_DOC_ALLOWLIST = [
   { path: "CODEX.md", kind: "adapter", title: "CODEX.md" },
   { path: "README.md", kind: "project", title: "README.md" },
 ] as const;
+
+function buildTopologyWorktreesFromDesktopState(state: {
+  sessions?: any[];
+  teammates?: any[];
+  services?: any[];
+  worktrees?: any[];
+}): any[] {
+  const sessions = [...(state.sessions ?? []), ...(state.teammates ?? [])];
+  const services = state.services ?? [];
+  return (state.worktrees ?? []).map((worktree, index) => {
+    const worktreeSessions = sessions.filter(
+      (session) => session.worktreePath === worktree.path || (!session.worktreePath && index === 0),
+    );
+    const worktreeServices = services.filter(
+      (service) => service.worktreePath === worktree.path || (!service.worktreePath && index === 0),
+    );
+    return {
+      ...worktree,
+      status: worktree.status ?? (worktreeSessions.length > 0 || worktreeServices.length > 0 ? "active" : "offline"),
+      sessions: worktreeSessions,
+      services: worktreeServices,
+    };
+  });
+}
 
 function isLibraryPathExposed(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").toLowerCase();
@@ -1329,6 +1355,46 @@ export class MetadataServer {
         currentParticipant: participant,
       });
       send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), worklist, model, threads });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/project-observability") {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const state = this.options.desktop.getState() as {
+        sessions?: any[];
+        teammates?: any[];
+        services?: any[];
+        worktrees?: any[];
+      };
+      const project = buildProjectObservability({
+        sessions: [...(state.sessions ?? []), ...(state.teammates ?? [])],
+        services: state.services ?? [],
+        worktrees: state.worktrees ?? [],
+        tasks: readAllTasks(),
+        notifications: listNotifications(),
+      });
+      send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), project });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/topology") {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const state = this.options.desktop.getState() as {
+        mainCheckoutInfo?: { name?: string };
+        sessions?: any[];
+        teammates?: any[];
+        services?: any[];
+        worktrees?: any[];
+      };
+      const topology = buildProjectTopology({
+        projectName: state.mainCheckoutInfo?.name ?? "project",
+        worktrees: buildTopologyWorktreesFromDesktopState(state),
+      });
+      send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), topology });
       return;
     }
     if (req.method === "POST" && url.pathname === "/statusline/refresh") {

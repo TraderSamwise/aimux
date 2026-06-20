@@ -1,29 +1,60 @@
 import { parseKeys } from "../key-parser.js";
-import { buildProjectTopology } from "../project-topology.js";
+import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
 
 type TopologyHost = any;
 
-function refreshTopology(host: TopologyHost): void {
-  host.topology = buildProjectTopology({
-    projectName: host.dashboardMainCheckoutInfoCache?.name ?? "project",
-    worktrees: host.dashboardWorktreeGroupsCache ?? [],
-  });
+function emptyTopology(): ProjectTopology {
+  return buildProjectTopology({ projectName: "project", worktrees: [] });
+}
+
+function applyTopology(host: TopologyHost, topology: ProjectTopology): void {
+  host.topology = topology;
   const len = host.topology.rows.length;
   if (typeof host.topologyIndex !== "number" || Number.isNaN(host.topologyIndex)) host.topologyIndex = 0;
+  if (host.topologyIndex < 0) host.topologyIndex = 0;
   if (host.topologyIndex >= len) host.topologyIndex = Math.max(0, len - 1);
+}
+
+function isProjectTopology(value: any): value is ProjectTopology {
+  return (
+    Boolean(value) &&
+    typeof value.projectName === "string" &&
+    typeof value.health === "string" &&
+    value.counts &&
+    typeof value.counts.worktrees === "number" &&
+    typeof value.counts.agents === "number" &&
+    typeof value.counts.services === "number" &&
+    Array.isArray(value.worktrees) &&
+    Array.isArray(value.rows)
+  );
+}
+
+export async function refreshTopology(host: TopologyHost): Promise<boolean> {
+  try {
+    const res = await host.getFromProjectService("/topology");
+    if (!res?.ok || !isProjectTopology(res.topology)) throw new Error("invalid topology payload");
+    applyTopology(host, res.topology);
+    return true;
+  } catch {
+    if (!host.topology) applyTopology(host, emptyTopology());
+    return false;
+  }
 }
 
 export function showTopology(host: TopologyHost): void {
   host.clearDashboardSubscreens();
-  refreshTopology(host);
+  if (!host.topology) applyTopology(host, emptyTopology());
   host.setDashboardScreen("topology");
   host.writeStatuslineFile();
   renderTopology(host);
+  void refreshTopology(host).then((refreshed) => {
+    if (refreshed && host.isDashboardScreen?.("topology")) renderTopology(host);
+  });
 }
 
 export function renderTopology(host: TopologyHost): void {
-  if (!host.topology) refreshTopology(host);
+  if (!host.topology) applyTopology(host, emptyTopology());
   renderTopologyScreen(host);
 }
 
@@ -61,8 +92,9 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    refreshTopology(host);
-    renderTopology(host);
+    void refreshTopology(host).then(() => {
+      if (host.isDashboardScreen?.("topology")) renderTopology(host);
+    });
     return;
   }
   const rows = host.topology?.rows ?? [];
