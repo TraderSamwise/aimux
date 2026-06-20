@@ -62,9 +62,9 @@ describe("app connection targets", () => {
     expect(resolveAppRelayUrl()).toBe("wss://relay-preview.example.com");
 
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "local";
-    process.env.EXPO_PUBLIC_AIMUX_DAEMON_URL = "http://localhost:43191/";
+    process.env.EXPO_PUBLIC_AIMUX_DAEMON_URL = "http://localhost:43210/";
     expect(resolveAppConnectionMode()).toBe("local");
-    expect(resolveAppDaemonUrl()).toBe("http://localhost:43191");
+    expect(resolveAppDaemonUrl()).toBe("http://localhost:43210");
   });
 
   it("does not let URL overrides implicitly switch the build-mode default", () => {
@@ -75,7 +75,7 @@ describe("app connection targets", () => {
     expect(resolveAppRelayUrl()).toBeUndefined();
 
     setEnv("NODE_ENV", "production");
-    process.env.EXPO_PUBLIC_AIMUX_DAEMON_URL = "http://localhost:43191/";
+    process.env.EXPO_PUBLIC_AIMUX_DAEMON_URL = "http://localhost:43210/";
     delete process.env.EXPO_PUBLIC_AIMUX_RELAY_URL;
     expect(resolveAppConnectionMode()).toBe("relay");
     expect(resolveAppDaemonUrl()).toBeUndefined();

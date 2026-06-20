@@ -1,6 +1,0 @@
-#!/usr/bin/env node
-import { prepareDevCliEnv, runRoutedCli } from "../dist/launcher-env.js";
-
-prepareDevCliEnv();
-
-runRoutedCli();

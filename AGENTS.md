@@ -35,12 +35,20 @@ When changing dashboard behavior, preserve the API-backed boundary:
 
 Remote-only is not the goal. Execution and service composition remain local by design; web/mobile parity comes from API-backed control-plane routes plus remote equivalents for tmux-specific behavior such as pane streaming or deep-link/focus actions.
 
-## Stable vs Dev CLI
+For cross-project terminal features, keep the boundary explicit:
 
-- `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is for real project work and production remote auth, so defaults should point at `https://aimux.app` and the production relay unless explicitly overridden.
-- `aimux-dev` should stay repo-linked for Aimux development. It sets `AIMUX_HOME=~/.aimux-dev`, `AIMUX_DAEMON_PORT=43191`, `AIMUX_ENV=development`, and `AIMUX_WEB_APP_URL=http://localhost:8081`.
-- Do not point `~/.local/bin/aimux` directly at this checkout for normal development. Use `aimux-dev` for live source iteration and rebuild with `yarn build` after `src/*.ts` changes.
-- To create a local stable build from current source, build a release asset with `AIMUX_RELEASE_VERSION=<version-or-local-label> yarn release:asset`, then install it with `scripts/install.sh release/aimux-<platform>-<arch>.tar.gz`.
+- API owns semantic product state: project health, lifecycle, Coordination, notifications, threads, tasks, handoffs, reviews, worktrees, and graveyard state.
+- tmux owns terminal mechanics: pane capture, live preview, window focus, window linking, client switching, and same-machine open behavior.
+- tmux metadata may bridge identity only: project root, worktree path, session id, window id, tool, label, and lightweight status hints.
+- Exposé and the meta dashboard are tmux-native local surfaces. They can use tmux metadata for previews and jumps, but must not become independent writers or alternate sources of truth for product state.
+- Future web/mobile parity for terminal actions should be pane streaming or deep-link/focus APIs, not raw tmux mechanics in remote clients.
+
+## Local CLI Development
+
+- `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is the only normal CLI lane, so defaults should point at `~/.aimux`, daemon port `43190`, `https://aimux.app`, and the production relay unless explicitly overridden.
+- Do not point `~/.local/bin/aimux` directly at this checkout for normal development. Build a local release asset, install it with `scripts/install.sh`, then use `aimux restart` to make the daemon/services/dashboards coherent.
+- To create a local build from current source, run `AIMUX_RELEASE_VERSION=<version-or-local-label> yarn release:asset`, then install it with `scripts/install.sh release/aimux-<platform>-<arch>.tar.gz`.
+- For rare sandboxing, use explicit environment overrides with `aimux`, for example `AIMUX_HOME=/tmp/aimux-scratch AIMUX_DAEMON_PORT=43201 aimux daemon restart`. Do not introduce a second named CLI lane.
 
 ## App (`app/`) - Expo Router + RN + Web
 
@@ -50,7 +58,7 @@ The browser and native clients live in `app/`. Single Expo codebase targeting we
 
 ```bash
 cd app
-yarn dev:web:local      # web client on http://localhost:8081, HMR, aimux-dev daemon
+yarn dev:web:local      # web client on http://localhost:8081, HMR, local aimux daemon
 yarn dev:native:local   # Metro for an already-installed native dev build
 yarn dev:ios:local      # build/install/open the iOS simulator dev build, not Expo Go
 yarn dev:android:local  # build/install/open the Android emulator dev build
@@ -59,7 +67,7 @@ yarn dev:android:local  # build/install/open the Android emulator dev build
 What triggers what:
 
 - `app/app/`, `app/components/`, `app/lib/`, `app/stores/` changes: Metro HMR, no restart.
-- `src/*.ts` Node CLI changes: run `yarn build` at the repo root so the daemon and metadata server see updated `dist/` code.
+- `src/*.ts` Node CLI changes: build and install a local release asset, then run `aimux restart` so the daemon and metadata server see the updated bundle.
 - The app is a pure HTTP+SSE client of the aimux daemon; it does not bundle the CLI.
 
 ### App Architecture

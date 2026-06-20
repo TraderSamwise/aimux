@@ -1,71 +1,36 @@
 # Development Runtime
 
-Aimux has two CLI lanes:
+Aimux has one normal CLI lane: `aimux`.
 
-- `aimux` is the production/local-work command. It uses `~/.aimux` and daemon port `43190`.
-- `aimux-dev` is the development command. It uses `~/.aimux-dev` and daemon port `43191`.
+The installed command runs from a frozen local/release bundle under
+`~/.aimux/native/`, uses `~/.aimux`, and talks to the local daemon on port
+`43190` unless explicitly overridden.
 
-Use `aimux-dev` when developing the GUI or daemon so real `aimux` sessions keep running.
+## Backend Loop
 
-## Runtime Isolation
+CLI, daemon, and project-service code runs from `dist/` inside the installed
+bundle. Building this checkout is not enough to change a running install.
 
-The runtime can be isolated with environment variables:
-
-```sh
-AIMUX_HOME=~/.aimux-dev
-AIMUX_DAEMON_PORT=43191
-AIMUX_DAEMON_HOST=127.0.0.1
-```
-
-`aimux-dev` sets those defaults before loading the normal CLI. Explicit environment variables still win:
+For backend changes:
 
 ```sh
-AIMUX_HOME=/tmp/aimux-scratch AIMUX_DAEMON_PORT=43201 aimux-dev daemon restart
+yarn build
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
+aimux restart
+aimux doctor versions
 ```
 
-`aimux-dev login` also defaults to the local Expo web app:
-
-```sh
-AIMUX_WEB_APP_URL=http://localhost:8081
-```
-
-Use the production app instead with:
-
-```sh
-AIMUX_WEB_APP_URL=https://aimux.app aimux-dev login
-```
-
-Both `aimux` and `aimux-dev` default relay tokens/connections to:
-
-```sh
-AIMUX_RELAY_URL=wss://relay.aimux.app
-```
-
-Override `AIMUX_RELAY_URL` when testing a preview or local relay.
-
-Repo-local `.aimux/` files still live inside each project checkout. Use a scratch project when testing destructive project workflows.
-
-Runtime-core migration commands are explicit and lane-aware:
-
-```sh
-aimux-dev migration audit --project /path/to/scratch-project
-aimux-dev migration import --project /path/to/scratch-project
-```
-
-`migration audit` is read-only. `migration import` writes only the selected project's state under the active `AIMUX_HOME` lane plus repo-local `.aimux/` files for that project, then records a rollback manifest under `migration-backups/`.
+`aimux restart` restarts the daemon, re-ensures known project services, and
+reloads existing dashboards without killing agent tmux windows.
 
 ## Local GUI
-
-Run the isolated daemon:
-
-```sh
-aimux-dev daemon restart
-aimux-dev daemon project-ensure --project /Users/sam/cs/glyde-frontend
-```
 
 Run the local web app with Expo HMR:
 
 ```sh
+aimux daemon ensure
 cd app
 yarn dev:web:local
 ```
@@ -73,7 +38,7 @@ yarn dev:web:local
 `yarn dev:web:local` disables relay mode and points the web app at:
 
 ```sh
-http://localhost:43191
+http://localhost:43190
 ```
 
 Run native dev builds without Expo Go:
@@ -94,16 +59,16 @@ yarn dev:native:local
 The iOS simulator helper points at:
 
 ```sh
-http://127.0.0.1:43191
+http://127.0.0.1:43190
 ```
 
 The Android emulator helper points at:
 
 ```sh
-http://10.0.2.2:43191
+http://10.0.2.2:43190
 ```
 
-The root helper does the build, ensures the dev daemon, and starts the app:
+The root helpers ensure the installed daemon and start the app:
 
 ```sh
 yarn dev:gui
@@ -135,42 +100,35 @@ The app connection target is controlled with:
 
 ```sh
 EXPO_PUBLIC_AIMUX_CONNECTION_MODE=local|relay
-EXPO_PUBLIC_AIMUX_DAEMON_URL=http://localhost:43191
+EXPO_PUBLIC_AIMUX_DAEMON_URL=http://localhost:43190
 EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app
 ```
 
-When `EXPO_PUBLIC_AIMUX_CONNECTION_MODE` is unset, Expo development builds default to `local` and production builds default to `relay`.
-Relay mode requires `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`; local mode may omit it and uses local-only auth.
+When `EXPO_PUBLIC_AIMUX_CONNECTION_MODE` is unset, Expo development builds
+default to `local` and production builds default to `relay`. Relay mode requires
+`EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`; local mode may omit it and uses local-only
+auth.
 
-## Backend Loop
+## Explicit Sandboxes
 
-CLI and daemon code runs from `dist/`, not directly from `src/`.
-
-Use one terminal for TypeScript watch builds:
-
-```sh
-yarn dev
-```
-
-After backend changes compile, restart the isolated daemon:
+Use an explicit sandbox only when you really need isolated state:
 
 ```sh
-yarn dev:daemon
-aimux-dev daemon project-ensure --project /Users/sam/cs/glyde-frontend
+AIMUX_HOME=/tmp/aimux-scratch AIMUX_DAEMON_PORT=43201 aimux daemon restart
 ```
 
-App changes under `app/` hot reload through Expo. Backend daemon/project-service changes require a restart.
+Custom sandboxes are env-var overrides on `aimux`; they are not a second named
+CLI workflow. Keep normal development on the installed `aimux` lane so
+cross-project views, restart behavior, and version diagnostics all describe one
+runtime.
+
+Repo-local `.aimux/` files still live inside each project checkout. Use a
+scratch project when testing destructive project workflows.
 
 ## Cleanup
 
-Stop the dev daemon:
+Stop the installed daemon:
 
 ```sh
-aimux-dev daemon stop
-```
-
-Remove all isolated dev runtime state:
-
-```sh
-rm -rf ~/.aimux-dev
+aimux daemon stop
 ```

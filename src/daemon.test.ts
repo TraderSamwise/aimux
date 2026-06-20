@@ -53,7 +53,7 @@ function writeMetadataEndpointFor(pid: number) {
     join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"),
     JSON.stringify({
       host: "127.0.0.1",
-      port: 43191,
+      port: 44291,
       pid,
       updatedAt: new Date().toISOString(),
     }),
@@ -297,11 +297,11 @@ describe("daemon supervision", () => {
     const previousPort = process.env.AIMUX_DAEMON_PORT;
     try {
       process.env.AIMUX_DAEMON_HOST = "localhost";
-      process.env.AIMUX_DAEMON_PORT = "43191";
+      process.env.AIMUX_DAEMON_PORT = "44191";
       const { getDaemonHost, getDaemonPort } = await import("./daemon.js");
 
       expect(getDaemonHost()).toBe("localhost");
-      expect(getDaemonPort()).toBe(43191);
+      expect(getDaemonPort()).toBe(44191);
     } finally {
       if (previousHost === undefined) {
         delete process.env.AIMUX_DAEMON_HOST;
@@ -335,17 +335,17 @@ describe("daemon supervision", () => {
   it("probes the configured daemon port when adopting an existing daemon", async () => {
     const previousPort = process.env.AIMUX_DAEMON_PORT;
     try {
-      process.env.AIMUX_DAEMON_PORT = "43191";
+      process.env.AIMUX_DAEMON_PORT = "44191";
       vi.mocked(requestJson).mockResolvedValueOnce({
         status: 200,
-        json: { ok: true, pid: 50_001, port: 43191 },
+        json: { ok: true, pid: 50_001, port: 44191 },
       });
       const { ensureDaemonRunning } = await import("./daemon.js");
 
       const info = await ensureDaemonRunning();
 
-      expect(info.port).toBe(43191);
-      expect(vi.mocked(requestJson)).toHaveBeenCalledWith("http://127.0.0.1:43191/health");
+      expect(info.port).toBe(44191);
+      expect(vi.mocked(requestJson)).toHaveBeenCalledWith("http://127.0.0.1:44191/health");
     } finally {
       if (previousPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
