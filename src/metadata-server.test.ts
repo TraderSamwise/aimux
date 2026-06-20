@@ -2568,9 +2568,11 @@ describe("MetadataServer threads API", () => {
         type: "review",
         assigner: "coder",
         reviewOf: "codex-1",
+        iteration: 0,
       }),
     });
-    const review2 = (await reviewRes2.json()) as { task: { id: string } };
+    const review2 = (await reviewRes2.json()) as { task: { id: string; iteration?: number } };
+    expect(review2.task.iteration).toBe(1);
 
     const changesRes = await fetch(`${base}/reviews/request-changes`, {
       method: "POST",

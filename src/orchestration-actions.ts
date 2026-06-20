@@ -71,7 +71,10 @@ export async function assignTask(input: AssignTaskInput): Promise<AssignTaskResu
     task.assigner = input.assigner;
     task.reviewStatus = "pending";
     task.reviewOf = input.reviewOf;
-    task.iteration = input.iteration ?? 1;
+    task.iteration =
+      typeof input.iteration === "number" && Number.isInteger(input.iteration) && input.iteration > 0
+        ? input.iteration
+        : 1;
   }
 
   let thread: OrchestrationThread | undefined;
