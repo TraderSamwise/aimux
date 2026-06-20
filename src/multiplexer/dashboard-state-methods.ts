@@ -288,6 +288,7 @@ export const dashboardStateMethods = {
     teammates: DashboardSession[];
     services: DashboardService[];
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    worktreeGroups: WorktreeGroup[];
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
