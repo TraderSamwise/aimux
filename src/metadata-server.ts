@@ -2107,7 +2107,7 @@ export class MetadataServer {
             return;
           }
           await this.options.desktop.resumeService({ serviceId: service.id });
-          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
+          const match = findProjectManagedWindow(tmux, process.cwd(), {
             sessionId: service.id,
           });
           if (!match) {
@@ -2130,7 +2130,7 @@ export class MetadataServer {
             return;
           }
           await this.options.desktop.resumeAgent({ sessionId: session.id });
-          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
+          const match = findProjectManagedWindow(tmux, process.cwd(), {
             sessionId: session.id,
           });
           if (!match) {
