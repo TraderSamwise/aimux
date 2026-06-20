@@ -9,8 +9,13 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
-import { requestReview } from "../task-workflow.js";
-import { isTeammateSession, isOverseerSession } from "../team.js";
+import {
+  getDefaultTeamConfig,
+  isTeammateSession,
+  isOverseerSession,
+  loadTeamConfig,
+  type TeamConfig,
+} from "../team.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -37,6 +42,29 @@ function flashPendingDashboardItem(
 
 function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined): any | undefined {
   return host.dashboardWorktreeGroupsCache.find((group: any) => group.path === worktreePath);
+}
+
+function isTeamConfig(value: unknown): value is TeamConfig {
+  if (!value || typeof value !== "object") return false;
+  const config = value as TeamConfig;
+  if (!config.roles || typeof config.roles !== "object") return false;
+  return Object.values(config.roles).every(
+    (role) =>
+      role &&
+      typeof role === "object" &&
+      typeof role.description === "string" &&
+      (role.canEdit === undefined || typeof role.canEdit === "boolean") &&
+      (role.reviewedBy === undefined || typeof role.reviewedBy === "string"),
+  );
+}
+
+function loadDashboardTeamConfig(): TeamConfig {
+  try {
+    const team = loadTeamConfig();
+    return isTeamConfig(team) ? team : getDefaultTeamConfig();
+  } catch {
+    return getDefaultTeamConfig();
+  }
 }
 
 function isRemovingDashboardWorktree(group: any | undefined): boolean {
@@ -405,12 +433,11 @@ export const dashboardInteractionMethods = {
             this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
             this.footerFlashTicks = 3;
             this.renderDashboard();
-            void this
-              .postToProjectService(PROJECT_API_ROUTES.operationFailuresClear, {
-                targetKind: "worktree",
-                operation: focusedGroup.operationFailure.operation,
-                worktreePath: this.dashboardState.focusedWorktreePath,
-              })
+            void this.postToProjectService(PROJECT_API_ROUTES.operationFailuresClear, {
+              targetKind: "worktree",
+              operation: focusedGroup.operationFailure.operation,
+              worktreePath: this.dashboardState.focusedWorktreePath,
+            })
               .then(async () => {
                 await this.refreshDashboardModelFromService(true);
                 this.renderDashboard();
@@ -819,16 +846,11 @@ export const dashboardInteractionMethods = {
 
     if (key === "enter" || key === "return") {
       this.clearDashboardOverlay();
-      if (this.mode === "dashboard") {
-        void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
-      } else {
-        try {
-          this.createService(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
-        } catch (error) {
-          this.showDashboardError("Failed to create service", [error instanceof Error ? error.message : String(error)]);
-          return;
-        }
+      if (this.mode !== "dashboard") {
+        this.showDashboardError("Failed to create service", ["Service creation requires the project service."]);
+        return;
       }
+      void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
       this.restoreDashboardAfterOverlayDismiss();
       return;
     }
@@ -889,19 +911,51 @@ export const dashboardInteractionMethods = {
     if (!session) return;
 
     const role = this.sessionRoles.get(session.id) ?? "coder";
-    let diff: string | undefined;
-    try {
-      diff = execSync("git diff HEAD", { encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
-    } catch {}
-
-    const reviewTask = await requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
-
-    if (reviewTask) {
-      this.footerFlash = `⧫ Review requested → ${reviewTask.assignee ?? "reviewer"}`;
-      this.footerFlashTicks = 3;
-    } else {
+    const team = loadDashboardTeamConfig();
+    const roleConfig = team.roles[role];
+    let reviewerRole = roleConfig?.reviewedBy;
+    if (!reviewerRole || reviewerRole === role) {
+      const fallback = Object.entries(team.roles)
+        .filter(([roleKey]) => roleKey !== role)
+        .find(([, cfg]) => cfg.description.toLowerCase().includes("review"));
+      reviewerRole =
+        fallback?.[0] ?? Object.entries(team.roles).find(([roleKey, cfg]) => roleKey !== role && cfg.canEdit)?.[0];
+    }
+    if (!reviewerRole) {
       this.footerFlash = "No reviewer role configured";
       this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return;
+    }
+    const worktreePath = this.sessionWorktreePaths?.get?.(session.id);
+    const reviewCwd = worktreePath ?? this.projectRoot ?? process.cwd();
+    let diff: string | undefined;
+    try {
+      diff =
+        execSync("git diff HEAD", { cwd: reviewCwd, encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
+    } catch {}
+
+    try {
+      const result = await this.postToProjectService(PROJECT_API_ROUTES.tasks.assign, {
+        from: session.id,
+        assignee: reviewerRole,
+        description: `Review: Review ${session.command} agent's recent work`,
+        prompt: `Review ${session.command} agent's recent work`,
+        type: "review",
+        diff,
+        worktreePath,
+        assigner: role,
+        reviewOf: session.id,
+        iteration: 1,
+      });
+      const assignee = result?.task?.assignee ?? reviewerRole;
+      this.footerFlash = `⧫ Review requested → ${assignee}`;
+      this.footerFlashTicks = 3;
+    } catch (error) {
+      this.showDashboardError("Failed to request review", [error instanceof Error ? error.message : String(error)]);
+      return;
+    } finally {
+      this.renderDashboard();
     }
   },
 
