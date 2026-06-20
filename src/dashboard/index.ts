@@ -13,6 +13,7 @@ export interface DashboardSession {
   index: number;
   id: string;
   command: string;
+  toolConfigKey?: string;
   tmuxWindowId?: string;
   tmuxWindowIndex?: number;
   lastUsedAt?: string;

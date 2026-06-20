@@ -343,7 +343,7 @@ export const dashboardInteractionMethods = {
       case "o": {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected) {
-          this.openRelevantThreadForSession(selected.id);
+          void this.openRelevantThreadForSession(selected.id);
         }
         return;
       }
@@ -351,7 +351,7 @@ export const dashboardInteractionMethods = {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected) {
           if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
-            this.openRelevantThreadForSession(selected.id);
+            void this.openRelevantThreadForSession(selected.id);
           } else {
             this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
             this.footerFlashTicks = 3;
@@ -696,6 +696,14 @@ export const dashboardInteractionMethods = {
         await this.refreshDashboardModelFromService?.(true);
         this.renderDashboard();
       }
+      return;
+    }
+
+    if (this.mode === "dashboard") {
+      await this.refreshDashboardModelFromService?.(true);
+      this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
       return;
     }
 

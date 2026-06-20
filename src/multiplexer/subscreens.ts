@@ -1,7 +1,7 @@
 import { parseKeys } from "../key-parser.js";
 import { type OrchestrationThread, type ThreadStatus } from "../threads.js";
-import { buildCoordinationThreadEntries, type ThreadEntry } from "../workflow.js";
-import { refreshNotificationEntries } from "./notifications.js";
+import { type ThreadEntry } from "../workflow.js";
+import { applyCoordinationFilter } from "./notifications.js";
 import { navigationUrgencyScore } from "../fast-control.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
@@ -42,8 +42,16 @@ export function getPreferredThreadIndexForParticipant(
   return entries.findIndex((entry) => entry.thread.id === targetId);
 }
 
-export function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): void {
-  const entries = buildCoordinationThreadEntries("user");
+export async function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): Promise<void> {
+  const refreshed =
+    typeof host.refreshCoordinationFromService === "function" ? await host.refreshCoordinationFromService() : true;
+  if (!refreshed && !host.coordinationLoaded) {
+    host.footerFlash = "Coordination refresh failed";
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+    return;
+  }
+  const entries: ThreadEntry[] = Array.isArray(host.threadEntries) ? host.threadEntries : [];
   const idx = getPreferredThreadIndexForParticipant(host, sessionId, entries);
   if (idx < 0 || idx >= entries.length) {
     host.footerFlash = `No thread for ${sessionId}`;
@@ -56,9 +64,8 @@ export function openRelevantThreadForSession(host: SubscreenHost, sessionId: str
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   const entry = host.threadEntries[host.threadIndex];
-  // Build the unified worklist (no frame write) so we can focus its row for this thread.
   host.coordinationFilter = "all";
-  refreshNotificationEntries(host);
+  applyCoordinationFilter(host);
   if (Array.isArray(host.coordinationWorklist) && entry) {
     const widx = host.coordinationWorklist.findIndex(
       (item: any) => item.kind === "thread" && item.thread?.thread.id === entry.thread.id,
@@ -116,16 +123,16 @@ export function describeHandoffState(_host: SubscreenHost, thread: Orchestration
   return `awaiting acceptance from ${thread.participants.filter((id) => id !== thread.createdBy).join(", ") || "recipient"}`;
 }
 
-function refreshCoordinationThreads(host: SubscreenHost): void {
-  // Instant local rebuild (sets threadEntries + worklist), then refine from the service.
-  refreshNotificationEntries(host);
+async function refreshCoordinationThreads(host: SubscreenHost): Promise<void> {
+  const refreshed =
+    typeof host.refreshCoordinationFromService === "function" ? await host.refreshCoordinationFromService() : true;
   if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
-  host.threadIndex = Math.min(host.threadIndex, Math.max(0, host.threadEntries.length - 1));
+  host.threadIndex = Math.min(host.threadIndex, Math.max(0, (host.threadEntries?.length ?? 0) - 1));
+  if (!refreshed) {
+    host.footerFlash = "Coordination refresh failed";
+    host.footerFlashTicks = 3;
+  }
   host.renderCoordination();
-  void host
-    .refreshCoordinationFromService?.()
-    .then(() => host.renderCoordination())
-    .catch(() => {});
 }
 
 export async function runThreadHandoffAction(
@@ -146,7 +153,7 @@ export async function runThreadHandoffAction(
     host.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
     return;
   }
-  refreshCoordinationThreads(host);
+  void refreshCoordinationThreads(host).catch(() => {});
 }
 
 export async function runThreadStatusAction(
@@ -164,7 +171,7 @@ export async function runThreadStatusAction(
     ]);
     return;
   }
-  refreshCoordinationThreads(host);
+  void refreshCoordinationThreads(host).catch(() => {});
 }
 
 export async function runTaskLifecycleAction(
@@ -191,7 +198,7 @@ export async function runTaskLifecycleAction(
     host.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
     return;
   }
-  refreshCoordinationThreads(host);
+  void refreshCoordinationThreads(host).catch(() => {});
 }
 
 export async function runReviewLifecycleAction(
@@ -214,7 +221,7 @@ export async function runReviewLifecycleAction(
     ]);
     return;
   }
-  refreshCoordinationThreads(host);
+  void refreshCoordinationThreads(host).catch(() => {});
 }
 
 export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {

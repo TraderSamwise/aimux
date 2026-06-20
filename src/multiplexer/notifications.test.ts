@@ -12,6 +12,7 @@ import {
   notificationTargetLabel,
   notificationTargetState,
   refreshCoordinationFromService,
+  refreshNotificationPanelFromService,
   refreshNotificationEntries,
 } from "./notifications.js";
 import { buildCoordinationView } from "../coordination-model.js";
@@ -242,6 +243,7 @@ describe("notification panel mutations route through the service", () => {
     const host: any = {
       notificationPanelState: { entries: [note], index: 0 },
       postToProjectService: notificationServiceDouble(),
+      getFromProjectService: vi.fn(async () => ({ ok: true, notifications: [] })),
       renderDashboard: vi.fn(),
       footerFlash: "",
       footerFlashTicks: 0,
@@ -250,6 +252,20 @@ describe("notification panel mutations route through the service", () => {
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { id: note.id });
     handleNotificationPanelKey(host, Buffer.from("C"));
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/clear", {});
+  });
+
+  it("refreshes the panel from /notifications", async () => {
+    const note = addExchangeNotification("panel-1", "needs you");
+    const host: any = {
+      notificationPanelState: { entries: [], index: -1 },
+      getFromProjectService: vi.fn(async () => ({ ok: true, notifications: [note] })),
+    };
+
+    await expect(refreshNotificationPanelFromService(host)).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/notifications");
+    expect(host.notificationPanelState.entries).toEqual([note]);
+    expect(host.notificationPanelState.index).toBe(0);
   });
 });
 
@@ -290,10 +306,13 @@ describe("coordination reads prefer the service", () => {
     expect(host.notificationEntries.map((entry: any) => entry.id)).toContain("r1");
   });
 
-  it("falls back to the local build when the service request fails", async () => {
+  it("preserves the last API state when the service request fails", async () => {
     addExchangeNotification("local-1", "local agent needs input");
     const host: any = {
       coordinationFilter: "all",
+      coordinationLoaded: true,
+      coordinationWorklist: [{ sessionId: "remote-1" }],
+      notificationEntries: [{ id: "r1" }],
       getFromProjectService: vi.fn(async () => {
         throw new Error("service down");
       }),
@@ -308,6 +327,30 @@ describe("coordination reads prefer the service", () => {
 
     expect(ok).toBe(false);
     expect(host.coordinationLoaded).toBe(true);
-    expect(host.coordinationWorklist.map((item: any) => item.sessionId)).toContain("local-1");
+    expect(host.coordinationWorklist.map((item: any) => item.sessionId)).toEqual(["remote-1"]);
+    expect(host.notificationEntries.map((entry: any) => entry.id)).toEqual(["r1"]);
+  });
+
+  it("rejects malformed service thread payloads before mutating host state", async () => {
+    const host: any = {
+      coordinationFilter: "all",
+      coordinationLoaded: true,
+      threadEntries: [{ thread: { id: "existing" } }],
+      coordinationWorklist: [{ sessionId: "remote-1" }],
+      notificationEntries: [{ id: "r1" }],
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        model: { items: [] },
+        worklist: { items: [] },
+        threads: { bad: true },
+      })),
+    };
+
+    const ok = await refreshCoordinationFromService(host);
+
+    expect(ok).toBe(false);
+    expect(host.threadEntries).toEqual([{ thread: { id: "existing" } }]);
+    expect(host.coordinationWorklist).toEqual([{ sessionId: "remote-1" }]);
+    expect(host.notificationEntries).toEqual([{ id: "r1" }]);
   });
 });
