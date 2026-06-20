@@ -396,6 +396,36 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("finds managed windows by backend session id", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (
+        joined ===
+        "list-windows -t aimux-mobile-abc -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}"
+      ) {
+        return "@3\t3\tcodex\t1\t100";
+      }
+      if (joined === "show-window-options -v -t @3 @aimux-meta") {
+        return JSON.stringify({
+          kind: "agent",
+          sessionId: "codex-new",
+          backendSessionId: "backend-existing",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+        });
+      }
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    const match = manager.findManagedWindow("aimux-mobile-abc", { backendSessionId: "backend-existing" });
+
+    expect(match?.target.windowId).toBe("@3");
+    expect(match?.metadata.sessionId).toBe("codex-new");
+  });
+
   it("creates agent windows with target metadata", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
