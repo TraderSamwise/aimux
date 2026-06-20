@@ -77,7 +77,12 @@ export interface StreamErrorEvent {
   error: string;
 }
 
-export type StreamEvent = ReadyEvent | AlertEvent | AgentOutputEvent | ProjectUpdateEvent | StreamErrorEvent;
+export type StreamEvent =
+  | ReadyEvent
+  | AlertEvent
+  | AgentOutputEvent
+  | ProjectUpdateEvent
+  | StreamErrorEvent;
 
 // Display-side representation of an image part as it appears in history.
 export interface HistoryImagePart {
