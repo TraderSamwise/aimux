@@ -87,7 +87,9 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    void refreshTopology(host).then(() => renderTopology(host));
+    void refreshTopology(host).then(() => {
+      if (host.isDashboardScreen?.("topology")) renderTopology(host);
+    });
     return;
   }
   const rows = host.topology?.rows ?? [];

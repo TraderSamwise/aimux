@@ -80,7 +80,9 @@ export function handleProjectKey(host: ProjectHost, data: Buffer): void {
   }
   const story = host.projectObservability?.story ?? [];
   if (key === "r") {
-    void refreshProjectObservability(host).then(() => renderProject(host));
+    void refreshProjectObservability(host).then(() => {
+      if (host.isDashboardScreen?.("project")) renderProject(host);
+    });
     return;
   }
   if (key === "down" || key === "j") {
