@@ -437,6 +437,13 @@ describe("MetadataServer threads API", () => {
     });
     expect(malformedAttachRes.status).toBe(400);
 
+    const partialAttachResizeRes = await fetch(`${base}/live-pane/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: 100 }),
+    });
+    expect(partialAttachResizeRes.status).toBe(400);
+
     const malformedOutputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=10.5`);
     expect(malformedOutputRes.status).toBe(400);
 
