@@ -11,10 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { listProjectLibrary, type LibraryDocument } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import {
-  useProjectApiRelayPolling,
-  useSerializedProjectApiRefresh,
-} from "@/lib/project-api-relay-polling";
+import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
@@ -135,7 +132,6 @@ export default function LibraryScreen() {
     return () => clearTimeout(timer);
   }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
 
-  useProjectApiRelayPolling(endpointKey, serializedRefresh);
   const visibleError = errorKey === viewKey ? error : null;
 
   return (
