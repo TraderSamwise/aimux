@@ -474,7 +474,7 @@ resolve_local_target_from_statusline() {
   [ -f "$statusline_json" ] || return 1
   resolved_target=$(
     python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
-import json, sys
+import json, subprocess, sys
 path, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
 
 def log(message):
@@ -485,6 +485,19 @@ def log(message):
             handle.write(f"aimux-control team statusline: {message}\n")
     except Exception:
         pass
+
+def is_live_window(window_id):
+    if not window_id:
+        return False
+    try:
+        pane_dead = subprocess.check_output(
+            ["tmux", "display-message", "-p", "-t", window_id, "#{pane_dead}"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return False
+    return bool(pane_dead) and pane_dead != "1"
 
 try:
     data = json.load(open(path))
@@ -519,7 +532,7 @@ if action == "team":
     if parent_id:
         parent = next((session for session in sessions if session.get("id") == parent_id), None)
         target = (parent or {}).get("tmuxWindowId") or ""
-        if not target:
+        if not is_live_window(target):
             log(f"parent target missing parentId={parent_id!r} parentFound={bool(parent)}")
             raise SystemExit(1)
         log(f"target parent window={target!r}")
@@ -559,7 +572,7 @@ if action == "team":
         parse_time(session.get("createdAt")),
         session.get("id") or "",
     ))
-    direct = [session for session in direct if session.get("tmuxWindowId")]
+    direct = [session for session in direct if is_live_window(session.get("tmuxWindowId"))]
     if not direct:
         log(f"no direct live teammates for currentId={current_id!r}")
         raise SystemExit(1)
@@ -591,7 +604,7 @@ for session in sessions:
         best_len = length
     elif length == best_len:
         matched.append(session)
-items = matched if matched else sessions
+items = [session for session in (matched if matched else sessions) if is_live_window(session.get("tmuxWindowId"))]
 items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, int(s.get("tmuxWindowIndex") or 1_000_000)))
 if not items:
     raise SystemExit(1)
@@ -690,9 +703,6 @@ for line in windows:
     except ValueError:
         log(f"skip malformed window line={line!r}")
         continue
-    if pane_dead == "1":
-        log(f"skip dead window={window_id!r} name={name!r}")
-        continue
     try:
         raw = run("show-window-options", "-v", "-t", window_id, "@aimux-meta").strip()
         meta = json.loads(raw)
@@ -716,6 +726,7 @@ for line in windows:
         "statusText": meta.get("statusText", ""),
         "team": team if isinstance(team, dict) else {},
         "createdAt": meta.get("createdAt", ""),
+        "alive": pane_dead != "1",
     })
 
 if not items:
@@ -732,8 +743,9 @@ if current_worktree:
     items = [item for item in items if item.get("worktreePath") == current_worktree]
 else:
     items = [item for item in items if current_path.startswith(item.get("worktreePath") or "")]
+items = [item for item in items if item.get("alive") or item.get("windowId") == current_window_id]
 log("items=" + repr([
-    f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}"
+    f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}:{'live' if item.get('alive') else 'dead'}"
     for item in items
 ]))
 
@@ -751,7 +763,7 @@ if action == "team":
     parent_id = current_team.get("parentSessionId")
     log(f"current id={current.get('sessionId')!r} parentId={parent_id!r} window={current.get('windowId')!r}")
     if parent_id:
-        parent = next((item for item in items if item.get("sessionId") == parent_id and not (item.get("team") or {}).get("parentSessionId")), None)
+        parent = next((item for item in items if item.get("alive") and item.get("sessionId") == parent_id and not (item.get("team") or {}).get("parentSessionId")), None)
         if not parent:
             log(f"parent metadata target missing parentId={parent_id!r}")
             raise SystemExit(1)
@@ -767,7 +779,7 @@ if action == "team":
     direct = [
         item
         for item in items
-        if (item.get("team") or {}).get("parentSessionId") == current_id
+        if item.get("alive") and (item.get("team") or {}).get("parentSessionId") == current_id
     ]
     log("direct candidates=" + repr([
         f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('statusText') or '-'}"
@@ -811,11 +823,19 @@ for idx, item in enumerate(items):
         break
 
 if action == "next":
-    print(items[(current_index + 1) % len(items)]["windowId"])
-    raise SystemExit(0)
+    for offset in range(1, len(items) + 1):
+        target = items[(current_index + offset) % len(items)]
+        if target.get("alive"):
+            print(target["windowId"])
+            raise SystemExit(0)
+    raise SystemExit(1)
 if action == "prev":
-    print(items[(current_index - 1) % len(items)]["windowId"])
-    raise SystemExit(0)
+    for offset in range(1, len(items) + 1):
+        target = items[(current_index - offset) % len(items)]
+        if target.get("alive"):
+            print(target["windowId"])
+            raise SystemExit(0)
+    raise SystemExit(1)
 if action == "attention":
     def rank(item):
         return (
@@ -823,7 +843,9 @@ if action == "attention":
             item.get("unseenCount", 0),
             1 if item.get("statusText") == "blocked" else 0,
         )
-    ranked = sorted(items, key=rank, reverse=True)
+    ranked = sorted([item for item in items if item.get("alive")], key=rank, reverse=True)
+    if not ranked:
+        raise SystemExit(1)
     if rank(ranked[0]) == (0, 0, 0):
         raise SystemExit(1)
     print(ranked[0]["windowId"])
@@ -833,9 +855,10 @@ if action == "window":
         index = int(item_index)
     except Exception:
         raise SystemExit(1)
-    if index < 1 or index > len(items):
+    live_items = [item for item in items if item.get("alive")]
+    if index < 1 or index > len(live_items):
         raise SystemExit(1)
-    print(items[index - 1]["windowId"])
+    print(live_items[index - 1]["windowId"])
     raise SystemExit(0)
 raise SystemExit(1)
 PY

@@ -465,6 +465,61 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
   });
 
+  it("uses a dead current host window only for next ordering", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@codex" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+      },
+      deadWindows: ["@codex"],
+      windowMetadata: {
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "codex",
+      "--current-window-id",
+      "@codex",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const state = JSON.parse(readFileSync(envRoot.statePath, "utf8")) as {
+      clients: Array<{ windowId: string }>;
+    };
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(state.clients[0]?.windowId).toBe("@shell");
+    expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-live");
+  });
+
   it("falls through to the control API for dead explicit local targets", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
@@ -1110,6 +1165,76 @@ describe("tmux-control.sh", () => {
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
     expect(log).not.toContain("link-window -d -s @other -t aimux-proj-client-live");
     expect(curlLog).toEqual([]);
+  });
+
+  it("skips dead statusline teammates in team order", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@reviewer", index: 7, name: "codex" },
+          { id: "@coder", index: 8, name: "claude" },
+        ],
+        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+      },
+      deadWindows: ["@reviewer"],
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@reviewer": { sessionId: "reviewer", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@coder": { sessionId: "coder", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [{ id: "parent", tmuxWindowId: "@parent", kind: "agent", worktreePath: "/repo/project/worktree" }],
+        teammates: [
+          {
+            id: "reviewer",
+            tmuxWindowId: "@reviewer",
+            kind: "agent",
+            createdAt: "2026-04-04T00:01:00.000Z",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", order: 1 },
+          },
+          {
+            id: "coder",
+            tmuxWindowId: "@coder",
+            kind: "agent",
+            createdAt: "2026-04-04T00:00:00.000Z",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "coder", order: 2 },
+          },
+        ],
+      }),
+    );
+
+    runControl(envRoot, [
+      "team",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@parent",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @coder -t aimux-proj-client-live");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).not.toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
   });
 
   it("switches from a focused parent agent to its first live teammate from tmux metadata", () => {
