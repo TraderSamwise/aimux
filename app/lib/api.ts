@@ -22,13 +22,17 @@ import {
   type CreateServiceResponse,
   type CreateWorktreeInput,
   type CreateWorktreeResponse,
+  type CoordinationWorklistResponse,
   type DeleteWorktreeResponse,
+  type GraveyardResponse,
   type GraveyardWorktreeResponse,
   type LivePaneAttachRequest,
   type LivePaneAttachResponse,
   type LivePaneInputResponse,
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
+  type LibraryResponse,
+  type NotificationsResponse,
   type NotificationClearResponse,
   type NotificationMutationInput,
   type NotificationReadResponse,
@@ -38,6 +42,8 @@ import {
   type OpenNotificationTargetRequest,
   type OrchestrationRouteMode,
   type OrchestrationRouteOptionsResponse,
+  type ProjectObservabilityResponse,
+  type ProjectTopologyResponse,
   type RemoveServiceResponse,
   type RemoveWorktreeResponse,
   type ResumeServiceResponse,
@@ -47,7 +53,9 @@ import {
   type StopServiceResponse,
   type SwitchAgentRequest,
   type TaskAssignInput,
+  type TaskDetailResponse,
   type TaskLifecycleInput,
+  type TaskListResponse,
   type ThreadLifecycleInput,
   type ThreadMarkSeenInput,
   type ThreadMarkSeenResponse,
@@ -57,8 +65,34 @@ import {
   type ThreadSendResponse,
   type ThreadStatusInput,
   type ThreadStatusResponse,
+  type ThreadSummaryResponse,
   type WorkflowMutationResponse,
+  type WorktreesResponse,
   type WorktreePathInput,
+} from "../../src/project-api-contract";
+
+export type {
+  CoordinationBucket,
+  CoordinationReachability,
+  CoordinationWorklistItem,
+  CoordinationWorklistResponse,
+  CoordinationWorklistType,
+  GraveyardEntryResponse,
+  GraveyardResponse,
+  LibraryDocument,
+  LibraryEntry,
+  LibraryResponse,
+  NotificationRecord,
+  NotificationsResponse,
+  ProjectObservabilityResponse,
+  ProjectTopologyResponse,
+  ProjectWorktreeSummary,
+  TaskDetailResponse,
+  TaskListResponse,
+  TaskSummaryResponse,
+  ThreadSummaryResponse,
+  WorktreeGraveyardEntryResponse,
+  WorktreesResponse,
 } from "../../src/project-api-contract";
 
 let _relay: RelayTransport | null = null;
@@ -619,43 +653,6 @@ export async function getDesktopState(
 
 // ── Notifications ────────────────────────────────────────────────────────
 
-export interface NotificationRecord {
-  id: string;
-  title: string;
-  subtitle?: string;
-  body: string;
-  sessionId?: string;
-  targetKey?: string;
-  targetKind?: "session" | "generic";
-  kind?: string;
-  projectName?: string;
-  projectRoot?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  branch?: string;
-  categoryLabel?: string;
-  reasonLabel?: string;
-  unread: boolean;
-  cleared: boolean;
-  createdAt: string;
-  updatedAt: string;
-  dedupeKey?: string;
-  interaction?: {
-    id: string;
-    type: "permission" | "exit_plan" | "question" | "input";
-    summary?: string;
-    telemetry?: boolean;
-    toolName?: string;
-    toolInputJSON?: string;
-  };
-}
-
-export interface NotificationsResponse {
-  ok: boolean;
-  notifications: NotificationRecord[];
-  unreadCount: number;
-}
-
 export async function listNotifications(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts & { unreadOnly?: boolean; sessionId?: string },
@@ -783,70 +780,6 @@ export async function graveyardWorktree(
 }
 
 // ── Worktrees, graveyard, threads ───────────────────────────────────────
-
-export interface WorktreesResponse {
-  ok: boolean;
-  worktrees: DesktopState["worktrees"];
-  [k: string]: unknown;
-}
-
-export interface GraveyardEntryResponse {
-  id: string;
-  tool?: string;
-  label?: string;
-  diedAt?: string;
-  [k: string]: unknown;
-}
-
-export interface WorktreeGraveyardEntryResponse {
-  name: string;
-  path: string;
-  branch?: string;
-  createdAt?: string;
-  graveyardedAt?: string;
-  agents?: GraveyardEntryResponse[];
-  services?: Array<{ id: string; command?: string; [k: string]: unknown }>;
-  [k: string]: unknown;
-}
-
-export interface GraveyardResponse {
-  ok: boolean;
-  entries: GraveyardEntryResponse[];
-  worktrees?: WorktreeGraveyardEntryResponse[];
-  [k: string]: unknown;
-}
-
-export interface ThreadSummaryResponse {
-  thread: { id: string; title?: string; status?: string; kind?: string };
-  lastMessage?: { body?: string; createdAt?: string };
-  [k: string]: unknown;
-}
-
-export interface TaskSummaryResponse {
-  id: string;
-  description?: string;
-  status?: string;
-  assignedTo?: string;
-  assignedBy?: string;
-  assignee?: string;
-  tool?: string;
-  threadId?: string;
-  [k: string]: unknown;
-}
-
-export interface TaskListResponse {
-  ok: boolean;
-  tasks: TaskSummaryResponse[];
-  [k: string]: unknown;
-}
-
-export interface TaskDetailResponse {
-  ok: boolean;
-  task: TaskSummaryResponse;
-  thread?: ThreadSummaryResponse["thread"];
-  messages?: Array<{ id?: string; body?: string; [k: string]: unknown }>;
-  [k: string]: unknown;
-}
 
 export async function listWorktrees(
   endpoint: ServiceEndpoint,
@@ -1129,52 +1062,6 @@ export async function listTasks(
 }
 
 // ── Coordination worklist (reconciled "needs-you" inbox) ─────────────────
-// The server builds the reconciled worklist (notifications + threads joined against live agent
-// state); clients render and act from it. Mirrors src/coordination-model.ts WorklistItem.
-
-export type CoordinationReachability = "live" | "offline" | "missing" | "none";
-export type CoordinationBucket = "awake" | "asleep" | "handled" | "unreachable";
-export type CoordinationWorklistType =
-  | "msg"
-  | "note"
-  | "task"
-  | "review"
-  | "handoff"
-  | "conversation";
-
-export interface CoordinationWorklistItem {
-  key: string;
-  kind: "notification" | "thread";
-  sessionId?: string;
-  type: CoordinationWorklistType;
-  bucket: CoordinationBucket;
-  title: string;
-  urgency: number;
-  reachability: CoordinationReachability;
-  actionable: boolean;
-  stale: boolean;
-  when?: string;
-  /** Agent-keyed notification rollup (for notification rows); shape mirrors CoordinationItem. */
-  notification?: Record<string, unknown>;
-  /** Genuine thread entry (for thread rows); shape mirrors WorkflowEntry. */
-  thread?: Record<string, unknown>;
-}
-
-export interface CoordinationWorklistResponse {
-  ok: boolean;
-  worklist: {
-    items: CoordinationWorklistItem[];
-    needsYou: CoordinationWorklistItem[];
-    tail: CoordinationWorklistItem[];
-  };
-  model: {
-    items: Array<Record<string, unknown>>;
-    actionable: Array<Record<string, unknown>>;
-    unreachable: Array<Record<string, unknown>>;
-  };
-  threads: Array<Record<string, unknown>>;
-  [k: string]: unknown;
-}
 
 export async function getCoordinationWorklist(
   endpoint: ServiceEndpoint,
@@ -1189,40 +1076,6 @@ export async function getCoordinationWorklist(
   );
 }
 
-export interface ProjectObservabilityResponse {
-  ok: boolean;
-  project: {
-    summary: {
-      agentsRunning: number;
-      agentsWaiting: number;
-      agentsOffline: number;
-      services: number;
-      worktrees: number;
-      openTasks: number;
-      doneTasks: number;
-      unreadNotifications: number;
-    };
-    progress: {
-      pending: number;
-      assigned: number;
-      in_progress: number;
-      blocked: number;
-      done: number;
-      failed: number;
-      total: number;
-    };
-    story: Array<{
-      id: string;
-      kind: "task" | "review" | "notification";
-      title: string;
-      meta: string;
-      body?: string;
-      createdAt: string;
-      status?: string;
-    }>;
-  };
-}
-
 export async function getProjectObservability(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
@@ -1235,34 +1088,6 @@ export async function getProjectObservability(
   );
 }
 
-export interface ProjectTopologyResponse {
-  ok: boolean;
-  topology: {
-    projectName: string;
-    health: "active" | "attention" | "idle" | "offline";
-    counts: { worktrees: number; agents: number; services: number };
-    worktrees: Array<{
-      name: string;
-      branch: string;
-      path?: string;
-      health: "active" | "attention" | "idle" | "offline";
-      agents: number;
-      services: number;
-    }>;
-    rows: Array<{
-      kind: "worktree" | "agent" | "service";
-      depth: number;
-      label: string;
-      detail?: string;
-      health: "active" | "attention" | "idle" | "offline";
-      status?: string;
-      sessionId?: string;
-      serviceId?: string;
-      worktreePath?: string;
-    }>;
-  };
-}
-
 export async function getProjectTopology(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
@@ -1273,34 +1098,6 @@ export async function getProjectTopology(
     PROJECT_API_ROUTES.topology,
     opts,
   );
-}
-
-export interface LibraryDocument {
-  id: string;
-  title: string;
-  path: string;
-  kind: string;
-  size: number;
-  updatedAt: string;
-  content: string;
-  truncated?: boolean;
-}
-
-export interface LibraryEntry {
-  id: string;
-  kind: "doc" | "plan";
-  title: string;
-  path: string;
-  updatedAt: string;
-  sessionId?: string;
-  label?: string;
-  preview: string;
-}
-
-export interface LibraryResponse {
-  ok: boolean;
-  documents: LibraryDocument[];
-  entries: LibraryEntry[];
 }
 
 export async function listProjectLibrary(

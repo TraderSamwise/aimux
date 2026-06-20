@@ -299,6 +299,165 @@ export interface ProjectServiceInfoResponse extends ProjectApiOk {
   serviceInfo?: unknown;
 }
 
+export type NotificationInteractionType = "permission" | "exit_plan" | "question" | "input";
+
+export interface NotificationInteractionRecord {
+  id: string;
+  type: NotificationInteractionType;
+  summary?: string;
+  telemetry?: boolean;
+  toolName?: string;
+  toolInputJSON?: string;
+}
+
+export interface NotificationRecord {
+  id: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+  sessionId?: string;
+  targetKey?: string;
+  targetKind?: "session" | "generic";
+  kind?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
+  unread: boolean;
+  cleared: boolean;
+  createdAt: string;
+  updatedAt: string;
+  dedupeKey?: string;
+  interaction?: NotificationInteractionRecord;
+}
+
+export type LibraryEntryKind = "doc" | "plan";
+
+export interface LibraryEntry {
+  id: string;
+  kind: LibraryEntryKind;
+  title: string;
+  path: string;
+  updatedAt: string;
+  sessionId?: string;
+  label?: string;
+  preview: string;
+}
+
+export type CoordinationReachability = "live" | "offline" | "missing" | "none";
+export type CoordinationBucket = "awake" | "asleep" | "handled" | "unreachable";
+export type CoordinationWorklistType = "msg" | "note" | "task" | "review" | "handoff" | "conversation";
+
+export interface CoordinationWorklistItem {
+  key: string;
+  kind: "notification" | "thread";
+  sessionId?: string;
+  type: CoordinationWorklistType;
+  bucket: CoordinationBucket;
+  title: string;
+  urgency: number;
+  reachability: CoordinationReachability;
+  actionable: boolean;
+  stale: boolean;
+  when?: string;
+  notification?: Record<string, unknown>;
+  thread?: Record<string, unknown>;
+}
+
+export interface CoordinationWorklistResponse extends ProjectApiOk {
+  worklist: {
+    items: CoordinationWorklistItem[];
+    needsYou: CoordinationWorklistItem[];
+    tail: CoordinationWorklistItem[];
+  };
+  model: {
+    items: Array<Record<string, unknown>>;
+    actionable: Array<Record<string, unknown>>;
+    unreachable: Array<Record<string, unknown>>;
+  };
+  threads: Array<Record<string, unknown>>;
+  [k: string]: unknown;
+}
+
+export interface ProjectObservabilityResponse extends ProjectApiOk {
+  project: {
+    summary: {
+      agentsRunning: number;
+      agentsWaiting: number;
+      agentsOffline: number;
+      services: number;
+      worktrees: number;
+      openTasks: number;
+      doneTasks: number;
+      unreadNotifications: number;
+    };
+    progress: {
+      pending: number;
+      assigned: number;
+      in_progress: number;
+      blocked: number;
+      done: number;
+      failed: number;
+      total: number;
+    };
+    story: Array<{
+      id: string;
+      kind: "task" | "review" | "notification";
+      title: string;
+      meta: string;
+      body?: string;
+      createdAt: string;
+      status?: string;
+    }>;
+  };
+}
+
+export interface ProjectTopologyResponse extends ProjectApiOk {
+  topology: {
+    projectName: string;
+    health: "active" | "attention" | "idle" | "offline";
+    counts: { worktrees: number; agents: number; services: number };
+    worktrees: Array<{
+      name: string;
+      branch: string;
+      path?: string;
+      health: "active" | "attention" | "idle" | "offline";
+      agents: number;
+      services: number;
+    }>;
+    rows: Array<{
+      kind: "worktree" | "agent" | "service";
+      depth: number;
+      label: string;
+      detail?: string;
+      health: "active" | "attention" | "idle" | "offline";
+      status?: string;
+      sessionId?: string;
+      serviceId?: string;
+      worktreePath?: string;
+    }>;
+  };
+}
+
+export interface LibraryDocument {
+  id: string;
+  title: string;
+  path: string;
+  kind: string;
+  size: number;
+  updatedAt: string;
+  content: string;
+  truncated?: boolean;
+}
+
+export interface LibraryResponse extends ProjectApiOk {
+  documents: LibraryDocument[];
+  entries: LibraryEntry[];
+}
+
 export type OrchestrationRouteMode = "message" | "handoff" | "task";
 
 export interface OrchestrationRouteOption {
@@ -317,6 +476,11 @@ export interface OrchestrationRouteOptionsResponse extends ProjectApiOk {
 export interface NotificationMutationInput {
   id?: string;
   sessionId?: string;
+}
+
+export interface NotificationsResponse extends ProjectApiOk {
+  notifications: NotificationRecord[];
+  unreadCount: number;
 }
 
 export interface NotificationReadResponse extends ProjectApiOk {
@@ -417,6 +581,36 @@ export interface TaskLifecycleInput {
   body?: string;
 }
 
+export interface ThreadSummaryResponse {
+  thread: { id: string; title?: string; status?: string; kind?: string };
+  lastMessage?: { body?: string; createdAt?: string };
+  [k: string]: unknown;
+}
+
+export interface TaskSummaryResponse {
+  id: string;
+  description?: string;
+  status?: string;
+  assignedTo?: string;
+  assignedBy?: string;
+  assignee?: string;
+  tool?: string;
+  threadId?: string;
+  [k: string]: unknown;
+}
+
+export interface TaskListResponse extends ProjectApiOk {
+  tasks: TaskSummaryResponse[];
+  [k: string]: unknown;
+}
+
+export interface TaskDetailResponse extends ProjectApiOk {
+  task: TaskSummaryResponse;
+  thread?: ThreadSummaryResponse["thread"];
+  messages?: Array<{ id?: string; body?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+}
+
 export interface WorkflowMutationResponse extends ProjectApiOk {
   thread?: unknown;
   message?: unknown;
@@ -457,6 +651,21 @@ export interface CreateWorktreeInput {
   name: string;
 }
 
+export interface ProjectWorktreeSummary {
+  name: string;
+  path: string;
+  branch: string;
+  isBare?: boolean;
+  pending?: boolean;
+  removing?: boolean;
+  [k: string]: unknown;
+}
+
+export interface WorktreesResponse extends ProjectApiOk {
+  worktrees: ProjectWorktreeSummary[];
+  [k: string]: unknown;
+}
+
 export interface WorktreePathInput {
   path: string;
 }
@@ -483,6 +692,31 @@ export interface ResurrectWorktreeResponse extends WorktreePathResponse {
 
 export interface DeleteWorktreeResponse extends WorktreePathResponse {
   status: "removed";
+}
+
+export interface GraveyardEntryResponse {
+  id: string;
+  tool?: string;
+  label?: string;
+  diedAt?: string;
+  [k: string]: unknown;
+}
+
+export interface WorktreeGraveyardEntryResponse {
+  name: string;
+  path: string;
+  branch?: string;
+  createdAt?: string;
+  graveyardedAt?: string;
+  agents?: GraveyardEntryResponse[];
+  services?: Array<{ id: string; command?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+}
+
+export interface GraveyardResponse extends ProjectApiOk {
+  entries: GraveyardEntryResponse[];
+  worktrees?: WorktreeGraveyardEntryResponse[];
+  [k: string]: unknown;
 }
 
 export interface AgentSessionInput {
