@@ -178,10 +178,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleDashboardFocusIn();
       return;
     }
-    if (host.handleActiveDashboardOverlayKey(data)) {
+    if (host.handleRuntimeGuardKey(data)) {
       return;
     }
-    if (host.handleRuntimeGuardKey(data)) {
+    if (host.handleActiveDashboardOverlayKey(data)) {
       return;
     }
     if (host.isDashboardScreen("coordination")) {
