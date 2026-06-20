@@ -1251,12 +1251,15 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: "startLine must be an integer" });
         return;
       }
-      const intervalMs =
-        intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
-      if (Number.isNaN(intervalMs) || intervalMs < 100) {
+      const parsedIntervalMs =
+        intervalMsRaw === null || intervalMsRaw.trim() === ""
+          ? ({ ok: true, value: 500 } as const)
+          : parsePositiveInteger(intervalMsRaw, "intervalMs");
+      if (!parsedIntervalMs.ok || parsedIntervalMs.value < 100) {
         send(res, 400, { ok: false, error: "intervalMs must be an integer >= 100" });
         return;
       }
+      const intervalMs = parsedIntervalMs.value;
       res.statusCode = 200;
       res.setHeader("content-type", "text/event-stream");
       res.setHeader("cache-control", "no-cache, no-transform");
@@ -1615,12 +1618,15 @@ export class MetadataServer {
       }
       const startLine = parsedStartLine.value;
 
-      const intervalMs =
-        intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
-      if (Number.isNaN(intervalMs) || intervalMs < 100) {
+      const parsedIntervalMs =
+        intervalMsRaw === null || intervalMsRaw.trim() === ""
+          ? ({ ok: true, value: 500 } as const)
+          : parsePositiveInteger(intervalMsRaw, "intervalMs");
+      if (!parsedIntervalMs.ok || parsedIntervalMs.value < 100) {
         send(res, 400, { ok: false, error: "intervalMs must be an integer >= 100" });
         return;
       }
+      const intervalMs = parsedIntervalMs.value;
 
       res.statusCode = 200;
       res.setHeader("content-type", "text/event-stream");
@@ -3303,12 +3309,17 @@ export class MetadataServer {
         req.method === "POST" &&
         (url.pathname === PROJECT_API_ROUTES.agents.interrupt || url.pathname === PROJECT_API_ROUTES.livePane.interrupt)
       ) {
-        const body = (await readJson(req)) as { sessionId: string };
+        const body = (await readJson(req)) as { sessionId?: string };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
         if (!this.options.lifecycle?.interruptAgent) {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.interruptAgent(body);
+        const result = await this.options.lifecycle.interruptAgent({ sessionId });
         this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;

@@ -402,6 +402,13 @@ describe("MetadataServer threads API", () => {
     });
     expect(interruptRes.ok).toBe(true);
 
+    const missingInterruptSessionRes = await fetch(`${base}/live-pane/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(missingInterruptSessionRes.status).toBe(400);
+
     const resizeRes = await fetch(`${base}/live-pane/resize`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -432,6 +439,9 @@ describe("MetadataServer threads API", () => {
 
     const malformedOutputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=10.5`);
     expect(malformedOutputRes.status).toBe(400);
+
+    const malformedStreamRes = await fetch(`${base}/live-pane/output/stream?sessionId=codex-1&intervalMs=100px`);
+    expect(malformedStreamRes.status).toBe(400);
 
     expect(calls).toEqual([
       { kind: "resize", sessionId: "codex-1", cols: 100, rows: 32 },

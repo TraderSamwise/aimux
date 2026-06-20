@@ -29,7 +29,6 @@ const SHARED_GUEST_SESSION_READ_ROUTES = new Set<string>([
   PROJECT_API_ROUTES.agents.output,
   PROJECT_API_ROUTES.agents.history,
   PROJECT_API_ROUTES.livePane.output,
-  PROJECT_API_ROUTES.livePane.outputStream,
   PROJECT_API_ROUTES.events,
 ]);
 
