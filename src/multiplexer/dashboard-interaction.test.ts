@@ -365,6 +365,41 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("does not fall back to local focus when the dashboard control route misses", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "running",
+      label: "Codex",
+      command: "codex",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "missing"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      offlineSessions: [],
+      resumeOfflineSessionWithFeedback: vi.fn(),
+      sessions: [{ id: "codex-1" }],
+      noteLastUsedItem: vi.fn(),
+      focusSession: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.focusSession).not.toHaveBeenCalled();
+    expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+    expect(host.resumeOfflineSessionWithFeedback).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Agent Codex is not available yet");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("dismisses failed worktree rows through the project service", async () => {
     const path = "/repo/.aimux/worktrees/demo";
     const host: any = {

@@ -100,6 +100,7 @@ function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
     index: typeof seed.index === "number" ? seed.index : -1,
     id: seed.id,
     command: seed.command,
+    toolConfigKey: seed.toolConfigKey,
     label: seed.label,
     status: seed.status ?? (seed.lifecycle === "offline" ? "offline" : "running"),
     active: Boolean(seed.active),
@@ -138,6 +139,7 @@ function buildMetadataPendingSessionSeed(input: {
     index: -1,
     id: input.sessionId,
     command: input.tool,
+    toolConfigKey: input.tool,
     label: input.tool,
     createdAt: new Date().toISOString(),
     status: "waiting",
@@ -711,6 +713,7 @@ export function computeDashboardSessions(
     sessions: host.sessions.map((session: any) => ({
       id: session.id,
       command: session.command,
+      toolConfigKey: host.sessionToolKeys?.get?.(session.id),
       backendSessionId: session.backendSessionId,
       team: session.team,
       createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,

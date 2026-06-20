@@ -1,4 +1,4 @@
-import { listNotifications } from "../notifications.js";
+import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   buildCoordinationView,
@@ -20,7 +20,7 @@ export interface NotificationRowMeta {
 }
 
 export function showNotificationPanel(host: NotificationHost): void {
-  const entries = listNotifications().slice(0, 40);
+  const entries = host.notificationPanelState?.entries ?? [];
   host.notificationPanelState = {
     entries,
     index: entries.length > 0 ? 0 : -1,
@@ -28,6 +28,11 @@ export function showNotificationPanel(host: NotificationHost): void {
   host.openDashboardOverlay("notification-panel");
   host.syncTuiNotificationContext(true);
   host.renderDashboard();
+  void refreshNotificationPanelFromService(host).then(() => host.renderDashboard()).catch(() => {
+    host.footerFlash = "Notification refresh failed";
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+  });
 }
 
 export function closeNotificationPanel(host: NotificationHost): void {
@@ -84,7 +89,7 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
 }
 
 // Route a notification panel mutation through the service (sole writer), then reload the panel
-// from the freshly-written store. Failures flash rather than mutating the local store directly.
+// from the service. Failures flash rather than mutating local notification state directly.
 async function mutateNotificationsViaService(
   host: NotificationHost,
   path: typeof PROJECT_API_ROUTES.notifications.read | typeof PROJECT_API_ROUTES.notifications.clear,
@@ -93,21 +98,34 @@ async function mutateNotificationsViaService(
 ): Promise<void> {
   try {
     await host.postToProjectService(path, selector);
+    const panel = host.notificationPanelState;
+    if (!panel) return;
+    await refreshNotificationPanelFromService(host);
+    if (opts.resetIndex) panel.index = panel.entries.length > 0 ? 0 : -1;
   } catch {
     host.footerFlash = "Notification update failed";
     host.footerFlashTicks = 3;
     host.renderDashboard();
     return;
   }
-  const panel = host.notificationPanelState;
-  if (!panel) return;
-  panel.entries = listNotifications().slice(0, 40);
-  if (opts.resetIndex) panel.index = panel.entries.length > 0 ? 0 : -1;
-  else if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
   host.renderDashboard();
 }
 
-/** Reconciled coordination payload — either built locally or received from the service. */
+export async function refreshNotificationPanelFromService(host: NotificationHost): Promise<boolean> {
+  const panel = host.notificationPanelState;
+  if (!panel) return false;
+  const res = await host.getFromProjectService(PROJECT_API_ROUTES.notifications.list);
+  if (!res?.ok || !Array.isArray(res.notifications)) {
+    throw new Error("invalid notifications payload");
+  }
+  panel.entries = (res.notifications as NotificationRecord[]).slice(0, 40);
+  if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
+  if (panel.index < 0 && panel.entries.length > 0) panel.index = 0;
+  if (panel.entries.length === 0) panel.index = -1;
+  return true;
+}
+
+/** Reconciled coordination payload. */
 interface CoordinationPayload {
   model: CoordinationModel;
   worklist: CoordinationWorklist;
@@ -152,10 +170,8 @@ export function applyCoordinationFilter(host: NotificationHost): void {
 }
 
 export function refreshNotificationEntries(host: NotificationHost): void {
-  // Local coordination build (the offline fallback): rebuild genuine threads, reconcile
-  // notifications against live agent state, and merge both into the unified worklist that drives
-  // the screen. The service endpoint runs this same buildCoordinationView, so the two never
-  // diverge. Called from every notification/thread mutation site so the screen stays coherent.
+  // Local build used by non-dashboard internals and tests; the dashboard reads this via the
+  // project-service coordination endpoint.
   const threads = buildCoordinationThreadEntries("user");
   const { model, worklist } = buildCoordinationView({
     sessions: host.getDashboardSessions?.() ?? [],
@@ -167,27 +183,31 @@ export function refreshNotificationEntries(host: NotificationHost): void {
   applyCoordinationModel(host, { model, worklist, threads });
 }
 
-// Prefer the service's reconciled worklist (the single authority, shared with the app); on any
-// failure fall back to the local build so a disconnected dashboard still shows last-known state.
+// Prefer the service's reconciled worklist (the single authority, shared with the app). On
+// failure preserve the last service payload so version skew cannot silently fork the view.
 export async function refreshCoordinationFromService(host: NotificationHost): Promise<boolean> {
   try {
     const res = await host.getFromProjectService(PROJECT_API_ROUTES.coordinationWorklist);
-    // Validate the shape before mutating host state so a malformed/version-skewed payload fails
-    // fast into the local fallback instead of half-applying and crashing a renderer downstream.
-    if (!res?.ok || !Array.isArray(res.model?.items) || !Array.isArray(res.worklist?.items)) {
+    // Validate before mutating so version-skewed payloads cannot half-apply.
+    if (
+      !res?.ok ||
+      !Array.isArray(res.model?.items) ||
+      !Array.isArray(res.worklist?.items) ||
+      (res.threads != null && !Array.isArray(res.threads))
+    ) {
       throw new Error("invalid coordination payload");
     }
-    applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads: res.threads ?? [] });
+    const threads = res.threads ?? [];
+    applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads });
     return true;
   } catch {
-    refreshNotificationEntries(host);
     return false;
   }
 }
 
 export function hydrateDashboardNotificationScreenState(host: NotificationHost): void {
   if (!host.isDashboardScreen?.("coordination")) return;
-  refreshNotificationEntries(host);
+  void host.refreshCoordinationFromService?.().then(() => host.renderCurrentDashboardView?.()).catch(() => {});
   host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
 }
 
@@ -276,7 +296,7 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   const settle = async () => {
     if (unread) {
       await markCoordinationItemRead(host, item);
-      refreshNotificationEntries(host);
+      await host.refreshCoordinationFromService?.();
     }
   };
   if (!item.sessionId) {

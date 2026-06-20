@@ -20,6 +20,7 @@ import { markSessionViewed } from "../session-viewed.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
+import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 
@@ -248,6 +249,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       .catch(() => {});
   }
   host.terminalHost.enterAlternateScreen(true);
+  startDashboardProjectEventStream(host);
   host.startStatusRefresh();
   host.renderCurrentDashboardView();
 
@@ -776,8 +778,7 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "coordination":
       host.clearDashboardSubscreens();
       host.setDashboardScreen("coordination");
-      // Force a fresh local load on next render (this path bypasses showCoordination), then refine
-      // from the service so this entry point reaches the same authority as showCoordination.
+      // This path bypasses showCoordination, so request the service-backed view explicitly.
       host.coordinationLoaded = false;
       host.persistDashboardUiState();
       host.openTmuxDashboardTarget();

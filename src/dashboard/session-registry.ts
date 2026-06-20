@@ -10,6 +10,7 @@ import { DEFAULT_EXACT_BACKEND_RESUME_TOOLS, describeSessionRestorability } from
 export interface DashboardLocalSession {
   id: string;
   command: string;
+  toolConfigKey?: string;
   tmuxWindowId?: string;
   backendSessionId?: string;
   team?: SessionTeamMetadata;
@@ -78,6 +79,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       index: dashSessions.length,
       id: session.id,
       command: session.command,
+      toolConfigKey: session.toolConfigKey,
       tmuxWindowId: session.tmuxWindowId,
       backendSessionId: session.backendSessionId,
       team: session.team,
@@ -126,6 +128,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       index: dashSessions.length,
       id: offline.id,
       command: offline.command,
+      toolConfigKey: offline.toolConfigKey,
       backendSessionId: offline.backendSessionId,
       restoreState: restorability?.restoreState,
       restoreBlockedReason: restorability?.restoreBlockedReason,
