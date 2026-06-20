@@ -522,6 +522,9 @@ function markActiveWindowFocused(
   currentWindowId: string | undefined,
 ): boolean {
   if (currentWindow && /^dashboard/.test(currentWindow)) {
+    if (!currentWindowId) return false;
+    const dashboardTarget = findExistingDashboardTarget(tmux, projectRoot, currentClientSession);
+    if (dashboardTarget?.windowId !== currentWindowId) return false;
     updateNotificationContext("tui", {
       focused: true,
       screen: "dashboard",
@@ -2214,6 +2217,11 @@ export class MetadataServer {
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const ok = markActiveWindowFocused(tmux, process.cwd(), currentClientSession, currentWindow, currentWindowId);
         if (!ok) {
           send(res, 404, { ok: false, error: "window not found" });
