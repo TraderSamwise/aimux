@@ -15,6 +15,9 @@ function cleanupInboxHost() {
     getDashboardSessions: () => [],
     getDashboardServices: () => [],
     metadataServer: { notifyChange: vi.fn() },
+    isDashboardScreen: vi.fn(() => true),
+    refreshCoordinationFromService: vi.fn(async () => true),
+    renderCurrentDashboardView: vi.fn(),
   } as any;
 }
 
@@ -31,7 +34,7 @@ describe("cleanupInbox runtime", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("archives a read+aged notification and refreshes consumers", async () => {
+  it("archives a read+aged notification and refreshes service-backed consumers", async () => {
     const record = addNotification({
       title: "needs input",
       body: "waiting",
@@ -45,9 +48,9 @@ describe("cleanupInbox runtime", () => {
     const result = await (persistenceMethods.cleanupInbox as any).call(host, { now: "2026-06-01T00:00:00.000Z" });
 
     expect(result.results.some((item: any) => item.status === "cleared")).toBe(true);
-    expect(Array.isArray(host.notificationEntries)).toBe(true);
-    expect(host.notificationEntries.some((entry: any) => entry.id === record.id)).toBe(false);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
+    await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce());
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("does not refresh or notify when nothing is eligible", async () => {
