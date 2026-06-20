@@ -338,6 +338,90 @@ export interface ThreadMarkSeenResponse extends ProjectApiOk {
   thread?: unknown;
 }
 
+export type ProjectThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
+export type ProjectThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
+export type ProjectThreadMessageKind = "request" | "reply" | "status" | "decision" | "handoff" | "note";
+
+export interface ThreadOpenInput {
+  title: string;
+  from: string;
+  participants: string[];
+  kind?: ProjectThreadKind;
+  worktreePath?: string;
+}
+
+export interface ThreadOpenResponse extends ProjectApiOk {
+  thread: unknown;
+}
+
+export interface ThreadSendInput {
+  threadId?: string;
+  from?: string;
+  to?: string[];
+  assignee?: string;
+  tool?: string;
+  worktreePath?: string;
+  kind?: ProjectThreadMessageKind;
+  body: string;
+  title?: string;
+}
+
+export interface ThreadSendResponse extends ProjectApiOk {
+  thread?: unknown;
+  message?: unknown;
+}
+
+export interface ThreadStatusInput {
+  threadId: string;
+  status: ProjectThreadStatus;
+  owner?: string;
+  waitingOn?: string[];
+}
+
+export interface ThreadStatusResponse extends ProjectApiOk {
+  thread: unknown;
+}
+
+export interface HandoffSendInput {
+  from?: string;
+  to?: string[];
+  assignee?: string;
+  tool?: string;
+  body: string;
+  title?: string;
+  worktreePath?: string;
+}
+
+export interface ThreadLifecycleInput {
+  threadId: string;
+  from?: string;
+  body?: string;
+}
+
+export interface TaskAssignInput {
+  from?: string;
+  to?: string | string[];
+  assignee?: string;
+  tool?: string;
+  description: string;
+  prompt?: string;
+  type?: "task" | "review";
+  diff?: string;
+  worktreePath?: string;
+}
+
+export interface TaskLifecycleInput {
+  taskId: string;
+  from?: string;
+  body?: string;
+}
+
+export interface WorkflowMutationResponse extends ProjectApiOk {
+  thread?: unknown;
+  message?: unknown;
+  task?: unknown;
+}
+
 export interface CreateServiceInput {
   command?: string;
   worktreePath?: string;

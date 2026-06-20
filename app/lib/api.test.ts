@@ -4,8 +4,15 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
 import {
   acceptShareInvite,
+  acceptHandoff,
+  acceptTask,
+  approveReview,
+  assignTask,
+  blockTask,
   focusWindow,
   clearNotifications,
+  completeHandoff,
+  completeTask,
   createService,
   createWorktree,
   createShareInvite,
@@ -34,20 +41,26 @@ import {
   openDashboard,
   openInbox,
   openNotificationTarget,
+  openThread,
   removeService,
   removeWorktree,
   removeShareParticipant,
   putPlan,
+  reopenTask,
+  requestReviewChanges,
   resurrectGraveyardWorktree,
   resizeLivePane,
   resumeService,
+  sendHandoff,
   sendAgentInput,
   sendLivePaneInput,
+  sendThreadMessage,
   setApiRelay,
   stopService,
   switchAttentionAgent,
   switchNextAgent,
   switchPrevAgent,
+  updateThreadStatus,
   uploadImageAttachment,
 } from "@/lib/api";
 import type { RelayTransport } from "@/lib/relay-transport";
@@ -159,6 +172,38 @@ describe("api relay routing", () => {
       dataBase64: "aGVsbG8=",
     });
     await markThreadSeen(endpoint, { threadId: "thread-1", sessionId: "agent-1" });
+    await openThread(endpoint, {
+      title: "Discuss launch",
+      from: "user",
+      participants: ["agent-1"],
+      kind: "conversation",
+    });
+    await sendThreadMessage(endpoint, {
+      threadId: "thread-1",
+      from: "user",
+      to: ["agent-1"],
+      kind: "request",
+      body: "Please check this.",
+    });
+    await updateThreadStatus(endpoint, {
+      threadId: "thread-1",
+      status: "blocked",
+      waitingOn: ["user"],
+    });
+    await sendHandoff(endpoint, { from: "user", to: ["agent-1"], body: "Take over this task." });
+    await acceptHandoff(endpoint, { threadId: "thread-1", from: "user" });
+    await completeHandoff(endpoint, { threadId: "thread-1", from: "user", body: "Done." });
+    await assignTask(endpoint, {
+      from: "user",
+      assignee: "reviewer",
+      description: "Review this diff.",
+    });
+    await acceptTask(endpoint, { taskId: "task-1", from: "user" });
+    await blockTask(endpoint, { taskId: "task-1", from: "user", body: "Waiting on context." });
+    await completeTask(endpoint, { taskId: "task-1", from: "user", body: "Finished." });
+    await reopenTask(endpoint, { taskId: "task-1", from: "user" });
+    await approveReview(endpoint, { taskId: "task-1", from: "user", body: "Looks good." });
+    await requestReviewChanges(endpoint, { taskId: "task-1", from: "user", body: "Needs tests." });
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
@@ -315,10 +360,85 @@ describe("api relay routing", () => {
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
     });
-    expect(request).toHaveBeenNthCalledWith(25, "POST", "/proxy/127.0.0.1/43210/threads/mark-seen", {
-      threadId: "thread-1",
-      sessionId: "agent-1",
+    expect(request).toHaveBeenNthCalledWith(
+      25,
+      "POST",
+      "/proxy/127.0.0.1/43210/threads/mark-seen",
+      {
+        threadId: "thread-1",
+        sessionId: "agent-1",
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(26, "POST", "/proxy/127.0.0.1/43210/threads/open", {
+      title: "Discuss launch",
+      from: "user",
+      participants: ["agent-1"],
+      kind: "conversation",
     });
+    expect(request).toHaveBeenNthCalledWith(27, "POST", "/proxy/127.0.0.1/43210/threads/send", {
+      threadId: "thread-1",
+      from: "user",
+      to: ["agent-1"],
+      kind: "request",
+      body: "Please check this.",
+    });
+    expect(request).toHaveBeenNthCalledWith(28, "POST", "/proxy/127.0.0.1/43210/threads/status", {
+      threadId: "thread-1",
+      status: "blocked",
+      waitingOn: ["user"],
+    });
+    expect(request).toHaveBeenNthCalledWith(29, "POST", "/proxy/127.0.0.1/43210/handoff", {
+      from: "user",
+      to: ["agent-1"],
+      body: "Take over this task.",
+    });
+    expect(request).toHaveBeenNthCalledWith(30, "POST", "/proxy/127.0.0.1/43210/handoff/accept", {
+      threadId: "thread-1",
+      from: "user",
+    });
+    expect(request).toHaveBeenNthCalledWith(31, "POST", "/proxy/127.0.0.1/43210/handoff/complete", {
+      threadId: "thread-1",
+      from: "user",
+      body: "Done.",
+    });
+    expect(request).toHaveBeenNthCalledWith(32, "POST", "/proxy/127.0.0.1/43210/tasks/assign", {
+      from: "user",
+      assignee: "reviewer",
+      description: "Review this diff.",
+    });
+    expect(request).toHaveBeenNthCalledWith(33, "POST", "/proxy/127.0.0.1/43210/tasks/accept", {
+      taskId: "task-1",
+      from: "user",
+    });
+    expect(request).toHaveBeenNthCalledWith(34, "POST", "/proxy/127.0.0.1/43210/tasks/block", {
+      taskId: "task-1",
+      from: "user",
+      body: "Waiting on context.",
+    });
+    expect(request).toHaveBeenNthCalledWith(35, "POST", "/proxy/127.0.0.1/43210/tasks/complete", {
+      taskId: "task-1",
+      from: "user",
+      body: "Finished.",
+    });
+    expect(request).toHaveBeenNthCalledWith(36, "POST", "/proxy/127.0.0.1/43210/tasks/reopen", {
+      taskId: "task-1",
+      from: "user",
+    });
+    expect(request).toHaveBeenNthCalledWith(37, "POST", "/proxy/127.0.0.1/43210/reviews/approve", {
+      taskId: "task-1",
+      from: "user",
+      body: "Looks good.",
+    });
+    expect(request).toHaveBeenNthCalledWith(
+      38,
+      "POST",
+      "/proxy/127.0.0.1/43210/reviews/request-changes",
+      {
+        taskId: "task-1",
+        from: "user",
+        body: "Needs tests.",
+      },
+    );
   });
 
   it("defaults location actions to resolve-only over relay", async () => {
