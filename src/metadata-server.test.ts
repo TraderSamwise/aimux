@@ -804,6 +804,46 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("does not trust stale exited agent window ids for resolve-only opens", async () => {
+    server?.stop();
+    const resumeAgent = vi.fn();
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "agent-1", command: "codex", status: "exited", tmuxWindowId: "@stale" }],
+          teammates: [],
+          services: [],
+        }),
+        resumeAgent,
+      },
+    });
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("stale exited window id should not be resolved");
+    });
+    await server.start();
+
+    try {
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "agent-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string; itemId?: string };
+
+      expect(res.status).toBe(409);
+      expect(body).toMatchObject({ ok: false, error: "agent is offline", itemId: "agent-1" });
+      expect(resumeAgent).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
   it("rejects unmanaged focus-window targets", async () => {
     const target = { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "outside" } as any;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;

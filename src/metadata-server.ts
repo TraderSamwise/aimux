@@ -2119,7 +2119,7 @@ export class MetadataServer {
           sendControlAction(res, "open-notification-target", match.target, focusResult, service.id);
           return;
         }
-        if (session && session.status === "offline") {
+        if (session && (session.status === "offline" || session.status === "exited")) {
           if (!focus) {
             send(res, 409, { ok: false, error: "agent is offline", itemId: session.id });
             return;
