@@ -31,7 +31,7 @@ import {
   type StopServiceResponse,
   type WorktreePathInput,
   type WorktreePathResponse,
-} from "../../src/project-api-contract.js";
+} from "../../src/project-api-contract";
 
 let _relay: RelayTransport | null = null;
 export function setApiRelay(relay: RelayTransport | null): void {
