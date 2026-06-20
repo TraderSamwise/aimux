@@ -534,7 +534,7 @@ function markActiveWindowFocused(
     return true;
   }
   if (!currentWindowId) return false;
-  const match = tmux.listProjectManagedWindows(projectRoot).find((entry) => entry.target.windowId === currentWindowId);
+  const match = findProjectManagedWindow(tmux, projectRoot, { windowId: currentWindowId });
   if (!match) return false;
   updateNotificationContext("tui", {
     focused: true,

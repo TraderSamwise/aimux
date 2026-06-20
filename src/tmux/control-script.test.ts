@@ -55,7 +55,8 @@ function listWindows() {
           .replace("#{session_name}", session)
           .replace("#{window_index}", String(window.index))
           .replace("#{window_name}", window.name)
-          .replace("#{window_id}", window.id),
+          .replace("#{window_id}", window.id)
+          .replace("#{pane_dead}", state.deadWindows?.includes(window.id) ? "1" : "0"),
       );
     }
   }
@@ -65,6 +66,14 @@ function displayMessage() {
   const targetIndex = args.indexOf("-t");
   const target = targetIndex >= 0 ? args[targetIndex + 1] : "";
   const format = args.at(-1) || "";
+  if (format === "#{pane_dead}") {
+    const exists = Object.values(state.windows || {}).some((windows) =>
+      (windows || []).some((window) => window.id === target),
+    );
+    if (!exists) fail();
+    out(state.deadWindows?.includes(target) ? "1" : "0");
+    return;
+  }
   const pane = (state.panes || {})[target];
   if (!pane) fail();
   out(
@@ -402,6 +411,113 @@ describe("tmux-control.sh", () => {
     expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
     expect(curlLog).toEqual([]);
+  });
+
+  it("skips dead host tmux metadata candidates for next", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      deadWindows: ["@codex"],
+      windowMetadata: {
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+  });
+
+  it("falls through to the control API for dead explicit local targets", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      deadWindows: ["@codex"],
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "window",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--window-id",
+      "@codex",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(curlLog.length).toBeGreaterThan(0);
+    expect(curlLog[0]).toContain("--data-urlencode windowId=@codex");
+    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/focus-window");
   });
 
   it("hydrates current context from explicit pane id", () => {
