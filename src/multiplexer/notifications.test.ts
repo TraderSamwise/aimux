@@ -330,4 +330,27 @@ describe("coordination reads prefer the service", () => {
     expect(host.coordinationWorklist.map((item: any) => item.sessionId)).toEqual(["remote-1"]);
     expect(host.notificationEntries.map((entry: any) => entry.id)).toEqual(["r1"]);
   });
+
+  it("rejects malformed service thread payloads before mutating host state", async () => {
+    const host: any = {
+      coordinationFilter: "all",
+      coordinationLoaded: true,
+      threadEntries: [{ thread: { id: "existing" } }],
+      coordinationWorklist: [{ sessionId: "remote-1" }],
+      notificationEntries: [{ id: "r1" }],
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        model: { items: [] },
+        worklist: { items: [] },
+        threads: { bad: true },
+      })),
+    };
+
+    const ok = await refreshCoordinationFromService(host);
+
+    expect(ok).toBe(false);
+    expect(host.threadEntries).toEqual([{ thread: { id: "existing" } }]);
+    expect(host.coordinationWorklist).toEqual([{ sessionId: "remote-1" }]);
+    expect(host.notificationEntries).toEqual([{ id: "r1" }]);
+  });
 });

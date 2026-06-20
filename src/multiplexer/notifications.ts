@@ -189,10 +189,16 @@ export async function refreshCoordinationFromService(host: NotificationHost): Pr
   try {
     const res = await host.getFromProjectService(PROJECT_API_ROUTES.coordinationWorklist);
     // Validate before mutating so version-skewed payloads cannot half-apply.
-    if (!res?.ok || !Array.isArray(res.model?.items) || !Array.isArray(res.worklist?.items)) {
+    if (
+      !res?.ok ||
+      !Array.isArray(res.model?.items) ||
+      !Array.isArray(res.worklist?.items) ||
+      (res.threads != null && !Array.isArray(res.threads))
+    ) {
       throw new Error("invalid coordination payload");
     }
-    applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads: res.threads ?? [] });
+    const threads = res.threads ?? [];
+    applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads });
     return true;
   } catch {
     return false;
