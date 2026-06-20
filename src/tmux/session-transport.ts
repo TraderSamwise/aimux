@@ -74,9 +74,9 @@ export class TmuxSessionTransport {
   }
 
   resize(cols: number, rows: number): void {
+    this.manager.resizeTarget(this.target, cols, rows);
     this.cols = cols;
     this.rows = rows;
-    this.manager.resizeTarget(this.target, cols, rows);
   }
 
   onData(cb: (data: string) => void): void {

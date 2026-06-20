@@ -124,6 +124,13 @@ describe("session runtime prompt submission", () => {
     }
   });
 
+  it("rejects invalid resize dimensions before resolving sessions", async () => {
+    const host: any = { sessions: [] };
+
+    await expect(resizeAgentPane(host, "codex-1", 0, 32)).rejects.toThrow("cols must be a positive integer");
+    await expect(resizeAgentPane(host, "codex-1", 100, 10.5)).rejects.toThrow("rows must be a positive integer");
+  });
+
   it("does not re-add graveyarded live sessions as offline when their process exits", () => {
     const runtime: any = {
       id: "codex-1",
