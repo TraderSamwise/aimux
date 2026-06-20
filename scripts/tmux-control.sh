@@ -499,6 +499,13 @@ def is_live_window(window_id):
         return False
     return bool(pane_dead) and pane_dead != "1"
 
+def is_same_or_child_path(path, parent):
+    if not path or not parent:
+        return False
+    path = path.rstrip("/")
+    parent = parent.rstrip("/")
+    return path == parent or path.startswith(parent + "/")
+
 try:
     data = json.load(open(path))
 except Exception as error:
@@ -596,7 +603,7 @@ for session in sessions:
     if current_worktree:
         if worktree != current_worktree:
             continue
-    elif not current_path.startswith(worktree):
+    elif not is_same_or_child_path(current_path, worktree):
         continue
     length = len(worktree)
     if length > best_len:
@@ -605,7 +612,14 @@ for session in sessions:
     elif length == best_len:
         matched.append(session)
 items = []
-for session in matched if matched else sessions:
+if matched:
+    candidate_sessions = matched
+elif current_worktree or current_path:
+    log("no statusline candidates after worktree filtering")
+    raise SystemExit(1)
+else:
+    candidate_sessions = sessions
+for session in candidate_sessions:
     alive = is_live_window(session.get("tmuxWindowId"))
     if not alive and session.get("tmuxWindowId") != current_window_id:
         continue
@@ -700,6 +714,13 @@ def log(message):
 def run(*args):
     return subprocess.check_output(["tmux", *args], text=True)
 
+def is_same_or_child_path(path, parent):
+    if not path or not parent:
+        return False
+    path = path.rstrip("/")
+    parent = parent.rstrip("/")
+    return path == parent or path.startswith(parent + "/")
+
 if explicit_window_id:
     log(f"explicit target {explicit_window_id}")
     print(explicit_window_id)
@@ -726,7 +747,7 @@ for line in windows:
         log(f"skip window={window_id!r} name={name!r} no/invalid meta error={error}")
         continue
     worktree = meta.get("worktreePath") or project_root
-    if not worktree or not current_path.startswith(worktree):
+    if not is_same_or_child_path(current_path, worktree):
         log(f"skip window={window_id!r} session={meta.get('sessionId')!r} worktree mismatch worktree={worktree!r}")
         continue
     kind = meta.get("kind") or "agent"
@@ -758,7 +779,7 @@ for item in items:
 if current_worktree:
     items = [item for item in items if item.get("worktreePath") == current_worktree]
 else:
-    items = [item for item in items if current_path.startswith(item.get("worktreePath") or "")]
+    items = [item for item in items if is_same_or_child_path(current_path, item.get("worktreePath") or "")]
 items = [item for item in items if item.get("alive") or item.get("windowId") == current_window_id]
 log("items=" + repr([
     f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}:{'live' if item.get('alive') else 'dead'}"
