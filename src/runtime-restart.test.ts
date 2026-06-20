@@ -163,6 +163,42 @@ describe("restartAimuxControlPlane", () => {
     expect(processKill).toHaveBeenCalledWith(9001, "SIGKILL");
   });
 
+  it("treats pids as exited when they disappear during ps state probing", async () => {
+    const processKill = vi
+      .spyOn(process, "kill")
+      .mockImplementationOnce(() => true)
+      .mockImplementationOnce(() => {
+        throw new Error("no such process");
+      })
+      .mockImplementation(() => true);
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("ps raced with exit");
+    });
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+    });
+
+    expect(processKill).toHaveBeenNthCalledWith(1, 9001, 0);
+    expect(processKill).toHaveBeenNthCalledWith(2, 9001, 0);
+    expect(processKill).not.toHaveBeenCalledWith(9001, "SIGKILL");
+  });
+
   it("restarts the daemon, ensures known services, and reloads only existing dashboards by default", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
