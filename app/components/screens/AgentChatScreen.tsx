@@ -55,6 +55,7 @@ const TERMINAL_HORIZONTAL_PADDING = 32;
 const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
+const CHAT_HEARTBEAT_RECONNECT_MS = 3000;
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
@@ -128,18 +129,43 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!serviceEndpoint || !sessionId || !heartbeatReady) return;
     const endpoint = serviceEndpoint;
-    const handle = startHeartbeat({
-      serviceEndpoint: endpoint,
-      sessionId,
-      token,
-      onEvent: (event) => {
-        ingestEvent(event);
-      },
-      onError: (err) => {
-        console.warn("heartbeat error:", err);
-      },
-    });
-    return () => handle.stop();
+    const activeSessionId = sessionId;
+    let cancelled = false;
+    let handle: { stop: () => void } | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleReconnect() {
+      if (cancelled || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        handle?.stop();
+        handle = null;
+        connect();
+      }, CHAT_HEARTBEAT_RECONNECT_MS);
+    }
+
+    function connect() {
+      handle = startHeartbeat({
+        serviceEndpoint: endpoint,
+        sessionId: activeSessionId,
+        token,
+        onEvent: (event) => {
+          ingestEvent(event);
+        },
+        onError: (err) => {
+          if (cancelled) return;
+          console.warn("heartbeat error:", err);
+          scheduleReconnect();
+        },
+      });
+    }
+
+    connect();
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      handle?.stop();
+    };
     // serviceEndpoint object identity changes during project-list reconciles.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpointKey, sessionId, token, ingestEvent, heartbeatReady]);
