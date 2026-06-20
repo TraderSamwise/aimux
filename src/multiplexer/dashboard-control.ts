@@ -180,14 +180,34 @@ export function reloadDashboardFromGuard(host: DashboardControlHost): void {
   host.footerFlash = "Reloading dashboard…";
   host.footerFlashTicks = 5;
   host.renderCurrentDashboardView();
+  const command = resolveDashboardReloadCommand();
   try {
-    const child = spawn("aimux", ["dashboard-reload", "--open"], { detached: true, stdio: "ignore" });
+    const child = spawn(command, ["dashboard-reload", "--open"], { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+      host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
+      host.footerFlashTicks = 6;
+      host.renderCurrentDashboardView();
+    });
     child.unref();
   } catch {
-    host.footerFlash = "Reload failed — run: aimux dashboard-reload --open";
+    host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
     host.footerFlashTicks = 6;
     host.renderCurrentDashboardView();
   }
+}
+
+export function resolveDashboardReloadCommand(): string {
+  const entrypoint = process.argv[1]?.trim();
+  if (entrypoint && /(?:^|\/)aimux-dev$/.test(entrypoint)) return entrypoint;
+  if (entrypoint && /(?:^|\/)aimux$/.test(entrypoint)) return "aimux";
+  if (
+    process.env.AIMUX_ENV === "development" ||
+    process.env.AIMUX_DAEMON_PORT === "43191" ||
+    process.env.AIMUX_HOME?.endsWith("/.aimux-dev")
+  ) {
+    return "aimux-dev";
+  }
+  return "aimux";
 }
 
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {

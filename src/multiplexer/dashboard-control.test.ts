@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   removeMetadataEndpoint: vi.fn(),
   ensureDaemonRunning: vi.fn(),
   ensureProjectService: vi.fn(),
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
 }));
 
 vi.mock("../http-client.js", () => ({
@@ -21,6 +22,10 @@ vi.mock("../metadata-store.js", () => ({
 vi.mock("../daemon.js", () => ({
   ensureDaemonRunning: mocks.ensureDaemonRunning,
   ensureProjectService: mocks.ensureProjectService,
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: mocks.spawn,
 }));
 
 describe("postToProjectService", () => {
@@ -56,6 +61,73 @@ describe("postToProjectService", () => {
 
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
     expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reloadDashboardFromGuard", () => {
+  it("uses the active aimux-dev entrypoint when the dashboard was launched through it", async () => {
+    const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
+    const originalArgv = process.argv[1];
+    process.argv[1] = "/Users/sam/cs/aimux/bin/aimux-dev";
+    const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
+
+    try {
+      reloadDashboardFromGuard(host as never);
+    } finally {
+      process.argv[1] = originalArgv;
+    }
+
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "/Users/sam/cs/aimux/bin/aimux-dev",
+      ["dashboard-reload", "--open"],
+      { detached: true, stdio: "ignore" },
+    );
+  });
+
+  it("shows a footer failure when the reload child emits an error", async () => {
+    let onError: (() => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: () => void) => {
+        if (event === "error") onError = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
+    const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
+
+    reloadDashboardFromGuard(host as never);
+    onError?.();
+
+    expect(host.footerFlash).toContain("Reload failed");
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to aimux-dev when the environment is the dev lane", async () => {
+    const { resolveDashboardReloadCommand } = await import("./dashboard-control.js");
+    const originalArgv = process.argv[1];
+    const originalEnv = process.env.AIMUX_ENV;
+    process.argv[1] = "/Users/sam/cs/aimux/dist/main.js";
+    process.env.AIMUX_ENV = "development";
+
+    try {
+      expect(resolveDashboardReloadCommand()).toBe("aimux-dev");
+    } finally {
+      process.argv[1] = originalArgv;
+      if (originalEnv === undefined) delete process.env.AIMUX_ENV;
+      else process.env.AIMUX_ENV = originalEnv;
+    }
+  });
+
+  it("uses PATH aimux instead of a versioned stable install path", async () => {
+    const { resolveDashboardReloadCommand } = await import("./dashboard-control.js");
+    const originalArgv = process.argv[1];
+    process.argv[1] = "/Users/sam/.aimux/native/1.2.3/bin/aimux";
+
+    try {
+      expect(resolveDashboardReloadCommand()).toBe("aimux");
+    } finally {
+      process.argv[1] = originalArgv;
+    }
   });
 });
 
