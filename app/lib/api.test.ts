@@ -4,6 +4,7 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
 import {
   acceptShareInvite,
+  focusWindow,
   clearNotifications,
   createService,
   createWorktree,
@@ -24,6 +25,10 @@ import {
   listThreads,
   listWorkflow,
   markNotificationsRead,
+  markActiveWindow,
+  openDashboard,
+  openInbox,
+  openNotificationTarget,
   removeService,
   removeWorktree,
   removeShareParticipant,
@@ -35,6 +40,9 @@ import {
   sendLivePaneInput,
   setApiRelay,
   stopService,
+  switchAttentionAgent,
+  switchNextAgent,
+  switchPrevAgent,
   uploadImageAttachment,
 } from "@/lib/api";
 import type { RelayTransport } from "@/lib/relay-transport";
@@ -126,6 +134,14 @@ describe("api relay routing", () => {
     await interruptLivePane(endpoint, "agent-1");
     await resizeLivePane(endpoint, "agent-1", 100, 32);
     await attachLivePane(endpoint, { sessionId: "agent-1", startLine: -90, cols: 100, rows: 32 });
+    await openDashboard(endpoint, { currentClientSession: "client-1", focus: false });
+    await openInbox(endpoint, { currentClientSession: "client-1", focus: false });
+    await openNotificationTarget(endpoint, { sessionId: "agent-1", focus: false });
+    await focusWindow(endpoint, { windowId: "@7", focus: false });
+    await markActiveWindow(endpoint, { currentClientSession: "client-1", currentWindowId: "@7" });
+    await switchNextAgent(endpoint, { currentClientSession: "client-1", focus: false });
+    await switchPrevAgent(endpoint, { currentClientSession: "client-1", focus: false });
+    await switchAttentionAgent(endpoint, { currentClientSession: "client-1", focus: false });
     await uploadImageAttachment(endpoint, {
       filename: "shot.png",
       mimeType: "image/png",
@@ -203,7 +219,39 @@ describe("api relay routing", () => {
       cols: 100,
       rows: 32,
     });
-    expect(request).toHaveBeenNthCalledWith(16, "POST", "/proxy/127.0.0.1/43210/attachments", {
+    expect(request).toHaveBeenNthCalledWith(16, "POST", "/proxy/127.0.0.1/43210/control/open-dashboard", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(17, "POST", "/proxy/127.0.0.1/43210/control/open-inbox", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(18, "POST", "/proxy/127.0.0.1/43210/control/open-notification-target", {
+      sessionId: "agent-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(19, "POST", "/proxy/127.0.0.1/43210/control/focus-window", {
+      windowId: "@7",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(20, "POST", "/proxy/127.0.0.1/43210/control/active-window", {
+      currentClientSession: "client-1",
+      currentWindowId: "@7",
+    });
+    expect(request).toHaveBeenNthCalledWith(21, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(22, "POST", "/proxy/127.0.0.1/43210/control/switch-prev", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(23, "POST", "/proxy/127.0.0.1/43210/control/switch-attention", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(24, "POST", "/proxy/127.0.0.1/43210/attachments", {
       kind: "image",
       filename: "shot.png",
       mimeType: "image/png",

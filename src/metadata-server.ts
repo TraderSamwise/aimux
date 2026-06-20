@@ -610,6 +610,47 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.end(body);
 }
 
+function controlFocusRequested(body: Record<string, unknown>, url: URL): boolean {
+  const raw = body.focus ?? url.searchParams.get("focus");
+  return raw !== false && raw !== "false" && raw !== "0";
+}
+
+function serializeControlTarget(target: TmuxTarget): Record<string, unknown> {
+  return {
+    sessionName: target.sessionName,
+    windowId: target.windowId,
+    windowIndex: target.windowIndex,
+    windowName: target.windowName,
+  };
+}
+
+function focusControlTarget(
+  tmux: TmuxRuntimeManager,
+  target: TmuxTarget,
+  currentClientSession: string | undefined,
+  clientTty: string | undefined,
+  focus: boolean,
+): { focused: boolean; focusMode?: string } {
+  if (!focus) return { focused: false };
+  return openTargetForClient(tmux, target, currentClientSession, clientTty);
+}
+
+function sendControlAction(
+  res: ServerResponse,
+  action: string,
+  target: TmuxTarget | undefined,
+  focusResult: { focused: boolean; focusMode?: string },
+  itemId?: string,
+): void {
+  send(res, 200, {
+    ok: true,
+    action,
+    ...focusResult,
+    ...(target ? { target: serializeControlTarget(target) } : {}),
+    ...(itemId ? { itemId } : {}),
+  });
+}
+
 function formatAgentInputWithAttachments(text: string, attachments: AttachmentRecord[]): string {
   const trimmedText = text.trim();
   if (attachments.length === 0) return text;
@@ -1804,6 +1845,7 @@ export class MetadataServer {
                 currentClientSession?: string;
                 clientTty?: string;
                 currentWindowId?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
@@ -1811,25 +1853,34 @@ export class MetadataServer {
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
-        if (!currentClientSession) {
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        if (focus && !currentClientSession) {
           send(res, 400, { ok: false, error: "currentClientSession is required" });
           return;
         }
-        persistDashboardReturnSelection(new TmuxRuntimeManager(), process.cwd(), currentClientSession, currentWindowId);
+        if (currentClientSession) {
+          persistDashboardReturnSelection(
+            new TmuxRuntimeManager(),
+            process.cwd(),
+            currentClientSession,
+            currentWindowId,
+          );
+        }
         const tmux = new TmuxRuntimeManager();
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
-        const openSessionName = tmux.hasSession(currentClientSession)
-          ? currentClientSession
-          : tmux.getOpenSessionName(dashboardSession.sessionName);
+        const openSessionName =
+          currentClientSession && tmux.hasSession(currentClientSession)
+            ? currentClientSession
+            : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
         if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
-        openTargetForClient(tmux, target, currentClientSession, clientTty);
-        send(res, 200, { ok: true });
+        const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
+        sendControlAction(res, "open-dashboard", target, focusResult);
         return;
       }
 
@@ -1839,32 +1890,37 @@ export class MetadataServer {
             ? ((await readJson(req)) as {
                 currentClientSession?: string;
                 clientTty?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
-        if (!currentClientSession) {
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        if (focus && !currentClientSession) {
           send(res, 400, { ok: false, error: "currentClientSession is required" });
           return;
         }
-        persistDashboardClientPreference(currentClientSession, (snapshot) => {
-          snapshot.screen = "coordination";
-        });
+        if (currentClientSession) {
+          persistDashboardClientPreference(currentClientSession, (snapshot) => {
+            snapshot.screen = "coordination";
+          });
+        }
         const tmux = new TmuxRuntimeManager();
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
-        const openSessionName = tmux.hasSession(currentClientSession)
-          ? currentClientSession
-          : tmux.getOpenSessionName(dashboardSession.sessionName);
+        const openSessionName =
+          currentClientSession && tmux.hasSession(currentClientSession)
+            ? currentClientSession
+            : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
         if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
-        openTargetForClient(tmux, target, currentClientSession, clientTty);
-        send(res, 200, { ok: true });
+        const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
+        sendControlAction(res, "open-inbox", target, focusResult);
         return;
       }
 
@@ -1878,6 +1934,7 @@ export class MetadataServer {
                 sessionId?: string;
                 currentClientSession?: string;
                 clientTty?: string;
+                focus?: boolean;
               })
             : {};
         const sessionId = body.sessionId?.trim() || url.searchParams.get("sessionId")?.trim() || undefined;
@@ -1892,6 +1949,7 @@ export class MetadataServer {
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const desktop = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[]; services?: any[] };
         const session = [...(desktop.sessions ?? []), ...(desktop.teammates ?? [])].find(
           (entry) => entry.id === sessionId,
@@ -1908,12 +1966,12 @@ export class MetadataServer {
             send(res, 404, { ok: false, error: "window not found" });
             return;
           }
-          openTargetForClient(tmux, target, currentClientSession, clientTty);
+          const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
           if (itemId && session?.id === itemId) {
             markSessionViewed(itemId);
           }
           markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
-          send(res, 200, { ok: true });
+          sendControlAction(res, "open-notification-target", target, focusResult, itemId);
         };
 
         if (session?.tmuxWindowId) {
@@ -1937,9 +1995,9 @@ export class MetadataServer {
             send(res, 404, { ok: false, error: "service window not found after resume" });
             return;
           }
-          openTargetForClient(tmux, match.target, currentClientSession, clientTty);
+          const focusResult = focusControlTarget(tmux, match.target, currentClientSession, clientTty, focus);
           markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, service.id);
-          send(res, 200, { ok: true });
+          sendControlAction(res, "open-notification-target", match.target, focusResult, service.id);
           return;
         }
         if (session && session.status === "offline") {
@@ -1955,10 +2013,10 @@ export class MetadataServer {
             send(res, 404, { ok: false, error: "agent window not found after resume" });
             return;
           }
-          openTargetForClient(tmux, match.target, currentClientSession, clientTty);
+          const focusResult = focusControlTarget(tmux, match.target, currentClientSession, clientTty, focus);
           markSessionViewed(session.id);
           markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, session.id);
-          send(res, 200, { ok: true });
+          sendControlAction(res, "open-notification-target", match.target, focusResult, session.id);
           return;
         }
         send(res, 404, { ok: false, error: "notification target is no longer available" });
@@ -1972,12 +2030,14 @@ export class MetadataServer {
                 currentClientSession?: string;
                 clientTty?: string;
                 windowId?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const windowId = body.windowId?.trim() || url.searchParams.get("windowId")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         if (!windowId) {
           send(res, 400, { ok: false, error: "windowId is required" });
           return;
@@ -1991,15 +2051,16 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        openTargetForClient(tmux, target, currentClientSession, clientTty);
+        const focusResult = focusControlTarget(tmux, target, currentClientSession, clientTty, focus);
         const match = tmux
           .listProjectManagedWindows(process.cwd())
           .find((entry) => entry.target.windowId === target.windowId);
+        const itemId = match?.metadata.kind === "agent" ? match.metadata.sessionId : undefined;
         if (match?.metadata.kind === "agent") {
           markSessionViewed(match.metadata.sessionId);
         }
-        markTargetUsed(tmux, process.cwd(), target, currentClientSession);
-        send(res, 200, { ok: true });
+        markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
+        sendControlAction(res, "focus-window", target, focusResult, itemId);
         return;
       }
 
@@ -2027,7 +2088,7 @@ export class MetadataServer {
           return;
         }
         this.notifyChange();
-        send(res, 200, { ok: true });
+        send(res, 200, { ok: true, action: "active-window", focused: false });
         return;
       }
 
@@ -2040,11 +2101,13 @@ export class MetadataServer {
                 currentWindow?: string;
                 currentWindowId?: string;
                 currentPath?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const item = resolveNextAgent(
           {
             projectRoot: process.cwd(),
@@ -2061,10 +2124,10 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
+        const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         markSessionViewed(item.metadata.sessionId);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
-        send(res, 200, { ok: true });
+        sendControlAction(res, "switch-next", item.target, focusResult, item.metadata.sessionId);
         return;
       }
 
@@ -2077,11 +2140,13 @@ export class MetadataServer {
                 currentWindow?: string;
                 currentWindowId?: string;
                 currentPath?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const item = resolvePrevAgent(
           {
             projectRoot: process.cwd(),
@@ -2098,10 +2163,10 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
+        const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         markSessionViewed(item.metadata.sessionId);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
-        send(res, 200, { ok: true });
+        sendControlAction(res, "switch-prev", item.target, focusResult, item.metadata.sessionId);
         return;
       }
 
@@ -2117,11 +2182,13 @@ export class MetadataServer {
                 currentWindow?: string;
                 currentWindowId?: string;
                 currentPath?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const item = resolveAttentionAgent(
           {
             projectRoot: process.cwd(),
@@ -2138,10 +2205,10 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
+        const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         markSessionViewed(item.metadata.sessionId);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
-        send(res, 200, { ok: true });
+        sendControlAction(res, "switch-attention", item.target, focusResult, item.metadata.sessionId);
         return;
       }
 
