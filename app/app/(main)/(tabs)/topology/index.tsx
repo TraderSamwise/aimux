@@ -1,31 +1,27 @@
-import React, { useMemo } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
-import Svg, { Circle, G, Line, Rect, Text as SvgText } from "react-native-svg";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Box, GitBranch, Network, Rows3, Table2 } from "lucide-react-native";
-import { Card, PressableCard } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
-import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Text } from "@/components/ui/text";
 import { StatusDot, StatusPill } from "@/components/status-dot";
-import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
+import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import {
+  useProjectApiRelayPolling,
+  useSerializedProjectApiRefresh,
+} from "@/lib/project-api-relay-polling";
+import { cn } from "@/lib/utils";
+import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
+import {
+  projectsAtom,
   selectedProjectAtom,
   selectedProjectEndpointAtom,
-  projectsAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
-import {
-  buildProjectTopology,
-  type ProjectTopology,
-  type TopologyHealth,
-  type TopologyNode,
-  type TopologyWorktree,
-} from "@/lib/openrig-topology";
-import { runtimeBrandForKind } from "@/lib/runtime-brand";
-import { cn } from "@/lib/utils";
 import {
   buildViewHref,
   cleanSearchValue,
@@ -34,6 +30,9 @@ import {
 } from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
+type ProjectTopologyModel = ProjectTopologyResponse["topology"];
+type TopologyRow = ProjectTopologyModel["rows"][number];
+type TopologyHealth = ProjectTopologyModel["health"];
 
 const VIEW_OPTIONS = [
   { value: "map", label: "Map" },
@@ -58,25 +57,6 @@ function healthColor(health: TopologyHealth): string {
   }
 }
 
-function healthLabel(health: TopologyHealth): string {
-  switch (health) {
-    case "active":
-      return "active";
-    case "attention":
-      return "attention";
-    case "offline":
-      return "offline";
-    case "idle":
-      return "idle";
-  }
-}
-
-function compactMapLabel(label: string, maxLength: number): string {
-  if (label.length <= maxLength) return label;
-  if (maxLength <= 3) return label.slice(0, maxLength);
-  return `${label.slice(0, maxLength - 3)}...`;
-}
-
 function SummaryTile({
   label,
   value,
@@ -88,7 +68,7 @@ function SummaryTile({
 }) {
   return (
     <Card className="mr-2 mb-2 min-w-[112px] flex-1 rounded-lg p-3">
-      <Text className="text-[22px] font-bold text-foreground leading-tight">{value}</Text>
+      <Text className="text-[22px] font-bold leading-tight text-foreground">{value}</Text>
       <View className="mt-1 flex-row items-center">
         {tone ? (
           <View
@@ -104,238 +84,86 @@ function SummaryTile({
   );
 }
 
-function NodeCard({ node, onPress }: { node: TopologyNode; onPress?: () => void }) {
-  const content = (
-    <>
-      <View className="flex-row items-center">
-        <View
-          className="mr-2.5 h-2.5 w-2.5 rounded-full"
-          style={{ backgroundColor: healthColor(node.health) }}
-        />
-        <Text
-          className="flex-1 text-[14px] font-semibold text-foreground"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {node.label}
-        </Text>
-        {node.status ? (
-          <View className="ml-2 flex-row items-center gap-2">
-            {node.kind === "agent" || node.kind === "service" ? (
-              <RuntimeBadge brand={runtimeBrandForKind(node.kind, node.command)} compact />
-            ) : null}
-            <StatusPill status={node.status} />
-          </View>
+function rowKey(row: TopologyRow, index: number): string {
+  return row.sessionId ?? row.serviceId ?? row.worktreePath ?? `${row.kind}:${row.label}:${index}`;
+}
+
+function RowCard({
+  row,
+  index,
+  onPickAgent,
+  onPickService,
+}: {
+  row: TopologyRow;
+  index: number;
+  onPickAgent: (id: string) => void;
+  onPickService: (id: string) => void;
+}) {
+  const canOpen = Boolean(row.sessionId || row.serviceId);
+  return (
+    <Pressable
+      key={rowKey(row, index)}
+      disabled={!canOpen}
+      onPress={() => {
+        if (row.sessionId) onPickAgent(row.sessionId);
+        if (row.serviceId) onPickService(row.serviceId);
+      }}
+      className={cn(
+        "flex-row items-center px-3 py-3 active:bg-accent",
+        index > 0 && "border-t border-border",
+        row.depth > 0 && "pl-8",
+      )}
+    >
+      <View className="mr-3">
+        <StatusDot status={row.status ?? row.health} size="sm" />
+      </View>
+      <View className="min-w-0 flex-1">
+        <View className="flex-row items-center">
+          <Text className="flex-1 text-[13px] font-semibold text-foreground" numberOfLines={1}>
+            {row.label}
+          </Text>
+          <Text className="ml-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            {row.kind}
+          </Text>
+        </View>
+        {row.detail || row.status ? (
+          <Text className="mt-1 text-[11px] text-muted-foreground" numberOfLines={1}>
+            {[row.detail, row.status].filter(Boolean).join(" · ")}
+          </Text>
         ) : null}
       </View>
-      {node.subtitle ? (
-        <Text
-          className="mt-1.5 text-[11px] text-muted-foreground"
-          numberOfLines={2}
-          ellipsizeMode="tail"
-        >
-          {node.subtitle}
-        </Text>
+      {row.status ? (
+        <View className="ml-2">
+          <StatusPill status={row.status} />
+        </View>
       ) : null}
-    </>
+    </Pressable>
   );
+}
 
-  if (onPress) {
+function WorktreeCards({ topology }: { topology: ProjectTopologyModel }) {
+  if (topology.worktrees.length === 0) {
     return (
-      <PressableCard onPress={onPress} className="mb-2 rounded-lg bg-secondary p-3">
-        {content}
-      </PressableCard>
+      <Card className="items-center rounded-xl p-6">
+        <Box size={22} color="#a1a1aa" />
+        <Text className="mt-2 text-sm text-muted-foreground">No worktrees yet</Text>
+      </Card>
     );
   }
-  return <Card className="mb-2 rounded-lg bg-secondary p-3">{content}</Card>;
-}
-
-function TopologyMap({
-  topology,
-  width,
-  onPickAgent,
-  onPickService,
-}: {
-  topology: ProjectTopology;
-  width: number;
-  onPickAgent: (id: string) => void;
-  onPickService: (id: string) => void;
-}) {
-  const mapWidth = Math.max(680, width - 64);
-  const rowHeight = 112;
-  const height = Math.max(240, 92 + topology.worktrees.length * rowHeight);
-  const projectX = 86;
-  const worktreeX = 286;
-  const leafX = 520;
-  const centerY = height / 2;
-
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View className="rounded-xl border border-border bg-card">
-        <Svg width={mapWidth} height={height}>
-          <Line
-            x1={projectX + 44}
-            y1={centerY}
-            x2={worktreeX - 72}
-            y2={centerY}
-            stroke="#3f3f46"
-            strokeWidth={2}
-          />
-          <Rect
-            x={24}
-            y={centerY - 36}
-            width={124}
-            height={72}
-            rx={10}
-            fill="#18181b"
-            stroke={healthColor(topology.project.health)}
-            strokeWidth={2}
-          />
-          <Circle cx={44} cy={centerY - 15} r={5} fill={healthColor(topology.project.health)} />
-          <SvgText x={62} y={centerY - 9} fill="#fafafa" fontSize="13" fontWeight="700">
-            {compactMapLabel(topology.project.label, 12)}
-          </SvgText>
-          <SvgText x={44} y={centerY + 15} fill="#a1a1aa" fontSize="10">
-            project
-          </SvgText>
-
-          {topology.worktrees.map((worktree, index) => {
-            const y = 56 + index * rowHeight;
-            const leaves = [...worktree.agents, ...worktree.services];
-            const leafStep = leaves.length > 1 ? 48 : 0;
-            const leafStart = y - ((leaves.length - 1) * leafStep) / 2;
-            return (
-              <React.Fragment key={worktree.id}>
-                <Line
-                  x1={worktreeX - 70}
-                  y1={centerY}
-                  x2={worktreeX - 70}
-                  y2={y}
-                  stroke="#3f3f46"
-                  strokeWidth={1.5}
-                />
-                <Line
-                  x1={worktreeX - 70}
-                  y1={y}
-                  x2={worktreeX - 12}
-                  y2={y}
-                  stroke="#3f3f46"
-                  strokeWidth={1.5}
-                />
-                <Rect
-                  x={worktreeX - 10}
-                  y={y - 28}
-                  width={156}
-                  height={56}
-                  rx={9}
-                  fill="#27272a"
-                  stroke={healthColor(worktree.health)}
-                  strokeWidth={1.5}
-                />
-                <Circle cx={worktreeX + 10} cy={y - 10} r={4} fill={healthColor(worktree.health)} />
-                <SvgText x={worktreeX + 24} y={y - 5} fill="#fafafa" fontSize="12" fontWeight="700">
-                  {compactMapLabel(worktree.name, 16)}
-                </SvgText>
-                <SvgText x={worktreeX + 10} y={y + 15} fill="#a1a1aa" fontSize="9">
-                  {worktree.branch ? compactMapLabel(worktree.branch, 22) : "worktree"}
-                </SvgText>
-                {leaves.map((node, leafIndex) => {
-                  const leafY = leafStart + leafIndex * leafStep;
-                  const canOpen = Boolean(node.sourceId);
-                  const openNode = () => {
-                    if (node.kind === "agent" && node.sourceId) onPickAgent(node.sourceId);
-                    if (node.kind === "service" && node.sourceId) onPickService(node.sourceId);
-                  };
-                  return (
-                    <G
-                      key={node.id}
-                      onPress={canOpen ? openNode : undefined}
-                      accessibilityLabel={canOpen ? `Open ${node.label}` : undefined}
-                      style={canOpen ? ({ cursor: "pointer" } as object) : undefined}
-                    >
-                      <Line
-                        x1={worktreeX + 146}
-                        y1={y}
-                        x2={leafX - 14}
-                        y2={leafY}
-                        stroke="#3f3f46"
-                        strokeWidth={1.5}
-                      />
-                      <Rect
-                        x={leafX}
-                        y={leafY - 20}
-                        width={132}
-                        height={40}
-                        rx={8}
-                        fill="#18181b"
-                        stroke={healthColor(node.health)}
-                        strokeWidth={1.25}
-                      />
-                      <Circle
-                        cx={leafX + 15}
-                        cy={leafY - 5}
-                        r={3.5}
-                        fill={healthColor(node.health)}
-                      />
-                      <SvgText
-                        x={leafX + 26}
-                        y={leafY}
-                        fill="#fafafa"
-                        fontSize="11"
-                        fontWeight="700"
-                      >
-                        {compactMapLabel(node.label, 12)}
-                      </SvgText>
-                      <SvgText x={leafX + 15} y={leafY + 13} fill="#a1a1aa" fontSize="8">
-                        {node.kind}
-                      </SvgText>
-                      {canOpen ? (
-                        <SvgText
-                          x={leafX + 104}
-                          y={leafY + 13}
-                          fill="#a1a1aa"
-                          fontSize="8"
-                          fontWeight="700"
-                        >
-                          open
-                        </SvgText>
-                      ) : null}
-                    </G>
-                  );
-                })}
-              </React.Fragment>
-            );
-          })}
-        </Svg>
-      </View>
-    </ScrollView>
-  );
-}
-
-function WorktreeTreeSection({
-  worktree,
-  onPickAgent,
-  onPickService,
-}: {
-  worktree: TopologyWorktree;
-  onPickAgent: (id: string) => void;
-  onPickService: (id: string) => void;
-}) {
-  return (
-    <Card className="mb-4 overflow-hidden rounded-xl p-0">
-      <View className="flex-row items-stretch border-b border-border bg-card">
-        <View className="w-1.5" style={{ backgroundColor: healthColor(worktree.health) }} />
-        <View className="flex-1 px-4 py-3.5">
+    <View className="gap-3">
+      {topology.worktrees.map((worktree) => (
+        <Card key={worktree.path ?? worktree.name} className="rounded-lg p-4">
           <View className="flex-row items-center">
-            <Text
-              className="flex-1 text-[17px] font-bold text-foreground"
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
+            <View
+              className="mr-2 h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: healthColor(worktree.health) }}
+            />
+            <Text className="flex-1 text-[14px] font-semibold text-foreground" numberOfLines={1}>
               {worktree.name}
             </Text>
-            <Text className="ml-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              {healthLabel(worktree.health)}
+            <Text className="text-[11px] text-muted-foreground">
+              {worktree.agents + worktree.services} nodes
             </Text>
           </View>
           {worktree.branch ? (
@@ -346,104 +174,44 @@ function WorktreeTreeSection({
               </Text>
             </View>
           ) : null}
-        </View>
-      </View>
-      <View className="p-3">
-        {worktree.agents.length > 0 ? (
-          <View className={cn(worktree.services.length > 0 && "mb-4")}>
-            <Text className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Agents · {worktree.agents.length}
-            </Text>
-            {worktree.agents.map((agent) => (
-              <NodeCard
-                key={agent.id}
-                node={agent}
-                onPress={() => agent.sourceId && onPickAgent(agent.sourceId)}
-              />
-            ))}
-          </View>
-        ) : null}
-        {worktree.services.length > 0 ? (
-          <View>
-            <Text className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Services · {worktree.services.length}
-            </Text>
-            {worktree.services.map((service) => (
-              <NodeCard
-                key={service.id}
-                node={service}
-                onPress={() => service.sourceId && onPickService(service.sourceId)}
-              />
-            ))}
-          </View>
-        ) : null}
-        {worktree.agents.length === 0 && worktree.services.length === 0 ? (
-          <Text className="py-2 text-[12px] italic text-muted-foreground">empty worktree</Text>
-        ) : null}
-      </View>
-    </Card>
+        </Card>
+      ))}
+    </View>
   );
 }
 
-function TopologyTable({
-  topology,
+function RowsList({
+  rows,
   onPickAgent,
   onPickService,
 }: {
-  topology: ProjectTopology;
+  rows: TopologyRow[];
   onPickAgent: (id: string) => void;
   onPickService: (id: string) => void;
 }) {
-  const rows = topology.worktrees.flatMap((worktree) =>
-    [...worktree.agents, ...worktree.services].map((node) => ({ worktree, node })),
-  );
-
   if (rows.length === 0) {
     return <Text className="text-sm text-muted-foreground">No agents or services yet.</Text>;
   }
-
   return (
     <Card className="overflow-hidden rounded-xl p-0">
-      {rows.map(({ worktree, node }, index) => (
-        <Pressable
-          key={node.id}
-          onPress={() => {
-            if (node.kind === "agent" && node.sourceId) onPickAgent(node.sourceId);
-            if (node.kind === "service" && node.sourceId) onPickService(node.sourceId);
-          }}
-          className={cn(
-            "flex-row items-center px-3 py-3 active:bg-accent",
-            index > 0 && "border-t border-border",
-          )}
-        >
-          <View className="mr-3">
-            <StatusDot status={node.status ?? node.health} size="sm" />
-          </View>
-          <View className="min-w-0 flex-1">
-            <View className="flex-row items-center">
-              <Text className="flex-1 text-[13px] font-semibold text-foreground" numberOfLines={1}>
-                {node.label}
-              </Text>
-              <Text className="ml-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                {node.kind}
-              </Text>
-            </View>
-            <Text className="mt-1 text-[11px] text-muted-foreground" numberOfLines={1}>
-              {worktree.name}
-              {node.subtitle ? ` · ${node.subtitle}` : ""}
-            </Text>
-          </View>
-        </Pressable>
+      {rows.map((row, index) => (
+        <RowCard
+          key={rowKey(row, index)}
+          row={row}
+          index={index}
+          onPickAgent={onPickAgent}
+          onPickService={onPickService}
+        />
       ))}
     </Card>
   );
 }
 
 export default function TopologyScreen() {
-  const { width } = useWindowDimensions();
   const projects = useAtomValue(projectsAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
+  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
     project?: string | string[];
@@ -455,17 +223,78 @@ export default function TopologyScreen() {
   const endpoint =
     project?.serviceEndpoint ??
     (project?.path === selectedProject?.path ? selectedProjectEndpoint : undefined);
-  const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
-  const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
+  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
+  const { getToken } = useAuth();
   const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
+  const [topology, setTopology] = useState<ProjectTopologyModel | null>(null);
+  const [topologyKey, setTopologyKey] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const getTokenRef = useRef(getToken);
+  const endpointRef = useRef(endpoint);
+  const viewKeyRef = useRef(viewKey);
+  const refreshSeqRef = useRef(0);
 
-  const topology = useMemo(
-    () => (project ? buildProjectTopology(project, groups, desktopState) : null),
-    [desktopState, groups, project],
+  useEffect(() => {
+    getTokenRef.current = getToken;
+    endpointRef.current = endpoint;
+    viewKeyRef.current = viewKey;
+  }, [endpoint, getToken, viewKey]);
+
+  const refresh = useCallback(async () => {
+    const seq = ++refreshSeqRef.current;
+    const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
+    if (!currentEndpoint) {
+      setTopology(null);
+      setTopologyKey(null);
+      setError(null);
+      setErrorKey(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const token = await getTokenRef.current();
+      const response = await getProjectTopology(currentEndpoint, { token });
+      if (seq !== refreshSeqRef.current) return;
+      setTopology(response.topology);
+      setTopologyKey(currentViewKey);
+      setError(null);
+      setErrorKey(null);
+    } catch (err) {
+      if (seq !== refreshSeqRef.current) return;
+      setError(err instanceof Error ? err.message : String(err));
+      setErrorKey(currentViewKey);
+    } finally {
+      if (seq === refreshSeqRef.current) setLoading(false);
+    }
+  }, []);
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void serializedRefresh();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
+
+  useProjectApiRelayPolling(endpointKey, serializedRefresh);
+
+  const visibleTopology = topologyKey === viewKey ? topology : null;
+  const visibleError = errorKey === viewKey ? error : null;
+  const leafRows = useMemo(
+    () => visibleTopology?.rows.filter((row) => row.kind !== "worktree") ?? [],
+    [visibleTopology],
   );
+  const activeCount = leafRows.filter((row) => row.health === "active").length;
+  const attentionCount = leafRows.filter((row) => row.health === "attention").length;
+  const offlineCount = leafRows.filter((row) => row.health === "offline").length;
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
@@ -478,32 +307,34 @@ export default function TopologyScreen() {
 
   return (
     <Page contentClassName="px-4 py-5 md:px-8 md:py-7">
-      {!project || !topology ? (
+      {!project ? (
         <PageStateCard
           title="No project selected"
           body="Pick a project from the sidebar to view topology."
         />
-      ) : endpoint && desktopState === null ? (
-        <PageStateCard title="Loading topology..." body="Fetching project runtime state." />
+      ) : !endpoint ? (
+        <PageStateCard
+          title="Project host not running"
+          body="Start the host to see worktree and agent topology."
+        />
+      ) : visibleError ? (
+        <PageStateCard title="Unable to load topology" body={visibleError} tone="danger" />
+      ) : !visibleTopology ? (
+        <PageStateCard
+          title={loading ? "Loading topology..." : "No topology"}
+          body="Fetching project runtime state."
+        />
       ) : (
         <>
           <PageHeader eyebrow="Topology" title={project.name} subtitle={project.path} />
 
-          {!endpoint && desktopState === null ? (
-            <PageStateCard
-              title="Project host not running"
-              body="Start the host to see worktree and agent topology."
-              className="mb-5"
-            />
-          ) : null}
-
           <View className="mb-5 flex-row flex-wrap">
-            <SummaryTile label="Worktrees" value={topology.summary.worktrees} />
-            <SummaryTile label="Agents" value={topology.summary.agents} />
-            <SummaryTile label="Services" value={topology.summary.services} />
-            <SummaryTile label="Active" value={topology.summary.active} tone="active" />
-            <SummaryTile label="Attention" value={topology.summary.attention} tone="attention" />
-            <SummaryTile label="Offline" value={topology.summary.offline} tone="offline" />
+            <SummaryTile label="Worktrees" value={visibleTopology.counts.worktrees} />
+            <SummaryTile label="Agents" value={visibleTopology.counts.agents} />
+            <SummaryTile label="Services" value={visibleTopology.counts.services} />
+            <SummaryTile label="Active" value={activeCount} tone="active" />
+            <SummaryTile label="Attention" value={attentionCount} tone="attention" />
+            <SummaryTile label="Offline" value={offlineCount} tone="offline" />
           </View>
 
           <View className="mb-4 flex-row items-center justify-between">
@@ -532,40 +363,30 @@ export default function TopologyScreen() {
           </View>
 
           {mode === "map" ? (
-            <TopologyMap
-              topology={topology}
-              width={width}
-              onPickAgent={handlePickAgent}
-              onPickService={handlePickService}
-            />
-          ) : null}
-
-          {mode === "tree" ? (
             <View>
-              {topology.worktrees.map((worktree) => (
-                <WorktreeTreeSection
-                  key={worktree.id}
-                  worktree={worktree}
+              <WorktreeCards topology={visibleTopology} />
+              <View className="mt-4">
+                <RowsList
+                  rows={leafRows}
                   onPickAgent={handlePickAgent}
                   onPickService={handlePickService}
                 />
-              ))}
+              </View>
             </View>
           ) : null}
-
-          {mode === "table" ? (
-            <TopologyTable
-              topology={topology}
+          {mode === "tree" ? (
+            <RowsList
+              rows={visibleTopology.rows}
               onPickAgent={handlePickAgent}
               onPickService={handlePickService}
             />
           ) : null}
-
-          {topology.worktrees.length === 0 ? (
-            <Card className="mt-4 items-center rounded-xl p-6">
-              <Box size={22} color="#a1a1aa" />
-              <Text className="mt-2 text-sm text-muted-foreground">No worktrees yet</Text>
-            </Card>
+          {mode === "table" ? (
+            <RowsList
+              rows={leafRows}
+              onPickAgent={handlePickAgent}
+              onPickService={handlePickService}
+            />
           ) : null}
         </>
       )}

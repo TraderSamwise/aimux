@@ -10,13 +10,17 @@ import {
   createWorktree,
   createShareInvite,
   deleteGraveyardWorktree,
+  getCoordinationWorklist,
   getShare,
   attachLivePane,
   getAgentOutput,
   getLivePaneOutput,
+  getProjectObservability,
+  getProjectTopology,
   getTask,
   graveyardWorktree,
   interruptLivePane,
+  listProjectLibrary,
   leaveShare,
   listShares,
   listProjects,
@@ -92,7 +96,9 @@ describe("api relay routing", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://127.0.0.1:43210/live-pane/output?sessionId=session%2Fa+b&startLine=-25");
+    expect(url).toBe(
+      "http://127.0.0.1:43210/live-pane/output?sessionId=session%2Fa+b&startLine=-25",
+    );
     expect(init.method).toBe("GET");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
   });
@@ -138,7 +144,11 @@ describe("api relay routing", () => {
     await openInbox(endpoint, { currentClientSession: "client-1", focus: false });
     await openNotificationTarget(endpoint, { sessionId: "agent-1", focus: false });
     await focusWindow(endpoint, { windowId: "@7", focus: false });
-    await markActiveWindow(endpoint, { currentClientSession: "client-1", clientTty: "/dev/ttys001", currentWindowId: "@7" });
+    await markActiveWindow(endpoint, {
+      currentClientSession: "client-1",
+      clientTty: "/dev/ttys001",
+      currentWindowId: "@7",
+    });
     await switchNextAgent(endpoint, { currentClientSession: "client-1", focus: false });
     await switchPrevAgent(endpoint, { currentClientSession: "client-1", focus: false });
     await switchAttentionAgent(endpoint, { currentClientSession: "client-1", focus: false });
@@ -205,9 +215,14 @@ describe("api relay routing", () => {
       sessionId: "agent-1",
       text: "again",
     });
-    expect(request).toHaveBeenNthCalledWith(13, "POST", "/proxy/127.0.0.1/43210/live-pane/interrupt", {
-      sessionId: "agent-1",
-    });
+    expect(request).toHaveBeenNthCalledWith(
+      13,
+      "POST",
+      "/proxy/127.0.0.1/43210/live-pane/interrupt",
+      {
+        sessionId: "agent-1",
+      },
+    );
     expect(request).toHaveBeenNthCalledWith(14, "POST", "/proxy/127.0.0.1/43210/live-pane/resize", {
       sessionId: "agent-1",
       cols: 100,
@@ -219,39 +234,79 @@ describe("api relay routing", () => {
       cols: 100,
       rows: 32,
     });
-    expect(request).toHaveBeenNthCalledWith(16, "POST", "/proxy/127.0.0.1/43210/control/open-dashboard", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(17, "POST", "/proxy/127.0.0.1/43210/control/open-inbox", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(18, "POST", "/proxy/127.0.0.1/43210/control/open-notification-target", {
-      sessionId: "agent-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(19, "POST", "/proxy/127.0.0.1/43210/control/focus-window", {
-      windowId: "@7",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(20, "POST", "/proxy/127.0.0.1/43210/control/active-window", {
-      currentClientSession: "client-1",
-      clientTty: "/dev/ttys001",
-      currentWindowId: "@7",
-    });
-    expect(request).toHaveBeenNthCalledWith(21, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(22, "POST", "/proxy/127.0.0.1/43210/control/switch-prev", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(23, "POST", "/proxy/127.0.0.1/43210/control/switch-attention", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
+    expect(request).toHaveBeenNthCalledWith(
+      16,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/open-dashboard",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      17,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/open-inbox",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      18,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/open-notification-target",
+      {
+        sessionId: "agent-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      19,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/focus-window",
+      {
+        windowId: "@7",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      20,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/active-window",
+      {
+        currentClientSession: "client-1",
+        clientTty: "/dev/ttys001",
+        currentWindowId: "@7",
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      21,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/switch-next",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      22,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/switch-prev",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      23,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/switch-attention",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
     expect(request).toHaveBeenNthCalledWith(24, "POST", "/proxy/127.0.0.1/43210/attachments", {
       kind: "image",
       filename: "shot.png",
@@ -271,43 +326,88 @@ describe("api relay routing", () => {
     await switchNextAgent(endpoint, { currentClientSession: "client-1" });
     await switchPrevAgent(endpoint, { currentClientSession: "client-1" });
     await switchAttentionAgent(endpoint, { currentClientSession: "client-1" });
-    await focusWindow(endpoint, { windowId: "@8", focus: true, currentClientSession: "client-1", clientTty: "/dev/ttys001" });
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/control/open-dashboard", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/control/open-inbox", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/control/open-notification-target", {
-      sessionId: "agent-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/control/focus-window", {
-      windowId: "@7",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(5, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(6, "POST", "/proxy/127.0.0.1/43210/control/switch-prev", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(7, "POST", "/proxy/127.0.0.1/43210/control/switch-attention", {
-      currentClientSession: "client-1",
-      focus: false,
-    });
-    expect(request).toHaveBeenNthCalledWith(8, "POST", "/proxy/127.0.0.1/43210/control/focus-window", {
+    await focusWindow(endpoint, {
       windowId: "@8",
       focus: true,
       currentClientSession: "client-1",
       clientTty: "/dev/ttys001",
     });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/open-dashboard",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/open-inbox",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/open-notification-target",
+      {
+        sessionId: "agent-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      4,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/focus-window",
+      {
+        windowId: "@7",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      5,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/switch-next",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      6,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/switch-prev",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      7,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/switch-attention",
+      {
+        currentClientSession: "client-1",
+        focus: false,
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      8,
+      "POST",
+      "/proxy/127.0.0.1/43210/control/focus-window",
+      {
+        windowId: "@8",
+        focus: true,
+        currentClientSession: "client-1",
+        clientTty: "/dev/ttys001",
+      },
+    );
   });
 
   it("uploads image attachments through direct project HTTP with auth", async () => {
@@ -358,6 +458,10 @@ describe("api relay routing", () => {
     await listWorkflow(endpoint, "codex/1");
     await listTasks(endpoint, { sessionId: "agent/1", status: "pending" });
     await getTask(endpoint, "task/1");
+    await getCoordinationWorklist(endpoint, "codex/1");
+    await getProjectObservability(endpoint);
+    await getProjectTopology(endpoint);
+    await listProjectLibrary(endpoint);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(
@@ -390,6 +494,20 @@ describe("api relay routing", () => {
       "/proxy/127.0.0.1/43210/tasks/task%2F1",
       undefined,
     );
+    expect(request).toHaveBeenNthCalledWith(
+      6,
+      "GET",
+      "/proxy/127.0.0.1/43210/coordination-worklist?participant=codex%2F1",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      7,
+      "GET",
+      "/proxy/127.0.0.1/43210/project-observability",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(8, "GET", "/proxy/127.0.0.1/43210/topology", undefined);
+    expect(request).toHaveBeenNthCalledWith(9, "GET", "/proxy/127.0.0.1/43210/library", undefined);
   });
 
   it("routes notification mutations through the relay proxy", async () => {

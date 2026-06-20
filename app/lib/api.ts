@@ -233,11 +233,17 @@ export async function sendLivePaneInput(
   text: string,
   opts?: SendAgentInputOptions,
 ): Promise<SendAgentInputResponse> {
-  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", PROJECT_API_ROUTES.livePane.input, opts, {
-    sessionId,
-    text,
-    ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
-  });
+  return callProjectJson<SendAgentInputResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.livePane.input,
+    opts,
+    {
+      sessionId,
+      text,
+      ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+    },
+  );
 }
 
 export const sendAgentInput = sendLivePaneInput;
@@ -247,7 +253,9 @@ export async function interruptLivePane(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; sessionId: string }> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.interrupt, opts, { sessionId });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.interrupt, opts, {
+    sessionId,
+  });
 }
 
 export async function resizeLivePane(
@@ -257,7 +265,11 @@ export async function resizeLivePane(
   rows: number,
   opts?: ApiOpts,
 ): Promise<LivePaneResizeResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.resize, opts, { sessionId, cols, rows });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.resize, opts, {
+    sessionId,
+    cols,
+    rows,
+  });
 }
 
 export async function attachLivePane(
@@ -273,7 +285,10 @@ export async function openDashboard(
   input: OpenDashboardRequest = {},
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, { focus: false, ...input });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, {
+    focus: false,
+    ...input,
+  });
 }
 
 export async function openInbox(
@@ -281,7 +296,10 @@ export async function openInbox(
   input: OpenInboxRequest = {},
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openInbox, opts, { focus: false, ...input });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openInbox, opts, {
+    focus: false,
+    ...input,
+  });
 }
 
 export async function openNotificationTarget(
@@ -289,10 +307,16 @@ export async function openNotificationTarget(
   input: OpenNotificationTargetRequest,
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openNotificationTarget, opts, {
-    focus: false,
-    ...input,
-  });
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.controls.openNotificationTarget,
+    opts,
+    {
+      focus: false,
+      ...input,
+    },
+  );
 }
 
 export async function focusWindow(
@@ -300,7 +324,10 @@ export async function focusWindow(
   input: FocusWindowRequest,
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.focusWindow, opts, { focus: false, ...input });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.focusWindow, opts, {
+    focus: false,
+    ...input,
+  });
 }
 
 export async function markActiveWindow(
@@ -316,7 +343,10 @@ export async function switchNextAgent(
   input: SwitchAgentRequest = {},
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchNext, opts, { focus: false, ...input });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchNext, opts, {
+    focus: false,
+    ...input,
+  });
 }
 
 export async function switchPrevAgent(
@@ -324,7 +354,10 @@ export async function switchPrevAgent(
   input: SwitchAgentRequest = {},
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchPrev, opts, { focus: false, ...input });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchPrev, opts, {
+    focus: false,
+    ...input,
+  });
 }
 
 export async function switchAttentionAgent(
@@ -332,7 +365,10 @@ export async function switchAttentionAgent(
   input: SwitchAgentRequest = {},
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchAttention, opts, { focus: false, ...input });
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchAttention, opts, {
+    focus: false,
+    ...input,
+  });
 }
 
 export interface UploadImageAttachmentInput {
@@ -361,12 +397,18 @@ export async function uploadImageAttachment(
   input: UploadImageAttachmentInput,
   opts?: ApiOpts,
 ): Promise<UploadImageAttachmentResponse> {
-  return callProjectJson<UploadImageAttachmentResponse>(endpoint, "POST", PROJECT_API_ROUTES.attachments, opts, {
-    kind: "image",
-    filename: input.filename,
-    mimeType: input.mimeType,
-    dataBase64: input.dataBase64,
-  });
+  return callProjectJson<UploadImageAttachmentResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.attachments,
+    opts,
+    {
+      kind: "image",
+      filename: input.filename,
+      mimeType: input.mimeType,
+      dataBase64: input.dataBase64,
+    },
+  );
 }
 
 // ── Relay sharing ────────────────────────────────────────────────────────
@@ -694,7 +736,13 @@ export async function graveyardWorktree(
   opts?: ApiOpts,
 ): Promise<GraveyardWorktreeResponse> {
   const input: WorktreePathInput = { path };
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.graveyard, opts, input);
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.worktreeActions.graveyard,
+    opts,
+    input,
+  );
 }
 
 // ── Worktrees, graveyard, threads ───────────────────────────────────────
@@ -782,7 +830,13 @@ export async function resurrectGraveyardAgent(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<ResurrectAgentResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.graveyardActions.resurrectAgent, opts, { sessionId });
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
+    opts,
+    { sessionId },
+  );
 }
 
 export async function resurrectGraveyardWorktree(
@@ -790,7 +844,13 @@ export async function resurrectGraveyardWorktree(
   path: string,
   opts?: ApiOpts,
 ): Promise<ResurrectWorktreeResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.graveyardActions.resurrectWorktree, opts, { path });
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.resurrectWorktree,
+    opts,
+    { path },
+  );
 }
 
 export async function deleteGraveyardWorktree(
@@ -798,7 +858,13 @@ export async function deleteGraveyardWorktree(
   path: string,
   opts?: ApiOpts,
 ): Promise<DeleteWorktreeResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.graveyardActions.deleteWorktree, opts, { path });
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.deleteWorktree,
+    opts,
+    { path },
+  );
 }
 
 export async function listThreads(
@@ -906,9 +972,34 @@ export async function getCoordinationWorklist(
 export interface ProjectObservabilityResponse {
   ok: boolean;
   project: {
-    summary: Record<string, number>;
-    progress: Record<string, number>;
-    story: Array<Record<string, unknown>>;
+    summary: {
+      agentsRunning: number;
+      agentsWaiting: number;
+      agentsOffline: number;
+      services: number;
+      worktrees: number;
+      openTasks: number;
+      doneTasks: number;
+      unreadNotifications: number;
+    };
+    progress: {
+      pending: number;
+      assigned: number;
+      in_progress: number;
+      blocked: number;
+      done: number;
+      failed: number;
+      total: number;
+    };
+    story: Array<{
+      id: string;
+      kind: "task" | "review" | "notification";
+      title: string;
+      meta: string;
+      body?: string;
+      createdAt: string;
+      status?: string;
+    }>;
   };
 }
 
@@ -916,17 +1007,39 @@ export async function getProjectObservability(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectObservabilityResponse> {
-  return callProjectJson<ProjectObservabilityResponse>(endpoint, "GET", PROJECT_API_ROUTES.projectObservability, opts);
+  return callProjectJson<ProjectObservabilityResponse>(
+    endpoint,
+    "GET",
+    PROJECT_API_ROUTES.projectObservability,
+    opts,
+  );
 }
 
 export interface ProjectTopologyResponse {
   ok: boolean;
   topology: {
     projectName: string;
-    health: string;
-    counts: Record<string, number>;
-    worktrees: Array<Record<string, unknown>>;
-    rows: Array<Record<string, unknown>>;
+    health: "active" | "attention" | "idle" | "offline";
+    counts: { worktrees: number; agents: number; services: number };
+    worktrees: Array<{
+      name: string;
+      branch: string;
+      path?: string;
+      health: "active" | "attention" | "idle" | "offline";
+      agents: number;
+      services: number;
+    }>;
+    rows: Array<{
+      kind: "worktree" | "agent" | "service";
+      depth: number;
+      label: string;
+      detail?: string;
+      health: "active" | "attention" | "idle" | "offline";
+      status?: string;
+      sessionId?: string;
+      serviceId?: string;
+      worktreePath?: string;
+    }>;
   };
 }
 
@@ -934,7 +1047,12 @@ export async function getProjectTopology(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectTopologyResponse> {
-  return callProjectJson<ProjectTopologyResponse>(endpoint, "GET", PROJECT_API_ROUTES.topology, opts);
+  return callProjectJson<ProjectTopologyResponse>(
+    endpoint,
+    "GET",
+    PROJECT_API_ROUTES.topology,
+    opts,
+  );
 }
 
 export interface LibraryDocument {

@@ -11,9 +11,14 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { listProjectLibrary, type LibraryDocument } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  useProjectApiRelayPolling,
+  useSerializedProjectApiRefresh,
+} from "@/lib/project-api-relay-polling";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
+import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -56,34 +61,51 @@ export default function LibraryScreen() {
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
   const selectedDocumentId = cleanSearchValue(searchParams.document);
   const [documents, setDocuments] = useState<LibraryDocument[]>([]);
+  const [documentsKey, setDocumentsKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
+  const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
+    viewKeyRef.current = viewKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken]);
+  }, [endpoint, getToken, viewKey]);
+
+  const visibleDocuments = useMemo(
+    () => (documentsKey === viewKey ? documents : []),
+    [documents, documentsKey, viewKey],
+  );
 
   const selectedDocument = useMemo(
-    () => documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null,
-    [documents, selectedDocumentId],
+    () =>
+      visibleDocuments.find((document) => document.id === selectedDocumentId) ??
+      visibleDocuments[0] ??
+      null,
+    [selectedDocumentId, visibleDocuments],
   );
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
     if (!currentEndpoint) {
       setDocuments([]);
+      setDocumentsKey(null);
       setError(null);
+      setErrorKey(null);
       setLoading(false);
       return;
     }
@@ -93,21 +115,28 @@ export default function LibraryScreen() {
       const response = await listProjectLibrary(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
       setDocuments(response.documents);
+      setDocumentsKey(currentViewKey);
       setError(null);
+      setErrorKey(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
+      setErrorKey(currentViewKey);
     } finally {
       if (seq === refreshSeqRef.current) setLoading(false);
     }
   }, []);
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refresh();
+      void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, refresh]);
+  }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
+
+  useProjectApiRelayPolling(endpointKey, serializedRefresh);
+  const visibleError = errorKey === viewKey ? error : null;
 
   return (
     <Page>
@@ -124,7 +153,7 @@ export default function LibraryScreen() {
             variant="outline"
             size="icon"
             disabled={!endpoint || loading}
-            onPress={() => void refresh()}
+            onPress={() => void serializedRefresh()}
             accessibilityLabel="Refresh library"
           >
             <RefreshCw size={18} color={foregroundIconColor} />
@@ -139,9 +168,9 @@ export default function LibraryScreen() {
           title="Project host offline"
           body="Start the project host to load library documents."
         />
-      ) : error ? (
-        <PageStateCard title="Library failed" body={error} tone="danger" />
-      ) : documents.length === 0 ? (
+      ) : visibleError ? (
+        <PageStateCard title="Library failed" body={visibleError} tone="danger" />
+      ) : visibleDocuments.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading library..." : "No library documents"}
           body="Durable project instruction files will appear here when present."
@@ -149,7 +178,7 @@ export default function LibraryScreen() {
       ) : (
         <View className="gap-4 lg:flex-row">
           <Card className="overflow-hidden rounded-xl p-0 lg:w-[320px]">
-            {documents.map((document) => (
+            {visibleDocuments.map((document) => (
               <DocumentRow
                 key={document.id}
                 document={document}
