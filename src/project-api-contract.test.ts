@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES, PROJECT_API_VIEWS } from "./project-api-contract.js";
+import {
+  PROJECT_API_EVENT_NAMES,
+  PROJECT_API_ROUTES,
+  PROJECT_API_VIEWS,
+  type LivePaneAttachRequest,
+} from "./project-api-contract.js";
 
 function collectRoutes(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -35,5 +40,16 @@ describe("project api contract", () => {
     expect(PROJECT_API_VIEWS).toContain("coordination-worklist");
     expect(PROJECT_API_VIEWS).toContain("desktop-state");
     expect(PROJECT_API_VIEWS).toContain("notifications");
+  });
+
+  it("requires live pane attach dimensions to be both or neither", () => {
+    const withoutResize: LivePaneAttachRequest = { sessionId: "codex-1", startLine: -90 };
+    const withResize: LivePaneAttachRequest = { sessionId: "codex-1", cols: 100, rows: 32 };
+    // @ts-expect-error attach resize dimensions are a pair
+    const missingRows: LivePaneAttachRequest = { sessionId: "codex-1", cols: 100 };
+
+    expect(withoutResize.sessionId).toBe("codex-1");
+    expect(withResize.sessionId).toBe("codex-1");
+    expect(missingRows.sessionId).toBe("codex-1");
   });
 });

@@ -217,11 +217,16 @@ export interface LivePaneResizeResponse extends ProjectApiOk {
   rows: number;
 }
 
-export interface LivePaneAttachRequest extends LivePaneSessionInput {
+interface LivePaneAttachBaseRequest extends LivePaneSessionInput {
   startLine?: number;
-  cols?: number;
-  rows?: number;
 }
+
+export type LivePaneAttachRequest =
+  | LivePaneAttachBaseRequest
+  | (LivePaneAttachBaseRequest & {
+      cols: number;
+      rows: number;
+    });
 
 export interface LivePaneAttachResponse extends LivePaneOutputResponse {
   stream: {
