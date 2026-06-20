@@ -350,6 +350,77 @@ describe("fast-control worktree scoping", () => {
     expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@3");
   });
 
+  it("uses a dead current teammate window only for teammate scoping", () => {
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "parent" },
+          metadata: {
+            kind: "agent",
+            sessionId: "parent",
+            label: "parent",
+            command: "claude",
+            worktreePath: "/repo/wt",
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 2, windowName: "dead-coder" },
+          metadata: {
+            kind: "agent",
+            sessionId: "dead-coder",
+            label: "dead-coder",
+            command: "codex",
+            worktreePath: "/repo/wt",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "coder", order: 1 },
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@3", windowIndex: 3, windowName: "reviewer" },
+          metadata: {
+            kind: "agent",
+            sessionId: "reviewer",
+            label: "reviewer",
+            command: "codex",
+            worktreePath: "/repo/other",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 2 },
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@4", windowIndex: 4, windowName: "other-team" },
+          metadata: {
+            kind: "agent",
+            sessionId: "other-team",
+            label: "other-team",
+            command: "codex",
+            worktreePath: "/repo/wt",
+            team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder", order: 1 },
+          },
+        },
+      ]),
+      isWindowAlive: vi.fn((target) => target.windowId !== "@2"),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "parent", active: false, activity: 100 },
+        { id: "@2", index: 2, name: "dead-coder", active: true, activity: 90 },
+        { id: "@3", index: 3, name: "reviewer", active: false, activity: 80 },
+        { id: "@4", index: 4, name: "other-team", active: false, activity: 70 },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+
+    const context = {
+      projectRoot: "/repo",
+      currentClientSession: "aimux-repo-abc-client-123",
+      currentWindow: "dead-coder",
+      currentWindowId: "@2",
+      currentPath: "/repo/wt",
+    };
+
+    const items = listSwitchableAgentItems(context, tmux);
+    expect(items.map((item) => item.target.windowId)).toEqual(["@3"]);
+    expect(resolveNextAgent(context, tmux)?.target.windowId).toBe("@3");
+    expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@3");
+  });
+
   it("excludes dead managed windows from switch controls", () => {
     const tmux = {
       getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
