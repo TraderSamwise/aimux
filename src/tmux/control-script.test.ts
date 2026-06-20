@@ -321,7 +321,7 @@ describe("tmux-control.sh", () => {
 
   it("requests explicit focus when falling through to the control API", () => {
     const envRoot = createFakeEnvironment({
-      clients: [],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
       windows: {},
       panes: {},
     });
@@ -333,9 +333,9 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-stale",
       "--client-tty",
-      "/dev/live",
+      "/dev/stale",
       "--current-window",
       "claude",
       "--current-window-id",
@@ -346,6 +346,8 @@ describe("tmux-control.sh", () => {
 
     const curlLog = readCurlLog(envRoot);
     expect(curlLog.length).toBeGreaterThan(0);
+    expect(curlLog[0]).toContain("--data-urlencode currentClientSession=aimux-proj-client-live");
+    expect(curlLog[0]).toContain("--data-urlencode clientTty=/dev/live");
     expect(curlLog[0]).toContain("--data-urlencode focus=true");
     expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/switch-next");
   });
