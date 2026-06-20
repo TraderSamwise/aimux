@@ -44,10 +44,18 @@ export function renderLabelInputOverlay(ctx: any): void {
 }
 
 export function buildWorktreeListOverlayOutput(ctx: any, cols: number, rows: number): string {
-  let worktrees: Array<{ name: string; branch: string; path: string }> = [];
-  try {
-    worktrees = ctx.listAllWorktrees().filter((wt: any) => !wt.isBare);
-  } catch {}
+  let worktrees: Array<{ name: string; branch: string; path?: string }> = [];
+  if (ctx.mode === "dashboard" && Array.isArray(ctx.dashboardWorktreeGroupsCache)) {
+    worktrees = ctx.dashboardWorktreeGroupsCache.map((group: any) => ({
+      name: group.name,
+      branch: group.branch,
+      path: group.path,
+    }));
+  } else {
+    try {
+      worktrees = ctx.listAllWorktrees().filter((wt: any) => !wt.isBare);
+    } catch {}
+  }
 
   const body: string[] = [];
   if (worktrees.length === 0) {
@@ -55,7 +63,8 @@ export function buildWorktreeListOverlayOutput(ctx: any, cols: number, rows: num
   } else {
     for (let i = 0; i < worktrees.length; i++) {
       const wt = worktrees[i];
-      const isMain = i === 0 ? ` ${style("(main)", "muted")}` : "";
+      const isMain =
+        wt.path === undefined || (ctx.mode !== "dashboard" && i === 0) ? ` ${style("(main)", "muted")}` : "";
       body.push(`  ${style(wt.name, "strong")} ${style(`(${wt.branch})`, "muted")}${isMain}`);
     }
   }
