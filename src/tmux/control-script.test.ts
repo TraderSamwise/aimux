@@ -520,6 +520,65 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-live");
   });
 
+  it("uses a dead current statusline window only for next ordering", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@codex" }],
+      windows: {
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+      },
+      deadWindows: ["@codex"],
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          { tmuxWindowId: "@shell", tmuxWindowIndex: 0, kind: "service", worktreePath: "/repo/project/worktree" },
+          { tmuxWindowId: "@claude", tmuxWindowIndex: 1, kind: "agent", worktreePath: "/repo/project/worktree" },
+          { tmuxWindowId: "@codex", tmuxWindowIndex: 6, kind: "agent", worktreePath: "/repo/project/worktree" },
+        ],
+      }),
+    );
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "codex",
+      "--current-window-id",
+      "@codex",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const state = JSON.parse(readFileSync(envRoot.statePath, "utf8")) as {
+      clients: Array<{ windowId: string }>;
+    };
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(state.clients[0]?.windowId).toBe("@shell");
+    expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-live");
+  });
+
   it("falls through to the control API for dead explicit local targets", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
