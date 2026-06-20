@@ -642,7 +642,7 @@ function validateControlFocusContext(
   if (!focus) return undefined;
   const sessionError = validateProjectClientSession(tmux, projectRoot, currentClientSession);
   if (sessionError) return sessionError;
-  if (!clientTty) return undefined;
+  if (!clientTty) return "clientTty is required";
   const client = tmux.findClientByTty(clientTty);
   if (!client) return "clientTty is not attached";
   if (!isProjectClientSession(tmux, projectRoot, client.sessionName)) {

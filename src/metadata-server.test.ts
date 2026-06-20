@@ -635,14 +635,18 @@ describe("MetadataServer threads API", () => {
     await server.start();
 
     const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
-    const opened: any[] = [];
+    const switched: Array<{ tty: string; target: unknown }> = [];
     const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
     const getTargetByWindowId = TmuxRuntimeManager.prototype.getTargetByWindowId;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
     const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
     const openTarget = TmuxRuntimeManager.prototype.openTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
     TmuxRuntimeManager.prototype.getTargetByWindowId = (_sessionName, windowId) =>
       windowId === "@7" ? target : undefined;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
@@ -658,9 +662,12 @@ describe("MetadataServer threads API", () => {
           },
         },
       ] as any;
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
     TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
-    TmuxRuntimeManager.prototype.openTarget = (nextTarget) => {
-      opened.push(nextTarget);
+    TmuxRuntimeManager.prototype.openTarget = vi.fn();
+    TmuxRuntimeManager.prototype.switchClientToTarget = (tty, nextTarget) => {
+      switched.push({ tty, target: nextTarget });
     };
     TmuxRuntimeManager.prototype.refreshStatus = vi.fn();
     try {
@@ -687,7 +694,11 @@ describe("MetadataServer threads API", () => {
       const res = await fetch(`${base}/control/open-notification-target`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: "teammate-1" }),
+        body: JSON.stringify({
+          sessionId: "teammate-1",
+          currentClientSession: "aimux-test-client-123",
+          clientTty: "/dev/ttys001",
+        }),
       });
 
       expect(res.ok).toBe(true);
@@ -695,10 +706,11 @@ describe("MetadataServer threads API", () => {
       expect(body).toMatchObject({
         ok: true,
         focused: true,
-        focusMode: "open-target",
+        focusMode: "client-tty",
         target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
       });
-      expect(opened).toEqual([target]);
+      expect(switched).toEqual([{ tty: "/dev/ttys001", target }]);
+      expect(TmuxRuntimeManager.prototype.openTarget).not.toHaveBeenCalled();
       expect(loadMetadataState().sessions["teammate-1"]?.derived).toMatchObject({
         attention: "normal",
         unseenCount: 0,
@@ -727,17 +739,20 @@ describe("MetadataServer threads API", () => {
         focused: false,
         target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
       });
-      expect(opened).toEqual([target]);
+      expect(switched).toEqual([{ tty: "/dev/ttys001", target }]);
       expect(loadMetadataState().sessions["teammate-1"]?.derived).toMatchObject({
         attention: "needs_input",
         unseenCount: 3,
       });
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
       TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
       TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
       TmuxRuntimeManager.prototype.openTarget = openTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
       TmuxRuntimeManager.prototype.refreshStatus = refreshStatus;
     }
   });
@@ -810,6 +825,61 @@ describe("MetadataServer threads API", () => {
     } finally {
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
+    }
+  });
+
+  it("requires an explicit client tty for mutating focus requests", async () => {
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
+    const openTarget = TmuxRuntimeManager.prototype.openTarget;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = vi.fn(() => ({ tty: "/dev/ttys999" }) as any);
+    TmuxRuntimeManager.prototype.switchClientToTarget = vi.fn();
+    TmuxRuntimeManager.prototype.openTarget = vi.fn();
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/focus-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ windowId: "@7", currentClientSession: "aimux-test-client-123", focus: true }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      expect(res.status).toBe(400);
+      expect(body).toEqual({ ok: false, error: "clientTty is required" });
+      expect(TmuxRuntimeManager.prototype.getAttachedClientForTarget).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.switchClientToTarget).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.openTarget).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
+      TmuxRuntimeManager.prototype.openTarget = openTarget;
     }
   });
 
