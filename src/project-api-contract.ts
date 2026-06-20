@@ -243,6 +243,47 @@ export interface LivePaneAttachResponse extends LivePaneOutputResponse {
   };
 }
 
+export interface ControlClientContext {
+  currentClientSession?: string;
+  clientTty?: string;
+  currentWindow?: string;
+  currentWindowId?: string;
+  currentPath?: string;
+  focus?: boolean;
+}
+
+export interface ControlTargetRef {
+  sessionName: string;
+  windowId: string;
+  windowIndex: number;
+  windowName: string;
+}
+
+export interface ControlActionResponse extends ProjectApiOk {
+  action: string;
+  focused: boolean;
+  focusMode?: "client-tty" | "linked-client-session" | "open-target";
+  target?: ControlTargetRef;
+  itemId?: string;
+}
+
+export type OpenDashboardRequest = ControlClientContext;
+export type OpenInboxRequest = ControlClientContext;
+
+export interface OpenNotificationTargetRequest extends ControlClientContext {
+  sessionId: string;
+}
+
+export interface FocusWindowRequest extends ControlClientContext {
+  windowId: string;
+}
+
+export type ActiveWindowRequest = Pick<
+  ControlClientContext,
+  "currentClientSession" | "currentWindow" | "currentWindowId"
+>;
+export type SwitchAgentRequest = ControlClientContext;
+
 export interface ProjectServiceInfoResponse extends ProjectApiOk {
   serviceInfo?: unknown;
 }

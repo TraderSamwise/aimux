@@ -677,12 +677,34 @@ describe("MetadataServer threads API", () => {
       });
 
       expect(res.ok).toBe(true);
+      const body = (await res.json()) as { ok: boolean; focused: boolean; focusMode?: string; target?: unknown };
+      expect(body).toMatchObject({
+        ok: true,
+        focused: true,
+        focusMode: "open-target",
+        target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+      });
       expect(opened).toEqual([target]);
       expect(loadMetadataState().sessions["teammate-1"]?.derived).toMatchObject({
         attention: "normal",
         unseenCount: 0,
       });
       expect(listNotifications({ sessionId: "teammate-1" })[0]?.unread).toBe(false);
+
+      const resolveOnlyRes = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "teammate-1", focus: false }),
+      });
+      const resolveOnly = (await resolveOnlyRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
+
+      expect(resolveOnlyRes.ok).toBe(true);
+      expect(resolveOnly).toMatchObject({
+        ok: true,
+        focused: false,
+        target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+      });
+      expect(opened).toEqual([target]);
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
