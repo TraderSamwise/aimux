@@ -699,6 +699,7 @@ describe("MetadataServer threads API", () => {
           sessionId: "teammate-1",
           currentClientSession: "aimux-test-client-123",
           clientTty: "/dev/ttys001",
+          focus: true,
         }),
       });
 
@@ -730,7 +731,7 @@ describe("MetadataServer threads API", () => {
       const resolveOnlyRes = await fetch(`${base}/control/open-notification-target`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: "teammate-1", focus: false }),
+        body: JSON.stringify({ sessionId: "teammate-1" }),
       });
       const resolveOnly = (await resolveOnlyRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
 
@@ -2008,7 +2009,7 @@ describe("MetadataServer threads API", () => {
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
       const res = await fetch(
-        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042`,
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
@@ -2025,7 +2026,7 @@ describe("MetadataServer threads API", () => {
         selectedEntryId: "codex-1",
       });
 
-      const inboxRes = await fetch(`${base}/control/open-inbox?clientTty=%2Fdev%2Fttys001`);
+      const inboxRes = await fetch(`${base}/control/open-inbox?clientTty=%2Fdev%2Fttys001&focus=true`);
       const inboxBody = (await inboxRes.json()) as { ok: boolean };
       expect(inboxRes.ok).toBe(true);
       expect(inboxBody.ok).toBe(true);

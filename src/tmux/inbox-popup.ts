@@ -324,6 +324,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
             sessionId: selected.sessionId,
             currentClientSession: options.currentClientSession,
             clientTty: options.clientTty,
+            focus: true,
           });
           if (selected.unread) {
             await postJson(endpoint, "/inbox/read", { id: selected.id });

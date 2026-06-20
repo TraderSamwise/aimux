@@ -615,7 +615,7 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
 
 function controlFocusRequested(body: Record<string, unknown>, url: URL): boolean {
   const raw = body.focus ?? url.searchParams.get("focus");
-  return raw !== false && raw !== "false" && raw !== "0";
+  return raw === true || raw === "true" || raw === "1";
 }
 
 function isProjectClientSession(tmux: TmuxRuntimeManager, projectRoot: string, sessionName: string): boolean {
