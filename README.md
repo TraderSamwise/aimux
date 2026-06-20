@@ -63,11 +63,17 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 To install a frozen local build from the current checkout:
 
 ```bash
-AIMUX_RELEASE_VERSION=0.1.16-local.$(git rev-parse --short HEAD) yarn release:asset
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
 scripts/install.sh release/aimux-darwin-arm64.tar.gz
 ```
 
-That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository.
+That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository. The installer updates `~/.local/bin/aimux` to point at the installed bundle.
+
+For development, remember the distinction:
+
+- `yarn build` updates this checkout's `dist/`, so `node dist/main.js ...` sees source changes.
+- Plain `aimux ...` runs the installed bundle behind `~/.local/bin/aimux`, so it will not see source changes until you build and install a local release archive.
+- After installing a new local CLI build, run `aimux restart` to move the daemon, project services, and existing dashboards onto that build.
 
 ### Build from source
 
@@ -78,8 +84,11 @@ cd aimux
 yarn install
 yarn build
 
-# Link globally
-yarn link
+# Install this checkout as the plain `aimux` command
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+scripts/install.sh release/aimux-darwin-arm64.tar.gz
+aimux restart
+aimux doctor versions
 ```
 
 Requires Node.js >= 24 and `tmux` in `PATH`.
