@@ -123,15 +123,20 @@ function buildTopologyWorktreesFromDesktopState(state: {
 }): any[] {
   const sessions = [...(state.sessions ?? []), ...(state.teammates ?? [])];
   const services = state.services ?? [];
-  return (state.worktrees ?? []).map((worktree, index) => ({
-    ...worktree,
-    sessions: sessions.filter(
+  return (state.worktrees ?? []).map((worktree, index) => {
+    const worktreeSessions = sessions.filter(
       (session) => session.worktreePath === worktree.path || (!session.worktreePath && index === 0),
-    ),
-    services: services.filter(
+    );
+    const worktreeServices = services.filter(
       (service) => service.worktreePath === worktree.path || (!service.worktreePath && index === 0),
-    ),
-  }));
+    );
+    return {
+      ...worktree,
+      status: worktree.status ?? (worktreeSessions.length > 0 || worktreeServices.length > 0 ? "active" : "offline"),
+      sessions: worktreeSessions,
+      services: worktreeServices,
+    };
+  });
 }
 
 function isLibraryPathExposed(path: string): boolean {
