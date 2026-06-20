@@ -109,13 +109,12 @@ yarn dev:ios:local      # build/install/open iOS simulator dev build
 yarn dev:android:local  # build/install/open Android emulator dev build
 ```
 
-Use `aimux-dev` for repo-linked Aimux development. It uses `~/.aimux-dev`, daemon port `43191`, development defaults, and the local web app at `http://localhost:8081`. Keep `aimux` reserved for stable/prod-like project work and remote auth against `https://aimux.app`.
+Use the installed `aimux` command for local development too. Backend changes must be built into a local release asset, installed with `scripts/install.sh`, and activated with `aimux restart`; do not point `~/.local/bin/aimux` directly at this checkout.
 
 For an already-installed native dev build:
 
 ```bash
-yarn build
-node bin/aimux-dev daemon ensure
+aimux daemon ensure
 cd app
 yarn dev:native:local
 ```
@@ -146,7 +145,7 @@ Aimux separates local execution from the shared control plane.
 
 Runtime layers:
 
-1. **Global daemon** — one local host service for project discovery, project activation, and supervision of project services. Stable `aimux` uses port `43190`; `aimux-dev` uses port `43191`.
+1. **Global daemon** — one local host service for project discovery, project activation, and supervision of project services. `aimux` uses port `43190` by default; explicit environment overrides can target another port for rare sandboxing.
 2. **Per-project service** — the project-local HTTP/SSE authority, implemented by the metadata server. It is the single writer for shared project control-plane state.
 3. **tmux runtime** — the managed per-project tmux session that owns agent/service/dashboard windows, PTYs, scrollback, attach/detach, and same-machine focus/open behavior.
 4. **Clients** — the terminal TUI dashboard, Expo web/mobile app, CLI commands, scripts, and plugins. Clients read and mutate shared project state through daemon/project-service APIs.
@@ -359,12 +358,14 @@ For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-
 
 The user-facing browser and native clients live in `app/` as a single Expo Router + React Native project. The same code targets web (browser), iOS, and Android.
 
-For GUI and daemon development, use the isolated `aimux-dev` runtime so your real
-`aimux` daemon and active work sessions keep running:
+For GUI and daemon development, use the installed `aimux` runtime. Backend changes
+need a local release install before the daemon or project services can run them:
 
 ```bash
-aimux-dev daemon restart
-aimux-dev daemon project-ensure --project /Users/sam/cs/glyde-frontend
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
+aimux restart
 cd app
 yarn dev:web:local
 ```
@@ -396,8 +397,8 @@ the loopback daemon is running, and injects local runtime config for the daemon
 port. The UI server binds to `127.0.0.1:43192` by default; use `--port` to choose
 a different local UI port.
 
-For simulator-local development, the helper scripts use `http://127.0.0.1:43191`
-for iOS and `http://10.0.2.2:43191` for Android. For mobile use against a remote
+For simulator-local development, the helper scripts use `http://127.0.0.1:43190`
+for iOS and `http://10.0.2.2:43190` for Android. For mobile use against a remote
 machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.
 
 Release pipeline (uses the shared `@tradersamwise/eas-release` CLI). Two paths,
@@ -863,11 +864,9 @@ Run aimux in multiple terminal tabs or through the dashboard for the same projec
 - Remote/share presence belongs to relay/share transport state unless explicitly mirrored from topology.
 - `--resume` does not use instance-registry session refs for ownership decisions.
 - When a runtime exits, topology-backed offline rows keep agents visible to other clients.
-- `aimux` and `aimux-dev` are separate runtime lanes. They use different `AIMUX_HOME`
-  directories and daemon ports, so switching lanes stops the other lane's project
-  service for that checkout but does not delete its topology or graveyard state.
-  Agents from the inactive lane should disappear from the active lane and reappear
-  when that lane owns the project again.
+- `aimux` has one normal runtime lane under `~/.aimux` on daemon port `43190`.
+  Use explicit `AIMUX_HOME` and `AIMUX_DAEMON_PORT` overrides only for rare
+  sandboxing, and do not create a second named CLI lane.
 - A visible offline agent row must come from topology. If the row has an exact
   backend session id, restore is marked ready. If that id is missing for a tool
   that requires exact backend resume, the row remains visible but restore is
