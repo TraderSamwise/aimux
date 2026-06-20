@@ -26,7 +26,6 @@ import {
 import { buildInboxCleanupPlan, runInboxCleanup, type InboxCleanupRunResult } from "../inbox-cleanup.js";
 import { buildCoordinationModel } from "../coordination-model.js";
 import { listNotifications } from "../notifications.js";
-import { refreshNotificationEntries } from "./notifications.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
@@ -220,8 +219,12 @@ export const persistenceMethods = {
     const result = runInboxCleanup(plan, {}, { dryRun: input?.dryRun === true });
     const changed = result.results.some((item) => item.status === "cleared");
     if (changed && input?.dryRun !== true) {
-      refreshNotificationEntries(this);
       this.metadataServer?.notifyChange?.();
+      if (this.isDashboardScreen?.("coordination")) {
+        void this.refreshCoordinationFromService?.()
+          .then(() => this.renderCurrentDashboardView?.())
+          .catch(() => {});
+      }
     }
     return result;
   },

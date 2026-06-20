@@ -4,6 +4,53 @@ import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
 describe("dashboardInteractionMethods", () => {
+  it("requests reviews through the project service", async () => {
+    const host: any = {
+      activeSession: { id: "codex-1", command: "codex" },
+      sessionRoles: new Map([["codex-1", "coder"]]),
+      sessionWorktreePaths: new Map([["codex-1", "/repo/.aimux/worktrees/demo"]]),
+      postToProjectService: vi.fn(async () => ({ ok: true, task: { assignee: "reviewer" } })),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await dashboardInteractionMethods.handleReviewRequest.call(host);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/tasks/assign",
+      expect.objectContaining({
+        from: "codex-1",
+        assignee: "reviewer",
+        description: "Review: Review codex agent's recent work",
+        prompt: "Review codex agent's recent work",
+        type: "review",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+      }),
+    );
+    expect(host.footerFlash).toBe("⧫ Review requested → reviewer");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("does not locally create services from the dashboard input path", () => {
+    const host: any = {
+      mode: "terminal",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      showDashboardError: vi.fn(),
+      createService: vi.fn(),
+      serviceInputBuffer: "yarn dev",
+      dashboardState: {},
+    };
+
+    dashboardInteractionMethods.handleServiceInputKey.call(host, Buffer.from("\r"));
+
+    expect(host.createService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
+      "Service creation requires the project service.",
+    ]);
+  });
+
   it("blocks stepping into a removing worktree", () => {
     const host: any = {
       dashboardState: {
