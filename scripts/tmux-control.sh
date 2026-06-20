@@ -152,18 +152,22 @@ resolve_live_client() {
 
 request_control() {
   max_time="$1"
+  resolve_live_client || true
+  request_client_session="${live_client_session:-$current_client_session}"
+  request_client_tty="${live_client_tty:-$client_tty}"
   curl \
     --silent \
     --show-error \
     --fail \
     --max-time "$max_time" \
     --get \
-    --data-urlencode "currentClientSession=$current_client_session" \
-    --data-urlencode "clientTty=$client_tty" \
+    --data-urlencode "currentClientSession=$request_client_session" \
+    --data-urlencode "clientTty=$request_client_tty" \
     --data-urlencode "currentWindow=$current_window" \
     --data-urlencode "currentWindowId=$current_window_id" \
     --data-urlencode "currentPath=$current_path" \
     --data-urlencode "windowId=$window_id" \
+    --data-urlencode "focus=true" \
     "${endpoint}${path}" >/dev/null 2>>"$debug_log"
 }
 

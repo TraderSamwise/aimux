@@ -319,6 +319,39 @@ describe("tmux-control.sh", () => {
     expect(curlLog).toEqual([]);
   });
 
+  it("requests explicit focus when falling through to the control API", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {},
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+
+    runControl(envRoot, [
+      "next",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/stale",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const curlLog = readCurlLog(envRoot);
+    expect(curlLog.length).toBeGreaterThan(0);
+    expect(curlLog[0]).toContain("--data-urlencode currentClientSession=aimux-proj-client-live");
+    expect(curlLog[0]).toContain("--data-urlencode clientTty=/dev/live");
+    expect(curlLog[0]).toContain("--data-urlencode focus=true");
+    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/switch-next");
+  });
+
   it("falls back to host tmux metadata for next when statusline is empty", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],

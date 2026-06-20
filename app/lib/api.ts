@@ -16,6 +16,8 @@ import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
 import {
   PROJECT_API_ROUTES,
+  type ActiveWindowRequest,
+  type ControlActionResponse,
   type CreateServiceInput,
   type CreateServiceResponse,
   type CreateWorktreeInput,
@@ -30,12 +32,17 @@ import {
   type NotificationClearResponse,
   type NotificationMutationInput,
   type NotificationReadResponse,
+  type FocusWindowRequest,
+  type OpenDashboardRequest,
+  type OpenInboxRequest,
+  type OpenNotificationTargetRequest,
   type RemoveServiceResponse,
   type RemoveWorktreeResponse,
   type ResumeServiceResponse,
   type ResurrectAgentResponse,
   type ResurrectWorktreeResponse,
   type StopServiceResponse,
+  type SwitchAgentRequest,
   type WorktreePathInput,
 } from "../../src/project-api-contract";
 
@@ -259,6 +266,73 @@ export async function attachLivePane(
   opts?: ApiOpts,
 ): Promise<LivePaneAttachResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.attach, opts, input);
+}
+
+export async function openDashboard(
+  endpoint: ServiceEndpoint,
+  input: OpenDashboardRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, { focus: false, ...input });
+}
+
+export async function openInbox(
+  endpoint: ServiceEndpoint,
+  input: OpenInboxRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openInbox, opts, { focus: false, ...input });
+}
+
+export async function openNotificationTarget(
+  endpoint: ServiceEndpoint,
+  input: OpenNotificationTargetRequest,
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openNotificationTarget, opts, {
+    focus: false,
+    ...input,
+  });
+}
+
+export async function focusWindow(
+  endpoint: ServiceEndpoint,
+  input: FocusWindowRequest,
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.focusWindow, opts, { focus: false, ...input });
+}
+
+export async function markActiveWindow(
+  endpoint: ServiceEndpoint,
+  input: ActiveWindowRequest,
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.activeWindow, opts, input);
+}
+
+export async function switchNextAgent(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchNext, opts, { focus: false, ...input });
+}
+
+export async function switchPrevAgent(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchPrev, opts, { focus: false, ...input });
+}
+
+export async function switchAttentionAgent(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchAttention, opts, { focus: false, ...input });
 }
 
 export interface UploadImageAttachmentInput {
