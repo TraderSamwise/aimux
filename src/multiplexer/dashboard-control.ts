@@ -23,7 +23,6 @@ import {
   buildDashboardRuntimeGuardOverlayOutput,
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
-  buildNotificationPanelOverlayOutput,
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
   buildTeammatePickerOverlayOutput,
@@ -212,9 +211,6 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "tool-options":
       host.handleToolOptionsKey(data);
       return true;
-    case "notification-panel":
-      host.handleNotificationPanelKey(data);
-      return true;
     case "teammate-picker":
       host.handleTeammatePickerKey(data);
       return true;
@@ -279,9 +275,6 @@ export function buildActiveDashboardOverlayOutput(
   }
   if (host.dashboardOverlayState.kind === "switcher") {
     return buildSwitcherOverlayOutput(host, cols, rows);
-  }
-  if (host.dashboardOverlayState.kind === "notification-panel") {
-    return buildNotificationPanelOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "teammate-picker") {
     return buildTeammatePickerOverlayOutput(host, cols, rows);

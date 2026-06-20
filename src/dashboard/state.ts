@@ -15,7 +15,6 @@ export type DashboardOverlayKind =
   | "worktree-remove-confirm"
   | "migrate-picker"
   | "thread-reply"
-  | "notification-panel"
   | "teammate-picker"
   | "switcher";
 
