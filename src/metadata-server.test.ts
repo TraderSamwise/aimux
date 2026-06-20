@@ -1116,6 +1116,42 @@ describe("MetadataServer threads API", () => {
     expect(resurrectGraveyard).toHaveBeenCalledWith({ sessionId: "codex-old" });
   });
 
+  it("returns graveyard entries with the server-built TUI view model", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({ sessions: [], teammates: [] }),
+        listGraveyard: () => [
+          {
+            id: "codex-old",
+            tool: "codex",
+            command: "codex",
+            status: "graveyard",
+          },
+        ],
+        listWorktreeGraveyard: () => [],
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/graveyard`);
+    const body = (await res.json()) as {
+      entries: Array<{ id: string }>;
+      viewModel: { rows: Array<{ kind: string }>; selectableRows: Array<{ kind: string; entry: { id: string } }> };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.entries).toEqual([expect.objectContaining({ id: "codex-old" })]);
+    expect(body.viewModel.rows.map((row) => row.kind)).toContain("orphan-agent");
+    expect(body.viewModel.selectableRows).toEqual([
+      expect.objectContaining({ kind: "orphan-agent", entry: expect.objectContaining({ id: "codex-old" }) }),
+    ]);
+  });
+
   it("passes worktree graveyard resurrection and delete over HTTP", async () => {
     server?.stop();
     const resurrectGraveyardWorktree = vi.fn(({ path }) => ({ path, status: "active" as const }));
@@ -2554,6 +2590,51 @@ describe("MetadataServer threads API", () => {
     const unreadJson = (await unreadRes.json()) as { unreadCount: number; notifications: unknown[] };
     expect(unreadJson.unreadCount).toBe(0);
     expect(unreadJson.notifications).toHaveLength(0);
+  });
+
+  it("returns library documents and renderer entries over HTTP", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getSessionDisplayContext: (sessionId) => (sessionId === "codex-plan" ? { label: "Codex plan" } : undefined),
+      },
+    });
+    const previousCwd = process.cwd();
+    process.chdir(repoRoot);
+    writeFileSync(join(repoRoot, "AGENTS.md"), "# Instructions\n");
+    writeFileSync(
+      join(getPlansDir(), "codex-plan.md"),
+      "---\nupdatedAt: 2026-06-20T00:00:00.000Z\n---\n# Plan\n\nShip the API library.",
+    );
+
+    try {
+      await server.start();
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/library`);
+      const body = (await res.json()) as {
+        documents: Array<{ id: string; content: string }>;
+        entries: Array<{ id: string; title: string; kind: string; preview: string }>;
+      };
+
+      expect(res.status).toBe(200);
+      expect(body.documents).toEqual([expect.objectContaining({ id: "AGENTS.md", content: "# Instructions\n" })]);
+      expect(body.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "doc:AGENTS.md", kind: "doc" }),
+          expect.objectContaining({
+            id: "plan:codex-plan",
+            title: "Codex plan",
+            kind: "plan",
+            preview: "# Plan\n\nShip the API library.",
+          }),
+        ]),
+      );
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 
   it("uses dashboard display context in session notification titles", async () => {

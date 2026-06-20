@@ -824,9 +824,21 @@ export interface LibraryDocument {
   truncated?: boolean;
 }
 
+export interface LibraryEntry {
+  id: string;
+  kind: "doc" | "plan";
+  title: string;
+  path: string;
+  updatedAt: string;
+  sessionId?: string;
+  label?: string;
+  preview: string;
+}
+
 export interface LibraryResponse {
   ok: boolean;
   documents: LibraryDocument[];
+  entries: LibraryEntry[];
 }
 
 export async function listProjectLibrary(

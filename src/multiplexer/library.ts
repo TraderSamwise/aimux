@@ -1,35 +1,64 @@
 import { spawnSync } from "node:child_process";
-import { dirname } from "node:path";
 import { parseKeys } from "../key-parser.js";
-import { loadLibraryEntries } from "../library.js";
-import { getPlansDir } from "../paths.js";
+import type { LibraryEntry } from "../library.js";
 import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
 
 type LibraryHost = any;
 
-function refreshLibrary(host: LibraryHost): void {
-  const plansDir = getPlansDir();
-  host.libraryEntries = loadLibraryEntries({
-    repoRoot: dirname(dirname(plansDir)),
-    plansDir,
-    resolveLabel: (id: string) => host.getSessionLabel(id),
-  });
+function isLibraryEntry(value: any): value is LibraryEntry {
+  return (
+    Boolean(value) &&
+    typeof value.id === "string" &&
+    (value.kind === "doc" || value.kind === "plan") &&
+    typeof value.title === "string" &&
+    typeof value.path === "string" &&
+    typeof value.updatedAt === "string" &&
+    typeof value.preview === "string" &&
+    (value.sessionId === undefined || typeof value.sessionId === "string") &&
+    (value.label === undefined || typeof value.label === "string")
+  );
+}
+
+function applyLibraryEntries(host: LibraryHost, entries: LibraryEntry[]): void {
+  host.libraryEntries = entries;
   if (typeof host.libraryIndex !== "number" || Number.isNaN(host.libraryIndex)) host.libraryIndex = 0;
+  if (host.libraryIndex < 0) host.libraryIndex = 0;
   if (host.libraryIndex >= host.libraryEntries.length) {
     host.libraryIndex = Math.max(0, host.libraryEntries.length - 1);
   }
 }
 
+export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
+  if (typeof host.getFromProjectService !== "function") {
+    if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
+    return false;
+  }
+  try {
+    const res = await host.getFromProjectService("/library");
+    if (!res?.ok || !Array.isArray(res.entries) || !res.entries.every(isLibraryEntry)) {
+      throw new Error("invalid library payload");
+    }
+    applyLibraryEntries(host, res.entries);
+    return true;
+  } catch {
+    if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
+    return false;
+  }
+}
+
 export function showLibrary(host: LibraryHost): void {
   host.clearDashboardSubscreens();
-  refreshLibrary(host);
+  if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
   host.setDashboardScreen("library");
   host.writeStatuslineFile();
   renderLibrary(host);
+  void refreshLibrary(host).then((refreshed) => {
+    if (refreshed && host.isDashboardScreen?.("library")) renderLibrary(host);
+  });
 }
 
 export function renderLibrary(host: LibraryHost): void {
-  if (!Array.isArray(host.libraryEntries)) refreshLibrary(host);
+  if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
   renderLibraryScreen(host);
 }
 
@@ -56,8 +85,10 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
     };
   }
 
-  refreshLibrary(host);
-  renderLibrary(host);
+  void refreshLibrary(host).then(() => {
+    if (host.isDashboardScreen?.("library")) renderLibrary(host);
+  });
+  if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
   if (host.dashboardErrorState) {
     host.renderDashboardErrorOverlay();
   }
@@ -90,8 +121,9 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    refreshLibrary(host);
-    renderLibrary(host);
+    void refreshLibrary(host).then(() => {
+      if (host.isDashboardScreen?.("library")) renderLibrary(host);
+    });
     return;
   }
   const entries = host.libraryEntries ?? [];
