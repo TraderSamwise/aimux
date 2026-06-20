@@ -71,7 +71,7 @@ import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES, type ProjectApiView } from "./project-api-contract.js";
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
@@ -865,23 +865,35 @@ export class MetadataServer {
     return this.interactions.listPending(sessionId);
   }
 
+  private notifyProjectChanged(
+    input: {
+      views?: ProjectApiView[];
+      reason?: string;
+      sessionId?: string;
+      worktreePath?: string;
+    } = {},
+  ): void {
+    this.eventBus.publishProjectUpdate(input);
+    this.options.onChange?.();
+  }
+
   // Settle a session the transcript reconciler found stuck "working": drop the
   // stale activity to idle so it derives "ready". Not a task_done — this is a
   // correction, so it must not bump unseen counts or fire a completion alert.
   reconcileSettleActivity(sessionId: string): void {
     this.tracker.setActivity(sessionId, "idle");
-    this.options.onChange?.();
+    this.notifyProjectChanged({ sessionId, reason: "reconcile-settle-activity" });
   }
 
   // Clear a needs_response attention stranded by a lost in-memory interaction
   // registry (e.g. after a daemon restart) once no live interaction remains.
   reconcileClearResponse(sessionId: string): void {
     this.tracker.setAttention(sessionId, "normal");
-    this.options.onChange?.();
+    this.notifyProjectChanged({ sessionId, reason: "reconcile-clear-response" });
   }
 
   notifyChange(): void {
-    this.options.onChange?.();
+    this.notifyProjectChanged({ reason: "notify-change" });
   }
 
   private resolveDirectTeammates(parentSessionId: string):
@@ -1054,7 +1066,7 @@ export class MetadataServer {
       cooldownMs: 60_000,
       forceNotify: true,
     });
-    this.options.onChange?.();
+    this.notifyChange();
     return request;
   }
 
@@ -1244,7 +1256,7 @@ export class MetadataServer {
           if (closed) return;
           if (result.output !== lastOutput) {
             lastOutput = result.output;
-            sendSseEvent(res, "agent_output", {
+            sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
@@ -1252,7 +1264,7 @@ export class MetadataServer {
             });
           }
         } catch (error) {
-          sendSseEvent(res, "error", {
+          sendSseEvent(res, PROJECT_API_EVENT_NAMES.error, {
             sessionId: sessionFilter,
             error: error instanceof Error ? error.message : String(error),
           });
@@ -1260,7 +1272,7 @@ export class MetadataServer {
         }
       };
 
-      sendSseEvent(res, "ready", {
+      sendSseEvent(res, PROJECT_API_EVENT_NAMES.ready, {
         projectId: getProjectId(),
         ts: new Date().toISOString(),
         sessionId: sessionFilter,
@@ -1302,8 +1314,7 @@ export class MetadataServer {
         entries: loadLibraryEntries({
           repoRoot: dirname(dirname(plansDir)),
           plansDir,
-          resolveLabel: (sessionId) =>
-            this.options.desktop?.getSessionDisplayContext?.(sessionId)?.label ?? undefined,
+          resolveLabel: (sessionId) => this.options.desktop?.getSessionDisplayContext?.(sessionId)?.label ?? undefined,
         }),
       });
       return;
@@ -1729,12 +1740,15 @@ export class MetadataServer {
           ...current,
           status: { text: body.text, tone: body.tone },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.openDashboard) {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.openDashboard
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1805,7 +1819,10 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.openNotificationTarget) {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.openNotificationTarget
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1937,7 +1954,10 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.activeWindow) {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.activeWindow
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1957,7 +1977,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2036,7 +2056,10 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.switchAttention) {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.switchAttention
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -2084,7 +2107,7 @@ export class MetadataServer {
           ...current,
           progress: { current: body.current, total: body.total, label: body.label },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2101,7 +2124,7 @@ export class MetadataServer {
             ...body.context,
           },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2118,7 +2141,7 @@ export class MetadataServer {
             services: body.services,
           },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2140,7 +2163,7 @@ export class MetadataServer {
           ...current,
           logs: [...(current.logs ?? []).slice(-19), entry],
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2185,7 +2208,7 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2193,7 +2216,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.markSeen) {
         const body = (await readJson(req)) as { session: string };
         markSessionViewed(body.session);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2201,7 +2224,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setActivity) {
         const body = (await readJson(req)) as { session: string; activity: AgentActivityState };
         this.tracker.setActivity(body.session, body.activity);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2237,7 +2260,7 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2310,7 +2333,7 @@ export class MetadataServer {
           }),
           cooldownMs: 60_000,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, telemetry: true });
         return;
       }
@@ -2358,7 +2381,7 @@ export class MetadataServer {
         const settled = await this.interactions.wait(request.id, { timeoutMs, signal: controller.signal });
         if (settled.status !== "resolved" && this.interactions.listPending(sessionId).length === 0) {
           this.tracker.setAttention(sessionId, "normal");
-          this.options.onChange?.();
+          this.notifyChange();
         }
         if (closed) return;
         send(res, 200, { ok: true, request: settled });
@@ -2409,7 +2432,7 @@ export class MetadataServer {
         if (request.sessionId && this.interactions.listPending(request.sessionId).length === 0) {
           this.tracker.setAttention(request.sessionId, "normal");
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, request });
         return;
       }
@@ -2465,7 +2488,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.clearLog) {
         const body = (await readJson(req)) as { session: string };
         clearSessionLogs(body.session);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2549,9 +2572,15 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.read) {
         const body = (await readJson(req)) as { id?: string; sessionId?: string };
+        const sessionId = body.sessionId?.trim() || undefined;
         const updated = markNotificationsRead({
           id: body.id?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
+          sessionId,
+        });
+        this.notifyProjectChanged({
+          views: ["coordination-worklist", "inbox", "notifications"],
+          reason: "notifications-read",
+          sessionId,
         });
         send(res, 200, { ok: true, updated });
         return;
@@ -2559,9 +2588,15 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.clear) {
         const body = (await readJson(req)) as { id?: string; sessionId?: string };
+        const sessionId = body.sessionId?.trim() || undefined;
         const cleared = clearNotifications({
           id: body.id?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
+          sessionId,
+        });
+        this.notifyProjectChanged({
+          views: ["coordination-worklist", "inbox", "notifications"],
+          reason: "notifications-clear",
+          sessionId,
         });
         send(res, 200, { ok: true, cleared });
         return;
@@ -2580,7 +2615,7 @@ export class MetadataServer {
           targetId: body.targetId?.trim() || undefined,
           worktreePath: body.worktreePath?.trim() || undefined,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, cleared });
         return;
       }
@@ -2596,10 +2631,16 @@ export class MetadataServer {
           participant?: string;
           includeNotifications?: boolean;
         };
+        const participantId = body.participant?.trim() || body.sessionId?.trim() || undefined;
         const updated = markRuntimeInboxRead({
           id: body.id?.trim() || undefined,
-          participantId: body.participant?.trim() || body.sessionId?.trim() || undefined,
+          participantId,
           includeNotifications: body.includeNotifications === true,
+        });
+        this.notifyProjectChanged({
+          views: ["coordination-worklist", "inbox"],
+          reason: url.pathname === PROJECT_API_ROUTES.runtime.inboxClear ? "inbox-clear" : "inbox-read",
+          sessionId: participantId,
         });
         send(res, 200, { ok: true, updated });
         return;
@@ -2615,7 +2656,7 @@ export class MetadataServer {
           tracker: this.tracker,
           emitAlert: (input) => this.emitAlert(input),
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, result);
         return;
       }
@@ -2635,7 +2676,7 @@ export class MetadataServer {
           kind: (body.kind as ThreadKind) ?? "conversation",
           worktreePath: body.worktreePath,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, thread });
         return;
       }
@@ -2694,7 +2735,7 @@ export class MetadataServer {
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2711,7 +2752,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, thread });
         return;
       }
@@ -2731,7 +2772,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, thread });
         return;
       }
@@ -2767,7 +2808,7 @@ export class MetadataServer {
           message: body.body.trim() || "A handoff is waiting for you.",
           worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2781,7 +2822,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2795,7 +2836,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2824,7 +2865,7 @@ export class MetadataServer {
           worktreePath: body.worktreePath,
         });
         this.emitAssignedTaskAlert(result);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2838,7 +2879,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2863,7 +2904,7 @@ export class MetadataServer {
           dedupeKey: `task-blocked:${result.task.id}`,
           cooldownMs: 15_000,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2888,7 +2929,7 @@ export class MetadataServer {
           dedupeKey: `task-done:${result.task.id}`,
           cooldownMs: 15_000,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2907,7 +2948,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.spawnAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -2986,7 +3027,7 @@ export class MetadataServer {
         if (taskResult) {
           this.emitAssignedTaskAlert(taskResult);
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result, task: taskResult?.task, thread: taskResult?.thread });
         return;
       }
@@ -3036,7 +3077,7 @@ export class MetadataServer {
             optionalString(resolved.parent.worktreePath),
         });
         this.emitAssignedTaskAlert(result);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, parentSessionId: resolved.parent.id, teammateSessionId: teammate.id, ...result });
         return;
       }
@@ -3064,7 +3105,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.stopAgent({ sessionId: resolved.teammate.id });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -3092,7 +3133,7 @@ export class MetadataServer {
           sessionId: resolved.teammate.id,
           session: resolved.teammate,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -3119,7 +3160,7 @@ export class MetadataServer {
         const result = await this.options.lifecycle.killAgent({
           sessionId: resolved.teammate.id,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -3144,7 +3185,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -3169,7 +3210,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.forkAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3181,7 +3222,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.stopAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3193,7 +3234,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3205,7 +3246,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.recordBackendSessionId(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3217,7 +3258,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.interruptAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3229,7 +3270,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.renameAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3241,7 +3282,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.migrateAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3253,7 +3294,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3291,7 +3332,7 @@ export class MetadataServer {
           attachments.filter((entry): entry is AttachmentRecord => !!entry),
         );
         const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: formattedText });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3311,11 +3352,11 @@ export class MetadataServer {
           const goal = typeof body.goal === "string" ? body.goal.trim() : "";
           const loop = { active: true, goal: goal || undefined, since: new Date().toISOString() };
           setSessionLoop(sessionId, loop);
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, sessionId, loop });
         } else {
           clearSessionLoop(sessionId);
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, sessionId, loop: null });
         }
         return;
@@ -3329,7 +3370,7 @@ export class MetadataServer {
           return;
         }
         setSessionOverseer(sessionId, Boolean(body.active));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, sessionId, overseer: Boolean(body.active) });
         return;
       }
@@ -3426,7 +3467,7 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, ...earlyResult.result });
           return;
         }
@@ -3435,10 +3476,10 @@ export class MetadataServer {
           send(res, 500, { ok: false, error: message });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         void resultPromise.then(
-          () => this.options.onChange?.(),
-          () => this.options.onChange?.(),
+          () => this.notifyChange(),
+          () => this.notifyChange(),
         );
         send(res, 202, { ok: true, path: body.name, status: "creating" });
         return;
@@ -3464,7 +3505,7 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, ...earlyResult.result });
           return;
         }
@@ -3473,10 +3514,10 @@ export class MetadataServer {
           send(res, 500, { ok: false, error: message });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         void resultPromise.then(
-          () => this.options.onChange?.(),
-          () => this.options.onChange?.(),
+          () => this.notifyChange(),
+          () => this.notifyChange(),
         );
         send(res, 202, { ok: true, path: body.path, status: "removing" });
         return;
@@ -3489,7 +3530,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.graveyardWorktree(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3501,7 +3542,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.createService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3513,7 +3554,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.stopService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3525,7 +3566,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resumeService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3537,7 +3578,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.removeService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3554,7 +3595,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resurrectGraveyard({ sessionId });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3566,7 +3607,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resurrectGraveyardWorktree(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3578,7 +3619,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.deleteGraveyardWorktree(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3590,7 +3631,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.cleanupGraveyard({ dryRun: body.dryRun === true });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...(typeof result === "object" && result ? result : { result }) });
         return;
       }
@@ -3610,7 +3651,7 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Review approved.",
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3630,7 +3671,7 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Changes requested.",
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3644,7 +3685,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
