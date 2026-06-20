@@ -22,6 +22,7 @@ function isLibraryEntry(value: any): value is LibraryEntry {
 
 function applyLibraryEntries(host: LibraryHost, entries: LibraryEntry[]): void {
   host.libraryEntries = entries;
+  host.libraryLoaded = true;
   if (typeof host.libraryIndex !== "number" || Number.isNaN(host.libraryIndex)) host.libraryIndex = 0;
   if (host.libraryIndex < 0) host.libraryIndex = 0;
   if (host.libraryIndex >= host.libraryEntries.length) {
@@ -29,9 +30,13 @@ function applyLibraryEntries(host: LibraryHost, entries: LibraryEntry[]): void {
   }
 }
 
+function ensureLibraryEntries(host: LibraryHost): void {
+  if (!host.libraryLoaded) applyLibraryEntries(host, []);
+}
+
 export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
-    if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
+    ensureLibraryEntries(host);
     return false;
   }
   try {
@@ -42,14 +47,14 @@ export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
     applyLibraryEntries(host, res.entries);
     return true;
   } catch {
-    if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
+    ensureLibraryEntries(host);
     return false;
   }
 }
 
 export function showLibrary(host: LibraryHost): void {
   host.clearDashboardSubscreens();
-  if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
+  ensureLibraryEntries(host);
   host.setDashboardScreen("library");
   host.writeStatuslineFile();
   renderLibrary(host);
@@ -59,7 +64,7 @@ export function showLibrary(host: LibraryHost): void {
 }
 
 export function renderLibrary(host: LibraryHost): void {
-  if (!Array.isArray(host.libraryEntries)) applyLibraryEntries(host, []);
+  ensureLibraryEntries(host);
   renderLibraryScreen(host);
 }
 
