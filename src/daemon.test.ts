@@ -511,12 +511,19 @@ describe("daemon routing (relay + proxy)", () => {
       undefined,
       headers,
     );
+    const streamRead = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/live-pane/output/stream?sessionId=claude-1",
+      undefined,
+      headers,
+    );
 
     expect(daemonMutation.status).toBe(403);
     expect(projectMutation.status).toBe(403);
     expect(otherSessionRead.status).toBe(403);
     expect(unscopedSessionRead.status).toBe(403);
     expect(attachmentRead.status).toBe(403);
+    expect(streamRead.status).toBe(403);
     expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
   });
 
