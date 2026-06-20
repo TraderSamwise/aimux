@@ -84,10 +84,7 @@ import {
   sendHandoff,
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
-import {
-  upsertNotification,
-  unreadNotificationCount,
-} from "./notifications.js";
+import { upsertNotification, unreadNotificationCount } from "./notifications.js";
 import { notifyAlert } from "./notify.js";
 import {
   buildDesktopNotifierDoctorReport,
@@ -143,6 +140,7 @@ import {
   openUrlInBrowser,
   startLocalUiServer,
 } from "./local-ui-server.js";
+import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -3538,6 +3536,19 @@ logsCmd
     mkdirSync(pathDirname(path), { recursive: true });
     writeFileSync(path, "");
     console.log(`Cleared ${path}`);
+  });
+
+doctorCmd
+  .command("versions")
+  .description("Inspect local daemon, project service, and dashboard version coherence")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const report = await buildRuntimeCoherenceReport();
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderRuntimeCoherenceReport(report));
   });
 
 doctorCmd
