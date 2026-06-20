@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   ensureDaemonRunning,
   ensureProjectService,
@@ -113,13 +114,32 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   );
 }
 
+export function isExitedProcessState(state: string): boolean {
+  return state.trim().startsWith("Z");
+}
+
 function defaultIsPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  if (process.platform !== "win32") {
+    try {
+      const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (isExitedProcessState(state)) return false;
+    } catch {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 async function waitForPidExit(input: {

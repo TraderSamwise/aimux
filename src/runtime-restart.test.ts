@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { isExitedProcessState, restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
 import type { RuntimeCoherenceReport } from "./runtime-coherence.js";
+
+const execFileSyncMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:child_process", () => ({
+  execFileSync: execFileSyncMock,
+}));
 
 function coherenceReport(): RuntimeCoherenceReport {
   return {
@@ -91,6 +97,108 @@ function stoppedDaemon(
 }
 
 describe("restartAimuxControlPlane", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    execFileSyncMock.mockReset();
+  });
+
+  it("treats zombie ps states as exited", () => {
+    expect(isExitedProcessState("Z")).toBe(true);
+    expect(isExitedProcessState("Z+")).toBe(true);
+    expect(isExitedProcessState("Zs")).toBe(true);
+    expect(isExitedProcessState("S")).toBe(false);
+    expect(isExitedProcessState("R+")).toBe(false);
+  });
+
+  it("treats zombie pids as exited through the default pid liveness check", async () => {
+    const processKill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    execFileSyncMock.mockReturnValue("Z+");
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+    });
+
+    expect(execFileSyncMock).toHaveBeenCalledWith("ps", ["-o", "stat=", "-p", "9001"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    expect(processKill).not.toHaveBeenCalledWith(9001, "SIGKILL");
+  });
+
+  it("treats live pids as alive when ps state probing fails", async () => {
+    const processKill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("ps unavailable");
+    });
+
+    await expect(
+      restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:01.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon: vi.fn(async () => stoppedDaemon()),
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+        ensureProjectService: vi.fn(),
+        createTmux: () => ({ isAvailable: () => true }),
+        resolveDashboardTarget: vi.fn(),
+        sleep: vi.fn(async () => {}),
+        daemonExitTimeoutMs: 1,
+        killGraceMs: 1,
+      }),
+    ).rejects.toThrow("pid 9001 did not exit within 2ms");
+    expect(processKill).toHaveBeenCalledWith(9001, "SIGKILL");
+  });
+
+  it("treats pids as exited when they disappear during ps state probing", async () => {
+    const processKill = vi
+      .spyOn(process, "kill")
+      .mockImplementationOnce(() => true)
+      .mockImplementationOnce(() => {
+        throw new Error("no such process");
+      })
+      .mockImplementation(() => true);
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("ps raced with exit");
+    });
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+    });
+
+    expect(processKill).toHaveBeenNthCalledWith(1, 9001, 0);
+    expect(processKill).toHaveBeenNthCalledWith(2, 9001, 0);
+    expect(processKill).not.toHaveBeenCalledWith(9001, "SIGKILL");
+  });
+
   it("restarts the daemon, ensures known services, and reloads only existing dashboards by default", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",

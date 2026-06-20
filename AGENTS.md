@@ -96,6 +96,14 @@ For aimux runtime or CLI behavior, source-level validation is not enough.
 
 - Changes under `src/*.ts` do not affect the running CLI until `yarn build` updates `dist/`.
 - `yarn vitest` and `yarn typecheck` validate source correctness; they do not prove the live runtime changed.
+- `yarn build` only updates this checkout. Plain `aimux` runs the installed bundle behind `~/.local/bin/aimux`; update it with a local release install:
+
+```bash
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
+```
+
 - Before asking someone to verify runtime behavior manually, always run:
 
 ```bash
