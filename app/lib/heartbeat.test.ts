@@ -50,4 +50,37 @@ describe("startHeartbeat relay transport", () => {
     handle.stop();
     expect(stop).toHaveBeenCalledTimes(1);
   });
+
+  it("subscribes to session live output over relay project events", () => {
+    const output = {
+      sessionId: "session/a b",
+      output: "hello",
+      startLine: -50,
+      parsed: { blocks: [{ type: "message", text: "hello" }] },
+    };
+    const subscribeProjectEvents = vi.fn(
+      (path, headers, onEvent: (event: string, data: unknown) => void) => {
+        onEvent("agent_output", output);
+        return { stop: vi.fn() };
+      },
+    );
+    setApiRelay({ subscribeProjectEvents } as unknown as RelayTransport);
+    const events: StreamEvent[] = [];
+
+    startHeartbeat({
+      serviceEndpoint: { host: "127.0.0.1", port: 43210 },
+      sessionId: "session/a b",
+      startLine: -50,
+      intervalMs: 250,
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(subscribeProjectEvents).toHaveBeenCalledWith(
+      "/proxy/127.0.0.1/43210/events?sessionId=session%2Fa+b&startLine=-50&intervalMs=250",
+      {},
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(events).toEqual([{ type: "agent_output", ...output }]);
+  });
 });
