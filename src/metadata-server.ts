@@ -2055,7 +2055,8 @@ export class MetadataServer {
         const match = tmux
           .listProjectManagedWindows(process.cwd())
           .find((entry) => entry.target.windowId === target.windowId);
-        const itemId = match?.metadata.kind === "agent" ? match.metadata.sessionId : undefined;
+        const itemId =
+          match?.metadata.kind === "agent" || match?.metadata.kind === "service" ? match.metadata.sessionId : undefined;
         if (match?.metadata.kind === "agent") {
           markSessionViewed(match.metadata.sessionId);
         }

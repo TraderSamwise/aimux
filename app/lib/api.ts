@@ -270,7 +270,7 @@ export async function attachLivePane(
 
 export async function openDashboard(
   endpoint: ServiceEndpoint,
-  input: OpenDashboardRequest = {},
+  input: OpenDashboardRequest = { focus: false },
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, input);
@@ -278,7 +278,7 @@ export async function openDashboard(
 
 export async function openInbox(
   endpoint: ServiceEndpoint,
-  input: OpenInboxRequest = {},
+  input: OpenInboxRequest = { focus: false },
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openInbox, opts, input);
@@ -310,7 +310,7 @@ export async function markActiveWindow(
 
 export async function switchNextAgent(
   endpoint: ServiceEndpoint,
-  input: SwitchAgentRequest = {},
+  input: SwitchAgentRequest = { focus: false },
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchNext, opts, input);
@@ -318,7 +318,7 @@ export async function switchNextAgent(
 
 export async function switchPrevAgent(
   endpoint: ServiceEndpoint,
-  input: SwitchAgentRequest = {},
+  input: SwitchAgentRequest = { focus: false },
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchPrev, opts, input);
@@ -326,7 +326,7 @@ export async function switchPrevAgent(
 
 export async function switchAttentionAgent(
   endpoint: ServiceEndpoint,
-  input: SwitchAgentRequest = {},
+  input: SwitchAgentRequest = { focus: false },
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchAttention, opts, input);

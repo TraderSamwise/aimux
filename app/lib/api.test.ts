@@ -259,6 +259,34 @@ describe("api relay routing", () => {
     });
   });
 
+  it("defaults location actions to resolve-only over relay", async () => {
+    const fetchMock = installFetchMock();
+    const request = installRelayMock({ ok: true });
+
+    await openDashboard(endpoint);
+    await openInbox(endpoint);
+    await switchNextAgent(endpoint);
+    await switchPrevAgent(endpoint);
+    await switchAttentionAgent(endpoint);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/control/open-dashboard", {
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/control/open-inbox", {
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/control/switch-prev", {
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(5, "POST", "/proxy/127.0.0.1/43210/control/switch-attention", {
+      focus: false,
+    });
+  });
+
   it("uploads image attachments through direct project HTTP with auth", async () => {
     const fetchMock = installFetchMock({
       ok: true,
