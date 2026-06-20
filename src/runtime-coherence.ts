@@ -223,7 +223,10 @@ function listDashboardReports(input: {
       const buildStamp = input.tmux.getWindowOption(target, "@aimux-dashboard-build");
       const owner = input.tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
       const status =
-        alive && buildStamp === input.expectedDashboardBuildStamp && owner === input.expectedRuntimeOwner
+        alive &&
+        buildStamp === input.expectedDashboardBuildStamp &&
+        owner === input.expectedRuntimeOwner &&
+        runtimeOwner === input.expectedRuntimeOwner
           ? "ok"
           : "mismatch";
       dashboards.push({
@@ -371,7 +374,9 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
         `    ${dashboard.status} ${dashboard.sessionName}:${dashboard.windowId} ${dashboard.windowName} alive=${dashboard.alive ? "yes" : "no"}`,
       );
       lines.push(`      build: ${dashboard.buildStamp ?? "(missing)"} expected=${project.expectedDashboardBuildStamp}`);
-      lines.push(`      owner: ${dashboard.owner ?? "(missing)"}`);
+      lines.push(
+        `      owner: ${dashboard.owner ?? "(missing)"} runtimeOwner=${dashboard.runtimeOwner ?? "(missing)"}`,
+      );
     }
   }
 

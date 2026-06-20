@@ -129,4 +129,47 @@ describe("runtime coherence report", () => {
     expect(report.projects[0]?.service.error).toBe("connection refused");
     expect(renderRuntimeCoherenceReport(report)).toContain("service: unreachable");
   });
+
+  it("marks dashboards stale when the tmux runtime owner differs", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => ["aimux-beta-222"]),
+        getSessionOption: vi.fn((sessionName: string, key: string) => {
+          if (key === "@aimux-project-root" && sessionName === "aimux-beta-222") return "/repo/beta";
+          if (key === TMUX_RUNTIME_OWNER_OPTION) return "owner-old";
+          return null;
+        }),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          beta: {
+            projectId: "beta",
+            projectRoot: "/repo/beta",
+            pid: 1002,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43192,
+        pid: 1002,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson: vi.fn(async () => ({
+        status: 200,
+        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+      })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.summary).toEqual({ projects: 1, ok: 0, needsRestart: 1 });
+    expect(report.projects[0]?.status).toBe("needs-restart");
+    expect(report.projects[0]?.dashboards[0]?.status).toBe("mismatch");
+    expect(renderRuntimeCoherenceReport(report)).toContain("runtimeOwner=owner-old");
+  });
 });
