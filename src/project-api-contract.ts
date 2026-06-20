@@ -189,6 +189,14 @@ export interface WorktreePathResponse extends ProjectApiOk {
   path: string;
 }
 
+export interface CreateWorktreeResponse extends WorktreePathResponse {
+  status?: "creating" | "created";
+}
+
+export interface RemoveWorktreeResponse extends WorktreePathResponse {
+  status?: "removing" | "removed";
+}
+
 export interface GraveyardWorktreeResponse extends WorktreePathResponse {
   status: "graveyarded";
 }
