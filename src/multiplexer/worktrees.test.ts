@@ -248,6 +248,46 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
   });
 
+  it("preserves an existing worktree row after duplicate create errors", async () => {
+    postToProjectService.mockRejectedValueOnce(new Error('Worktree "demo" already exists'));
+    const pending = createPendingActionsStore();
+    const existingWorktree = {
+      name: "demo",
+      branch: "demo",
+      path: "/repo/.aimux/worktrees/demo",
+      sessions: [],
+      services: [],
+    };
+    const host: any = {
+      mode: "dashboard",
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardRawWorktreeGroupsCache: [existingWorktree],
+      dashboardWorktreeGroupsCache: [existingWorktree],
+      dashboardOperationFailuresCache: [],
+      dashboardState: { worktreeNavOrder: [existingWorktree.path], focusedWorktreePath: existingWorktree.path },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        applyRawWorktrees(host, pending, [existingWorktree]);
+        return true;
+      }),
+      settleDashboardCreatePending: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled(), { timeout: 2000 });
+
+    expect(host.dashboardWorktreeGroupsCache).toEqual([existingWorktree]);
+    expect(host.dashboardState.focusedWorktreePath).toBe(existingWorktree.path);
+    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
+  });
+
   it("keeps project-service worktree creates pending until the worktree is rendered as real", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();

@@ -117,9 +117,14 @@ function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string)
 }
 
 function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): void {
-  host.dashboardWorktreeGroupsCache = host.dashboardWorktreeGroupsCache.filter((group: any) => group.path !== path);
+  host.dashboardWorktreeGroupsCache = host.dashboardWorktreeGroupsCache.filter(
+    (group: any) =>
+      group.path !== path ||
+      (group.optimistic !== true && group.pending !== true && group.pendingAction !== "creating"),
+  );
   host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
-  if (host.dashboardState.focusedWorktreePath === path) {
+  const stillRendered = host.dashboardWorktreeGroupsCache.some((group: any) => group.path === path);
+  if (host.dashboardState.focusedWorktreePath === path && !stillRendered) {
     host.dashboardState.focusedWorktreePath = undefined;
   }
   host.dashboardUiStateStore.markSelectionDirty();
