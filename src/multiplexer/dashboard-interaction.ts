@@ -8,6 +8,7 @@ import {
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { requestReview } from "../task-workflow.js";
 import { isTeammateSession, isOverseerSession } from "../team.js";
 
@@ -108,7 +109,7 @@ function moveSelectedDashboardWorktreeEntry(host: any, direction: "up" | "down")
   if (nextIndex >= 0) host.dashboardState.sessionIndex = nextIndex;
   host.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, host.dashboardState.focusedWorktreePath);
   host.persistDashboardUiState();
-  void host.postToProjectService?.("/statusline/refresh", { force: true }).catch(() => {});
+  void host.postToProjectService?.(PROJECT_API_ROUTES.statuslineRefresh, { force: true }).catch(() => {});
   host.footerFlash = `Moved ${selectedEntry.kind === "session" ? "agent" : "service"} ${direction}`;
   host.footerFlashTicks = 2;
   host.renderDashboard();
@@ -405,7 +406,7 @@ export const dashboardInteractionMethods = {
             this.footerFlashTicks = 3;
             this.renderDashboard();
             void this
-              .postToProjectService("/operation-failures/clear", {
+              .postToProjectService(PROJECT_API_ROUTES.operationFailuresClear, {
                 targetKind: "worktree",
                 operation: focusedGroup.operationFailure.operation,
                 worktreePath: this.dashboardState.focusedWorktreePath,
@@ -918,7 +919,7 @@ export const dashboardInteractionMethods = {
         worktreePath: target.worktreePath,
       };
       if (mode === "message") {
-        await this.postToProjectService("/threads/send", {
+        await this.postToProjectService(PROJECT_API_ROUTES.threads.send, {
           kind: "request",
           ...requestBody,
           body,
@@ -926,13 +927,13 @@ export const dashboardInteractionMethods = {
         const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
         this.footerFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
       } else if (mode === "handoff") {
-        await this.postToProjectService("/handoff", {
+        await this.postToProjectService(PROJECT_API_ROUTES.handoff.send, {
           ...requestBody,
           body,
         });
         this.footerFlash = `Sent handoff to ${target.label}`;
       } else {
-        await this.postToProjectService("/tasks/assign", {
+        await this.postToProjectService(PROJECT_API_ROUTES.tasks.assign, {
           ...requestBody,
           description: body,
         });

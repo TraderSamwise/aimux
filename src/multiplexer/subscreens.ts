@@ -3,6 +3,7 @@ import { type OrchestrationThread, type ThreadStatus } from "../threads.js";
 import { buildCoordinationThreadEntries, type ThreadEntry } from "../workflow.js";
 import { refreshNotificationEntries } from "./notifications.js";
 import { navigationUrgencyScore } from "../fast-control.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { style } from "../tui/render/theme.js";
@@ -134,10 +135,10 @@ export async function runThreadHandoffAction(
 ): Promise<void> {
   try {
     if (mode === "accept") {
-      await host.postToProjectService("/handoff/accept", { threadId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.handoff.accept, { threadId, from: "user" });
       host.footerFlash = "⇢ Handoff accepted";
     } else {
-      await host.postToProjectService("/handoff/complete", { threadId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.handoff.complete, { threadId, from: "user" });
       host.footerFlash = "⇢ Handoff completed";
     }
     host.footerFlashTicks = 3;
@@ -154,7 +155,7 @@ export async function runThreadStatusAction(
   status: ThreadStatus,
 ): Promise<void> {
   try {
-    await host.postToProjectService("/threads/status", { threadId, status });
+    await host.postToProjectService(PROJECT_API_ROUTES.threads.status, { threadId, status });
     host.footerFlash = `Thread marked ${status}`;
     host.footerFlashTicks = 3;
   } catch (error) {
@@ -173,16 +174,16 @@ export async function runTaskLifecycleAction(
 ): Promise<void> {
   try {
     if (mode === "accept") {
-      await host.postToProjectService("/tasks/accept", { taskId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.tasks.accept, { taskId, from: "user" });
       host.footerFlash = "⧫ Task accepted";
     } else if (mode === "block") {
-      await host.postToProjectService("/tasks/block", { taskId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.tasks.block, { taskId, from: "user" });
       host.footerFlash = "⧫ Task blocked";
     } else if (mode === "reopen") {
-      await host.postToProjectService("/tasks/reopen", { taskId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.tasks.reopen, { taskId, from: "user" });
       host.footerFlash = "↺ Task reopened";
     } else {
-      await host.postToProjectService("/tasks/complete", { taskId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.tasks.complete, { taskId, from: "user" });
       host.footerFlash = "✓ Task completed";
     }
     host.footerFlashTicks = 3;
@@ -200,10 +201,10 @@ export async function runReviewLifecycleAction(
 ): Promise<void> {
   try {
     if (mode === "approve") {
-      await host.postToProjectService("/reviews/approve", { taskId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.reviews.approve, { taskId, from: "user" });
       host.footerFlash = "✓ Review approved";
     } else {
-      await host.postToProjectService("/reviews/request-changes", { taskId, from: "user" });
+      await host.postToProjectService(PROJECT_API_ROUTES.reviews.requestChanges, { taskId, from: "user" });
       host.footerFlash = "↺ Changes requested";
     }
     host.footerFlashTicks = 3;
@@ -240,7 +241,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
     }
     // Reply through the service (sole writer) rather than mutating the thread store in-process.
     void host
-      .postToProjectService("/threads/send", { threadId: entry.thread.id, from: "user", kind: "reply", body })
+      .postToProjectService(PROJECT_API_ROUTES.threads.send, { threadId: entry.thread.id, from: "user", kind: "reply", body })
       .then(() => refreshCoordinationThreads(host))
       .catch((error: unknown) =>
         host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]),

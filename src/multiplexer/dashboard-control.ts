@@ -17,6 +17,7 @@ import { loadTeamConfig, isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -389,7 +390,7 @@ export function openLiveTmuxWindowForEntry(
     const target = openManagedSessionWindow(host.tmuxRuntimeManager, process.cwd(), entry);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void host.postToProjectService("/statusline/refresh", { sessionId: entry.id }).catch(() => {});
+    void host.postToProjectService(PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
     updateNotificationContext("tui", {
       focused: true,
       sessionId: entry.id,
@@ -429,7 +430,7 @@ export function openLiveTmuxWindowForService(
     const target = openManagedServiceWindow(host.tmuxRuntimeManager, process.cwd(), serviceId);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void host.postToProjectService("/statusline/refresh", { sessionId: serviceId }).catch(() => {});
+    void host.postToProjectService(PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
     noteLastUsedItem(host, serviceId);
     return "opened";
   } catch (error) {

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { parseKeys } from "../key-parser.js";
 import type { LibraryEntry } from "../library.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
 
 type LibraryHost = any;
@@ -34,7 +35,7 @@ export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
     return false;
   }
   try {
-    const res = await host.getFromProjectService("/library");
+    const res = await host.getFromProjectService(PROJECT_API_ROUTES.library);
     if (!res?.ok || !Array.isArray(res.entries) || !res.entries.every(isLibraryEntry)) {
       throw new Error("invalid library payload");
     }
