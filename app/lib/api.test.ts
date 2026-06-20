@@ -138,7 +138,7 @@ describe("api relay routing", () => {
     await openInbox(endpoint, { currentClientSession: "client-1", focus: false });
     await openNotificationTarget(endpoint, { sessionId: "agent-1", focus: false });
     await focusWindow(endpoint, { windowId: "@7", focus: false });
-    await markActiveWindow(endpoint, { currentClientSession: "client-1", currentWindowId: "@7" });
+    await markActiveWindow(endpoint, { currentClientSession: "client-1", clientTty: "/dev/ttys001", currentWindowId: "@7" });
     await switchNextAgent(endpoint, { currentClientSession: "client-1", focus: false });
     await switchPrevAgent(endpoint, { currentClientSession: "client-1", focus: false });
     await switchAttentionAgent(endpoint, { currentClientSession: "client-1", focus: false });
@@ -237,6 +237,7 @@ describe("api relay routing", () => {
     });
     expect(request).toHaveBeenNthCalledWith(20, "POST", "/proxy/127.0.0.1/43210/control/active-window", {
       currentClientSession: "client-1",
+      clientTty: "/dev/ttys001",
       currentWindowId: "@7",
     });
     expect(request).toHaveBeenNthCalledWith(21, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {

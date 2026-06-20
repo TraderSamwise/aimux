@@ -287,9 +287,11 @@ export type FocusWindowRequest = ControlClientContext & {
 };
 
 export type ActiveWindowRequest = Pick<
-  ControlClientBaseContext,
+  ControlClientContext,
   "currentClientSession" | "currentWindow" | "currentWindowId"
->;
+> & {
+  clientTty: string;
+};
 export type SwitchAgentRequest = ControlClientContext;
 
 export interface ProjectServiceInfoResponse extends ProjectApiOk {
