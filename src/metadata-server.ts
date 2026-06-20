@@ -165,8 +165,7 @@ function orchestrationCandidateFromSession(session: any): RoutingCandidate {
     role: session.role ?? session.team?.role,
     worktreePath: session.worktreePath,
     status,
-    canReceiveInput:
-      runtime?.canReceiveInput ?? (status === "running" || status === "idle" || status === "waiting"),
+    canReceiveInput: runtime?.canReceiveInput ?? (status === "running" || status === "idle" || status === "waiting"),
     isAlive: runtime?.isAlive ?? (status !== "exited" && status !== "offline"),
     workflowPressure:
       (session.workflowOnMeCount ?? 0) * 5 +
@@ -954,6 +953,23 @@ function optionalStringOrFirst(value: unknown): string | undefined {
   if (typeof value === "string") return optionalString(value);
   if (!Array.isArray(value)) return undefined;
   return value.map(optionalString).find(Boolean);
+}
+
+function optionalStringArray(value: unknown): string[] {
+  if (typeof value === "string") {
+    const entry = optionalString(value);
+    return entry ? [entry] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value.map(optionalString).filter((entry): entry is string => Boolean(entry));
+}
+
+function routeRecipients(input: { to?: unknown; assignee?: unknown; tool?: unknown }): string[] {
+  const explicit = optionalStringArray(input.to);
+  if (explicit.length > 0) return explicit;
+  return [optionalString(input.assignee), optionalString(input.tool)].filter((entry): entry is string =>
+    Boolean(entry),
+  );
 }
 
 function runtimeInboxEntries(
@@ -3119,19 +3135,21 @@ export class MetadataServer {
           body: string;
           title?: string;
         };
+        const recipients = routeRecipients(body);
+        const explicitRecipients = optionalStringArray(body.to);
         const result = this.options.threads?.sendMessage
           ? this.options.threads.sendMessage(body)
           : body.threadId
             ? sendThreadMessage({
                 threadId: body.threadId,
                 from: body.from ?? "user",
-                to: body.to,
+                to: recipients,
                 kind: body.kind,
                 body: body.body,
               })
             : sendDirectMessage({
                 from: body.from ?? "user",
-                to: body.to ?? [],
+                to: recipients,
                 kind: body.kind as any,
                 body: body.body,
                 title: body.title,
@@ -3139,24 +3157,32 @@ export class MetadataServer {
               });
         const messageKind = body.kind ?? "request";
         if (messageKind === "handoff") {
-          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          const alertRecipients = this.resolveAlertRecipients(
+            explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            result.message,
+            recipients,
+          );
           this.emitThreadWaitingAlert({
             kind: "handoff_waiting",
             threadId: (result.thread as { id: string }).id,
             from: body.from ?? "user",
-            recipients,
-            title: `Handoff for ${recipients.join(", ") || "agent"}`,
+            recipients: alertRecipients,
+            title: `Handoff for ${alertRecipients.join(", ") || "agent"}`,
             message: body.body.trim() || "A handoff is waiting for you.",
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         } else if (messageKind === "request" || messageKind === "reply" || messageKind === "note") {
-          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          const alertRecipients = this.resolveAlertRecipients(
+            explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            result.message,
+            recipients,
+          );
           this.emitThreadWaitingAlert({
             kind: "message_waiting",
             threadId: (result.thread as { id: string }).id,
             from: body.from ?? "user",
-            recipients,
-            title: `Message for ${recipients.join(", ") || "agent"}`,
+            recipients: alertRecipients,
+            title: `Message for ${alertRecipients.join(", ") || "agent"}`,
             message: body.body.trim() || "A new message is waiting.",
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
