@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isDevelopmentRuntime, resolveRelayUrl, resolveWebAppUrl } from "./connection-targets.js";
 
@@ -82,33 +80,21 @@ describe("isDevelopmentRuntime lane detection", () => {
     expect(isDevelopmentRuntime()).toBe(true);
   });
 
-  it("detects dev from the dev home even if AIMUX_ENV is unset", () => {
+  it("does not infer development from a custom home", () => {
     clearLaneEnv();
-    process.env.AIMUX_HOME = join(homedir(), ".aimux-dev");
-    expect(isDevelopmentRuntime()).toBe(true);
+    process.env.AIMUX_HOME = "/tmp/aimux-custom";
+    expect(isDevelopmentRuntime()).toBe(false);
   });
 
-  it("detects dev from a tilde-prefixed home path", () => {
+  it("does not infer development from a custom daemon port", () => {
     clearLaneEnv();
-    process.env.AIMUX_HOME = "~/.aimux-dev";
-    expect(isDevelopmentRuntime()).toBe(true);
+    process.env.AIMUX_DAEMON_PORT = "44190";
+    expect(isDevelopmentRuntime()).toBe(false);
   });
 
-  it("detects dev from the dev daemon port", () => {
-    clearLaneEnv();
-    process.env.AIMUX_DAEMON_PORT = "43191";
-    expect(isDevelopmentRuntime()).toBe(true);
-  });
-
-  it("detects dev from the local web app url", () => {
+  it("does not infer development from an explicit local web app url", () => {
     clearLaneEnv();
     process.env.AIMUX_WEB_APP_URL = "http://localhost:8081";
-    expect(isDevelopmentRuntime()).toBe(true);
-  });
-
-  it("treats the prod home as production", () => {
-    clearLaneEnv();
-    process.env.AIMUX_HOME = join(homedir(), ".aimux");
     expect(isDevelopmentRuntime()).toBe(false);
   });
 });

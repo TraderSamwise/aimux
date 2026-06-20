@@ -27,7 +27,7 @@ async function startTestServer(root = makeUiRoot()): Promise<LocalUiServerHandle
     uiRoot: root,
     config: {
       connectionMode: "local",
-      daemonUrl: "http://127.0.0.1:43191",
+      daemonUrl: "http://127.0.0.1:43190",
     },
   });
   handles.push(handle);
@@ -75,7 +75,7 @@ describe("local UI server", () => {
     const res = await fetch(`${server.url}/aimux-local-config.js`);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    await expect(res.text()).resolves.toContain('"daemonUrl":"http://127.0.0.1:43191"');
+    await expect(res.text()).resolves.toContain('"daemonUrl":"http://127.0.0.1:43190"');
   });
 
   it("falls back to index for routed app paths", async () => {

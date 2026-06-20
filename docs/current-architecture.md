@@ -26,9 +26,11 @@ The global daemon owns:
 - project discovery and activation
 - supervision of daemon-managed project services
 - daemon HTTP for client project/service discovery
-- stable/dev runtime lane separation
+- the single installed local runtime lane
 
-Stable `aimux` uses port `43190`. `aimux-dev` uses port `43191`.
+`aimux` uses port `43190` by default. Explicit `AIMUX_HOME` and
+`AIMUX_DAEMON_PORT` overrides are available for rare sandboxes, but they are not
+a second named CLI workflow.
 
 Useful commands:
 

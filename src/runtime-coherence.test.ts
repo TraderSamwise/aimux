@@ -50,7 +50,7 @@ function createTmux(overrides: Partial<TmuxRuntimeManager> = {}): TmuxRuntimeMan
 describe("runtime coherence report", () => {
   it("reports service and dashboard version mismatches across known projects", async () => {
     const requestJson = vi.fn(async (url: string) => {
-      if (url.includes("43191")) {
+      if (url.includes("43211")) {
         return {
           status: 200,
           json: { ok: true, pid: 1001, serviceInfo: { ...expectedManifest, buildStamp: "service-old" } },
@@ -60,8 +60,8 @@ describe("runtime coherence report", () => {
     });
     const endpointFor = (projectRoot?: string): MetadataApiEndpoint | null =>
       projectRoot === "/repo/alpha"
-        ? { host: "127.0.0.1", port: 43191, pid: 1001, updatedAt: "2026-06-20T00:00:00.000Z" }
-        : { host: "127.0.0.1", port: 43192, pid: 1002, updatedAt: "2026-06-20T00:00:00.000Z" };
+        ? { host: "127.0.0.1", port: 43211, pid: 1001, updatedAt: "2026-06-20T00:00:00.000Z" }
+        : { host: "127.0.0.1", port: 43212, pid: 1002, updatedAt: "2026-06-20T00:00:00.000Z" };
 
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux(),
@@ -113,7 +113,7 @@ describe("runtime coherence report", () => {
       }),
       loadMetadataEndpoint: () => ({
         host: "127.0.0.1",
-        port: 43191,
+        port: 43211,
         pid: 1001,
         updatedAt: "2026-06-20T00:00:00.000Z",
       }),
@@ -154,7 +154,7 @@ describe("runtime coherence report", () => {
       }),
       loadMetadataEndpoint: () => ({
         host: "127.0.0.1",
-        port: 43192,
+        port: 43212,
         pid: 1002,
         updatedAt: "2026-06-20T00:00:00.000Z",
       }),

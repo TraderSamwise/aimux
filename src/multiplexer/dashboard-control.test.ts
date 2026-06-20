@@ -192,10 +192,10 @@ describe("showOrchestrationRoutePicker", () => {
 });
 
 describe("reloadDashboardFromGuard", () => {
-  it("uses the active aimux-dev entrypoint when the dashboard was launched through it", async () => {
+  it("uses PATH aimux for dashboard reloads", async () => {
     const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
     const originalArgv = process.argv[1];
-    process.argv[1] = "/Users/sam/cs/aimux/bin/aimux-dev";
+    process.argv[1] = "/Users/sam/cs/aimux/dist/main.js";
     const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
 
     try {
@@ -204,11 +204,10 @@ describe("reloadDashboardFromGuard", () => {
       process.argv[1] = originalArgv;
     }
 
-    expect(mocks.spawn).toHaveBeenCalledWith(
-      "/Users/sam/cs/aimux/bin/aimux-dev",
-      ["dashboard-reload", "--open"],
-      { detached: true, stdio: "ignore" },
-    );
+    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["dashboard-reload", "--open"], {
+      detached: true,
+      stdio: "ignore",
+    });
   });
 
   it("shows a footer failure when the reload child emits an error", async () => {
@@ -227,22 +226,6 @@ describe("reloadDashboardFromGuard", () => {
 
     expect(host.footerFlash).toContain("Reload failed");
     expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
-  });
-
-  it("falls back to aimux-dev when the environment is the dev lane", async () => {
-    const { resolveDashboardReloadCommand } = await import("./dashboard-control.js");
-    const originalArgv = process.argv[1];
-    const originalEnv = process.env.AIMUX_ENV;
-    process.argv[1] = "/Users/sam/cs/aimux/dist/main.js";
-    process.env.AIMUX_ENV = "development";
-
-    try {
-      expect(resolveDashboardReloadCommand()).toBe("aimux-dev");
-    } finally {
-      process.argv[1] = originalArgv;
-      if (originalEnv === undefined) delete process.env.AIMUX_ENV;
-      else process.env.AIMUX_ENV = originalEnv;
-    }
   });
 
   it("uses PATH aimux instead of a versioned stable install path", async () => {

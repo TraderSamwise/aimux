@@ -130,7 +130,7 @@ their local daemon via the browser:
 aimux login
 ```
 
-This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.app`, or `http://localhost:8081` for `aimux-dev`), mints a
+This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.app`), mints a
 long-lived (~90d) HS256 daemon token at the relay, and stores it locally
 at `~/.aimux/auth.json`. The daemon picks it up on next start, or
 `aimux remote enable` connects without a restart.

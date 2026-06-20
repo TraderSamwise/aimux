@@ -1830,7 +1830,7 @@ describe("tmux-control.sh", () => {
       "--current-path",
       "/repo/project/worktree",
       "--aimux-home",
-      "/home/user/.aimux-dev",
+      "/home/user/.aimux-custom",
     ]);
 
     const log = readLog(envRoot);
@@ -1844,7 +1844,9 @@ describe("tmux-control.sh", () => {
     expect(
       log.some((entry) => entry.includes("cat ") && entry.includes("exec") && entry.includes("expose --project-root")),
     ).toBe(true);
-    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-dev"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
+      true,
+    );
     expect(curlLog).toEqual([]);
   });
 
@@ -1881,12 +1883,14 @@ describe("tmux-control.sh", () => {
       "--current-path",
       "/repo/project/worktree",
       "--aimux-home",
-      "/home/user/.aimux-dev",
+      "/home/user/.aimux-custom",
     ]);
 
     const log = readLog(envRoot);
     expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-live -n meta-dashboard"))).toBe(true);
     expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-dev"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
+      true,
+    );
   });
 });

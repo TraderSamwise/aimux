@@ -191,16 +191,6 @@ export function reloadDashboardFromGuard(host: DashboardControlHost): void {
 }
 
 export function resolveDashboardReloadCommand(): string {
-  const entrypoint = process.argv[1]?.trim();
-  if (entrypoint && /(?:^|\/)aimux-dev$/.test(entrypoint)) return entrypoint;
-  if (entrypoint && /(?:^|\/)aimux$/.test(entrypoint)) return "aimux";
-  if (
-    process.env.AIMUX_ENV === "development" ||
-    process.env.AIMUX_DAEMON_PORT === "43191" ||
-    process.env.AIMUX_HOME?.endsWith("/.aimux-dev")
-  ) {
-    return "aimux-dev";
-  }
   return "aimux";
 }
 
@@ -568,9 +558,7 @@ async function showOrchestrationRoutePickerFromService(
   if (selectedSessionId) params.set("selectedSessionId", selectedSessionId);
   if (worktreePath) params.set("worktreePath", worktreePath);
   try {
-    const res = await host.getFromProjectService(
-      `${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`,
-    );
+    const res = await host.getFromProjectService(`${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`);
     if (!res?.ok || !Array.isArray(res.options) || !res.options.every(validOrchestrationRouteOption)) {
       throw new Error("invalid orchestration route options payload");
     }

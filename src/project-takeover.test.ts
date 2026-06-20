@@ -28,7 +28,7 @@ describe("project takeover", () => {
   beforeEach(() => {
     tmpHome = mkdtempSync(join(tmpdir(), "aimux-takeover-"));
     vi.stubEnv("HOME", tmpHome);
-    vi.stubEnv("AIMUX_HOME", join(tmpHome, ".aimux"));
+    vi.stubEnv("AIMUX_HOME", join(tmpHome, ".aimux-custom"));
     livePids = new Set([1001, 2001, 2002]);
     vi.mocked(requestJson).mockClear();
     execFileSyncMock.mockReset();
@@ -47,19 +47,19 @@ describe("project takeover", () => {
     rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("stops only the matching project service in the other aimux home", async () => {
+  it("stops only the matching project service in the default aimux home", async () => {
     const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
     const projectRoot = join(tmpHome, "repo-a");
     const otherProjectRoot = join(tmpHome, "repo-b");
     const projectId = getProjectIdFor(projectRoot);
     const otherProjectId = getProjectIdFor(otherProjectRoot);
-    const devHome = join(tmpHome, ".aimux-dev");
-    const projectStateDir = join(devHome, "projects", projectId);
+    const defaultHome = join(tmpHome, ".aimux");
+    const projectStateDir = join(defaultHome, "projects", projectId);
 
-    mkdirSync(join(devHome, "daemon"), { recursive: true });
+    mkdirSync(join(defaultHome, "daemon"), { recursive: true });
     mkdirSync(projectStateDir, { recursive: true });
-    writeJson(join(devHome, "daemon", "daemon.json"), { pid: 1001, port: 43191 });
-    writeJson(join(devHome, "daemon", "state.json"), {
+    writeJson(join(defaultHome, "daemon", "daemon.json"), { pid: 1001, port: 43190 });
+    writeJson(join(defaultHome, "daemon", "state.json"), {
       version: 1,
       updatedAt: new Date().toISOString(),
       projects: {
@@ -67,19 +67,19 @@ describe("project takeover", () => {
         [otherProjectId]: { pid: 2002, projectRoot: otherProjectRoot },
       },
     });
-    writeJson(join(projectStateDir, "metadata-api.json"), { host: "127.0.0.1", port: 43191 });
-    writeFileSync(join(projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43191\n");
+    writeJson(join(projectStateDir, "metadata-api.json"), { host: "127.0.0.1", port: 43190 });
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43190\n");
 
     await takeOverProjectFromOtherOwners(projectRoot);
 
     expect(requestJson).toHaveBeenCalledTimes(1);
-    expect(requestJson).toHaveBeenCalledWith("http://127.0.0.1:43191/projects/stop", {
+    expect(requestJson).toHaveBeenCalledWith("http://127.0.0.1:43190/projects/stop", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: { projectRoot },
       timeoutMs: 1500,
     });
-    const state = JSON.parse(readFileSync(join(devHome, "daemon", "state.json"), "utf-8")) as {
+    const state = JSON.parse(readFileSync(join(defaultHome, "daemon", "state.json"), "utf-8")) as {
       projects: Record<string, unknown>;
     };
     expect(state.projects[projectId]).toBeUndefined();
@@ -89,19 +89,19 @@ describe("project takeover", () => {
     expect(livePids.has(2002)).toBe(true);
   });
 
-  it("preserves the other owner topology so agents return when switching lanes back", async () => {
+  it("preserves the default owner topology while clearing stale connection files", async () => {
     const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
     const projectRoot = join(tmpHome, "repo-a");
     const projectId = getProjectIdFor(projectRoot);
-    const devHome = join(tmpHome, ".aimux-dev");
-    const projectStateDir = join(devHome, "projects", projectId);
+    const defaultHome = join(tmpHome, ".aimux");
+    const projectStateDir = join(defaultHome, "projects", projectId);
     const topologyPath = join(projectStateDir, "runtime-topology.yaml");
-    const topology = "version: 1\nsessions:\n  - id: codex-dev\n    status: offline\n";
+    const topology = "version: 1\nsessions:\n  - id: codex-custom\n    status: offline\n";
 
-    mkdirSync(join(devHome, "daemon"), { recursive: true });
+    mkdirSync(join(defaultHome, "daemon"), { recursive: true });
     mkdirSync(projectStateDir, { recursive: true });
-    writeJson(join(devHome, "daemon", "daemon.json"), { pid: 1001, port: 43191 });
-    writeJson(join(devHome, "daemon", "state.json"), {
+    writeJson(join(defaultHome, "daemon", "daemon.json"), { pid: 1001, port: 43190 });
+    writeJson(join(defaultHome, "daemon", "state.json"), {
       version: 1,
       updatedAt: new Date().toISOString(),
       projects: {
@@ -109,8 +109,8 @@ describe("project takeover", () => {
       },
     });
     writeFileSync(topologyPath, topology);
-    writeJson(join(projectStateDir, "metadata-api.json"), { host: "127.0.0.1", port: 43191 });
-    writeFileSync(join(projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43191\n");
+    writeJson(join(projectStateDir, "metadata-api.json"), { host: "127.0.0.1", port: 43190 });
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43190\n");
 
     await takeOverProjectFromOtherOwners(projectRoot);
 
@@ -123,13 +123,13 @@ describe("project takeover", () => {
     const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
     const projectRoot = join(tmpHome, "repo-a");
     const projectId = getProjectIdFor(projectRoot);
-    const devHome = join(tmpHome, ".aimux-dev");
+    const defaultHome = join(tmpHome, ".aimux");
 
     vi.mocked(requestJson).mockRejectedValueOnce(new Error("other daemon unavailable"));
     execFileSyncMock.mockReturnValue("sleep 999");
-    mkdirSync(join(devHome, "daemon"), { recursive: true });
-    writeJson(join(devHome, "daemon", "daemon.json"), { pid: 1001, port: 43191 });
-    writeJson(join(devHome, "daemon", "state.json"), {
+    mkdirSync(join(defaultHome, "daemon"), { recursive: true });
+    writeJson(join(defaultHome, "daemon", "daemon.json"), { pid: 1001, port: 43190 });
+    writeJson(join(defaultHome, "daemon", "state.json"), {
       version: 1,
       updatedAt: new Date().toISOString(),
       projects: {
@@ -140,7 +140,7 @@ describe("project takeover", () => {
     await takeOverProjectFromOtherOwners(projectRoot);
 
     expect(livePids.has(2001)).toBe(true);
-    const state = JSON.parse(readFileSync(join(devHome, "daemon", "state.json"), "utf-8")) as {
+    const state = JSON.parse(readFileSync(join(defaultHome, "daemon", "state.json"), "utf-8")) as {
       projects: Record<string, unknown>;
     };
     expect(state.projects[projectId]).toBeUndefined();
