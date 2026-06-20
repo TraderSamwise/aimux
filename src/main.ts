@@ -85,9 +85,6 @@ import {
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
 import {
-  clearNotifications,
-  listNotifications,
-  markNotificationsRead,
   upsertNotification,
   unreadNotificationCount,
 } from "./notifications.js";
@@ -386,6 +383,15 @@ async function getProjectServiceJson(path: string): Promise<any> {
     throw new Error(json?.error || `request failed: ${status}`);
   }
   return json;
+}
+
+function notificationQuery(opts: { unread?: boolean; session?: string }): string {
+  const query = new URLSearchParams();
+  if (opts.unread) query.set("unread", "1");
+  const sessionId = opts.session?.trim();
+  if (sessionId) query.set("sessionId", sessionId);
+  const rendered = query.toString();
+  return rendered ? `?${rendered}` : "";
 }
 
 async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallback: () => any): Promise<any> {
@@ -3822,7 +3828,7 @@ program
     const clearSessionNotifications = async () =>
       postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
         ok: true,
-        cleared: clearNotifications({ sessionId }),
+        cleared: 0,
       }));
     const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
     if (transcriptPath) {
@@ -3918,7 +3924,7 @@ program
     const clearSessionNotifications = async () =>
       postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
         ok: true,
-        cleared: clearNotifications({ sessionId }),
+        cleared: 0,
       }));
 
     const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
@@ -3972,11 +3978,9 @@ program
   .option("--json", "Emit JSON output")
   .action(async (opts: { unread?: boolean; session?: string; json?: boolean }) => {
     await initPaths();
-    const notifications = listNotifications({
-      unreadOnly: Boolean(opts.unread),
-      sessionId: opts.session?.trim() || undefined,
-    });
-    const unreadCount = unreadNotificationCount({ sessionId: opts.session?.trim() || undefined });
+    const result = await getProjectServiceJson(`/notifications${notificationQuery(opts)}`);
+    const notifications = Array.isArray(result.notifications) ? result.notifications : [];
+    const unreadCount = typeof result.unreadCount === "number" ? result.unreadCount : 0;
     if (opts.json) {
       console.log(JSON.stringify({ notifications, unreadCount }));
       return;
@@ -3999,7 +4003,10 @@ program
   .option("--json", "Emit JSON output")
   .action(async (opts: { session?: string; json?: boolean }) => {
     await initPaths();
-    const cleared = clearNotifications({ sessionId: opts.session?.trim() || undefined });
+    const result = await postProjectServiceJson("/notifications/clear", {
+      sessionId: opts.session?.trim() || undefined,
+    });
+    const cleared = typeof result.cleared === "number" ? result.cleared : 0;
     if (opts.json) {
       console.log(JSON.stringify({ ok: true, cleared }));
       return;
@@ -4014,7 +4021,10 @@ program
   .option("--json", "Emit JSON output")
   .action(async (opts: { session?: string; json?: boolean }) => {
     await initPaths();
-    const updated = markNotificationsRead({ sessionId: opts.session?.trim() || undefined });
+    const result = await postProjectServiceJson("/notifications/read", {
+      sessionId: opts.session?.trim() || undefined,
+    });
+    const updated = typeof result.updated === "number" ? result.updated : 0;
     if (opts.json) {
       console.log(JSON.stringify({ ok: true, updated }));
       return;
