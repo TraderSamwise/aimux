@@ -75,22 +75,25 @@ export default function ServiceDetailScreen() {
   }, [getToken]);
 
   const found = useMemo(() => findService(groups, serviceId), [groups, serviceId]);
-  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointHost = endpoint?.host ?? null;
+  const endpointPort = endpoint?.port ?? null;
+  const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;
   const relayReadyForRequests = !env.AIMUX_RELAY_URL || relayStatus === "connected";
 
   useEffect(() => {
-    if (found || !endpoint || !endpointKey || !projectPath || !serviceId) return;
+    if (found || !endpointHost || !endpointPort || !endpointKey || !projectPath || !serviceId) return;
     if (!relayReadyForRequests) return;
     const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
     if (missingServiceFetchKey === fetchKey) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const endpointForRequest = { host: endpointHost, port: endpointPort };
     (async () => {
       setMissingServiceFetchKey(fetchKey);
       setLoadingMissingService(true);
       try {
         const currentToken = await getToken();
-        const state = await getDesktopState(endpoint, { token: currentToken });
+        const state = await getDesktopState(endpointForRequest, { token: currentToken });
         if (!cancelled) setDesktopState(state);
       } catch (err) {
         console.warn("service detail desktop-state refresh failed:", err);
@@ -105,11 +108,15 @@ export default function ServiceDetailScreen() {
     })();
     return () => {
       cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        setMissingServiceFetchKey((current) => (current === fetchKey ? null : current));
+      }
     };
   }, [
-    endpoint,
+    endpointHost,
     endpointKey,
+    endpointPort,
     found,
     getToken,
     missingServiceFetchKey,
