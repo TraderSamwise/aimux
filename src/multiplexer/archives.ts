@@ -1,44 +1,30 @@
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
-import { loadLastUsedState } from "../last-used.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
-import { listWorktreeGraveyardEntries, type WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import { postToProjectService } from "./dashboard-control.js";
-import { requestJson } from "../http-client.js";
-import { resolveProjectServiceEndpoint } from "../metadata-store.js";
-import {
-  buildGraveyardViewModel,
-  type GraveyardSelectableRow,
-  type GraveyardViewModel,
-} from "./graveyard-view-model.js";
-import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
 
 type ArchivesHost = any;
 
 export function showGraveyard(host: ArchivesHost): void {
   host.clearDashboardSubscreens();
-  loadGraveyardEntries(host);
+  if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
   host.graveyardWorktreeDeleteConfirm = null;
   clampGraveyardSelection(host);
   host.setDashboardScreen("graveyard");
   host.writeStatuslineFile();
   renderGraveyard(host);
-  if (host.mode === "dashboard") {
-    void refreshGraveyardEntriesFromService(host);
-  }
+  void refreshGraveyardEntriesFromService(host);
 }
 
 export function hydrateDashboardArchiveScreenState(host: ArchivesHost): void {
   if (host.isDashboardScreen?.("graveyard")) {
-    loadGraveyardEntries(host);
-    if (host.mode === "dashboard") {
-      void refreshGraveyardEntriesFromService(host);
-    }
+    void refreshGraveyardEntriesFromService(host);
   }
 }
 
 export function renderGraveyard(host: ArchivesHost): void {
-  refreshGraveyardViewModel(host);
+  if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
   renderGraveyardScreen(host);
 }
 
@@ -135,11 +121,13 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
         ? postToProjectService(host, "/graveyard/resurrect", { sessionId: item.entry.id }, { timeoutMs: 10_000 })
         : host.resurrectGraveyardSession(item.entry.id);
   void promise
-    .then(() => {
-      host.graveyardEntries = host.listGraveyardEntries();
-      host.worktreeGraveyardEntries = host.listWorktreeGraveyardEntries();
+    .then(async () => {
       host.graveyardWorktreeDeleteConfirm = null;
-      refreshGraveyardViewModel(host);
+      if (host.mode === "dashboard") {
+        await refreshGraveyardEntriesFromService(host);
+      } else {
+        applyGraveyardPayload(host, emptyGraveyardPayload());
+      }
       if (getSelectableGraveyardRows(host).length === 0) {
         host.setDashboardScreen("dashboard");
         if (host.mode === "dashboard") {
@@ -163,25 +151,15 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
     });
 }
 
-function refreshGraveyardViewModel(host: ArchivesHost): GraveyardViewModel {
-  const lastUsedState = loadLastUsedState(process.cwd());
-  const viewModel = buildGraveyardViewModel({
-    worktrees: host.worktreeGraveyardEntries ?? [],
-    agents: host.graveyardEntries ?? [],
-    parentSessions: [...(host.dashboardSessionsCache ?? []), ...(host.sessions ?? []), ...(host.offlineSessions ?? [])],
-    teammates: [...(host.dashboardTeammatesCache ?? []), ...(host.sessions ?? []), ...(host.offlineSessions ?? [])],
-    lastUsedById: lastUsedState.items,
-  });
-  host.graveyardViewModel = viewModel;
-  return viewModel;
-}
-
 function getSelectableGraveyardRows(host: ArchivesHost): GraveyardSelectableRow[] {
-  return (host.graveyardViewModel ?? refreshGraveyardViewModel(host)).selectableRows;
+  if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+  return host.graveyardViewModel.selectableRows;
 }
 
 function clampGraveyardSelection(host: ArchivesHost): void {
   const items = getSelectableGraveyardRows(host);
+  if (typeof host.graveyardIndex !== "number" || Number.isNaN(host.graveyardIndex)) host.graveyardIndex = 0;
+  if (host.graveyardIndex < 0) host.graveyardIndex = 0;
   if (host.graveyardIndex >= items.length) {
     host.graveyardIndex = Math.max(0, items.length - 1);
   }
@@ -196,10 +174,12 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     } else {
       await host.deleteGraveyardWorktree(entry.path);
     }
-    host.worktreeGraveyardEntries = host.listWorktreeGraveyardEntries();
-    host.graveyardEntries = host.listGraveyardEntries();
     host.graveyardWorktreeDeleteConfirm = null;
-    refreshGraveyardViewModel(host);
+    if (host.mode === "dashboard") {
+      await refreshGraveyardEntriesFromService(host);
+    } else {
+      applyGraveyardPayload(host, emptyGraveyardPayload());
+    }
     clampGraveyardSelection(host);
     if (getSelectableGraveyardRows(host).length === 0) {
       host.setDashboardScreen("dashboard");
@@ -213,33 +193,54 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   }
 }
 
-function loadGraveyardEntries(host: ArchivesHost): void {
-  host.graveyardEntries = listTopologySessionStates({ statuses: ["graveyard"] });
-  host.worktreeGraveyardEntries = listWorktreeGraveyardEntries();
-  refreshGraveyardViewModel(host);
+function emptyGraveyardPayload(): { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel } {
+  return { entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
 }
 
-async function refreshGraveyardEntriesFromService(host: ArchivesHost): Promise<void> {
-  const endpoint = resolveProjectServiceEndpoint(process.cwd());
-  if (!endpoint) return;
+function isGraveyardViewModel(value: any): value is GraveyardViewModel {
+  return Boolean(value) && Array.isArray(value.rows) && Array.isArray(value.selectableRows);
+}
+
+function isGraveyardPayload(value: any): value is { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel } {
+  return (
+    Boolean(value) &&
+    value.ok === true &&
+    Array.isArray(value.entries) &&
+    Array.isArray(value.worktrees) &&
+    isGraveyardViewModel(value.viewModel)
+  );
+}
+
+function applyGraveyardPayload(
+  host: ArchivesHost,
+  payload: { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel },
+): void {
+  host.graveyardEntries = payload.entries;
+  host.worktreeGraveyardEntries = payload.worktrees;
+  host.graveyardViewModel = payload.viewModel;
+  clampGraveyardSelection(host);
+}
+
+export async function refreshGraveyardEntriesFromService(host: ArchivesHost): Promise<boolean> {
+  if (typeof host.getFromProjectService !== "function") {
+    if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+    return false;
+  }
   try {
-    const { status, json } = await requestJson<{ ok?: boolean; entries?: any[]; worktrees?: WorktreeGraveyardEntry[] }>(
-      `http://${endpoint.host}:${endpoint.port}/graveyard`,
-      { timeoutMs: 3000 },
-    );
-    if (status < 200 || status >= 300 || json?.ok !== true) return;
-    host.graveyardEntries = Array.isArray(json.entries) ? json.entries : [];
-    host.worktreeGraveyardEntries = Array.isArray(json.worktrees) ? json.worktrees : [];
-    refreshGraveyardViewModel(host);
-    clampGraveyardSelection(host);
+    const res = await host.getFromProjectService("/graveyard", { timeoutMs: 3000 });
+    if (!isGraveyardPayload(res)) throw new Error("invalid graveyard payload");
+    applyGraveyardPayload(host, res);
     if (host.isDashboardScreen?.("graveyard")) {
       renderGraveyard(host);
     }
+    return true;
   } catch (error) {
+    if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
     debug(
       `failed to refresh graveyard from service: ${error instanceof Error ? error.message : String(error)}`,
       "session",
     );
+    return false;
   }
 }
 

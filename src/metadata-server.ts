@@ -71,7 +71,8 @@ import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
-import { markLastUsed } from "./last-used.js";
+import { loadLastUsedState, markLastUsed } from "./last-used.js";
+import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
@@ -107,6 +108,7 @@ import {
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
+import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 
 const LIBRARY_DOC_ALLOWLIST = [
   { path: "AGENTS.md", kind: "instructions", title: "AGENTS.md" },
@@ -1291,9 +1293,16 @@ export class MetadataServer {
     }
 
     if (req.method === "GET" && url.pathname === "/library") {
+      const plansDir = getPlansDir();
       send(res, 200, {
         ok: true,
         documents: listLibraryDocuments(),
+        entries: loadLibraryEntries({
+          repoRoot: dirname(dirname(plansDir)),
+          plansDir,
+          resolveLabel: (sessionId) =>
+            this.options.desktop?.getSessionDisplayContext?.(sessionId)?.label ?? undefined,
+        }),
       });
       return;
     }
@@ -1423,10 +1432,22 @@ export class MetadataServer {
         send(res, 501, { ok: false, error: "graveyard listing not supported by this service" });
         return;
       }
+      const entries = this.options.desktop.listGraveyard();
+      const worktrees = this.options.desktop.listWorktreeGraveyard?.() ?? [];
+      const state = this.options.desktop.getState?.() as
+        | { sessions?: any[]; teammates?: any[]; services?: any[] }
+        | undefined;
       send(res, 200, {
         ok: true,
-        entries: this.options.desktop.listGraveyard(),
-        worktrees: this.options.desktop.listWorktreeGraveyard?.() ?? [],
+        entries,
+        worktrees,
+        viewModel: buildGraveyardViewModel({
+          agents: entries as any[],
+          worktrees: worktrees as any[],
+          parentSessions: [...(state?.sessions ?? []), ...(state?.teammates ?? [])],
+          teammates: state?.teammates ?? [],
+          lastUsedById: loadLastUsedState(process.cwd()).items,
+        }),
       });
       return;
     }
