@@ -1445,6 +1445,51 @@ describe("MetadataServer threads API", () => {
     expect(Array.isArray(body.threads)).toBe(true);
   });
 
+  it("serves orchestration route options from desktop state", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            {
+              id: "codex-1",
+              command: "custom-codex-command",
+              toolConfigKey: "codex",
+              status: "idle",
+              label: "Reviewer",
+              semantic: {
+                user: { label: "idle" },
+                runtime: { canReceiveInput: true, isAlive: true },
+              },
+            },
+          ],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/orchestration/routes?selectedSessionId=codex-1`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      options: Array<{ label: string; sessionId?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.options[0]).toEqual({ label: "Reviewer (codex-1)", sessionId: "codex-1" });
+    expect(body.options).toContainEqual({
+      label: "Tool: codex [1: codex-1]",
+      tool: "codex",
+      recipientIds: ["codex-1"],
+    });
+  });
+
   it("clears dashboard operation failures over HTTP", async () => {
     const failure = addDashboardOperationFailure({
       targetKind: "worktree",

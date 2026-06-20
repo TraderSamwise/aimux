@@ -64,6 +64,131 @@ describe("postToProjectService", () => {
   });
 });
 
+describe("dashboard live target activation", () => {
+  it("opens agents through the project-service control API in dashboard mode", async () => {
+    const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : "@9")),
+      },
+      showDashboardError: vi.fn(),
+    };
+
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" })).resolves.toBe("opened");
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/control/open-notification-target",
+      {
+        sessionId: "codex-1",
+        focus: true,
+        currentClientSession: "aimux-repo-client-live",
+        clientTty: "/dev/live",
+        currentWindowId: "@9",
+      },
+      { timeoutMs: 10_000 },
+    );
+  });
+
+  it("opens services through the project-service control API in dashboard mode", async () => {
+    const { waitAndOpenLiveTmuxWindowForService } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+      },
+      showDashboardError: vi.fn(),
+    };
+
+    await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1")).resolves.toBe("opened");
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/control/open-notification-target",
+      {
+        sessionId: "service-1",
+        focus: true,
+        currentClientSession: "aimux-repo-client-live",
+        clientTty: undefined,
+        currentWindowId: undefined,
+      },
+      { timeoutMs: 10_000 },
+    );
+  });
+});
+
+describe("showOrchestrationRoutePicker", () => {
+  it("loads route options from the project service in dashboard mode", async () => {
+    const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: {
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [],
+        worktreeSessions: [],
+        worktreeNavOrder: [],
+      },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [{ id: "codex-1" }]),
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        options: [
+          {
+            label: "Role: reviewer [1: codex-1]",
+            assignee: "reviewer",
+            worktreePath: "/repo/.aimux/worktrees/demo",
+            recipientIds: ["codex-1"],
+          },
+        ],
+      })),
+      openDashboardOverlay: vi.fn(),
+      renderOrchestrationRoutePicker: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    showOrchestrationRoutePicker(host, "task");
+    await vi.waitFor(() => expect(host.renderOrchestrationRoutePicker).toHaveBeenCalledOnce());
+
+    expect(host.getFromProjectService).toHaveBeenCalledWith(
+      "/orchestration/routes?mode=task&selectedSessionId=codex-1&worktreePath=%2Frepo%2F.aimux%2Fworktrees%2Fdemo",
+    );
+    expect(host.orchestrationRouteMode).toBe("task");
+    expect(host.orchestrationRouteOptions).toEqual([
+      {
+        label: "Role: reviewer [1: codex-1]",
+        assignee: "reviewer",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+        recipientIds: ["codex-1"],
+      },
+    ]);
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("orchestration-route-picker");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed service route option payloads before opening the picker", async () => {
+    const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: { worktreeEntries: [], worktreeSessions: [], worktreeNavOrder: [] },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => []),
+      getFromProjectService: vi.fn(async () => ({ ok: true, options: [{ recipientIds: "codex-1" }] })),
+      openDashboardOverlay: vi.fn(),
+      renderOrchestrationRoutePicker: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    showOrchestrationRoutePicker(host, "message");
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalledOnce());
+
+    expect(host.openDashboardOverlay).not.toHaveBeenCalled();
+    expect(host.renderOrchestrationRoutePicker).not.toHaveBeenCalled();
+  });
+});
+
 describe("reloadDashboardFromGuard", () => {
   it("uses the active aimux-dev entrypoint when the dashboard was launched through it", async () => {
     const { reloadDashboardFromGuard } = await import("./dashboard-control.js");

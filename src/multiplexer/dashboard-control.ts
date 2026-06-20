@@ -17,7 +17,7 @@ import { loadTeamConfig, isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
-import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -41,14 +41,7 @@ import { buildThreadReplyOverlayOutput } from "./subscreens.js";
 import { probeRuntimeGuard, runtimeGuardEquals, runtimeGuardKeyDisposition } from "./runtime-guard.js";
 
 type DashboardControlHost = any;
-type DashboardOrchestrationTarget = {
-  label: string;
-  sessionId?: string;
-  assignee?: string;
-  tool?: string;
-  worktreePath?: string;
-  recipientIds?: string[];
-};
+type DashboardOrchestrationTarget = OrchestrationRouteOption;
 
 function writeStatuslineTextFile(name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
@@ -415,7 +408,10 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
 ): Promise<"opened" | "missing" | "error"> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const result = openLiveTmuxWindowForEntry(host, entry);
+    const result =
+      host.mode === "dashboard"
+        ? await openProjectServiceNotificationTarget(host, entry.id, "agent")
+        : openLiveTmuxWindowForEntry(host, entry);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -449,11 +445,57 @@ export async function waitAndOpenLiveTmuxWindowForService(
 ): Promise<"opened" | "missing" | "error"> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const result = openLiveTmuxWindowForService(host, serviceId);
+    const result =
+      host.mode === "dashboard"
+        ? await openProjectServiceNotificationTarget(host, serviceId, "service")
+        : openLiveTmuxWindowForService(host, serviceId);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return "missing";
+}
+
+async function openProjectServiceNotificationTarget(
+  host: DashboardControlHost,
+  sessionId: string,
+  kind: "agent" | "service",
+): Promise<"opened" | "missing" | "error"> {
+  try {
+    await host.postToProjectService(
+      PROJECT_API_ROUTES.controls.openNotificationTarget,
+      {
+        sessionId,
+        focus: true,
+        ...dashboardControlClientContext(host),
+      },
+      { timeoutMs: 10_000 },
+    );
+    return "opened";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("not found") || message.includes("no longer available")) return "missing";
+    host.showDashboardError(`Failed to open ${kind}`, [
+      message,
+      "The tmux window may still be starting. Try again in a moment.",
+    ]);
+    return "error";
+  }
+}
+
+function dashboardControlClientContext(host: DashboardControlHost): {
+  currentClientSession?: string;
+  clientTty?: string;
+  currentWindowId?: string;
+} {
+  try {
+    return {
+      currentClientSession: host.tmuxRuntimeManager.currentClientSession() ?? undefined,
+      clientTty: host.tmuxRuntimeManager.displayMessage?.("#{client_tty}") ?? undefined,
+      currentWindowId: host.tmuxRuntimeManager.displayMessage?.("#{window_id}") ?? undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 export function noteLastUsedItem(host: DashboardControlHost, itemId: string): void {
@@ -488,10 +530,64 @@ export function getSelectedDashboardServiceForActions(host: DashboardControlHost
   return host.getDashboardServices().find((service: DashboardService) => service.id === selectedEntry.id);
 }
 
+function applyOrchestrationRouteOptions(
+  host: DashboardControlHost,
+  mode: "message" | "handoff" | "task",
+  options: DashboardOrchestrationTarget[],
+): void {
+  if (options.length === 0) {
+    host.showDashboardError("No orchestration targets available", [
+      "Select a local agent, define team roles, or enable tools before sending orchestration actions.",
+    ]);
+    return;
+  }
+
+  host.orchestrationRouteMode = mode;
+  host.orchestrationRouteOptions = options;
+  host.openDashboardOverlay("orchestration-route-picker");
+  host.renderOrchestrationRoutePicker();
+}
+
+function validOrchestrationRouteOption(value: unknown): value is DashboardOrchestrationTarget {
+  if (!value || typeof value !== "object") return false;
+  const option = value as DashboardOrchestrationTarget;
+  return typeof option.label === "string" && (!option.recipientIds || Array.isArray(option.recipientIds));
+}
+
+async function showOrchestrationRoutePickerFromService(
+  host: DashboardControlHost,
+  mode: "message" | "handoff" | "task",
+  selectedSessionId?: string,
+  worktreePath?: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  params.set("mode", mode);
+  if (selectedSessionId) params.set("selectedSessionId", selectedSessionId);
+  if (worktreePath) params.set("worktreePath", worktreePath);
+  try {
+    const res = await host.getFromProjectService(
+      `${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`,
+    );
+    if (!res?.ok || !Array.isArray(res.options) || !res.options.every(validOrchestrationRouteOption)) {
+      throw new Error("invalid orchestration route options payload");
+    }
+    applyOrchestrationRouteOptions(host, mode, res.options);
+  } catch (error) {
+    host.showDashboardError("Failed to load orchestration targets", [
+      error instanceof Error ? error.message : String(error),
+    ]);
+  }
+}
+
 export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "message" | "handoff" | "task"): void {
   const selected = getSelectedDashboardSessionForActions(host);
-  const options: DashboardOrchestrationTarget[] = [];
   const focusedWorktreePath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
+  if (host.mode === "dashboard" && typeof host.getFromProjectService === "function") {
+    void showOrchestrationRoutePickerFromService(host, mode, selected?.id, focusedWorktreePath);
+    return;
+  }
+
+  const options: DashboardOrchestrationTarget[] = [];
   const metadataState = loadMetadataState().sessions;
   const candidates = host.sessions.map((session: any) => {
     const derivedActivity = metadataState[session.id]?.derived?.activity;
@@ -551,17 +647,7 @@ export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "
     });
   }
 
-  if (options.length === 0) {
-    host.showDashboardError("No orchestration targets available", [
-      "Select a local agent, define team roles, or enable tools before sending orchestration actions.",
-    ]);
-    return;
-  }
-
-  host.orchestrationRouteMode = mode;
-  host.orchestrationRouteOptions = options;
-  host.openDashboardOverlay("orchestration-route-picker");
-  host.renderOrchestrationRoutePicker();
+  applyOrchestrationRouteOptions(host, mode, options);
 }
 
 export function showOrchestrationInput(

@@ -9,6 +9,7 @@ import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { stopDashboardProjectEventStream } from "./project-event-stream.js";
 import {
   adjustAfterRemove as adjustAfterRemoveImpl,
   buildLiveServiceStates as buildLiveServiceStatesImpl,
@@ -376,6 +377,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.clearDashboardBusy();
     this.stopHeartbeat();
     this.stopProjectServiceRefresh();
+    stopDashboardProjectEventStream(this);
     (this as any).stopGraveyardCleanup?.();
     (this as any).stopInboxCleanup?.();
     this.saveState();
