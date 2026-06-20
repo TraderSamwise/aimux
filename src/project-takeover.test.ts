@@ -69,6 +69,7 @@ describe("project takeover", () => {
     });
     writeJson(join(projectStateDir, "metadata-api.json"), { host: "127.0.0.1", port: 43190 });
     writeFileSync(join(projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43190\n");
+    writeJson(join(projectStateDir, "host.json"), { legacy: true });
 
     await takeOverProjectFromOtherOwners(projectRoot);
 
@@ -86,6 +87,7 @@ describe("project takeover", () => {
     expect(state.projects[otherProjectId]).toBeTruthy();
     expect(existsSync(join(projectStateDir, "metadata-api.json"))).toBe(false);
     expect(existsSync(join(projectStateDir, "metadata-api.txt"))).toBe(false);
+    expect(existsSync(join(projectStateDir, "host.json"))).toBe(true);
     expect(livePids.has(2002)).toBe(true);
   });
 

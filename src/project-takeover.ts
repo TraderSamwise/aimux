@@ -99,7 +99,7 @@ function cleanOtherOwnerProjectState(owner: OtherOwner, projectId: string): void
     writeJson(statePath, state);
   }
   const projectStateDir = join(owner.home, "projects", projectId);
-  for (const file of ["metadata-api.json", "metadata-api.txt", "host.json"]) {
+  for (const file of ["metadata-api.json", "metadata-api.txt"]) {
     try {
       rmSync(join(projectStateDir, file), { force: true });
     } catch {}
