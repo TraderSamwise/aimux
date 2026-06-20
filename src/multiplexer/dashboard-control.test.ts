@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   removeMetadataEndpoint: vi.fn(),
   ensureDaemonRunning: vi.fn(),
   ensureProjectService: vi.fn(),
-  spawn: vi.fn(() => ({ unref: vi.fn() })),
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
 }));
 
 vi.mock("../http-client.js", () => ({
@@ -82,6 +82,24 @@ describe("reloadDashboardFromGuard", () => {
       ["dashboard-reload", "--open"],
       { detached: true, stdio: "ignore" },
     );
+  });
+
+  it("shows a footer failure when the reload child emits an error", async () => {
+    let onError: (() => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: () => void) => {
+        if (event === "error") onError = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
+    const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
+
+    reloadDashboardFromGuard(host as never);
+    onError?.();
+
+    expect(host.footerFlash).toContain("Reload failed");
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to aimux-dev when the environment is the dev lane", async () => {

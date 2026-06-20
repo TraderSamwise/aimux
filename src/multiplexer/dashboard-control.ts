@@ -183,6 +183,11 @@ export function reloadDashboardFromGuard(host: DashboardControlHost): void {
   const command = resolveDashboardReloadCommand();
   try {
     const child = spawn(command, ["dashboard-reload", "--open"], { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+      host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
+      host.footerFlashTicks = 6;
+      host.renderCurrentDashboardView();
+    });
     child.unref();
   } catch {
     host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
