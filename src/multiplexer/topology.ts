@@ -11,23 +11,61 @@ function emptyTopology(): ProjectTopology {
 
 function applyTopology(host: TopologyHost, topology: ProjectTopology): void {
   host.topology = topology;
+  host.topologyLoaded = true;
   const len = host.topology.rows.length;
   if (typeof host.topologyIndex !== "number" || Number.isNaN(host.topologyIndex)) host.topologyIndex = 0;
   if (host.topologyIndex < 0) host.topologyIndex = 0;
   if (host.topologyIndex >= len) host.topologyIndex = Math.max(0, len - 1);
 }
 
+function ensureTopology(host: TopologyHost): void {
+  if (!host.topologyLoaded) applyTopology(host, emptyTopology());
+}
+
+function isTopologyHealth(value: any): boolean {
+  return value === "active" || value === "attention" || value === "idle" || value === "offline";
+}
+
+function isTopologyWorktree(value: any): boolean {
+  return (
+    Boolean(value) &&
+    typeof value.name === "string" &&
+    typeof value.branch === "string" &&
+    isTopologyHealth(value.health) &&
+    typeof value.agents === "number" &&
+    typeof value.services === "number" &&
+    (value.path === undefined || typeof value.path === "string")
+  );
+}
+
+function isTopologyRow(value: any): boolean {
+  return (
+    Boolean(value) &&
+    (value.kind === "worktree" || value.kind === "agent" || value.kind === "service") &&
+    typeof value.depth === "number" &&
+    typeof value.label === "string" &&
+    isTopologyHealth(value.health) &&
+    (value.detail === undefined || typeof value.detail === "string") &&
+    (value.status === undefined || typeof value.status === "string") &&
+    (value.sessionId === undefined || typeof value.sessionId === "string") &&
+    (value.serviceId === undefined || typeof value.serviceId === "string") &&
+    (value.worktreePath === undefined || typeof value.worktreePath === "string")
+  );
+}
+
 function isProjectTopology(value: any): value is ProjectTopology {
   return (
     Boolean(value) &&
     typeof value.projectName === "string" &&
-    typeof value.health === "string" &&
+    isTopologyHealth(value.health) &&
     value.counts &&
     typeof value.counts.worktrees === "number" &&
     typeof value.counts.agents === "number" &&
     typeof value.counts.services === "number" &&
     Array.isArray(value.worktrees) &&
-    Array.isArray(value.rows)
+    value.worktrees.every(isTopologyWorktree) &&
+    Array.isArray(value.rows) &&
+    value.rows.every(isTopologyRow)
   );
 }
 
@@ -38,14 +76,14 @@ export async function refreshTopology(host: TopologyHost): Promise<boolean> {
     applyTopology(host, res.topology);
     return true;
   } catch {
-    if (!host.topology) applyTopology(host, emptyTopology());
+    ensureTopology(host);
     return false;
   }
 }
 
 export function showTopology(host: TopologyHost): void {
   host.clearDashboardSubscreens();
-  if (!host.topology) applyTopology(host, emptyTopology());
+  ensureTopology(host);
   host.setDashboardScreen("topology");
   host.writeStatuslineFile();
   renderTopology(host);
@@ -55,7 +93,7 @@ export function showTopology(host: TopologyHost): void {
 }
 
 export function renderTopology(host: TopologyHost): void {
-  if (!host.topology) applyTopology(host, emptyTopology());
+  ensureTopology(host);
   renderTopologyScreen(host);
 }
 

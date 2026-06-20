@@ -9,8 +9,8 @@ vi.mock("../tui/screens/subscreen-renderers.js", () => ({
 import { handleProjectKey, refreshProjectObservability } from "./project.js";
 
 describe("refreshProjectObservability", () => {
-  it("loads the project model from the project service", async () => {
-    const project = {
+  function projectModel(story: any[] = []) {
+    return {
       summary: {
         agentsRunning: 1,
         agentsWaiting: 0,
@@ -22,8 +22,14 @@ describe("refreshProjectObservability", () => {
         unreadNotifications: 0,
       },
       progress: { pending: 0, assigned: 0, in_progress: 0, blocked: 0, done: 0, failed: 0, total: 0 },
-      story: [{ id: "notif:1", kind: "notification", title: "Needs input", meta: "needs_input", createdAt: "now" }],
+      story,
     };
+  }
+
+  it("loads the project model from the project service", async () => {
+    const project = projectModel([
+      { id: "notif:1", kind: "notification", title: "Needs input", meta: "needs_input", createdAt: "now" },
+    ]);
     const host: any = {
       projectIndex: -1,
       getFromProjectService: vi.fn(async () => ({ ok: true, project })),
@@ -33,6 +39,7 @@ describe("refreshProjectObservability", () => {
 
     expect(host.getFromProjectService).toHaveBeenCalledWith("/project-observability");
     expect(host.projectObservability).toBe(project);
+    expect(host.projectObservabilityLoaded).toBe(true);
     expect(host.projectIndex).toBe(0);
   });
 
@@ -45,6 +52,57 @@ describe("refreshProjectObservability", () => {
     await expect(refreshProjectObservability(host)).resolves.toBe(false);
 
     expect(host.getDashboardSessions).not.toHaveBeenCalled();
+    expect(host.projectObservabilityLoaded).toBe(true);
+    expect(host.projectObservability.story).toEqual([]);
+  });
+
+  it("preserves the loaded project model when a refresh payload is invalid", async () => {
+    const project = projectModel([{ id: "task:1", kind: "task", title: "Keep me", meta: "open", createdAt: "now" }]);
+    const invalidProject = projectModel([
+      { id: "thread:1", kind: "thread", title: "Bad", meta: "open", createdAt: "now" },
+    ]);
+    const host: any = {
+      projectObservability: project,
+      projectObservabilityLoaded: true,
+      projectIndex: 0,
+      getFromProjectService: vi.fn(async () => ({ ok: true, project: invalidProject })),
+    };
+
+    await expect(refreshProjectObservability(host)).resolves.toBe(false);
+
+    expect(host.projectObservability).toBe(project);
+    expect(host.projectObservability.story[0].title).toBe("Keep me");
+  });
+
+  it("preserves the loaded project model when the service request rejects", async () => {
+    const project = projectModel([
+      { id: "task:1", kind: "task", title: "Still here", meta: "assigned", createdAt: "now" },
+    ]);
+    const host: any = {
+      projectObservability: project,
+      projectObservabilityLoaded: true,
+      getFromProjectService: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    };
+
+    await expect(refreshProjectObservability(host)).resolves.toBe(false);
+
+    expect(host.projectObservability).toBe(project);
+  });
+
+  it("applies a valid empty project model over previously loaded state", async () => {
+    const project = projectModel([{ id: "task:old", kind: "task", title: "Old", meta: "assigned", createdAt: "now" }]);
+    const emptyProject = projectModel([]);
+    const host: any = {
+      projectObservability: project,
+      projectObservabilityLoaded: true,
+      getFromProjectService: vi.fn(async () => ({ ok: true, project: emptyProject })),
+    };
+
+    await expect(refreshProjectObservability(host)).resolves.toBe(true);
+
+    expect(host.projectObservability).toBe(emptyProject);
     expect(host.projectObservability.story).toEqual([]);
   });
 

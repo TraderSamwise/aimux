@@ -9,19 +9,21 @@ vi.mock("../tui/screens/subscreen-renderers.js", () => ({
 import { handleLibraryKey, refreshLibrary } from "./library.js";
 
 describe("refreshLibrary", () => {
+  function libraryEntry(id = "plan:codex-1") {
+    return {
+      id,
+      kind: "plan",
+      title: "Codex plan",
+      path: "/repo/.aimux/plans/codex-1.md",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+      sessionId: "codex-1",
+      label: "Codex plan",
+      preview: "# Plan",
+    };
+  }
+
   it("loads renderer entries from the project service", async () => {
-    const entries = [
-      {
-        id: "plan:codex-1",
-        kind: "plan",
-        title: "Codex plan",
-        path: "/repo/.aimux/plans/codex-1.md",
-        updatedAt: "2026-06-20T00:00:00.000Z",
-        sessionId: "codex-1",
-        label: "Codex plan",
-        preview: "# Plan",
-      },
-    ];
+    const entries = [libraryEntry()];
     const host: any = {
       libraryIndex: -1,
       getFromProjectService: vi.fn(async () => ({ ok: true, entries })),
@@ -31,6 +33,7 @@ describe("refreshLibrary", () => {
 
     expect(host.getFromProjectService).toHaveBeenCalledWith("/library");
     expect(host.libraryEntries).toBe(entries);
+    expect(host.libraryLoaded).toBe(true);
     expect(host.libraryIndex).toBe(0);
   });
 
@@ -43,7 +46,52 @@ describe("refreshLibrary", () => {
     await expect(refreshLibrary(host)).resolves.toBe(false);
 
     expect(host.getSessionLabel).not.toHaveBeenCalled();
+    expect(host.libraryLoaded).toBe(true);
     expect(host.libraryEntries).toEqual([]);
+  });
+
+  it("preserves loaded entries when a refresh payload is invalid", async () => {
+    const entries = [libraryEntry("plan:keep")];
+    const host: any = {
+      libraryEntries: entries,
+      libraryLoaded: true,
+      libraryIndex: 0,
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [{ id: "bad" }] })),
+    };
+
+    await expect(refreshLibrary(host)).resolves.toBe(false);
+
+    expect(host.libraryEntries).toBe(entries);
+    expect(host.libraryEntries[0].id).toBe("plan:keep");
+  });
+
+  it("preserves loaded entries when the service request rejects", async () => {
+    const entries = [libraryEntry("plan:keep")];
+    const host: any = {
+      libraryEntries: entries,
+      libraryLoaded: true,
+      getFromProjectService: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    };
+
+    await expect(refreshLibrary(host)).resolves.toBe(false);
+
+    expect(host.libraryEntries).toBe(entries);
+  });
+
+  it("applies a valid empty list over previously loaded entries", async () => {
+    const entries = [libraryEntry("plan:old")];
+    const host: any = {
+      libraryEntries: entries,
+      libraryLoaded: true,
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [] })),
+    };
+
+    await expect(refreshLibrary(host)).resolves.toBe(true);
+
+    expect(host.libraryEntries).toEqual([]);
+    expect(host.libraryEntries).not.toBe(entries);
   });
 
   it("does not redraw library after manual refresh when the user has navigated away", async () => {
