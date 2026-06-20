@@ -84,6 +84,7 @@ export default function ServiceDetailScreen() {
     const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
     if (missingServiceFetchKey === fetchKey) return;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     (async () => {
       setMissingServiceFetchKey(fetchKey);
       setLoadingMissingService(true);
@@ -93,12 +94,18 @@ export default function ServiceDetailScreen() {
         if (!cancelled) setDesktopState(state);
       } catch (err) {
         console.warn("service detail desktop-state refresh failed:", err);
+        if (!cancelled) {
+          retryTimer = setTimeout(() => {
+            setMissingServiceFetchKey((current) => (current === fetchKey ? null : current));
+          }, 2000);
+        }
       } finally {
         if (!cancelled) setLoadingMissingService(false);
       }
     })();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [
     endpoint,
