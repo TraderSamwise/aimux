@@ -58,6 +58,10 @@ async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal
         throw new Error(`event stream request failed: ${response.status}`);
       }
       await readEventStream(response.body, signal, (name, payload) => handleProjectEvent(host, name, payload));
+      if (!signal.aborted && host.mode === "dashboard") {
+        debug("dashboard project event stream closed; reconnecting", "dashboard");
+        await sleep(RETRY_MS, signal);
+      }
     } catch (error) {
       if (signal.aborted || host.mode !== "dashboard") return;
       debug(`dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`, "dashboard");
@@ -215,15 +219,17 @@ export function applyDashboardAlert(host: ProjectEventStreamHost, event: AlertEv
 }
 
 async function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
   });
 }

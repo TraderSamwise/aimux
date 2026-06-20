@@ -408,9 +408,10 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
 ): Promise<"opened" | "missing" | "error"> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
-        ? await openProjectServiceNotificationTarget(host, entry.id, "agent")
+        ? await openProjectServiceNotificationTarget(host, entry.id, "agent", remainingMs)
         : openLiveTmuxWindowForEntry(host, entry);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -445,9 +446,10 @@ export async function waitAndOpenLiveTmuxWindowForService(
 ): Promise<"opened" | "missing" | "error"> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
-        ? await openProjectServiceNotificationTarget(host, serviceId, "service")
+        ? await openProjectServiceNotificationTarget(host, serviceId, "service", remainingMs)
         : openLiveTmuxWindowForService(host, serviceId);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -459,6 +461,7 @@ async function openProjectServiceNotificationTarget(
   host: DashboardControlHost,
   sessionId: string,
   kind: "agent" | "service",
+  timeoutMs: number,
 ): Promise<"opened" | "missing" | "error"> {
   try {
     await host.postToProjectService(
@@ -468,7 +471,7 @@ async function openProjectServiceNotificationTarget(
         focus: true,
         ...dashboardControlClientContext(host),
       },
-      { timeoutMs: 10_000 },
+      { timeoutMs },
     );
     return "opened";
   } catch (error) {

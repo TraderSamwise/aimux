@@ -77,7 +77,7 @@ describe("dashboard live target activation", () => {
       showDashboardError: vi.fn(),
     };
 
-    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" })).resolves.toBe("opened");
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1200)).resolves.toBe("opened");
 
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/control/open-notification-target",
@@ -88,8 +88,9 @@ describe("dashboard live target activation", () => {
         clientTty: "/dev/live",
         currentWindowId: "@9",
       },
-      { timeoutMs: 10_000 },
+      { timeoutMs: expect.any(Number) },
     );
+    expect(host.postToProjectService.mock.calls[0][2].timeoutMs).toBeLessThanOrEqual(1200);
   });
 
   it("opens services through the project-service control API in dashboard mode", async () => {
@@ -104,7 +105,7 @@ describe("dashboard live target activation", () => {
       showDashboardError: vi.fn(),
     };
 
-    await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1")).resolves.toBe("opened");
+    await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1", 1200)).resolves.toBe("opened");
 
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/control/open-notification-target",
@@ -115,8 +116,9 @@ describe("dashboard live target activation", () => {
         clientTty: undefined,
         currentWindowId: undefined,
       },
-      { timeoutMs: 10_000 },
+      { timeoutMs: expect.any(Number) },
     );
+    expect(host.postToProjectService.mock.calls[0][2].timeoutMs).toBeLessThanOrEqual(1200);
   });
 });
 
