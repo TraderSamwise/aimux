@@ -22,6 +22,11 @@ import {
   type CreateWorktreeResponse,
   type DeleteWorktreeResponse,
   type GraveyardWorktreeResponse,
+  type LivePaneAttachRequest,
+  type LivePaneAttachResponse,
+  type LivePaneInputResponse,
+  type LivePaneOutputResponse,
+  type LivePaneResizeResponse,
   type NotificationClearResponse,
   type NotificationMutationInput,
   type NotificationReadResponse,
@@ -189,14 +194,9 @@ export async function getProjectState(
   return callProjectJson<ProjectStateResponse>(endpoint, "GET", PROJECT_API_ROUTES.state, opts);
 }
 
-export interface AgentOutputResponse {
-  sessionId: string;
-  output: string;
-  startLine?: number;
-  parsed?: ParsedAgentOutput;
-}
+export type AgentOutputResponse = LivePaneOutputResponse & { parsed?: ParsedAgentOutput };
 
-export async function getAgentOutput(
+export async function getLivePaneOutput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   startLine?: number,
@@ -207,32 +207,58 @@ export async function getAgentOutput(
   return callProjectJson<AgentOutputResponse>(
     endpoint,
     "GET",
-    `${PROJECT_API_ROUTES.agents.output}?${params.toString()}`,
+    `${PROJECT_API_ROUTES.livePane.output}?${params.toString()}`,
     opts,
   );
 }
 
-export interface SendAgentInputResponse {
-  ok: boolean;
-  sessionId: string;
-  accepted: true;
-}
+export const getAgentOutput = getLivePaneOutput;
+
+export type SendAgentInputResponse = LivePaneInputResponse;
 
 export interface SendAgentInputOptions extends ApiOpts {
   attachmentIds?: string[];
 }
 
-export async function sendAgentInput(
+export async function sendLivePaneInput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   text: string,
   opts?: SendAgentInputOptions,
 ): Promise<SendAgentInputResponse> {
-  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", PROJECT_API_ROUTES.agents.input, opts, {
+  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", PROJECT_API_ROUTES.livePane.input, opts, {
     sessionId,
     text,
     ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
   });
+}
+
+export const sendAgentInput = sendLivePaneInput;
+
+export async function interruptLivePane(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; sessionId: string }> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.interrupt, opts, { sessionId });
+}
+
+export async function resizeLivePane(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  cols: number,
+  rows: number,
+  opts?: ApiOpts,
+): Promise<LivePaneResizeResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.resize, opts, { sessionId, cols, rows });
+}
+
+export async function attachLivePane(
+  endpoint: ServiceEndpoint,
+  input: LivePaneAttachRequest,
+  opts?: ApiOpts,
+): Promise<LivePaneAttachResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.attach, opts, input);
 }
 
 export interface UploadImageAttachmentInput {

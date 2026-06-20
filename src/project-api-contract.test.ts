@@ -22,6 +22,9 @@ describe("project api contract", () => {
     expect(PROJECT_API_ROUTES.topology).toBe("/topology");
     expect(PROJECT_API_ROUTES.library).toBe("/library");
     expect(PROJECT_API_ROUTES.graveyardActions.resurrectWorktree).toBe("/graveyard/worktrees/resurrect");
+    expect(PROJECT_API_ROUTES.livePane.output).toBe("/live-pane/output");
+    expect(PROJECT_API_ROUTES.livePane.input).toBe("/live-pane/input");
+    expect(PROJECT_API_ROUTES.livePane.attach).toBe("/live-pane/attach");
   });
 
   it("defines shared SSE event names and API-backed views", () => {

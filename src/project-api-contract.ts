@@ -52,6 +52,14 @@ export const PROJECT_API_ROUTES = {
     interactionPending: "/agents/interaction/pending",
     interactionStream: "/agents/interaction/stream",
   },
+  livePane: {
+    attach: "/live-pane/attach",
+    output: "/live-pane/output",
+    outputStream: "/live-pane/output/stream",
+    input: "/live-pane/input",
+    interrupt: "/live-pane/interrupt",
+    resize: "/live-pane/resize",
+  },
   services: {
     create: "/services/create",
     stop: "/services/stop",
@@ -168,6 +176,64 @@ export interface ProjectUpdateEvent {
 
 export interface ProjectApiOk {
   ok: boolean;
+}
+
+export interface LivePaneSessionInput {
+  sessionId: string;
+}
+
+export interface LivePaneOutputInput extends LivePaneSessionInput {
+  startLine?: number;
+}
+
+export interface LivePaneOutputResponse extends ProjectApiOk {
+  sessionId: string;
+  output: string;
+  startLine?: number;
+  parsed?: unknown;
+}
+
+export interface LivePaneInputRequest extends LivePaneSessionInput {
+  text: string;
+  attachmentIds?: string[];
+}
+
+export interface LivePaneInputResponse extends ProjectApiOk {
+  sessionId: string;
+  accepted: true;
+}
+
+export interface LivePaneInterruptResponse extends ProjectApiOk {
+  sessionId: string;
+}
+
+export interface LivePaneResizeRequest extends LivePaneSessionInput {
+  cols: number;
+  rows: number;
+}
+
+export interface LivePaneResizeResponse extends ProjectApiOk {
+  sessionId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface LivePaneAttachRequest extends LivePaneSessionInput {
+  startLine?: number;
+  cols?: number;
+  rows?: number;
+}
+
+export interface LivePaneAttachResponse extends LivePaneOutputResponse {
+  stream: {
+    route: typeof PROJECT_API_ROUTES.events;
+    sessionId: string;
+    startLine: number;
+  };
+  resize?: {
+    cols: number;
+    rows: number;
+  };
 }
 
 export interface ProjectServiceInfoResponse extends ProjectApiOk {

@@ -346,6 +346,13 @@ interface MetadataServerOptions {
       | {
           sessionId: string;
         };
+    resizeAgentPane?: (input: {
+      sessionId: string;
+      cols: number;
+      rows: number;
+    }) =>
+      | Promise<{ sessionId: string; cols: number; rows: number }>
+      | { sessionId: string; cols: number; rows: number };
     renameAgent?: (input: { sessionId: string; label?: string }) =>
       | Promise<{ sessionId: string; label?: string }>
       | {
@@ -618,6 +625,25 @@ function formatAgentInputWithAttachments(text: string, attachments: AttachmentRe
 function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function parseOptionalInteger(
+  raw: string | null,
+  field: string,
+): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === null || raw.trim() === "") return { ok: true };
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value)) return { ok: false, error: `${field} must be an integer` };
+  return { ok: true, value };
+}
+
+function parsePositiveInteger(
+  value: unknown,
+  field: string,
+): { ok: true; value: number } | { ok: false; error: string } {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : NaN;
+  if (!Number.isInteger(parsed) || parsed < 1) return { ok: false, error: `${field} must be an integer >= 1` };
+  return { ok: true, value: parsed };
 }
 
 type DesktopSessionRecord = Record<string, unknown> & {
@@ -1547,7 +1573,13 @@ export class MetadataServer {
       send(res, 200, { ok: true, items });
       return;
     }
-    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.outputStream) {
+    if (
+      req.method === "GET" &&
+      (url.pathname === PROJECT_API_ROUTES.agents.outputStream ||
+        url.pathname === PROJECT_API_ROUTES.livePane.outputStream)
+    ) {
+      const outputEventName =
+        url.pathname === PROJECT_API_ROUTES.livePane.outputStream ? PROJECT_API_EVENT_NAMES.agentOutput : "output";
       const sessionId = url.searchParams.get("sessionId")?.trim();
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
@@ -1560,12 +1592,12 @@ export class MetadataServer {
         return;
       }
 
-      const startLine =
-        startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
-      if (startLineRaw !== null && Number.isNaN(startLine)) {
-        send(res, 400, { ok: false, error: "startLine must be an integer" });
+      const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
+      if (!parsedStartLine.ok) {
+        send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
+      const startLine = parsedStartLine.value;
 
       const intervalMs =
         intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
@@ -1605,7 +1637,7 @@ export class MetadataServer {
           if (closed) return;
           if (result.output !== lastOutput) {
             lastOutput = result.output;
-            sendSseEvent(res, "output", {
+            sendSseEvent(res, outputEventName, {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
@@ -3251,7 +3283,10 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interrupt) {
+      if (
+        req.method === "POST" &&
+        (url.pathname === PROJECT_API_ROUTES.agents.interrupt || url.pathname === PROJECT_API_ROUTES.livePane.interrupt)
+      ) {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.lifecycle?.interruptAgent) {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
@@ -3259,6 +3294,36 @@ export class MetadataServer {
         }
         const result = await this.options.lifecycle.interruptAgent(body);
         this.notifyChange();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.livePane.resize) {
+        const body = (await readJson(req)) as { sessionId?: string; cols?: unknown; rows?: unknown };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.lifecycle?.resizeAgentPane) {
+          send(res, 501, { ok: false, error: "live pane resize not supported by this service" });
+          return;
+        }
+        const cols = parsePositiveInteger(body.cols, "cols");
+        const rows = parsePositiveInteger(body.rows, "rows");
+        if (!cols.ok) {
+          send(res, 400, { ok: false, error: cols.error });
+          return;
+        }
+        if (!rows.ok) {
+          send(res, 400, { ok: false, error: rows.error });
+          return;
+        }
+        const result = await this.options.lifecycle.resizeAgentPane({
+          sessionId,
+          cols: cols.value,
+          rows: rows.value,
+        });
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3299,7 +3364,10 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.input) {
+      if (
+        req.method === "POST" &&
+        (url.pathname === PROJECT_API_ROUTES.agents.input || url.pathname === PROJECT_API_ROUTES.livePane.input)
+      ) {
         const body = (await readJson(req)) as { sessionId?: string; text?: string; attachmentIds?: unknown };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3420,7 +3488,10 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.output) {
+      if (
+        req.method === "GET" &&
+        (url.pathname === PROJECT_API_ROUTES.agents.output || url.pathname === PROJECT_API_ROUTES.livePane.output)
+      ) {
         const sessionId = url.searchParams.get("sessionId")?.trim();
         const startLineRaw = url.searchParams.get("startLine");
         if (!sessionId) {
@@ -3431,14 +3502,82 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent output not supported by this service" });
           return;
         }
+        const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
+        if (!parsedStartLine.ok) {
+          send(res, 400, { ok: false, error: parsedStartLine.error });
+          return;
+        }
+        const startLine = parsedStartLine.value;
+        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.livePane.attach) {
+        const body = (await readJson(req)) as {
+          sessionId?: string;
+          startLine?: unknown;
+          cols?: unknown;
+          rows?: unknown;
+        };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.lifecycle?.readAgentOutput) {
+          send(res, 501, { ok: false, error: "live pane output not supported by this service" });
+          return;
+        }
+
         const startLine =
-          startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
-        if (startLineRaw !== null && Number.isNaN(startLine)) {
+          body.startLine === undefined
+            ? -120
+            : typeof body.startLine === "number"
+              ? body.startLine
+              : typeof body.startLine === "string"
+                ? Number.parseInt(body.startLine, 10)
+                : NaN;
+        if (!Number.isInteger(startLine)) {
           send(res, 400, { ok: false, error: "startLine must be an integer" });
           return;
         }
-        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
-        send(res, 200, { ok: true, ...result });
+
+        let resize: { cols: number; rows: number } | undefined;
+        if (body.cols !== undefined || body.rows !== undefined) {
+          if (!this.options.lifecycle?.resizeAgentPane) {
+            send(res, 501, { ok: false, error: "live pane resize not supported by this service" });
+            return;
+          }
+          const cols = parsePositiveInteger(body.cols, "cols");
+          const rows = parsePositiveInteger(body.rows, "rows");
+          if (!cols.ok) {
+            send(res, 400, { ok: false, error: cols.error });
+            return;
+          }
+          if (!rows.ok) {
+            send(res, 400, { ok: false, error: rows.error });
+            return;
+          }
+          const result = await this.options.lifecycle.resizeAgentPane({
+            sessionId,
+            cols: cols.value,
+            rows: rows.value,
+          });
+          resize = { cols: result.cols, rows: result.rows };
+        }
+
+        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
+        send(res, 200, {
+          ok: true,
+          ...output,
+          stream: {
+            route: PROJECT_API_ROUTES.events,
+            sessionId,
+            startLine: output.startLine ?? startLine,
+          },
+          ...(resize ? { resize } : {}),
+        });
         return;
       }
 
