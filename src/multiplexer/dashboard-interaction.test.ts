@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
+vi.mock("../team.js", async () => {
+  const actual = await vi.importActual<typeof import("../team.js")>("../team.js");
+  return {
+    ...actual,
+    loadTeamConfig: vi.fn(() => actual.getDefaultTeamConfig()),
+  };
+});
+
 describe("dashboardInteractionMethods", () => {
   it("requests reviews through the project service", async () => {
     const host: any = {
@@ -26,6 +34,9 @@ describe("dashboardInteractionMethods", () => {
         prompt: "Review codex agent's recent work",
         type: "review",
         worktreePath: "/repo/.aimux/worktrees/demo",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 1,
       }),
     );
     expect(host.footerFlash).toBe("⧫ Review requested → reviewer");

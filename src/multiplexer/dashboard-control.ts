@@ -569,14 +569,14 @@ async function showOrchestrationRoutePickerFromService(
 }
 
 export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "message" | "handoff" | "task"): void {
-  const selected = getSelectedDashboardSessionForActions(host);
-  const focusedWorktreePath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
   if (host.mode !== "dashboard" || typeof host.getFromProjectService !== "function") {
     host.showDashboardError("Failed to load orchestration targets", [
       "Orchestration routing requires the project service.",
     ]);
     return;
   }
+  const selected = getSelectedDashboardSessionForActions(host);
+  const focusedWorktreePath = host.dashboardState.focusedWorktreePath;
   void showOrchestrationRoutePickerFromService(host, mode, selected?.id, focusedWorktreePath);
 }
 
