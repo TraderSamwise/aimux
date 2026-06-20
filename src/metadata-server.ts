@@ -2631,10 +2631,16 @@ export class MetadataServer {
           participant?: string;
           includeNotifications?: boolean;
         };
+        const participantId = body.participant?.trim() || body.sessionId?.trim() || undefined;
         const updated = markRuntimeInboxRead({
           id: body.id?.trim() || undefined,
-          participantId: body.participant?.trim() || body.sessionId?.trim() || undefined,
+          participantId,
           includeNotifications: body.includeNotifications === true,
+        });
+        this.notifyProjectChanged({
+          views: ["coordination-worklist", "inbox"],
+          reason: url.pathname === PROJECT_API_ROUTES.runtime.inboxClear ? "inbox-clear" : "inbox-read",
+          sessionId: participantId,
         });
         send(res, 200, { ok: true, updated });
         return;

@@ -2072,6 +2072,42 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"notifications"');
   });
 
+  it("streams project_update invalidations after inbox mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    for (const pathname of ["/inbox/read", "/inbox/clear"]) {
+      const handoffRes = await fetch(`${base}/handoff`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          from: "lead",
+          assignee: "codex-1",
+          body: `Please inspect ${pathname}.`,
+        }),
+      });
+      expect(handoffRes.ok).toBe(true);
+
+      const streamRes = await fetch(`${base}/events`);
+      expect(streamRes.ok).toBe(true);
+      expect(streamRes.body).toBeTruthy();
+
+      const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+      const readRes = await fetch(`${base}${pathname}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ participant: "codex-1" }),
+      });
+      expect(readRes.ok).toBe(true);
+
+      const text = await streamRead;
+      expect(text).toContain("event: project_update");
+      expect(text).toContain('"coordination-worklist"');
+      expect(text).toContain('"inbox"');
+    }
+  });
+
   it("updates shell service state over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
