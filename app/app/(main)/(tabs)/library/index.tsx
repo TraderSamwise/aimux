@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { listProjectLibrary, type LibraryDocument } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
@@ -63,28 +64,39 @@ export default function LibraryScreen() {
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
   const selectedDocumentId = cleanSearchValue(searchParams.document);
   const [documents, setDocuments] = useState<LibraryDocument[]>([]);
+  const [documentsKey, setDocumentsKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
+  const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
+    viewKeyRef.current = viewKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken]);
+  }, [endpoint, getToken, viewKey]);
+
+  const visibleDocuments = documentsKey === viewKey ? documents : [];
 
   const selectedDocument = useMemo(
-    () => documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null,
-    [documents, selectedDocumentId],
+    () =>
+      visibleDocuments.find((document) => document.id === selectedDocumentId) ??
+      visibleDocuments[0] ??
+      null,
+    [selectedDocumentId, visibleDocuments],
   );
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
     if (!currentEndpoint) {
       setDocuments([]);
+      setDocumentsKey(null);
       setError(null);
       setLoading(false);
       return;
@@ -95,6 +107,7 @@ export default function LibraryScreen() {
       const response = await listProjectLibrary(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
       setDocuments(response.documents);
+      setDocumentsKey(currentViewKey);
       setError(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
@@ -110,6 +123,8 @@ export default function LibraryScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [endpointKey, projectViewRefreshNonce, refresh]);
+
+  useProjectApiRelayPolling(endpointKey, refresh);
 
   return (
     <Page>
@@ -143,7 +158,7 @@ export default function LibraryScreen() {
         />
       ) : error ? (
         <PageStateCard title="Library failed" body={error} tone="danger" />
-      ) : documents.length === 0 ? (
+      ) : visibleDocuments.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading library..." : "No library documents"}
           body="Durable project instruction files will appear here when present."
@@ -151,7 +166,7 @@ export default function LibraryScreen() {
       ) : (
         <View className="gap-4 lg:flex-row">
           <Card className="overflow-hidden rounded-xl p-0 lg:w-[320px]">
-            {documents.map((document) => (
+            {visibleDocuments.map((document) => (
               <DocumentRow
                 key={document.id}
                 document={document}
