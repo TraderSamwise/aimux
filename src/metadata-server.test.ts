@@ -954,9 +954,8 @@ describe("MetadataServer threads API", () => {
           },
         },
       ] as any;
-    await server.start();
-
     try {
+      await server.start();
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -1014,9 +1013,8 @@ describe("MetadataServer threads API", () => {
           },
         },
       ] as any;
-    await server.start();
-
     try {
+      await server.start();
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
