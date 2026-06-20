@@ -198,10 +198,12 @@ export default function ProjectScreen() {
   const [tasks, setTasks] = useState<TaskSummaryResponse[]>([]);
   const [tasksKey, setTasksKey] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
+  const [taskErrorKey, setTaskErrorKey] = useState<string | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [model, setModel] = useState<ProjectObservabilityModel>(() => emptyProjectObservability());
   const [modelKey, setModelKey] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -238,6 +240,7 @@ export default function ProjectScreen() {
       setModel(emptyProjectObservability());
       setModelKey(null);
       setProjectError(null);
+      setProjectErrorKey(null);
       setLoadingProject(false);
       return;
     }
@@ -249,9 +252,11 @@ export default function ProjectScreen() {
       setModel(response.project);
       setModelKey(currentViewKey);
       setProjectError(null);
+      setProjectErrorKey(null);
     } catch (err) {
       if (seq !== projectRefreshSeqRef.current) return;
       setProjectError(err instanceof Error ? err.message : String(err));
+      setProjectErrorKey(currentViewKey);
     } finally {
       if (seq === projectRefreshSeqRef.current) setLoadingProject(false);
     }
@@ -265,6 +270,7 @@ export default function ProjectScreen() {
       setTasks([]);
       setTasksKey(null);
       setTaskError(null);
+      setTaskErrorKey(null);
       setLoadingTasks(false);
       return;
     }
@@ -276,9 +282,11 @@ export default function ProjectScreen() {
       setTasks(response.tasks);
       setTasksKey(currentViewKey);
       setTaskError(null);
+      setTaskErrorKey(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
       setTaskError(err instanceof Error ? err.message : String(err));
+      setTaskErrorKey(currentViewKey);
     } finally {
       if (seq === refreshSeqRef.current) setLoadingTasks(false);
     }
@@ -321,6 +329,8 @@ export default function ProjectScreen() {
     visibleModel.summary.agentsWaiting +
     visibleModel.summary.agentsOffline;
   const taskCount = visibleModel.summary.openTasks + visibleModel.summary.doneTasks;
+  const visibleProjectError = projectErrorKey === viewKey ? projectError : null;
+  const visibleTaskError = taskErrorKey === viewKey ? taskError : null;
 
   return (
     <Page>
@@ -373,15 +383,15 @@ export default function ProjectScreen() {
           title="Project host offline"
           body="Start the project host to load project state."
         />
-      ) : projectError ? (
+      ) : visibleProjectError ? (
         <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
           <Text className="text-sm font-semibold text-foreground">Project state failed</Text>
-          <Text className="mt-1 text-xs text-muted-foreground">{projectError}</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">{visibleProjectError}</Text>
         </Card>
-      ) : taskError ? (
+      ) : visibleTaskError ? (
         <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
           <Text className="text-sm font-semibold text-foreground">Project queue failed</Text>
-          <Text className="mt-1 text-xs text-muted-foreground">{taskError}</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">{visibleTaskError}</Text>
         </Card>
       ) : null}
 
