@@ -54,8 +54,8 @@ export interface RuntimeConfig {
 }
 
 export interface ExposeConfig {
-  /** When true, the Exposé popup always shows agents across all worktrees, ignoring the current-worktree scope. */
-  forceGlobalScope: boolean;
+  /** Initial Exposé scope outside the meta dashboard; meta dashboard still starts at global. */
+  initialScope: "worktree" | "project" | "global";
   /** When true, non-selected tiles are dimmed (preview receded to gray, border dimmed); off keeps every tile in full color. */
   dimInactive: boolean;
 }
@@ -209,7 +209,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
     autoNudgeWithoutOverseer: false,
   },
   expose: {
-    forceGlobalScope: false,
+    initialScope: "worktree",
     dimInactive: false,
   },
   tools: {
