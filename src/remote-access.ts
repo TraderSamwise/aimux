@@ -1,3 +1,5 @@
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+
 export type RemoteActorRole = "owner" | "guest";
 
 export interface RemoteActor {
@@ -23,6 +25,12 @@ const EMAIL_HEADER = "x-aimux-actor-email";
 const SHARE_ID_HEADER = "x-aimux-share-id";
 const SHARE_SESSION_ID_HEADER = "x-aimux-share-session-id";
 const RELAY_HEADER_PREFIX = "x-aimux-";
+const SHARED_GUEST_SESSION_READ_ROUTES = new Set<string>([
+  PROJECT_API_ROUTES.agents.output,
+  PROJECT_API_ROUTES.agents.history,
+  PROJECT_API_ROUTES.livePane.output,
+  PROJECT_API_ROUTES.events,
+]);
 
 function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
   if (!headers) return undefined;
@@ -91,7 +99,7 @@ export function assertRemoteAccessAllowed(
   if (!proxyMatch) return { ok: false, status: 403, error: "shared guests cannot access daemon routes" };
 
   const subPath = proxyMatch[1] || "/";
-  if (subPath === "/agents/output" || subPath === "/agents/history" || subPath === "/events") {
+  if (SHARED_GUEST_SESSION_READ_ROUTES.has(subPath)) {
     if (!actor.shareSessionId) {
       return { ok: false, status: 403, error: "shared guest route requires an authorized share session" };
     }

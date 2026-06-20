@@ -179,6 +179,25 @@ export async function interruptAgent(host: SessionRuntimeHost, sessionId: string
   return { sessionId };
 }
 
+export async function resizeAgentPane(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<{ sessionId: string; cols: number; rows: number }> {
+  if (!Number.isInteger(cols) || cols <= 0) throw new Error("cols must be a positive integer");
+  if (!Number.isInteger(rows) || rows <= 0) throw new Error("rows must be a positive integer");
+
+  const session = resolveRunningSession(host, sessionId);
+  if (session.transport instanceof TmuxSessionTransport) {
+    const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+    if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+    session.transport.retarget(target);
+  }
+  session.resize(cols, rows);
+  return { sessionId, cols, rows };
+}
+
 export async function sendAgentInput(
   host: SessionRuntimeHost,
   sessionId: string,
