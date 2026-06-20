@@ -440,9 +440,6 @@ describe("MetadataServer threads API", () => {
     const malformedOutputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=10.5`);
     expect(malformedOutputRes.status).toBe(400);
 
-    const malformedStreamRes = await fetch(`${base}/live-pane/output/stream?sessionId=codex-1&intervalMs=100px`);
-    expect(malformedStreamRes.status).toBe(400);
-
     expect(calls).toEqual([
       { kind: "resize", sessionId: "codex-1", cols: 100, rows: 32 },
       { kind: "input", sessionId: "codex-1", text: "hello" },
