@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   listSwitchableAgentItems,
   listSwitchableAgentMenuItems,
+  resolveAttentionAgent,
   resolveNextAgent,
   resolvePrevAgent,
 } from "./fast-control.js";
@@ -35,6 +36,7 @@ describe("fast-control worktree scoping", () => {
           },
         },
       ]),
+      isWindowAlive: vi.fn(() => true),
       listWindows: vi.fn(() => [
         { id: "@593", index: 4, name: "claude", active: true },
         { id: "@594", index: 5, name: "codex", active: false },
@@ -78,6 +80,7 @@ describe("fast-control worktree scoping", () => {
           },
         },
       ]),
+      isWindowAlive: vi.fn(() => true),
       listWindows: vi.fn(() => [
         { id: "@595", index: 0, name: "dashboard-77a017bd", active: false },
         { id: "@596", index: 3, name: "claude", active: true },
@@ -130,6 +133,7 @@ describe("fast-control worktree scoping", () => {
           },
         },
       ]),
+      isWindowAlive: vi.fn(() => true),
       listWindows: vi.fn().mockImplementation((sessionName: string) =>
         sessionName === "aimux-repo-abc"
           ? [
@@ -185,6 +189,7 @@ describe("fast-control worktree scoping", () => {
           },
         },
       ]),
+      isWindowAlive: vi.fn(() => true),
       listWindows: vi.fn(() => [
         { id: "@1", index: 1, name: "claude", active: true, activity: 100 },
         { id: "@2", index: 2, name: "shell", active: false, activity: 90 },
@@ -241,6 +246,7 @@ describe("fast-control worktree scoping", () => {
           },
         },
       ]),
+      isWindowAlive: vi.fn(() => true),
       listWindows: vi.fn(() => [
         { id: "@1", index: 1, name: "parent", active: true, activity: 100 },
         { id: "@2", index: 2, name: "reviewer", active: false, activity: 90 },
@@ -320,6 +326,7 @@ describe("fast-control worktree scoping", () => {
           },
         },
       ]),
+      isWindowAlive: vi.fn(() => true),
       listWindows: vi.fn(() => [
         { id: "@1", index: 1, name: "parent", active: false, activity: 100 },
         { id: "@2", index: 4, name: "implementer", active: true, activity: 90 },
@@ -341,5 +348,63 @@ describe("fast-control worktree scoping", () => {
     expect(items.map((item) => item.target.windowId)).toEqual(["@3", "@2"]);
     expect(resolveNextAgent(context, tmux)?.target.windowId).toBe("@3");
     expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@3");
+  });
+
+  it("excludes dead managed windows from switch controls", () => {
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "claude-a",
+            label: "Claude A",
+            command: "claude",
+            worktreePath: "/repo/wt",
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 2, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "codex-b",
+            label: "Codex B",
+            command: "codex",
+            worktreePath: "/repo/wt",
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@3", windowIndex: 3, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "claude-c",
+            label: "Claude C",
+            command: "claude",
+            worktreePath: "/repo/wt",
+          },
+        },
+      ]),
+      isWindowAlive: vi.fn((target) => target.windowId !== "@2"),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "claude", active: true, activity: 100 },
+        { id: "@2", index: 2, name: "codex", active: false, activity: 90 },
+        { id: "@3", index: 3, name: "claude", active: false, activity: 80 },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+
+    const context = {
+      projectRoot: "/repo",
+      currentClientSession: "aimux-repo-abc-client-123",
+      currentWindow: "claude",
+      currentWindowId: "@1",
+      currentPath: "/repo/wt",
+    };
+
+    expect(listSwitchableAgentItems(context, tmux).map((item) => item.target.windowId)).toEqual(["@1", "@3"]);
+    expect(listSwitchableAgentMenuItems(context, tmux).map((item) => item.target.windowId)).toEqual(["@1", "@3"]);
+    expect(resolveNextAgent(context, tmux)?.target.windowId).toBe("@3");
+    expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@3");
+    expect(resolveAttentionAgent(context, tmux)).toBeNull();
   });
 });
