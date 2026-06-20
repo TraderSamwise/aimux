@@ -667,7 +667,10 @@ describe("MetadataServer threads API", () => {
           ],
           teammates: [{ id: "team-1", command: "codex", status: "waiting", worktreePath: "/repo" }],
           services: [{ id: "svc-1", command: "yarn dev", status: "running", worktreePath: "/repo" }],
-          worktrees: [{ name: "main", path: "/repo", branch: "main" }],
+          worktrees: [
+            { name: "main", path: "/repo", branch: "main" },
+            { name: "empty", path: "/empty", branch: "empty" },
+          ],
         }),
       },
     });
@@ -683,16 +686,17 @@ describe("MetadataServer threads API", () => {
       topology: {
         projectName: string;
         counts: { worktrees: number; agents: number; services: number };
-        rows: Array<{ kind: string; sessionId?: string; serviceId?: string }>;
+        rows: Array<{ kind: string; label?: string; status?: string; sessionId?: string; serviceId?: string }>;
       };
     };
 
     expect(res.ok).toBe(true);
     expect(body.ok).toBe(true);
     expect(body.topology.projectName).toBe("aimux");
-    expect(body.topology.counts).toEqual({ worktrees: 1, agents: 3, services: 1 });
+    expect(body.topology.counts).toEqual({ worktrees: 2, agents: 3, services: 1 });
     expect(body.topology.rows).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ kind: "worktree", label: "empty", status: "offline" }),
         expect.objectContaining({ kind: "agent", sessionId: "live-1" }),
         expect.objectContaining({ kind: "agent", sessionId: "main-1" }),
         expect.objectContaining({ kind: "agent", sessionId: "team-1" }),
