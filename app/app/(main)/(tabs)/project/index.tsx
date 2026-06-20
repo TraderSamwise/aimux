@@ -18,6 +18,7 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
+import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
@@ -192,9 +193,11 @@ export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const [tasks, setTasks] = useState<TaskSummaryResponse[]>([]);
+  const [tasksKey, setTasksKey] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [model, setModel] = useState<ProjectObservabilityModel>(() => emptyProjectObservability());
+  const [modelKey, setModelKey] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
   const project = useAtomValue(selectedProjectAtom);
@@ -205,21 +208,29 @@ export default function ProjectScreen() {
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
+  const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
   const projectRefreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
+    viewKeyRef.current = viewKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken]);
+  }, [endpoint, getToken, viewKey]);
+
+  const visibleModel = modelKey === viewKey ? model : emptyProjectObservability();
+  const visibleTasks = tasksKey === viewKey ? tasks : [];
 
   const refreshProject = useCallback(async () => {
     const seq = ++projectRefreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
     if (!currentEndpoint) {
       setModel(emptyProjectObservability());
+      setModelKey(null);
       setProjectError(null);
       setLoadingProject(false);
       return;
@@ -230,6 +241,7 @@ export default function ProjectScreen() {
       const response = await getProjectObservability(currentEndpoint, { token });
       if (seq !== projectRefreshSeqRef.current) return;
       setModel(response.project);
+      setModelKey(currentViewKey);
       setProjectError(null);
     } catch (err) {
       if (seq !== projectRefreshSeqRef.current) return;
@@ -242,8 +254,10 @@ export default function ProjectScreen() {
   const refreshTasks = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
     if (!currentEndpoint) {
       setTasks([]);
+      setTasksKey(null);
       setTaskError(null);
       setLoadingTasks(false);
       return;
@@ -254,6 +268,7 @@ export default function ProjectScreen() {
       const response = await listTasks(currentEndpoint, undefined, { token });
       if (seq !== refreshSeqRef.current) return;
       setTasks(response.tasks);
+      setTasksKey(currentViewKey);
       setTaskError(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
@@ -263,30 +278,42 @@ export default function ProjectScreen() {
     }
   }, []);
 
+  const refreshProjectView = useCallback(async () => {
+    await Promise.all([refreshProject(), refreshTasks()]);
+  }, [refreshProject, refreshTasks]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      void refreshProject();
-      void refreshTasks();
+      void refreshProjectView();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, refreshProject, refreshTasks]);
+  }, [endpointKey, projectViewRefreshNonce, refreshProjectView]);
+
+  useProjectApiRelayPolling(endpointKey, refreshProjectView);
 
   const artifactHints = useMemo(
-    () => model.story.filter((item) => matchesStoryTerms(item, /artifact|file|doc|plan|handoff/i)),
-    [model.story],
+    () =>
+      visibleModel.story.filter((item) =>
+        matchesStoryTerms(item, /artifact|file|doc|plan|handoff/i),
+      ),
+    [visibleModel.story],
   );
   const verificationHints = useMemo(
     () =>
-      model.story.filter((item) => matchesStoryTerms(item, /test|verify|lint|build|typecheck/i)),
-    [model.story],
+      visibleModel.story.filter((item) =>
+        matchesStoryTerms(item, /test|verify|lint|build|typecheck/i),
+      ),
+    [visibleModel.story],
   );
   const openTasks = useMemo(
-    () => tasks.filter((task) => task.status !== "done" && task.status !== "failed"),
-    [tasks],
+    () => visibleTasks.filter((task) => task.status !== "done" && task.status !== "failed"),
+    [visibleTasks],
   );
   const agentCount =
-    model.summary.agentsRunning + model.summary.agentsWaiting + model.summary.agentsOffline;
-  const taskCount = model.summary.openTasks + model.summary.doneTasks;
+    visibleModel.summary.agentsRunning +
+    visibleModel.summary.agentsWaiting +
+    visibleModel.summary.agentsOffline;
+  const taskCount = visibleModel.summary.openTasks + visibleModel.summary.doneTasks;
 
   return (
     <Page>
@@ -300,8 +327,7 @@ export default function ProjectScreen() {
             size="icon"
             disabled={!endpoint || loadingTasks || loadingProject}
             onPress={() => {
-              void refreshProject();
-              void refreshTasks();
+              void refreshProjectView();
             }}
             accessibilityLabel="Refresh project"
           >
@@ -312,10 +338,10 @@ export default function ProjectScreen() {
 
       <View className="mb-5 flex-row flex-wrap">
         <SummaryTile label="Agents" value={agentCount} />
-        <SummaryTile label="Services" value={model.summary.services} />
-        <SummaryTile label="Worktrees" value={model.summary.worktrees} />
+        <SummaryTile label="Services" value={visibleModel.summary.services} />
+        <SummaryTile label="Worktrees" value={visibleModel.summary.worktrees} />
         <SummaryTile label="Tasks" value={taskCount} />
-        <SummaryTile label="Unread" value={model.summary.unreadNotifications} />
+        <SummaryTile label="Unread" value={visibleModel.summary.unreadNotifications} />
       </View>
 
       <View className="mb-4 flex-row flex-wrap">
@@ -355,8 +381,8 @@ export default function ProjectScreen() {
       {project && endpoint ? (
         <>
           {section === "dashboard" ? <WorktreeDashboard padded={false} /> : null}
-          {section === "story" ? <StoryList items={model.story} /> : null}
-          {section === "progress" ? <ProgressSection model={model} /> : null}
+          {section === "story" ? <StoryList items={visibleModel.story} /> : null}
+          {section === "progress" ? <ProgressSection model={visibleModel} /> : null}
           {section === "artifacts" ? <StoryList items={artifactHints} /> : null}
           {section === "tests" ? <StoryList items={verificationHints} /> : null}
           {section === "queue" ? <TaskList tasks={openTasks} /> : null}
@@ -370,8 +396,8 @@ export default function ProjectScreen() {
                   </Text>
                 </View>
                 <Text className="mt-2 text-[13px] text-muted-foreground">
-                  {model.summary.worktrees} worktrees · {agentCount} agents ·{" "}
-                  {model.summary.services} services
+                  {visibleModel.summary.worktrees} worktrees · {agentCount} agents ·{" "}
+                  {visibleModel.summary.services} services
                 </Text>
               </Card>
             </View>

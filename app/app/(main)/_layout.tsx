@@ -281,22 +281,6 @@ export default function MainLayout() {
     store,
   ]);
 
-  // Relay clients cannot open the project service EventSource directly yet, so
-  // keep API-backed views fresh through the same typed HTTP surface.
-  useEffect(() => {
-    if (!relayUrl && !activeShare) return;
-    if (!effectiveProjectPath || !endpointKey || !relayReadyForRequests) return;
-    const timer = setInterval(() => kickProjectApiViewRefresh(), POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [
-    activeShare,
-    effectiveProjectPath,
-    endpointKey,
-    kickProjectApiViewRefresh,
-    relayReadyForRequests,
-    relayUrl,
-  ]);
-
   // Realtime alert delivery for local projects. The durable notification poll
   // above keeps the inbox current, but browser notifications should use live
   // events when the browser can reach the project service directly. Relay mode

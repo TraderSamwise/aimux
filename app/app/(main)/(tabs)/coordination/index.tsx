@@ -15,6 +15,7 @@ import {
   type CoordinationWorklistItem,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -123,23 +124,29 @@ export default function CoordinationScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const [items, setItems] = useState<CoordinationWorklistItem[]>([]);
+  const [itemsKey, setItemsKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endpointRef = useRef(endpoint);
+  const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
+    viewKeyRef.current = viewKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken]);
+  }, [endpoint, getToken, viewKey]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
     if (!currentEndpoint) {
       setItems([]);
+      setItemsKey(null);
       setError(null);
       setLoading(false);
       return;
@@ -150,10 +157,10 @@ export default function CoordinationScreen() {
       const response = await getCoordinationWorklist(currentEndpoint, "user", { token });
       if (seq !== refreshSeqRef.current) return;
       setItems(response.worklist.items);
+      setItemsKey(currentViewKey);
       setError(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
-      setItems([]);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (seq === refreshSeqRef.current) setLoading(false);
@@ -167,8 +174,11 @@ export default function CoordinationScreen() {
     return () => clearTimeout(timer);
   }, [endpointKey, refreshNonce, refresh]);
 
-  const needsYou = useMemo(() => items.filter((item) => item.actionable), [items]);
-  const tail = useMemo(() => items.filter((item) => !item.actionable), [items]);
+  useProjectApiRelayPolling(endpointKey, refresh);
+
+  const visibleItems = itemsKey === viewKey ? items : [];
+  const needsYou = useMemo(() => visibleItems.filter((item) => item.actionable), [visibleItems]);
+  const tail = useMemo(() => visibleItems.filter((item) => !item.actionable), [visibleItems]);
 
   function handlePressItem(item: CoordinationWorklistItem) {
     if (item.sessionId) {
@@ -216,7 +226,7 @@ export default function CoordinationScreen() {
         />
       ) : error ? (
         <PageStateCard title="Coordination failed" body={error} tone="danger" />
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading coordination..." : "Nothing needs you"}
           body="Agent asks, handoffs, reviews, and waiting threads will appear here."

@@ -10,6 +10,7 @@ import { Text } from "@/components/ui/text";
 import { StatusDot, StatusPill } from "@/components/status-dot";
 import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useProjectApiRelayPolling } from "@/lib/project-api-relay-polling";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -220,28 +221,34 @@ export default function TopologyScreen() {
     project?.serviceEndpoint ??
     (project?.path === selectedProject?.path ? selectedProjectEndpoint : undefined);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
   const { getToken } = useAuth();
   const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
   const [topology, setTopology] = useState<ProjectTopologyModel | null>(null);
+  const [topologyKey, setTopologyKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const getTokenRef = useRef(getToken);
   const endpointRef = useRef(endpoint);
+  const viewKeyRef = useRef(viewKey);
   const refreshSeqRef = useRef(0);
 
   useEffect(() => {
     getTokenRef.current = getToken;
     endpointRef.current = endpoint;
-  }, [endpoint, getToken]);
+    viewKeyRef.current = viewKey;
+  }, [endpoint, getToken, viewKey]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
+    const currentViewKey = viewKeyRef.current;
     if (!currentEndpoint) {
       setTopology(null);
+      setTopologyKey(null);
       setError(null);
       setLoading(false);
       return;
@@ -252,10 +259,10 @@ export default function TopologyScreen() {
       const response = await getProjectTopology(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
       setTopology(response.topology);
+      setTopologyKey(currentViewKey);
       setError(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
-      setTopology(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (seq === refreshSeqRef.current) setLoading(false);
@@ -269,9 +276,12 @@ export default function TopologyScreen() {
     return () => clearTimeout(timer);
   }, [endpointKey, projectViewRefreshNonce, refresh]);
 
+  useProjectApiRelayPolling(endpointKey, refresh);
+
+  const visibleTopology = topologyKey === viewKey ? topology : null;
   const leafRows = useMemo(
-    () => topology?.rows.filter((row) => row.kind !== "worktree") ?? [],
-    [topology],
+    () => visibleTopology?.rows.filter((row) => row.kind !== "worktree") ?? [],
+    [visibleTopology],
   );
   const activeCount = leafRows.filter((row) => row.health === "active").length;
   const attentionCount = leafRows.filter((row) => row.health === "attention").length;
@@ -300,7 +310,7 @@ export default function TopologyScreen() {
         />
       ) : error ? (
         <PageStateCard title="Unable to load topology" body={error} tone="danger" />
-      ) : !topology ? (
+      ) : !visibleTopology ? (
         <PageStateCard
           title={loading ? "Loading topology..." : "No topology"}
           body="Fetching project runtime state."
@@ -310,9 +320,9 @@ export default function TopologyScreen() {
           <PageHeader eyebrow="Topology" title={project.name} subtitle={project.path} />
 
           <View className="mb-5 flex-row flex-wrap">
-            <SummaryTile label="Worktrees" value={topology.counts.worktrees} />
-            <SummaryTile label="Agents" value={topology.counts.agents} />
-            <SummaryTile label="Services" value={topology.counts.services} />
+            <SummaryTile label="Worktrees" value={visibleTopology.counts.worktrees} />
+            <SummaryTile label="Agents" value={visibleTopology.counts.agents} />
+            <SummaryTile label="Services" value={visibleTopology.counts.services} />
             <SummaryTile label="Active" value={activeCount} tone="active" />
             <SummaryTile label="Attention" value={attentionCount} tone="attention" />
             <SummaryTile label="Offline" value={offlineCount} tone="offline" />
@@ -343,10 +353,10 @@ export default function TopologyScreen() {
             />
           </View>
 
-          {mode === "map" ? <WorktreeCards topology={topology} /> : null}
+          {mode === "map" ? <WorktreeCards topology={visibleTopology} /> : null}
           {mode === "tree" ? (
             <RowsList
-              rows={topology.rows}
+              rows={visibleTopology.rows}
               onPickAgent={handlePickAgent}
               onPickService={handlePickService}
             />
