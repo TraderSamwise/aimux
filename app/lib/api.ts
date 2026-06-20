@@ -19,18 +19,19 @@ import {
   type CreateServiceInput,
   type CreateServiceResponse,
   type CreateWorktreeInput,
+  type CreateWorktreeResponse,
   type DeleteWorktreeResponse,
   type GraveyardWorktreeResponse,
   type NotificationClearResponse,
   type NotificationMutationInput,
   type NotificationReadResponse,
   type RemoveServiceResponse,
+  type RemoveWorktreeResponse,
   type ResumeServiceResponse,
   type ResurrectAgentResponse,
   type ResurrectWorktreeResponse,
   type StopServiceResponse,
   type WorktreePathInput,
-  type WorktreePathResponse,
 } from "../../src/project-api-contract";
 
 let _relay: RelayTransport | null = null;
@@ -573,7 +574,7 @@ export async function createWorktree(
   endpoint: ServiceEndpoint,
   name: string,
   opts?: ApiOpts,
-): Promise<WorktreePathResponse> {
+): Promise<CreateWorktreeResponse> {
   const input: CreateWorktreeInput = { name };
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.create, opts, input);
 }
@@ -582,7 +583,7 @@ export async function removeWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<WorktreePathResponse> {
+): Promise<RemoveWorktreeResponse> {
   const input: WorktreePathInput = { path };
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.remove, opts, input);
 }
@@ -797,7 +798,7 @@ export async function getCoordinationWorklist(
   return callProjectJson<CoordinationWorklistResponse>(
     endpoint,
     "GET",
-    `/coordination-worklist?participant=${encodeURIComponent(participant)}`,
+    `${PROJECT_API_ROUTES.coordinationWorklist}?participant=${encodeURIComponent(participant)}`,
     opts,
   );
 }
