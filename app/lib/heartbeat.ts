@@ -6,10 +6,12 @@
 
 import { EventSourcePolyfill } from "event-source-polyfill";
 import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES } from "../../src/project-api-contract";
 import type {
   AgentOutputEvent,
   AlertEvent,
   ReadyEvent,
+  ProjectUpdateEvent,
   StreamErrorEvent,
   StreamEvent,
 } from "@/lib/events";
@@ -28,7 +30,13 @@ export interface HeartbeatHandle {
   stop: () => void;
 }
 
-const SSE_EVENT_NAMES = ["ready", "alert", "agent_output", "error"] as const;
+const SSE_EVENT_NAMES = [
+  PROJECT_API_EVENT_NAMES.ready,
+  PROJECT_API_EVENT_NAMES.alert,
+  PROJECT_API_EVENT_NAMES.agentOutput,
+  PROJECT_API_EVENT_NAMES.projectUpdate,
+  PROJECT_API_EVENT_NAMES.error,
+] as const;
 
 export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   const { serviceEndpoint, sessionId, startLine, intervalMs, token, onEvent, onError } = options;
@@ -38,7 +46,7 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   if (startLine !== undefined) params.set("startLine", String(startLine));
   if (intervalMs !== undefined) params.set("intervalMs", String(intervalMs));
   const qs = params.toString();
-  const url = `${getServiceUrl(serviceEndpoint)}/events${qs ? `?${qs}` : ""}`;
+  const url = `${getServiceUrl(serviceEndpoint)}${PROJECT_API_ROUTES.events}${qs ? `?${qs}` : ""}`;
 
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -103,4 +111,4 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
 }
 
 // Re-exports so callers can type-narrow without importing from events directly.
-export type { AgentOutputEvent, AlertEvent, ReadyEvent, StreamErrorEvent, StreamEvent };
+export type { AgentOutputEvent, AlertEvent, ReadyEvent, ProjectUpdateEvent, StreamErrorEvent, StreamEvent };

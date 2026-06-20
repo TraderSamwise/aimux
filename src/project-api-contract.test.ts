@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES, PROJECT_API_VIEWS } from "./project-api-contract.js";
 
 function collectRoutes(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -22,5 +22,13 @@ describe("project api contract", () => {
     expect(PROJECT_API_ROUTES.topology).toBe("/topology");
     expect(PROJECT_API_ROUTES.library).toBe("/library");
     expect(PROJECT_API_ROUTES.graveyardActions.resurrectWorktree).toBe("/graveyard/worktrees/resurrect");
+  });
+
+  it("defines shared SSE event names and API-backed views", () => {
+    expect(PROJECT_API_EVENT_NAMES.projectUpdate).toBe("project_update");
+    expect(PROJECT_API_EVENT_NAMES.agentOutput).toBe("agent_output");
+    expect(PROJECT_API_VIEWS).toContain("coordination-worklist");
+    expect(PROJECT_API_VIEWS).toContain("desktop-state");
+    expect(PROJECT_API_VIEWS).toContain("notifications");
   });
 });

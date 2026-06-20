@@ -17,6 +17,7 @@ import { PluginRuntime } from "../plugin-runtime.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
+import { PROJECT_API_EVENT_NAMES } from "../project-api-contract.js";
 import {
   contextualizeAlertInput,
   mergeDisplayContext,
@@ -313,7 +314,11 @@ export class Multiplexer {
       },
     });
     this.eventBus.subscribe((event) => {
-      if (event.type !== "alert") return;
+      if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
+        if (event.views.includes("coordination-worklist")) scheduleCoordinationPush(this);
+        return;
+      }
+      if (event.type !== PROJECT_API_EVENT_NAMES.alert) return;
       if (event.kind === "notification") {
         this.footerFlash = `◌ ${event.title}`;
       } else if (event.kind === "needs_input") {
@@ -336,8 +341,6 @@ export class Multiplexer {
         this.footerFlash = `✗ ${event.title}`;
       }
       this.footerFlashTicks = 4;
-      // Push the worklist live the moment activity happens, if the screen is showing.
-      scheduleCoordinationPush(this);
     });
   }
 

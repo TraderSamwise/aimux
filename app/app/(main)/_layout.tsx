@@ -41,6 +41,7 @@ import {
   type ActiveSharedSession,
 } from "@/stores/settings";
 import { addSecurityEventAtom } from "@/stores/security";
+import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 
 const POLL_INTERVAL_MS = 2000;
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
@@ -307,6 +308,12 @@ export default function MainLayout() {
           sessionId: null,
           token,
           onEvent: (event) => {
+            if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
+              if (event.views.includes("notifications") || event.views.includes("inbox")) {
+                kickNotificationFeedRefresh();
+              }
+              return;
+            }
             if (event.type !== "alert") return;
             if (event.notificationId) {
               markNotificationRecordsObserved({ projectPath, ids: [event.notificationId] });

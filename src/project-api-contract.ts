@@ -127,6 +127,45 @@ export const PROJECT_API_ROUTES = {
 
 export type ProjectApiRoute = `/${string}`;
 
+export const PROJECT_API_EVENT_NAMES = {
+  ready: "ready",
+  alert: "alert",
+  agentOutput: "agent_output",
+  projectUpdate: "project_update",
+  error: "error",
+} as const;
+
+export const PROJECT_API_VIEWS = [
+  "agents",
+  "coordination-worklist",
+  "desktop-state",
+  "graveyard",
+  "inbox",
+  "library",
+  "notifications",
+  "plans",
+  "project-observability",
+  "services",
+  "tasks",
+  "threads",
+  "topology",
+  "workflow",
+  "worktrees",
+] as const;
+
+export type ProjectApiEventName = (typeof PROJECT_API_EVENT_NAMES)[keyof typeof PROJECT_API_EVENT_NAMES];
+export type ProjectApiView = (typeof PROJECT_API_VIEWS)[number];
+
+export interface ProjectUpdateEvent {
+  type: typeof PROJECT_API_EVENT_NAMES.projectUpdate;
+  projectId: string;
+  ts: string;
+  views: ProjectApiView[];
+  reason?: string;
+  sessionId?: string;
+  worktreePath?: string;
+}
+
 export interface ProjectApiOk {
   ok: boolean;
 }
