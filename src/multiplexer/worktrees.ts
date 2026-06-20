@@ -30,6 +30,10 @@ function assertDashboardWorktreeMutationSettled(settled: boolean, action: Pendin
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
     ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => entry.path === path)
@@ -49,7 +53,7 @@ async function waitForRenderedDashboardWorktreeState(
     await host.refreshDashboardModelFromService(true);
     const group = findRenderedWorktreeForSettlement(host, path);
     if (predicate(group)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await sleep(100);
   }
   return false;
 }
@@ -175,9 +179,20 @@ async function waitForRenderedDashboardWorktreeCreate(
     }
     showOptimisticDashboardWorktreeCreate(host, name);
     host.renderDashboard?.();
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await sleep(250);
   }
   return { ok: false, error: new Error("worktree creating did not settle before timing out") };
+}
+
+async function refreshDashboardWorktreeCreateFailure(host: WorktreeHost, path: string): Promise<void> {
+  if (typeof host.refreshDashboardModelFromService !== "function") return;
+  const deadline = Date.now() + 1000;
+  for (;;) {
+    if (findDashboardWorktreeCreateFailure(host, path)) return;
+    await host.refreshDashboardModelFromService(true);
+    if (findDashboardWorktreeCreateFailure(host, path) || Date.now() >= deadline) return;
+    await sleep(100);
+  }
 }
 
 export function showWorktreeCreatePrompt(host: WorktreeHost): void {
@@ -250,7 +265,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-          await host.refreshDashboardModelFromService?.(true);
+          await refreshDashboardWorktreeCreateFailure(host, targetPath);
           showDashboardWorktreeCreateFailure(host, name, targetPath, err);
         }
       })();
