@@ -616,7 +616,9 @@ describe("MetadataServer threads API", () => {
 
   it("opens notification targets from hidden teammate desktop state", async () => {
     server?.stop();
+    const onChange = vi.fn();
     server = new MetadataServer({
+      onChange,
       desktop: {
         getState: () => ({
           sessions: [{ id: "parent", command: "claude", status: "running" }],
@@ -718,6 +720,7 @@ describe("MetadataServer threads API", () => {
         unseenCount: 0,
       });
       expect(listNotifications({ sessionId: "teammate-1" })[0]?.unread).toBe(false);
+      expect(onChange).toHaveBeenCalledTimes(1);
 
       updateSessionMetadata("teammate-1", (current) => ({
         ...current,
@@ -728,6 +731,7 @@ describe("MetadataServer threads API", () => {
           unseenCount: 3,
         },
       }));
+      onChange.mockClear();
       const resolveOnlyRes = await fetch(`${base}/control/open-notification-target`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -746,6 +750,7 @@ describe("MetadataServer threads API", () => {
         attention: "needs_input",
         unseenCount: 3,
       });
+      expect(onChange).not.toHaveBeenCalled();
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
@@ -762,32 +767,41 @@ describe("MetadataServer threads API", () => {
   it("does not resume offline notification targets for resolve-only opens", async () => {
     server?.stop();
     const resumeService = vi.fn();
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     server = new MetadataServer({
       desktop: {
         getState: () => ({
           sessions: [],
           teammates: [],
-          services: [{ id: "svc-1", command: "yarn dev", status: "offline" }],
+          services: [{ id: "svc-1", command: "yarn dev", status: "offline", tmuxWindowId: "@stale" }],
         }),
         resumeService,
       },
     });
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("stale offline window id should not be resolved");
+    });
     await server.start();
 
-    const endpoint = server.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    try {
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
-    const res = await fetch(`${base}/control/open-notification-target`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId: "svc-1", focus: false }),
-    });
-    const body = (await res.json()) as { ok: boolean; error?: string; itemId?: string };
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "svc-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string; itemId?: string };
 
-    expect(res.status).toBe(409);
-    expect(body).toMatchObject({ ok: false, error: "service is offline", itemId: "svc-1" });
-    expect(resumeService).not.toHaveBeenCalled();
+      expect(res.status).toBe(409);
+      expect(body).toMatchObject({ ok: false, error: "service is offline", itemId: "svc-1" });
+      expect(resumeService).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
   });
 
   it("rejects unmanaged focus-window targets", async () => {

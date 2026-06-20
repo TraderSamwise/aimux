@@ -3,7 +3,7 @@ import { TerminalHost } from "../terminal-host.js";
 import { parseKeys } from "../key-parser.js";
 import { requestJson } from "../http-client.js";
 import { keycap, padVisible, statusDot, style } from "../tui/render/theme.js";
-import { TmuxRuntimeManager } from "./runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
 
 function styleInboxHelp(line: string): string {
   return line
@@ -104,7 +104,7 @@ function loadEndpoint(projectStateDir: string): string {
 
 function resolveFocusedParticipant(options: TmuxInboxPopupOptions): string | undefined {
   const currentWindowId = options.currentWindowId?.trim();
-  if (!currentWindowId || (options.currentWindow?.trim() && /^dashboard/.test(options.currentWindow.trim()))) {
+  if (!currentWindowId || (options.currentWindow?.trim() && isDashboardWindowName(options.currentWindow.trim()))) {
     return undefined;
   }
   try {

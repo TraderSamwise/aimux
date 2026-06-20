@@ -164,6 +164,7 @@ request_control() {
     --data-urlencode "currentWindowId=$current_window_id" \
     --data-urlencode "currentPath=$current_path" \
     --data-urlencode "windowId=$window_id" \
+    --data-urlencode "focus=true" \
     "${endpoint}${path}" >/dev/null 2>>"$debug_log"
 }
 

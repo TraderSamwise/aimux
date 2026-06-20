@@ -521,7 +521,7 @@ function markActiveWindowFocused(
   currentWindow: string | undefined,
   currentWindowId: string | undefined,
 ): boolean {
-  if (currentWindow && /^dashboard/.test(currentWindow)) {
+  if (currentWindow && isDashboardWindowName(currentWindow)) {
     if (!currentWindowId) return false;
     const dashboardTarget = findExistingDashboardTarget(tmux, projectRoot, currentClientSession);
     if (dashboardTarget?.windowId !== currentWindowId) return false;
@@ -2091,18 +2091,11 @@ export class MetadataServer {
           }
           if (focus) {
             markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, itemId);
+            this.notifyChange();
           }
           sendControlAction(res, "open-notification-target", match.target, focusResult, itemId);
         };
 
-        if (session?.tmuxWindowId) {
-          openWindowId(session.tmuxWindowId, session.id);
-          return;
-        }
-        if (service?.tmuxWindowId) {
-          openWindowId(service.tmuxWindowId, service.id);
-          return;
-        }
         if (service && service.status !== "running") {
           if (!focus) {
             send(res, 409, { ok: false, error: "service is offline", itemId: service.id });
@@ -2122,6 +2115,7 @@ export class MetadataServer {
           }
           const focusResult = focusControlTarget(tmux, match.target, currentClientSession, clientTty, focus);
           markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, service.id);
+          this.notifyChange();
           sendControlAction(res, "open-notification-target", match.target, focusResult, service.id);
           return;
         }
@@ -2145,7 +2139,16 @@ export class MetadataServer {
           const focusResult = focusControlTarget(tmux, match.target, currentClientSession, clientTty, focus);
           markSessionViewed(session.id);
           markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, session.id);
+          this.notifyChange();
           sendControlAction(res, "open-notification-target", match.target, focusResult, session.id);
+          return;
+        }
+        if (session?.tmuxWindowId) {
+          openWindowId(session.tmuxWindowId, session.id);
+          return;
+        }
+        if (service?.tmuxWindowId) {
+          openWindowId(service.tmuxWindowId, service.id);
           return;
         }
         send(res, 404, { ok: false, error: "notification target is no longer available" });
@@ -2190,6 +2193,7 @@ export class MetadataServer {
         }
         if (focus) {
           markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, itemId);
+          this.notifyChange();
         }
         sendControlAction(res, "focus-window", match.target, focusResult, itemId);
         return;
@@ -2295,6 +2299,7 @@ export class MetadataServer {
         if (focus) {
           markSessionViewed(item.metadata.sessionId);
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+          this.notifyChange();
         }
         sendControlAction(res, "switch-next", item.target, focusResult, item.metadata.sessionId);
         return;
@@ -2346,6 +2351,7 @@ export class MetadataServer {
         if (focus) {
           markSessionViewed(item.metadata.sessionId);
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+          this.notifyChange();
         }
         sendControlAction(res, "switch-prev", item.target, focusResult, item.metadata.sessionId);
         return;
@@ -2400,6 +2406,7 @@ export class MetadataServer {
         if (focus) {
           markSessionViewed(item.metadata.sessionId);
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+          this.notifyChange();
         }
         sendControlAction(res, "switch-attention", item.target, focusResult, item.metadata.sessionId);
         return;
