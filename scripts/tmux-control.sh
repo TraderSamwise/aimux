@@ -957,7 +957,7 @@ case "$action" in
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|inbox|menu|expose|meta|window|active|team)
+  next|prev|attention|inbox|menu|expose|meta|window|active|team)
     fallback_local_control && exit 0
     ;;
 esac
