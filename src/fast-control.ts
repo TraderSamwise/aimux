@@ -32,6 +32,7 @@ export interface FastControlItem {
 }
 
 type ManagedWindowEntry = { target: TmuxTarget; metadata: TmuxWindowMetadata };
+type InternalFastControlItem = FastControlItem & { alive: boolean };
 
 export function navigationUrgencyScore(input: {
   semantic?: {
@@ -137,21 +138,26 @@ function urgencyFor(projectRoot: string, sessionId?: string): number {
 
 export type AgentListScope = "all" | "worktree";
 
-export function listSwitchableAgentItems(
+function buildSwitchableAgentItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
   opts: { scope?: AgentListScope } = {},
-): FastControlItem[] {
+): InternalFastControlItem[] {
   const scope = opts.scope ?? "worktree";
   const tmuxSession = tmux.getProjectSession(context.projectRoot);
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
-  const managedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
-  const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, managedWindows);
+  const allManagedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
+  const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, allManagedWindows);
+  const aliveByWindowId = new Map(
+    allManagedWindows.map((entry) => [entry.target.windowId, tmux.isWindowAlive(entry.target)] as const),
+  );
   const teammateParentSessionId = currentManagedWindow?.metadata.team?.parentSessionId;
   const scopedWorktreePath = resolveContextWorktreePath(context, currentManagedWindow);
-  let managed = managedWindows
+  let managed = allManagedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
+      const alive = aliveByWindowId.get(target.windowId) ?? false;
+      if (!alive && target.windowId !== currentManagedWindow?.target.windowId) return false;
       if (teammateParentSessionId && scope !== "all") {
         return metadata.kind !== "service" && metadata.team?.parentSessionId === teammateParentSessionId;
       }
@@ -176,6 +182,7 @@ export function listSwitchableAgentItems(
       activity: entry.target.windowIndex,
       lastUsedAt: getLastUsedAt(context.projectRoot, entry.metadata.sessionId),
       recentRank: recentRankMap.get(entry.metadata.sessionId) ?? Number.MAX_SAFE_INTEGER,
+      alive: aliveByWindowId.get(entry.target.windowId) ?? false,
     }));
 
   const activityByWindowId = new Map(
@@ -189,6 +196,14 @@ export function listSwitchableAgentItems(
   return managed;
 }
 
+export function listSwitchableAgentItems(
+  context: FastControlContext,
+  tmux = new TmuxRuntimeManager(),
+  opts: { scope?: AgentListScope } = {},
+): FastControlItem[] {
+  return buildSwitchableAgentItems(context, tmux, opts).filter((entry) => entry.alive);
+}
+
 export function resolveCurrentAgentIndex(items: FastControlItem[], context: FastControlContext): number {
   const byId = context.currentWindowId
     ? items.findIndex(({ target }) => target.windowId === context.currentWindowId)
@@ -200,19 +215,27 @@ export function resolveCurrentAgentIndex(items: FastControlItem[], context: Fast
 }
 
 export function resolveNextAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
-  const items = listSwitchableAgentItems(context, tmux);
-  if (items.length === 0) return null;
+  const items = buildSwitchableAgentItems(context, tmux);
+  if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
   const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
-  return items[(resolvedIndex + 1) % items.length] ?? null;
+  for (let offset = 1; offset <= items.length; offset++) {
+    const item = items[(resolvedIndex + offset) % items.length];
+    if (item?.alive) return item;
+  }
+  return null;
 }
 
 export function resolvePrevAgent(context: FastControlContext, tmux = new TmuxRuntimeManager()): FastControlItem | null {
-  const items = listSwitchableAgentItems(context, tmux);
-  if (items.length === 0) return null;
+  const items = buildSwitchableAgentItems(context, tmux);
+  if (items.every((item) => !item.alive)) return null;
   const currentIndex = resolveCurrentAgentIndex(items, context);
   const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
-  return items[(resolvedIndex - 1 + items.length) % items.length] ?? null;
+  for (let offset = 1; offset <= items.length; offset++) {
+    const item = items[(resolvedIndex - offset + items.length) % items.length];
+    if (item?.alive) return item;
+  }
+  return null;
 }
 
 export function resolveAttentionAgent(
