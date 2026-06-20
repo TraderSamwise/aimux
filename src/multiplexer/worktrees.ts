@@ -1,7 +1,6 @@
 import { getWorktreeCreatePath } from "../worktree.js";
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
-import { addDashboardOperationFailure } from "../dashboard/operation-failures.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   buildWorktreeListOverlayOutput,
@@ -124,43 +123,17 @@ function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): vo
 
 function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, path: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  const failure = addDashboardOperationFailure({
-    targetKind: "worktree",
-    operation: "create",
-    title: `Failed to create worktree "${name}"`,
-    message,
-    worktreePath: path,
-    worktreeName: name,
-  });
   host.dashboardPendingActions.clearWorktreeAction(path);
   host.dashboardOptimisticWorktreeCreatedAt?.delete?.(path);
-  removeOptimisticDashboardWorktree(host, path);
-  host.dashboardWorktreeGroupsCache = [
-    ...host.dashboardWorktreeGroupsCache,
-    {
-      name,
-      branch: "(failed)",
-      path,
-      status: "offline",
-      sessions: [],
-      services: [],
-      operationFailure: failure,
-    },
-  ];
+  const failure = findDashboardWorktreeCreateFailure(host, path);
+  if (!failure) {
+    removeOptimisticDashboardWorktree(host, path);
+  }
   sortDashboardWorktrees(host.dashboardWorktreeGroupsCache);
-  host.dashboardState.focusedWorktreePath = path;
+  if (failure) {
+    host.dashboardState.focusedWorktreePath = path;
+  }
   host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
-  host.dashboardOperationFailuresCache = [
-    failure,
-    ...(host.dashboardOperationFailuresCache ?? []).filter(
-      (existing: any) =>
-        !(
-          existing.targetKind === failure.targetKind &&
-          existing.operation === failure.operation &&
-          existing.worktreePath === failure.worktreePath
-        ),
-    ),
-  ];
   host.dashboardUiStateStore.markSelectionDirty();
   host.showDashboardError(`Failed to create "${name}"`, [`Path: ${path}`, `Error: ${message}`]);
 }
@@ -277,6 +250,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
+          await host.refreshDashboardModelFromService?.(true);
           showDashboardWorktreeCreateFailure(host, name, targetPath, err);
         }
       })();
