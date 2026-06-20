@@ -503,9 +503,7 @@ function persistDashboardReturnSelection(
   persistDashboardClientPreference(currentClientSession, (snapshot) => {
     snapshot.screen = "dashboard";
     if (!currentWindowId) return;
-    const match = tmux
-      .listProjectManagedWindows(projectRoot)
-      .find((entry) => entry.target.windowId === currentWindowId);
+    const match = findProjectManagedWindow(tmux, projectRoot, { windowId: currentWindowId });
     if (!match) return;
     snapshot.focusedWorktreePath = match.metadata.worktreePath;
     snapshot.level = "sessions";
