@@ -8,45 +8,27 @@ This document is the source of truth for the runtime/control-plane split in aimu
 
 ## Overview
 
-Aimux has three distinct layers:
+Aimux separates local execution from the shared control plane.
 
-1. `tmux` runtime
-2. global aimux daemon
-3. clients
+Runtime layers:
 
-These layers should not be conflated.
+1. **Global daemon** — one local host service for project discovery, project activation, and supervision of per-project services.
+2. **Per-project service** — the project-local HTTP/SSE authority, implemented by the metadata server.
+3. **tmux runtime** — the managed per-project tmux session that owns real terminal execution.
+4. **Clients** — terminal TUI dashboard, Expo web/mobile app, CLI helpers, scripts, and plugins.
 
-## 1. `tmux` Runtime
+These layers should not be conflated. The project service is the single writer for shared project control-plane state. tmux remains the local execution substrate.
 
-`tmux` is the only runtime substrate.
+## 1. Global Daemon
 
-It owns:
+The global daemon owns:
 
-- agent windows
-- PTY lifecycle
-- scrollback
-- attach/detach
-- repaint and terminal protocol behavior
-
-Each project gets one shared managed tmux session for agent runtime.
-
-That project session is the live terminal authority.
-
-Aimux does not own a custom PTY multiplexer anymore.
-
-## 2. Global Aimux Daemon
-
-Aimux now has one global control-plane daemon.
-
-It owns:
-
-- project discovery
-- project activation
+- project discovery and activation
 - supervision of daemon-managed project services
-- metadata API lifecycle
-- plugin runtime supervision
-- statusline/state aggregation
-- desktop-facing project/session summaries
+- daemon HTTP for client project/service discovery
+- stable/dev runtime lane separation
+
+Stable `aimux` uses port `43190`. `aimux-dev` uses port `43191`.
 
 Useful commands:
 
@@ -60,88 +42,73 @@ aimux daemon stop
 aimux daemon kill
 ```
 
-## 3. Daemon-Managed Project Services
+## 2. Per-Project Service
 
 For each active project, the daemon may supervise one project service process.
 
-That project service owns the project-scoped sidecars:
+The project service owns:
 
-- `MetadataServer`
-- `PluginRuntime`
-- project `statusline.json` writing
-- project-scoped orchestration and workflow APIs
+- live project state and API lifecycle
+- notifications, threads, tasks, handoffs, reviews, and Coordination worklists
+- lifecycle mutations such as spawn, stop, kill, fork, rename, migrate, worktree, and graveyard actions
+- workflow actions such as reply, mark seen, accept, block, complete, reopen, approve, and request changes
+- `/events` SSE project updates and alerts for TUI, web, and mobile clients
+- plugin runtime and metadata sidecars
+- derived `statusline.json` snapshots for tmux status/debugging
 
-This is not an elected lease anymore.
+This is not an elected lease model. There is no per-project host handoff or host stealing. If a project service dies, tmux agent windows keep running and the daemon can start a replacement service.
 
-There is no per-project host handoff or host stealing model now.
+## 3. tmux Runtime
 
-If a project service dies:
+tmux is the only terminal runtime substrate.
 
-- tmux agent windows keep running
-- the daemon can start a replacement project service
-- shared control-plane behavior resumes when the replacement starts
+It owns:
+
+- agent, service, and dashboard windows
+- PTY lifecycle
+- scrollback
+- attach/detach
+- repaint and terminal protocol behavior
+- same-machine focus/open/window switching
+
+Each project gets one shared managed tmux session for agent runtime. Aimux does not own a custom PTY multiplexer anymore.
+
+Remote clients do not replace tmux. They use API routes for control-plane state, pane read/stream routes for terminal views, and remote equivalents for tmux-specific behavior such as deep-link or focus resolution.
 
 ## 4. Clients
 
 Clients include:
 
 - terminal dashboard processes
-- desktop / Tauri
+- Expo web/mobile app in `app/`
 - CLI commands
-- external services
+- scripts, plugins, and local watchers
 
-Clients are not control-plane authorities.
+Clients are not control-plane authorities. They should:
 
-They:
+- ensure the daemon exists when appropriate
+- discover project services through daemon/project metadata
+- call project-service HTTP for shared reads and mutations
+- consume project-service `/events` SSE for heartbeat, alerts, and refreshes
+- treat `statusline.json` as derived/debug state, not a primary transport
 
-- ensure the daemon exists
-- ensure the current project service exists when needed
-- attach to tmux dashboards/agent windows
-- call metadata/orchestration surfaces through the daemon-managed system
+The terminal TUI dashboard is an API-backed client for shared workflows. It still owns terminal-local UI state such as current screen, selection, filters, text buffers, overlays, and render timing.
 
-Desktop transport is now HTTP-first:
+The web/mobile app is a pure HTTP+SSE client. It does not bundle the CLI and does not own or repair the daemon.
 
-- desktop uses daemon HTTP for project discovery and project-service discovery
-- desktop uses project-service HTTP for live project snapshots and awaited lifecycle actions
-- desktop uses project-service SSE for ephemeral live events such as alerts and streaming output
-- desktop should not poll by spawning CLI subprocesses for routine heartbeat state
-- desktop should treat `statusline.json` as a derived/debug artifact, not as its primary live API
-- desktop pending UI should remain active until heartbeat reconciles the expected state change
-- desktop secondary screens may call project-service HTTP directly for workflow, threads, and graveyard views
-- desktop orchestration actions should also go directly through project-service HTTP, not CLI wrappers
+## Shared API Surface
 
-Shared semantic state is reused across features:
+Project-service HTTP exposes the live control plane, including:
 
-- runtime topology is authoritative for session lifecycle and placement
-- session semantics describe session-level meaning derived from runtime topology and metadata
-- workflow/thread state describes collaboration-level meaning
-
-Features should render or route from those shared state surfaces instead of inventing local interpretations:
-
-- chips
-- footer/status bars
-- alerts
-- compact labels/suffixes
-- tmux statusline payloads
-- orchestration routing
-
-Desktop terminal control is tmux-client-first:
-
-- the embedded terminal pane hosts a real attached tmux client
-- same-project agent/dashboard switching should retarget that live tmux client
-- desktop should only cold-spawn the shell transport attach path when it needs to create a new attached terminal session
-
-Project-service HTTP now exposes the live orchestration surface, including:
-
-- `GET /events` (SSE project event stream)
-- `GET /workflow`
+- `GET /health`
+- `GET /desktop-state`
+- `GET /coordination-worklist`
+- `GET /events`
 - `GET /notifications`
-- `GET /threads`
-- `GET /threads/:id`
-- `GET /tasks`
-- `GET /tasks/:id`
 - `POST /notifications/read`
 - `POST /notifications/clear`
+- `GET /threads`
+- `GET /threads/:id`
 - `POST /threads/open`
 - `POST /threads/send`
 - `POST /threads/mark-seen`
@@ -156,47 +123,9 @@ Project-service HTTP now exposes the live orchestration surface, including:
 - `POST /tasks/reopen`
 - `POST /reviews/approve`
 - `POST /reviews/request-changes`
-- `POST /worktrees/remove`
-- `POST /worktrees/graveyard`
-- `POST /graveyard/worktrees/resurrect`
-- `POST /graveyard/worktrees/delete`
+- lifecycle, topology, worktree, graveyard, pane read, and pane stream routes
 
-Project-service HTTP also exposes low-latency tmux control helpers:
-
-- `GET /control/switchable-agents`
-- `POST /control/switch-next`
-- `POST /control/switch-prev`
-- `POST /control/switch-attention`
-- `POST /control/open-dashboard`
-
-Tmux hotkeys use these through a small shell transport instead of shelling into the heavyweight operator CLI.
-That transport prefers local tmux resolution and only falls back to project-service control helpers when local recovery is insufficient.
-
-Likewise, the tmux statusline now reads precomputed tmux-ready strings from the project state directory instead of spawning a separate render CLI.
-
-Dashboard mode is a pure client of the project service's `desktop-state` snapshot.
-It no longer reconstructs dashboard session/worktree model state locally on focus or render paths.
-Project-service endpoint discovery is advertised through `metadata-api.json`; legacy `host.json` endpoint fallback is no longer part of the live architecture.
-
-The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
-
-```bash
-aimux spawn --tool claude --project /abs/path/to/repo --json
-aimux fork <sessionId> --tool codex --project /abs/path/to/repo --json
-aimux stop <sessionId> --project /abs/path/to/repo --json
-aimux rename <sessionId> --label "Backend reviewer" --project /abs/path/to/repo --json
-aimux migrate <sessionId> --worktree /abs/path/to/worktree --project /abs/path/to/repo --json
-aimux kill <sessionId> --project /abs/path/to/repo --json
-aimux graveyard send <sessionId> --project /abs/path/to/repo --json
-aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
-aimux worktree list --project /abs/path/to/repo --json
-aimux worktree create feature-x --project /abs/path/to/repo --json
-aimux worktree remove /abs/path/to/worktree --project /abs/path/to/repo --json
-aimux worktree graveyard /abs/path/to/worktree --project /abs/path/to/repo --json
-aimux worktree resurrect /abs/path/to/worktree --project /abs/path/to/repo --json
-aimux worktree delete-graveyard /abs/path/to/worktree --project /abs/path/to/repo --json
-desktop terminal focus uses the same shell transport with the project-scoped `tmuxWindowId` from `desktop-state`
-```
+Shared response contracts belong in `src/project-api-contract.ts`. The Expo client wrappers live in `app/lib/api.ts`. TUI request helpers live in `src/multiplexer/dashboard-control.ts`.
 
 ## Dashboard Model
 
@@ -213,17 +142,61 @@ Dashboard UI state is terminal-local:
 
 - the shared per-project tmux runtime session owns agent windows
 - each terminal gets its own tmux client session and dashboard window/process
-- dashboard tab, pointer, and load state are per-terminal
-- leaving the dashboard from inside managed tmux detaches or returns the client without destroying that per-terminal dashboard window, so later `aimux` runs can fast-reattach
+- dashboard tab, pointer, filter, and load state are per-terminal
+- leaving the dashboard from inside managed tmux detaches or returns the client without destroying that per-terminal dashboard window
 
-Shared control-plane state is no longer owned by the dashboard process.
+Shared control-plane state is not owned by the dashboard process. Dashboard reads and mutations that affect shared state should go through project-service APIs.
 
-Dashboard startup/open paths also prune stale dashboard artifacts automatically. Invalid dashboard windows are removed when they:
+Dashboard startup/open paths prune stale dashboard artifacts automatically. Invalid dashboard windows are removed when they:
 
 - point at dead panes
 - are stuck in failure keep-alive commands like `cat` or `tail`
 - are missing the current dashboard build stamp
 - advertise a mismatched dashboard build stamp
+
+## Tmux Control Helpers
+
+Project-service HTTP also exposes low-latency tmux control helpers for same-machine behavior, including switchable agents, next/previous/attention switching, and opening the dashboard.
+
+Tmux hotkeys use these through a small shell transport instead of shelling into the heavyweight operator CLI. That transport prefers local tmux resolution and falls back to project-service control helpers when local recovery is insufficient.
+
+The final window switch still happens in tmux.
+
+## State Split
+
+Repo-local `.aimux/` remains the agent-facing shared contract for durable artifacts agents can inspect directly:
+
+- plans
+- context
+- history
+- session discovery artifacts
+
+Runtime exchange owns threads, tasks, handoffs, reviews, workflow state, and notification records. Legacy repo-local thread/task files are import or compatibility inputs only; new external reads and writes should go through exchange-backed project-service APIs.
+
+Global `~/.aimux/projects/<project-id>/...` remains runtime-private project state.
+
+Global `~/.aimux/daemon/...` is daemon-private state.
+
+## App And Remote Client Implications
+
+Web/mobile clients should be designed around:
+
+- one global daemon
+- daemon-managed project services
+- tmux as local runtime authority
+- daemon/project-service HTTP as the primary transport
+- project-service `/events` SSE for live updates
+- explicit screens for dashboard, activity, Coordination, threads, plans, and graveyard
+- explicit workflow-aware orchestration screens and actions on top of project-service HTTP
+- pane read/stream APIs or deep-link/focus routes for tmux-specific behavior
+
+Clients should not:
+
+- infer project liveness from stale project-local lease files
+- spawn replacement project hosts directly
+- assume the dashboard process owns shared control-plane state
+- rely on CLI subprocess polling for routine live updates
+- write runtime-exchange, notification, thread/task/review, topology, worktree, or graveyard state directly
 
 ## `aimux serve`
 
@@ -239,41 +212,8 @@ It does not mean:
 - become the elected host
 - compete with another dashboard process for project ownership
 
-## State Split
-
-Repo-local `.aimux/` remains the agent-facing shared contract for durable artifacts agents can inspect directly:
-
-- plans
-- context
-- history
-- sessions discovery artifacts
-
-Runtime exchange owns threads, tasks, handoffs, reviews, workflow state, and notification records. Legacy repo-local thread/task files are import or compatibility inputs only; new external reads and writes should go through exchange-backed APIs.
-
-Global `~/.aimux/projects/<project-id>/...` remains runtime-private project state.
-
-Global `~/.aimux/daemon/...` is daemon-private state.
-
-## Desktop / Tauri Implications
-
-Desktop should be designed around:
-
-- one global daemon
-- daemon-managed project services
-- tmux as runtime authority
-- daemon/project-service HTTP as the primary desktop transport
-- explicit desktop screens for dashboard, activity, threads, plans, and graveyard
-- explicit workflow-aware orchestration screens and actions on top of project-service HTTP
-
-Desktop should not:
-
-- infer project liveness from stale project-local lease files
-- spawn replacement project hosts directly
-- assume the dashboard process owns shared control-plane state
-- rely on CLI subprocess polling for routine live updates
-
 ## Notes
 
 - [docs/global-control-plane-rfc.md](./global-control-plane-rfc.md) explains why the architecture changed.
 - [docs/project-host-model.md](./project-host-model.md) is historical only.
-- [docs/desktop-ui-contract.md](./desktop-ui-contract.md) is the desktop/Tauri UI integration contract.
+- [docs/desktop-ui-contract.md](./desktop-ui-contract.md) is historical; the active client is the Expo app in `app/`.
