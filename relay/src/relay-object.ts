@@ -486,9 +486,14 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private removeSocket(ws: WebSocket): void {
-    this.rehydrateSockets(ws);
+    this.rehydrateSockets();
     const tags = this.ctx.getTags(ws);
-    if (tags.includes("daemon") && this.daemonWs === ws) {
+    const wasActiveDaemon = tags.includes("daemon") && this.daemonWs === ws;
+    const closingProjectEventSubscriptionIds = tags.includes("client")
+      ? Object.keys(this.clientSocketAttachment(ws).projectEventSubscriptions ?? {})
+      : [];
+    this.rehydrateSockets(ws);
+    if (wasActiveDaemon) {
       this.daemonWs = null;
       // Fail every in-flight request immediately instead of waiting for
       // the TTL — the daemon that was going to answer just disappeared.
@@ -501,9 +506,7 @@ export class RelayObject extends DurableObject<Env> {
       for (const [id, entry] of this.pendingRequests) {
         if (entry.client === ws) this.pendingRequests.delete(id);
       }
-      for (const [id, entry] of this.eventSubscriptions) {
-        if (entry.client !== ws) continue;
-        this.eventSubscriptions.delete(id);
+      for (const id of closingProjectEventSubscriptionIds) {
         this.detachClientProjectEventSubscription(ws, id);
         this.sendDaemonProjectEventsUnsubscribe(id);
       }
