@@ -2346,6 +2346,22 @@ describe("MetadataServer threads API", () => {
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
       ) as Record<string, unknown>;
       expect(inboxSnapshot.screen).toBe("coordination");
+
+      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      const deadRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+      );
+      const deadBody = (await deadRes.json()) as { ok: boolean };
+      expect(deadRes.ok).toBe(true);
+      expect(deadBody.ok).toBe(true);
+      const deadSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(deadSnapshot).toMatchObject({ screen: "dashboard" });
+      expect(deadSnapshot.focusedWorktreePath).toBeUndefined();
+      expect(deadSnapshot.level).toBeUndefined();
+      expect(deadSnapshot.selectedEntryKind).toBeUndefined();
+      expect(deadSnapshot.selectedEntryId).toBeUndefined();
     } finally {
       TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;

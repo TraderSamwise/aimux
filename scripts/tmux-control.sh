@@ -604,7 +604,14 @@ for session in sessions:
         best_len = length
     elif length == best_len:
         matched.append(session)
-items = [session for session in (matched if matched else sessions) if is_live_window(session.get("tmuxWindowId"))]
+items = []
+for session in matched if matched else sessions:
+    alive = is_live_window(session.get("tmuxWindowId"))
+    if not alive and session.get("tmuxWindowId") != current_window_id:
+        continue
+    item = dict(session)
+    item["alive"] = alive
+    items.append(item)
 items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, int(s.get("tmuxWindowIndex") or 1_000_000)))
 if not items:
     raise SystemExit(1)
@@ -614,13 +621,19 @@ for idx, item in enumerate(items):
         current_index = idx
         break
 if action == "next":
-    target = items[(current_index + 1) % len(items)]
-    print(target.get("tmuxWindowId", ""))
-    raise SystemExit(0)
+    for offset in range(1, len(items) + 1):
+        target = items[(current_index + offset) % len(items)]
+        if target.get("alive"):
+            print(target.get("tmuxWindowId", ""))
+            raise SystemExit(0)
+    raise SystemExit(1)
 if action == "prev":
-    target = items[(current_index - 1) % len(items)]
-    print(target.get("tmuxWindowId", ""))
-    raise SystemExit(0)
+    for offset in range(1, len(items) + 1):
+        target = items[(current_index - offset) % len(items)]
+        if target.get("alive"):
+            print(target.get("tmuxWindowId", ""))
+            raise SystemExit(0)
+    raise SystemExit(1)
 if action == "attention":
     def rank(item):
         semantic = item.get("semantic") or {}
@@ -630,7 +643,9 @@ if action == "attention":
             int(semantic.get("blockedCount") or 0),
             int(semantic.get("pendingDeliveryCount") or 0),
         )
-    ranked = sorted(items, key=rank, reverse=True)
+    ranked = sorted([item for item in items if item.get("alive")], key=rank, reverse=True)
+    if not ranked:
+        raise SystemExit(1)
     target = ranked[0]
     if rank(target) == (0, 0, 0, 0):
         raise SystemExit(1)
@@ -641,9 +656,10 @@ if action == "window":
         index = int(item_index)
     except Exception:
         raise SystemExit(1)
-    if index < 1 or index > len(items):
+    live_items = [item for item in items if item.get("alive")]
+    if index < 1 or index > len(live_items):
         raise SystemExit(1)
-    print(items[index - 1].get("tmuxWindowId", ""))
+    print(live_items[index - 1].get("tmuxWindowId", ""))
     raise SystemExit(0)
 raise SystemExit(1)
 PY
