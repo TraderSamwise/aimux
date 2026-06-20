@@ -10,13 +10,17 @@ import {
   createWorktree,
   createShareInvite,
   deleteGraveyardWorktree,
+  getCoordinationWorklist,
   getShare,
   attachLivePane,
   getAgentOutput,
   getLivePaneOutput,
+  getProjectObservability,
+  getProjectTopology,
   getTask,
   graveyardWorktree,
   interruptLivePane,
+  listProjectLibrary,
   leaveShare,
   listShares,
   listProjects,
@@ -454,6 +458,10 @@ describe("api relay routing", () => {
     await listWorkflow(endpoint, "codex/1");
     await listTasks(endpoint, { sessionId: "agent/1", status: "pending" });
     await getTask(endpoint, "task/1");
+    await getCoordinationWorklist(endpoint, "codex/1");
+    await getProjectObservability(endpoint);
+    await getProjectTopology(endpoint);
+    await listProjectLibrary(endpoint);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(
@@ -486,6 +494,20 @@ describe("api relay routing", () => {
       "/proxy/127.0.0.1/43210/tasks/task%2F1",
       undefined,
     );
+    expect(request).toHaveBeenNthCalledWith(
+      6,
+      "GET",
+      "/proxy/127.0.0.1/43210/coordination-worklist?participant=codex%2F1",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      7,
+      "GET",
+      "/proxy/127.0.0.1/43210/project-observability",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(8, "GET", "/proxy/127.0.0.1/43210/topology", undefined);
+    expect(request).toHaveBeenNthCalledWith(9, "GET", "/proxy/127.0.0.1/43210/library", undefined);
   });
 
   it("routes notification mutations through the relay proxy", async () => {

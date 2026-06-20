@@ -14,6 +14,7 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
+import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -56,6 +57,7 @@ export default function LibraryScreen() {
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
@@ -107,7 +109,7 @@ export default function LibraryScreen() {
       void refresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, refresh]);
+  }, [endpointKey, projectViewRefreshNonce, refresh]);
 
   return (
     <Page>
