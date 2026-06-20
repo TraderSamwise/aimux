@@ -311,6 +311,12 @@ export default function MainLayout() {
           sessionId: activeShare?.sessionId ?? null,
           token,
           onEvent: (event) => {
+            if (event.type === PROJECT_API_EVENT_NAMES.ready) {
+              kickProjectApiViewRefresh();
+              kickDesktopStateRefresh();
+              kickNotificationFeedRefresh();
+              return;
+            }
             if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
               if (projectUpdateTouchesServiceView(event.views)) {
                 kickProjectApiViewRefresh();
