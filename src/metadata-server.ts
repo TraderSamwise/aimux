@@ -1592,13 +1592,8 @@ export class MetadataServer {
       send(res, 200, { ok: true, items });
       return;
     }
-    if (
-      req.method === "GET" &&
-      (url.pathname === PROJECT_API_ROUTES.agents.outputStream ||
-        url.pathname === PROJECT_API_ROUTES.livePane.outputStream)
-    ) {
-      const outputEventName =
-        url.pathname === PROJECT_API_ROUTES.livePane.outputStream ? PROJECT_API_EVENT_NAMES.agentOutput : "output";
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.outputStream) {
+      const outputEventName = "output";
       const sessionId = url.searchParams.get("sessionId")?.trim();
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");

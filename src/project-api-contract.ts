@@ -55,7 +55,6 @@ export const PROJECT_API_ROUTES = {
   livePane: {
     attach: "/live-pane/attach",
     output: "/live-pane/output",
-    outputStream: "/live-pane/output/stream",
     input: "/live-pane/input",
     interrupt: "/live-pane/interrupt",
     resize: "/live-pane/resize",
