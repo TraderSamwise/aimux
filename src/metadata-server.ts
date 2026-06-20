@@ -98,6 +98,7 @@ import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
+import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import {
   createRuntimeExchangeStore,
   type RuntimeExchangeInboxEntry,
@@ -2558,6 +2559,24 @@ export class MetadataServer {
           id: body.id?.trim() || undefined,
           sessionId: body.sessionId?.trim() || undefined,
         });
+        send(res, 200, { ok: true, cleared });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/operation-failures/clear") {
+        const body = (await readJson(req)) as {
+          targetKind?: "worktree" | "agent" | "service" | "dashboard";
+          operation?: string;
+          targetId?: string;
+          worktreePath?: string;
+        };
+        const cleared = clearDashboardOperationFailures({
+          targetKind: body.targetKind,
+          operation: body.operation?.trim() || undefined,
+          targetId: body.targetId?.trim() || undefined,
+          worktreePath: body.worktreePath?.trim() || undefined,
+        });
+        this.options.onChange?.();
         send(res, 200, { ok: true, cleared });
         return;
       }

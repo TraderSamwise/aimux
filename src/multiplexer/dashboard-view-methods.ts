@@ -52,8 +52,11 @@ export const dashboardViewMethods = {
       pendingTarget,
       itemId,
       () => {
-        this.refreshLocalDashboardModel();
-        this.renderDashboard();
+        void this.refreshDashboardModelFromService?.(true)
+          .catch(() => undefined)
+          .then(() => {
+            this.renderDashboard();
+          });
       },
       {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
@@ -63,8 +66,6 @@ export const dashboardViewMethods = {
           }
           if (pendingTarget === "worktree") {
             const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
-            const rawWorktree = this.listDesktopWorktrees?.().find((entry: any) => entry.path === path);
-            if (rawWorktree && rawWorktree.pending !== true && rawWorktree.pendingAction !== "creating") return true;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
             return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
           }

@@ -221,7 +221,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     await expect(isSettled?.()).resolves.toBe(true);
   });
 
-  it("settles a creating worktree from the raw worktree list even when rendered pending is still applied", async () => {
+  it("settles a creating worktree from the service-rendered worktree group", async () => {
     let isSettled: (() => Promise<boolean> | boolean) | undefined;
     const path = "/repo/.aimux/worktrees/demo";
     const host: any = {
@@ -233,8 +233,8 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
         }),
       },
       refreshDashboardModelFromService: vi.fn(async () => true),
-      listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path, isBare: false }]),
-      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, pending: true, pendingAction: "creating" }],
+      listDesktopWorktrees: vi.fn(),
+      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path }],
       getDashboardServices: vi.fn(() => []),
       getDashboardSessions: vi.fn(() => []),
     };
@@ -242,6 +242,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     dashboardViewMethods.settleDashboardCreatePending.call(host, `worktree:${path}`);
 
     await expect(isSettled?.()).resolves.toBe(true);
+    expect(host.listDesktopWorktrees).not.toHaveBeenCalled();
   });
 });
 

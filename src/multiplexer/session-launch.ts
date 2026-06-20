@@ -237,7 +237,6 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.writeDashboardClientStatuslineFile?.();
   const primed = await host.refreshDashboardModelFromService(true);
   if (!primed) {
-    host.refreshLocalDashboardModel();
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
