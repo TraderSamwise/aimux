@@ -16,6 +16,7 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 type SessionRuntimeHost = any;
@@ -63,7 +64,7 @@ export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: st
     host.writeStatuslineFile();
     host.renderCurrentDashboardView();
     try {
-      await host.postToProjectService("/agents/rename", { sessionId, label });
+      await host.postToProjectService(PROJECT_API_ROUTES.agents.rename, { sessionId, label });
       host.invalidateDesktopStateSnapshot();
       if (typeof host.refreshDashboardModelFromService === "function") {
         await host.refreshDashboardModelFromService(true);

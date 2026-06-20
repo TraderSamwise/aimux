@@ -71,6 +71,7 @@ import { buildCoordinationThreadEntries, buildWorkflowEntries } from "./workflow
 import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
@@ -1186,7 +1187,7 @@ export class MetadataServer {
 
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
-    if (req.method === "GET" && url.pathname === "/events") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.events) {
       const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
@@ -1281,7 +1282,7 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/notifications") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.notifications.list) {
       const unreadOnly = url.searchParams.get("unread") === "1";
       const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
       const notifications = listNotifications({ unreadOnly, sessionId });
@@ -1293,7 +1294,7 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/library") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.library) {
       const plansDir = getPlansDir();
       send(res, 200, {
         ok: true,
@@ -1308,7 +1309,7 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/inbox") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.inbox) {
       const unreadOnly = url.searchParams.get("unread") === "1";
       const participantId = url.searchParams.get("participant")?.trim() || undefined;
       const includeDone = url.searchParams.get("includeDone") === "1";
@@ -1322,7 +1323,7 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/health") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.health) {
       send(res, 200, {
         ok: true,
         projectStateDir: getProjectStateDir(),
@@ -1331,11 +1332,11 @@ export class MetadataServer {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/state") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.state) {
       send(res, 200, loadMetadataState());
       return;
     }
-    if (req.method === "GET" && url.pathname === "/desktop-state") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.desktopState) {
       if (!this.options.desktop?.getState) {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
@@ -1348,7 +1349,7 @@ export class MetadataServer {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/coordination-worklist") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.coordinationWorklist) {
       if (!this.options.desktop?.getState) {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
@@ -1367,7 +1368,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), worklist, model, threads });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/project-observability") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.projectObservability) {
       if (!this.options.desktop?.getState) {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
@@ -1388,7 +1389,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), project });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/topology") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.topology) {
       if (!this.options.desktop?.getState) {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
@@ -1407,7 +1408,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), topology });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/statusline/refresh") {
+    if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.statuslineRefresh) {
       if (!this.options.desktop?.refreshStatusline) {
         send(res, 501, { ok: false, error: "statusline refresh not supported by this service" });
         return;
@@ -1420,7 +1421,7 @@ export class MetadataServer {
       send(res, 200, { ok: true });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/worktrees") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.worktrees) {
       if (!this.options.desktop?.listWorktrees) {
         send(res, 501, { ok: false, error: "worktree listing not supported by this service" });
         return;
@@ -1428,7 +1429,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, worktrees: this.options.desktop.listWorktrees() });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/graveyard") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.graveyard) {
       if (!this.options.desktop?.listGraveyard) {
         send(res, 501, { ok: false, error: "graveyard listing not supported by this service" });
         return;
@@ -1452,7 +1453,7 @@ export class MetadataServer {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/agents") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.list) {
       const metadataState = loadMetadataState();
       const tasks = readAllTasks();
       const activeTaskFor = (sessionId: string) =>
@@ -1479,15 +1480,15 @@ export class MetadataServer {
       send(res, 200, { ok: true, agents });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/threads") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.threads.list) {
       send(res, 200, listThreadSummaries(url.searchParams.get("session") ?? undefined));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/workflow") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.workflow) {
       send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/tasks") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.tasks.list) {
       const sessionId = url.searchParams.get("session")?.trim();
       const status = url.searchParams.get("status")?.trim();
       const tasks = readAllTasks()
@@ -1496,7 +1497,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, tasks });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/usage/mark") {
+    if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.usageMark) {
       const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
       const itemId = body.itemId?.trim() || "";
       if (!itemId) {
@@ -1514,7 +1515,7 @@ export class MetadataServer {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/control/switchable-agents") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.controls.switchableAgents) {
       const currentClientSession = url.searchParams.get("currentClientSession")?.trim() || undefined;
       const currentWindow = url.searchParams.get("currentWindow")?.trim() || undefined;
       const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
@@ -1535,7 +1536,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, items });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/agents/output/stream") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.outputStream) {
       const sessionId = url.searchParams.get("sessionId")?.trim();
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
@@ -1619,10 +1620,11 @@ export class MetadataServer {
       pollTimer.unref?.();
       return;
     }
-    if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
+    const threadRoutePrefix = `${PROJECT_API_ROUTES.threads.list}/`;
+    if (req.method === "GET" && url.pathname.startsWith(threadRoutePrefix)) {
       let threadId: string;
       try {
-        threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+        threadId = decodeURIComponent(url.pathname.slice(threadRoutePrefix.length));
       } catch {
         send(res, 400, { ok: false, error: "invalid threadId" });
         return;
@@ -1635,10 +1637,11 @@ export class MetadataServer {
       send(res, 200, { thread, messages: readMessages(threadId) });
       return;
     }
-    if (req.method === "GET" && url.pathname.startsWith("/tasks/")) {
+    const taskRoutePrefix = `${PROJECT_API_ROUTES.tasks.list}/`;
+    if (req.method === "GET" && url.pathname.startsWith(taskRoutePrefix)) {
       let taskId: string;
       try {
-        taskId = decodeURIComponent(url.pathname.slice("/tasks/".length));
+        taskId = decodeURIComponent(url.pathname.slice(taskRoutePrefix.length));
       } catch {
         send(res, 400, { ok: false, error: "invalid taskId" });
         return;
@@ -1655,10 +1658,11 @@ export class MetadataServer {
     }
 
     try {
-      if (req.method === "GET" && url.pathname.startsWith("/plans/")) {
+      const planRoutePrefix = `${PROJECT_API_ROUTES.plans}/`;
+      if (req.method === "GET" && url.pathname.startsWith(planRoutePrefix)) {
         let raw: string;
         try {
-          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+          raw = decodeURIComponent(url.pathname.slice(planRoutePrefix.length));
         } catch {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
@@ -1684,10 +1688,10 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "PUT" && url.pathname.startsWith("/plans/")) {
+      if (req.method === "PUT" && url.pathname.startsWith(planRoutePrefix)) {
         let raw: string;
         try {
-          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+          raw = decodeURIComponent(url.pathname.slice(planRoutePrefix.length));
         } catch {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
@@ -1719,7 +1723,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-status") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setStatus) {
         const body = (await readJson(req)) as { session: string; text: string; tone?: MetadataTone };
         updateSessionMetadata(body.session, (current) => ({
           ...current,
@@ -1730,7 +1734,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-dashboard") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.openDashboard) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1766,7 +1770,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-inbox") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.openInbox) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1801,7 +1805,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-notification-target") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.openNotificationTarget) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1895,7 +1899,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/focus-window") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.focusWindow) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1933,7 +1937,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/active-window") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.activeWindow) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1958,7 +1962,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/switch-next") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.switchNext) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1995,7 +1999,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/switch-prev") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.switchPrev) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -2032,7 +2036,7 @@ export class MetadataServer {
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/switch-attention") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.switchAttention) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -2069,7 +2073,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-progress") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setProgress) {
         const body = (await readJson(req)) as {
           session: string;
           current: number;
@@ -2085,7 +2089,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-context") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setContext) {
         const body = (await readJson(req)) as {
           session: string;
           context: SessionContextMetadata;
@@ -2102,7 +2106,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-services") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setServices) {
         const body = (await readJson(req)) as {
           session: string;
           services: SessionServiceMetadata[];
@@ -2119,7 +2123,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/log") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.log) {
         const body = (await readJson(req)) as {
           session: string;
           message: string;
@@ -2141,7 +2145,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/event") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.event) {
         const body = (await readJson(req)) as { session: string; event: AgentEvent };
         this.tracker.emit(body.session, body.event);
         if (body.event.kind === "needs_input") {
@@ -2186,7 +2190,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/mark-seen") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.markSeen) {
         const body = (await readJson(req)) as { session: string };
         markSessionViewed(body.session);
         this.options.onChange?.();
@@ -2194,7 +2198,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-activity") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setActivity) {
         const body = (await readJson(req)) as { session: string; activity: AgentActivityState };
         this.tracker.setActivity(body.session, body.activity);
         this.options.onChange?.();
@@ -2202,7 +2206,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-attention") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setAttention) {
         const body = (await readJson(req)) as { session: string; attention: AgentAttentionState };
         this.tracker.setAttention(body.session, body.attention);
         if (body.attention === "needs_input") {
@@ -2238,7 +2242,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/register") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionRegister) {
         const body = (await readJson(req)) as {
           session?: string;
           type?: InteractionType;
@@ -2264,7 +2268,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/notify") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionNotify) {
         // Read-only telemetry (e.g. Codex, whose native TUI owns the decision):
         // emit a non-actionable interaction alert and flag attention, but never
         // register a blocking interaction. Returns immediately.
@@ -2311,7 +2315,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/request") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionRequest) {
         const body = (await readJson(req)) as {
           session?: string;
           type?: InteractionType;
@@ -2361,7 +2365,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/interaction/wait") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.interactionWait) {
         const id = url.searchParams.get("id")?.trim();
         if (!id) {
           send(res, 400, { ok: false, error: "id is required" });
@@ -2385,7 +2389,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/respond") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionRespond) {
         const body = (await readJson(req)) as { id?: string; response?: InteractionResponse };
         const id = body.id?.trim();
         if (!id) {
@@ -2410,13 +2414,13 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/interaction/pending") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.interactionPending) {
         const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
         send(res, 200, { ok: true, requests: this.interactions.listPending(sessionId) });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/interaction/stream") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.interactionStream) {
         res.statusCode = 200;
         res.setHeader("content-type", "text/event-stream");
         res.setHeader("cache-control", "no-cache, no-transform");
@@ -2458,7 +2462,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/clear-log") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.clearLog) {
         const body = (await readJson(req)) as { session: string };
         clearSessionLogs(body.session);
         this.options.onChange?.();
@@ -2466,7 +2470,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notify") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.notify) {
         const body = (await readJson(req)) as {
           title?: string;
           subtitle?: string;
@@ -2524,7 +2528,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notification-context") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.notificationContext) {
         const body = (await readJson(req)) as {
           source?: "desktop" | "tui";
           focused?: boolean;
@@ -2543,7 +2547,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notifications/read") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.read) {
         const body = (await readJson(req)) as { id?: string; sessionId?: string };
         const updated = markNotificationsRead({
           id: body.id?.trim() || undefined,
@@ -2553,7 +2557,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notifications/clear") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.clear) {
         const body = (await readJson(req)) as { id?: string; sessionId?: string };
         const cleared = clearNotifications({
           id: body.id?.trim() || undefined,
@@ -2563,7 +2567,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/operation-failures/clear") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.operationFailuresClear) {
         const body = (await readJson(req)) as {
           targetKind?: "worktree" | "agent" | "service" | "dashboard";
           operation?: string;
@@ -2581,7 +2585,11 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && (url.pathname === "/inbox/read" || url.pathname === "/inbox/clear")) {
+      if (
+        req.method === "POST" &&
+        (url.pathname === PROJECT_API_ROUTES.runtime.inboxRead ||
+          url.pathname === PROJECT_API_ROUTES.runtime.inboxClear)
+      ) {
         const body = (await readJson(req)) as {
           id?: string;
           sessionId?: string;
@@ -2597,7 +2605,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/shell-state") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.shellState) {
         const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string; command?: string };
         const result = applyShellStateTransition({
           state: body.state,
@@ -2612,7 +2620,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/open") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.open) {
         const body = (await readJson(req)) as {
           title: string;
           from: string;
@@ -2632,7 +2640,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/send") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.send) {
         const body = (await readJson(req)) as {
           threadId?: string;
           from?: string;
@@ -2691,7 +2699,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/mark-seen") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.markSeen) {
         const body = (await readJson(req)) as { threadId: string; session?: string; sessionId?: string };
         const sessionId = (body.session ?? body.sessionId ?? "").trim();
         if (!sessionId) {
@@ -2708,7 +2716,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/status") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.status) {
         const body = (await readJson(req)) as {
           threadId: string;
           status: ThreadStatus;
@@ -2728,7 +2736,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/handoff") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.handoff.send) {
         const body = (await readJson(req)) as {
           from?: string;
           to?: string[];
@@ -2764,7 +2772,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/handoff/accept") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.handoff.accept) {
         const body = (await readJson(req)) as { threadId: string; from?: string; body?: string };
         const result = this.options.actions?.acceptHandoff
           ? this.options.actions.acceptHandoff(body)
@@ -2778,7 +2786,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/handoff/complete") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.handoff.complete) {
         const body = (await readJson(req)) as { threadId: string; from?: string; body?: string };
         const result = this.options.actions?.completeHandoff
           ? this.options.actions.completeHandoff(body)
@@ -2792,7 +2800,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/assign") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.assign) {
         const body = (await readJson(req)) as {
           from?: string;
           to?: string | string[];
@@ -2821,7 +2829,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/accept") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.accept) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.acceptTask
           ? await this.options.actions.acceptTask(body)
@@ -2835,7 +2843,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/block") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.block) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.blockTask
           ? await this.options.actions.blockTask(body)
@@ -2860,7 +2868,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/complete") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.complete) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.completeTask
           ? await this.options.actions.completeTask(body)
@@ -2885,7 +2893,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/spawn") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.spawn) {
         const body = (await readJson(req)) as {
           tool: string;
           sessionId?: string;
@@ -2904,7 +2912,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/teammates") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.teammates) {
         const parentSessionId = url.searchParams.get("parentSessionId")?.trim() ?? "";
         const result = this.resolveDirectTeammates(parentSessionId);
         if (!result.ok) {
@@ -2919,7 +2927,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/create") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.createTeammate) {
         const body = (await readJson(req)) as {
           parentSessionId: string;
           role?: string;
@@ -2983,7 +2991,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/tasks") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.createTeammateTask) {
         const body = (await readJson(req)) as {
           parentSessionId: string;
           teammateSessionId: string;
@@ -3033,15 +3041,15 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/send") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.rawTeammateSend) {
         send(res, 410, {
           ok: false,
-          error: "raw teammate send has been removed; create durable teammate work with /agents/teammates/tasks",
+          error: `raw teammate send has been removed; create durable teammate work with ${PROJECT_API_ROUTES.agents.createTeammateTask}`,
         });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/stop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.stopTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -3066,7 +3074,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/resume") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.resumeTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -3094,7 +3102,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/kill") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.killTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -3121,7 +3129,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/resurrect") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.resurrectTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectGraveyardTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -3146,7 +3154,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/fork") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.fork) {
         const body = (await readJson(req)) as {
           sourceSessionId: string;
           tool: string;
@@ -3166,7 +3174,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/stop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.stop) {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.lifecycle?.stopAgent) {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
@@ -3178,7 +3186,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/resume") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.resume) {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.desktop?.resumeAgent) {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
@@ -3190,7 +3198,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/record-backend-session") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.recordBackendSession) {
         const body = (await readJson(req)) as { sessionId: string; backendSessionId: string };
         if (!this.options.lifecycle?.recordBackendSessionId) {
           send(res, 501, { ok: false, error: "backend session recording not supported by this service" });
@@ -3202,7 +3210,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interrupt") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interrupt) {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.lifecycle?.interruptAgent) {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
@@ -3214,7 +3222,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/rename") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.rename) {
         const body = (await readJson(req)) as { sessionId: string; label?: string };
         if (!this.options.lifecycle?.renameAgent) {
           send(res, 501, { ok: false, error: "agent rename not supported by this service" });
@@ -3226,7 +3234,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/migrate") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.migrate) {
         const body = (await readJson(req)) as { sessionId: string; worktreePath: string };
         if (!this.options.lifecycle?.migrateAgent) {
           send(res, 501, { ok: false, error: "agent migrate not supported by this service" });
@@ -3238,7 +3246,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/kill") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.kill) {
         const body = (await readJson(req)) as { sessionId: string; session?: Record<string, unknown> };
         if (!this.options.lifecycle?.killAgent) {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
@@ -3250,7 +3258,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/input") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.input) {
         const body = (await readJson(req)) as { sessionId?: string; text?: string; attachmentIds?: unknown };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3288,7 +3296,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/loop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.loop) {
         const body = (await readJson(req)) as { sessionId?: string; active?: boolean; goal?: string };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3313,7 +3321,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/overseer") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.overseer) {
         const body = (await readJson(req)) as { sessionId?: string; active?: boolean };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3326,7 +3334,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/attachments") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.attachments) {
         const body = (await readJson(req)) as { filename?: unknown; mimeType?: unknown; dataBase64?: unknown };
         if (
           typeof body.filename !== "string" ||
@@ -3371,7 +3379,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/output") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.output) {
         const sessionId = url.searchParams.get("sessionId")?.trim();
         const startLineRaw = url.searchParams.get("startLine");
         if (!sessionId) {
@@ -3393,12 +3401,12 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/history") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.history) {
         send(res, 410, { ok: false, error: "agent message history requires the runtime core replacement" });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/worktrees/create") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.create) {
         const body = (await readJson(req)) as { name: string };
         if (!this.options.desktop?.createWorktree) {
           send(res, 501, { ok: false, error: "worktree create not supported by this service" });
@@ -3436,7 +3444,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/worktrees/remove") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.remove) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.removeWorktree) {
           send(res, 501, { ok: false, error: "worktree remove not supported by this service" });
@@ -3474,7 +3482,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/worktrees/graveyard") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.graveyard) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.graveyardWorktree) {
           send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
@@ -3486,7 +3494,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/create") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.create) {
         const body = (await readJson(req)) as { command?: string; worktreePath?: string; serviceId?: string };
         if (!this.options.desktop?.createService) {
           send(res, 501, { ok: false, error: "service create not supported by this service" });
@@ -3498,7 +3506,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/stop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.stop) {
         const body = (await readJson(req)) as { serviceId: string };
         if (!this.options.desktop?.stopService) {
           send(res, 501, { ok: false, error: "service stop not supported by this service" });
@@ -3510,7 +3518,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/resume") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.resume) {
         const body = (await readJson(req)) as { serviceId: string };
         if (!this.options.desktop?.resumeService) {
           send(res, 501, { ok: false, error: "service resume not supported by this service" });
@@ -3522,7 +3530,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/remove") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.remove) {
         const body = (await readJson(req)) as { serviceId: string };
         if (!this.options.desktop?.removeService) {
           send(res, 501, { ok: false, error: "service remove not supported by this service" });
@@ -3534,7 +3542,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/resurrect") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.resurrectAgent) {
         const body = (await readJson(req)) as { sessionId?: string; id?: string };
         const sessionId = (body.sessionId ?? body.id ?? "").trim();
         if (!sessionId) {
@@ -3551,7 +3559,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/worktrees/resurrect") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.resurrectWorktree) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.resurrectGraveyardWorktree) {
           send(res, 501, { ok: false, error: "worktree graveyard resurrection not supported by this service" });
@@ -3563,7 +3571,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/worktrees/delete") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.deleteWorktree) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.deleteGraveyardWorktree) {
           send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
@@ -3575,7 +3583,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/cleanup") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.cleanup) {
         const body = (await readJson(req).catch(() => ({}))) as { dryRun?: boolean };
         if (!this.options.desktop?.cleanupGraveyard) {
           send(res, 501, { ok: false, error: "graveyard cleanup not supported by this service" });
@@ -3587,7 +3595,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/reviews/approve") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.reviews.approve) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.approveReview
           ? await this.options.actions.approveReview(body)
@@ -3607,7 +3615,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/reviews/request-changes") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.reviews.requestChanges) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.requestTaskChanges
           ? await this.options.actions.requestTaskChanges(body)
@@ -3627,7 +3635,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/reopen") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.reopen) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.reopenTask
           ? await this.options.actions.reopenTask(body)
