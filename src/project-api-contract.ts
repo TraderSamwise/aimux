@@ -222,7 +222,10 @@ interface LivePaneAttachBaseRequest extends LivePaneSessionInput {
 }
 
 export type LivePaneAttachRequest =
-  | LivePaneAttachBaseRequest
+  | (LivePaneAttachBaseRequest & {
+      cols?: never;
+      rows?: never;
+    })
   | (LivePaneAttachBaseRequest & {
       cols: number;
       rows: number;
