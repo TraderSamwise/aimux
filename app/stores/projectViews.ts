@@ -16,7 +16,6 @@ const SERVICE_VIEW_REFRESHES = new Set<ProjectApiView>([
   "tasks",
   "threads",
   "topology",
-  "workflow",
   "worktrees",
 ]);
 

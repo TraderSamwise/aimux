@@ -8,39 +8,9 @@ import {
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
 import type { InteractionType } from "./interaction-requests.js";
+import type { NotificationInteractionRecord, NotificationRecord } from "./project-api-contract.js";
 
-export interface NotificationInteractionRecord {
-  id: string;
-  type: InteractionType;
-  summary?: string;
-  telemetry?: boolean;
-  toolName?: string;
-  toolInputJSON?: string;
-}
-
-export interface NotificationRecord {
-  id: string;
-  title: string;
-  subtitle?: string;
-  body: string;
-  sessionId?: string;
-  targetKey?: string;
-  targetKind?: "session" | "generic";
-  kind?: string;
-  projectName?: string;
-  projectRoot?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  branch?: string;
-  categoryLabel?: string;
-  reasonLabel?: string;
-  unread: boolean;
-  cleared: boolean;
-  createdAt: string;
-  updatedAt: string;
-  dedupeKey?: string;
-  interaction?: NotificationInteractionRecord;
-}
+export type { NotificationInteractionRecord, NotificationRecord } from "./project-api-contract.js";
 
 const PROJECT_NOTIFICATION_PARTICIPANT = "project";
 /** Tag marking an exchange thread as a notification record (not a workflow thread). */

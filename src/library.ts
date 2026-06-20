@@ -1,18 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { LibraryEntry } from "./project-api-contract.js";
 
-export type LibraryEntryKind = "doc" | "plan";
-
-export interface LibraryEntry {
-  id: string;
-  kind: LibraryEntryKind;
-  title: string;
-  path: string;
-  updatedAt: string;
-  sessionId?: string;
-  label?: string;
-  preview: string;
-}
+export type { LibraryEntry, LibraryEntryKind } from "./project-api-contract.js";
 
 // Mirrors metadata-server's LIBRARY_DOC_ALLOWLIST so the TUI library and the
 // app/HTTP library surface the same project documents.
