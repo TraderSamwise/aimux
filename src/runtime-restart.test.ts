@@ -241,4 +241,35 @@ describe("restartAimuxControlPlane", () => {
     expect(calls.indexOf("pid:1001:dead")).toBeLessThan(calls.indexOf("ensure-daemon"));
     expect(calls.indexOf("ensure-daemon")).toBeLessThan(calls.indexOf("ensure-service:/repo/alpha"));
   });
+
+  it("does not wait or kill service pids when no daemon was stopped", async () => {
+    const isPidAlive = vi.fn(() => {
+      throw new Error("should not inspect service pids without a daemon stop");
+    });
+    const killPid = vi.fn();
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => null),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive,
+      killPid,
+    });
+
+    expect(isPidAlive).not.toHaveBeenCalled();
+    expect(killPid).not.toHaveBeenCalled();
+  });
 });

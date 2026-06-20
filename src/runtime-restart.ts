@@ -167,7 +167,7 @@ async function waitForPidsExit(input: {
 }
 
 function priorProjectServicePids(before: RuntimeCoherenceReport): number[] {
-  return before.projects.flatMap((project) => [project.service.daemonState?.pid ?? 0, project.service.pid ?? 0]);
+  return before.projects.map((project) => project.service.daemonState?.pid ?? 0);
 }
 
 export async function restartAimuxControlPlane(
@@ -190,15 +190,15 @@ export async function restartAimuxControlPlane(
       sleep,
       killPid,
     });
+    await waitForPidsExit({
+      pids: priorProjectServicePids(before),
+      timeoutMs: options.serviceExitTimeoutMs ?? 5000,
+      killGraceMs: options.killGraceMs ?? 2000,
+      isPidAlive,
+      sleep,
+      killPid,
+    });
   }
-  await waitForPidsExit({
-    pids: priorProjectServicePids(before),
-    timeoutMs: options.serviceExitTimeoutMs ?? 5000,
-    killGraceMs: options.killGraceMs ?? 2000,
-    isPidAlive,
-    sleep,
-    killPid,
-  });
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
