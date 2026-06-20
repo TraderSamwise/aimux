@@ -1333,6 +1333,27 @@ describe("MetadataServer threads API", () => {
       expect(invalidSwitchBody).toEqual({ ok: false, error: "currentClientSession is not a project client" });
       expect(TmuxRuntimeManager.prototype.listManagedWindows).not.toHaveBeenCalled();
 
+      TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+        sessionName === "aimux-test-client-123" ? [{ id: "@7", index: 7, name: "codex", active: true }] : [];
+      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      const deadManagedRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-test-client-123",
+          clientTty: "/dev/ttys001",
+          currentWindow: "codex",
+          currentWindowId: "@7",
+        }),
+      });
+      const deadManagedBody = (await deadManagedRes.json()) as { ok: boolean; error?: string };
+      expect(deadManagedRes.status).toBe(404);
+      expect(deadManagedBody).toEqual({ ok: false, error: "window not found" });
+      expect(loadNotificationContexts().contexts.tui).toBeUndefined();
+      TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+        sessionName === "aimux-test-client-123" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
+      TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+
       const spoofedDashboardRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },

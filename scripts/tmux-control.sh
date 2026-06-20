@@ -340,6 +340,7 @@ switch_local_window() {
     resolve_live_client || return 1
   fi
   item_id="${2-}"
+  is_live_window "$target_window_id" || return 1
   target_index=$(ensure_linked_window "$target_window_id") || return 1
   if [ -n "${live_client_tty-}" ]; then
     tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
@@ -355,6 +356,13 @@ switch_local_window() {
     tmux refresh-client -S >/dev/null 2>&1 || true
   fi
   exit 0
+}
+
+is_live_window() {
+  target_window_id="$1"
+  [ -n "$target_window_id" ] || return 1
+  pane_dead=$(tmux display-message -p -t "$target_window_id" '#{pane_dead}' 2>/dev/null || true)
+  [ "$pane_dead" != "1" ] && [ -n "$pane_dead" ]
 }
 
 show_local_message() {
@@ -669,7 +677,7 @@ if explicit_window_id:
     raise SystemExit(0)
 
 try:
-    windows = run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}").splitlines()
+    windows = run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}|#{pane_dead}").splitlines()
     log(f"start host={host_session!r} currentWindowId={current_window_id!r} currentPath={current_path!r} windows={len(windows)}")
 except Exception as error:
     log(f"list windows failed host={host_session!r} error={error}")
@@ -678,9 +686,12 @@ except Exception as error:
 items = []
 for line in windows:
     try:
-        window_id, index, name = line.split("|", 2)
+        window_id, index, name, pane_dead = line.split("|", 3)
     except ValueError:
         log(f"skip malformed window line={line!r}")
+        continue
+    if pane_dead == "1":
+        log(f"skip dead window={window_id!r} name={name!r}")
         continue
     try:
         raw = run("show-window-options", "-v", "-t", window_id, "@aimux-meta").strip()
