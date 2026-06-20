@@ -1,7 +1,5 @@
 import type { AimuxDaemon } from "./daemon.js";
 import { notifyRemoteClientConnected } from "./notify.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
-import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 
 interface RelayRequest {
   id: string;
@@ -60,8 +58,6 @@ const MAX_RETRY_MS = 30_000;
 const MAX_HANDSHAKE_FAILURES = 5;
 const REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS = 5 * 60 * 1000;
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
-const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
-const DAEMON_ROUTE_BASE_URL = "http://127.0.0.1";
 
 export type RelayConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected" | "auth_failed";
 
@@ -139,6 +135,7 @@ export class RelayClient {
 
     this.ws.addEventListener("close", (event) => {
       this.ws = null;
+      this.abortProjectEventSubscriptions();
       const code = (event as unknown as { code?: number }).code;
       // 1008/4001 = auth rejected by relay; don't hammer with retries.
       if (code === 1008 || code === 4001) {
@@ -270,7 +267,7 @@ export class RelayClient {
     message: RelayProjectEventsSubscribe,
     controller: AbortController,
   ): Promise<void> {
-    const routed = this.resolveProjectEventsRoute(message.path, message.headers);
+    const routed = this.daemon.resolveProjectEventStream(message.path, message.headers);
     if (!routed.ok) {
       this.sendRaw(
         JSON.stringify({
@@ -284,7 +281,11 @@ export class RelayClient {
     }
 
     try {
-      const response = await fetch(routed.url, { method: "GET", signal: controller.signal });
+      const response = await fetch(routed.url, {
+        method: "GET",
+        headers: routed.headers,
+        signal: controller.signal,
+      });
       if (!response.ok || !response.body) {
         this.sendRaw(
           JSON.stringify({
@@ -319,27 +320,6 @@ export class RelayClient {
         }),
       );
     }
-  }
-
-  private resolveProjectEventsRoute(
-    path: string,
-    headers?: Record<string, string>,
-  ): { ok: true; url: string } | { ok: false; status: number; error: string } {
-    const routeUrl = new URL(path, DAEMON_ROUTE_BASE_URL);
-    const pathname = routeUrl.pathname;
-    const actor = parseRemoteActor(headers);
-    const access = assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
-    if (!access.ok) {
-      return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
-    }
-    const proxyMatch = pathname.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
-    if (!proxyMatch) return { ok: false, status: 400, error: "project event stream must use a project proxy path" };
-    const [, host, portStr, subPath] = proxyMatch;
-    if (!PROXY_ALLOWED_HOSTS.has(host)) return { ok: false, status: 403, error: "proxy host not allowed" };
-    if (subPath !== PROJECT_API_ROUTES.events) {
-      return { ok: false, status: 400, error: "project event stream path must be /events" };
-    }
-    return { ok: true, url: `http://${host}:${portStr}${subPath}${routeUrl.search}` };
   }
 
   private async readProjectEventStream(

@@ -558,6 +558,44 @@ describe("daemon routing (relay + proxy)", () => {
     );
   });
 
+  it("resolves authorized shared guest project event streams", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = daemon.resolveProjectEventStream("/proxy/127.0.0.1/4321/events?sessionId=claude-1", {
+      "x-aimux-actor-role": "guest",
+      "x-aimux-share-id": "share_1",
+      "x-aimux-share-session-id": "claude-1",
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      url: "http://127.0.0.1:4321/events?sessionId=claude-1",
+      headers: {
+        "x-aimux-actor-role": "guest",
+        "x-aimux-share-id": "share_1",
+        "x-aimux-share-session-id": "claude-1",
+      },
+    });
+  });
+
+  it("rejects unscoped shared guest project event streams", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = daemon.resolveProjectEventStream("/proxy/127.0.0.1/4321/events", {
+      "x-aimux-actor-role": "guest",
+      "x-aimux-share-id": "share_1",
+      "x-aimux-share-session-id": "claude-1",
+    });
+
+    expect(res).toMatchObject({
+      ok: false,
+      status: 403,
+      error: "shared session route requires a session id",
+    });
+  });
+
   it("returns 504 when the proxied target times out", async () => {
     vi.mocked(requestJson).mockRejectedValueOnce(new Error("request timed out after 10000ms"));
     const { AimuxDaemon } = await import("./daemon.js");

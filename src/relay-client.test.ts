@@ -107,7 +107,13 @@ describe("RelayClient runtime compatibility", () => {
           });
         }),
       );
-      const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
+      const daemon = {
+        routeRequest: vi.fn(),
+        resolveProjectEventStream: vi.fn(() => ({
+          ok: true,
+          url: "http://127.0.0.1:4321/events",
+        })),
+      } as unknown as AimuxDaemon;
       const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
       (client as unknown as { ws: { readyState: number; send: (data: string) => void } | null }).ws = {
         readyState: 1,
@@ -157,7 +163,14 @@ describe("RelayClient runtime compatibility", () => {
     const sent: string[] = [];
     try {
       vi.stubGlobal("WebSocket", { OPEN: 1 });
-      const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
+      const daemon = {
+        routeRequest: vi.fn(),
+        resolveProjectEventStream: vi.fn(() => ({
+          ok: false,
+          status: 403,
+          error: "shared session route requires a session id",
+        })),
+      } as unknown as AimuxDaemon;
       const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
       (client as unknown as { ws: { readyState: number; send: (data: string) => void } | null }).ws = {
         readyState: 1,
