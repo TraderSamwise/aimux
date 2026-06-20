@@ -263,27 +263,48 @@ describe("api relay routing", () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ ok: true });
 
-    await openDashboard(endpoint);
-    await openInbox(endpoint);
-    await switchNextAgent(endpoint);
-    await switchPrevAgent(endpoint);
-    await switchAttentionAgent(endpoint);
+    await openDashboard(endpoint, { currentClientSession: "client-1" });
+    await openInbox(endpoint, { currentClientSession: "client-1" });
+    await openNotificationTarget(endpoint, { sessionId: "agent-1" });
+    await focusWindow(endpoint, { windowId: "@7" });
+    await switchNextAgent(endpoint, { currentClientSession: "client-1" });
+    await switchPrevAgent(endpoint, { currentClientSession: "client-1" });
+    await switchAttentionAgent(endpoint, { currentClientSession: "client-1" });
+    await focusWindow(endpoint, { windowId: "@8", focus: true, currentClientSession: "client-1" });
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/control/open-dashboard", {
+      currentClientSession: "client-1",
       focus: false,
     });
     expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/control/open-inbox", {
+      currentClientSession: "client-1",
       focus: false,
     });
-    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {
+    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/control/open-notification-target", {
+      sessionId: "agent-1",
       focus: false,
     });
-    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/control/switch-prev", {
+    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/control/focus-window", {
+      windowId: "@7",
       focus: false,
     });
-    expect(request).toHaveBeenNthCalledWith(5, "POST", "/proxy/127.0.0.1/43210/control/switch-attention", {
+    expect(request).toHaveBeenNthCalledWith(5, "POST", "/proxy/127.0.0.1/43210/control/switch-next", {
+      currentClientSession: "client-1",
       focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(6, "POST", "/proxy/127.0.0.1/43210/control/switch-prev", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(7, "POST", "/proxy/127.0.0.1/43210/control/switch-attention", {
+      currentClientSession: "client-1",
+      focus: false,
+    });
+    expect(request).toHaveBeenNthCalledWith(8, "POST", "/proxy/127.0.0.1/43210/control/focus-window", {
+      windowId: "@8",
+      focus: true,
+      currentClientSession: "client-1",
     });
   });
 
