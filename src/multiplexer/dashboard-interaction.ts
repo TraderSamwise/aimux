@@ -6,7 +6,6 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { requestReview } from "../task-workflow.js";
@@ -402,16 +401,24 @@ export const dashboardInteractionMethods = {
             return;
           }
           if (isFailedDashboardWorktree(focusedGroup)) {
-            clearDashboardOperationFailures({
-              targetKind: "worktree",
-              operation: focusedGroup.operationFailure.operation,
-              worktreePath: this.dashboardState.focusedWorktreePath,
-            });
             this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
             this.footerFlashTicks = 3;
-            this.invalidateDesktopStateSnapshot();
-            this.refreshLocalDashboardModel();
             this.renderDashboard();
+            void this
+              .postToProjectService("/operation-failures/clear", {
+                targetKind: "worktree",
+                operation: focusedGroup.operationFailure.operation,
+                worktreePath: this.dashboardState.focusedWorktreePath,
+              })
+              .then(async () => {
+                await this.refreshDashboardModelFromService(true);
+                this.renderDashboard();
+              })
+              .catch((error: unknown) => {
+                this.showDashboardError("Failed to dismiss worktree failure", [
+                  error instanceof Error ? error.message : String(error),
+                ]);
+              });
             return;
           }
           const wtName =
@@ -685,7 +692,7 @@ export const dashboardInteractionMethods = {
     const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
     if (openResult !== "missing") {
       if (entry.status === "offline") {
-        this.refreshLocalDashboardModel();
+        await this.refreshDashboardModelFromService?.(true);
         this.renderDashboard();
       }
       return;

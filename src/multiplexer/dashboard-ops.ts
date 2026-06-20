@@ -130,11 +130,9 @@ function assertDashboardMutationSettled(settled: boolean, action: string): void 
 async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOpsHost): Promise<boolean> {
   if (typeof host.refreshDashboardModelFromService === "function") {
     await host.refreshDashboardModelFromService(true);
+    return true;
   }
-  if (typeof host.refreshLocalDashboardModel === "function") {
-    host.refreshLocalDashboardModel();
-  }
-  return true;
+  return false;
 }
 
 async function waitForStableDashboardSessionAbsence(
@@ -188,9 +186,6 @@ async function waitForDashboardSessionResumeSettle(
     const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
     if (isLiveDashboardSessionEntry(entry)) {
       if (entry?.status === "offline" || entry?.pendingAction === "starting") {
-        if (typeof host.refreshLocalDashboardModel === "function") {
-          host.refreshLocalDashboardModel();
-        }
         if (typeof host.renderDashboard === "function") {
           host.renderDashboard();
         }
@@ -201,7 +196,7 @@ async function waitForDashboardSessionResumeSettle(
       typeof host.waitForSessionStart === "function" &&
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
     ) {
-      host.refreshLocalDashboardModel();
+      await host.refreshDashboardModelFromService(true);
       host.renderDashboard();
       const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
       if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
@@ -209,9 +204,6 @@ async function waitForDashboardSessionResumeSettle(
     if (hasLiveManagedAgentWindow(host, sessionId)) {
       if (typeof host.refreshDashboardModelFromService === "function") {
         await host.refreshDashboardModelFromService(true);
-      }
-      if (typeof host.refreshLocalDashboardModel === "function") {
-        host.refreshLocalDashboardModel();
       }
       if (typeof host.renderDashboard === "function") {
         host.renderDashboard();
@@ -242,9 +234,6 @@ async function waitForRenderedDashboardServiceState(
         isLiveDashboardServiceEntry(service) &&
         (service?.status !== "running" || service?.pendingAction === "starting")
       ) {
-        if (typeof host.refreshLocalDashboardModel === "function") {
-          host.refreshLocalDashboardModel();
-        }
         if (typeof host.renderDashboard === "function") {
           host.renderDashboard();
         }
