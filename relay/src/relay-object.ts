@@ -486,20 +486,21 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private removeSocket(ws: WebSocket): void {
-    this.rehydrateSockets();
     const tags = this.ctx.getTags(ws);
-    const wasActiveDaemon = tags.includes("daemon") && this.daemonWs === ws;
+    const wasKnownActiveDaemon = tags.includes("daemon") && this.daemonWs === ws;
     const closingProjectEventSubscriptionIds = tags.includes("client")
       ? Object.keys(this.clientSocketAttachment(ws).projectEventSubscriptions ?? {})
       : [];
     this.rehydrateSockets(ws);
-    if (wasActiveDaemon) {
-      this.daemonWs = null;
+    if (tags.includes("daemon") && (wasKnownActiveDaemon || !this.daemonWs)) {
+      const replacementDaemon = this.daemonWs;
       // Fail every in-flight request immediately instead of waiting for
       // the TTL — the daemon that was going to answer just disappeared.
       this.failPendingRequests("Daemon connection lost", 502);
       this.failProjectEventSubscriptions("Daemon connection lost", 502);
-      this.broadcastToClients({ type: "daemon_status", online: false });
+      if (!replacementDaemon) {
+        this.broadcastToClients({ type: "daemon_status", online: false });
+      }
     } else {
       this.clientSockets.delete(ws);
       this.clientDeviceIds.delete(ws);
