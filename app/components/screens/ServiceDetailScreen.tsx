@@ -1,19 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronLeft } from "lucide-react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
+import { getDesktopState } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { env } from "@/lib/env";
 import { singleRouteParam } from "@/lib/route-params";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
-import { worktreeGroupsFamily } from "@/stores/desktopState";
+import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
+import { relayStatusAtom } from "@/stores/relay";
 
 function findService(
   groups: WorktreeBucket[],
@@ -45,12 +48,17 @@ export default function ServiceDetailScreen() {
   const serviceId = singleRouteParam(params.serviceId);
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
-  const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
+  const projectPath = project?.path ?? "";
+  const groups = useAtomValue(worktreeGroupsFamily(projectPath));
+  const setDesktopState = useSetAtom(desktopStateFamily(projectPath));
+  const relayStatus = useAtomValue(relayStatusAtom);
   const router = useRouter();
   const pathname = usePathname();
 
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | null>(null);
+  const [loadingMissingService, setLoadingMissingService] = useState(false);
+  const [missingServiceFetchKey, setMissingServiceFetchKey] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -67,6 +75,42 @@ export default function ServiceDetailScreen() {
   }, [getToken]);
 
   const found = useMemo(() => findService(groups, serviceId), [groups, serviceId]);
+  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const relayReadyForRequests = !env.AIMUX_RELAY_URL || relayStatus === "connected";
+
+  useEffect(() => {
+    if (found || !endpoint || !endpointKey || !projectPath || !serviceId) return;
+    if (!relayReadyForRequests) return;
+    const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
+    if (missingServiceFetchKey === fetchKey) return;
+    let cancelled = false;
+    (async () => {
+      setMissingServiceFetchKey(fetchKey);
+      setLoadingMissingService(true);
+      try {
+        const currentToken = await getToken();
+        const state = await getDesktopState(endpoint, { token: currentToken });
+        if (!cancelled) setDesktopState(state);
+      } catch (err) {
+        console.warn("service detail desktop-state refresh failed:", err);
+      } finally {
+        if (!cancelled) setLoadingMissingService(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    endpoint,
+    endpointKey,
+    found,
+    getToken,
+    missingServiceFetchKey,
+    projectPath,
+    relayReadyForRequests,
+    serviceId,
+    setDesktopState,
+  ]);
 
   function goBack() {
     if (router.canGoBack()) router.back();
@@ -81,7 +125,9 @@ export default function ServiceDetailScreen() {
           <Text className="text-sm text-muted-foreground">Back</Text>
         </Pressable>
 
-        {!found ? (
+        {!found && loadingMissingService ? (
+          <Text className="text-sm text-muted-foreground">Loading service...</Text>
+        ) : !found ? (
           <Text className="text-sm text-muted-foreground">
             Service not found. It may have been removed.
           </Text>
