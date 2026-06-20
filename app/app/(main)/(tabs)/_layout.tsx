@@ -18,6 +18,7 @@ export default function MainTabsLayout() {
       tabBar={(props) => <MobileTabBar {...props} />}
     >
       <Tabs.Screen name="(dashboard)" />
+      <Tabs.Screen name="coordination" />
       <Tabs.Screen name="topology" />
       <Tabs.Screen name="project" />
       <Tabs.Screen name="library" />

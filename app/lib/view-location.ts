@@ -92,6 +92,7 @@ export function detailHrefForPath(
 }
 
 function detailTabPrefix(pathname: string): string {
+  if (pathname.startsWith("/coordination")) return "/coordination";
   if (pathname.startsWith("/topology")) return "/topology";
   if (pathname.startsWith("/project")) return "/project";
   if (pathname.startsWith("/library")) return "/library";

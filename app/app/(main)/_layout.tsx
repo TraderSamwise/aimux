@@ -18,6 +18,7 @@ import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
+  kickDesktopStateRefreshAtom,
   desktopStateRefreshNonceAtom,
 } from "@/stores/desktopState";
 import {
@@ -34,6 +35,10 @@ import {
   selectedProjectPathAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
+import {
+  kickProjectApiViewRefreshAtom,
+  projectUpdateTouchesServiceView,
+} from "@/stores/projectViews";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import {
   activeSharedSessionAtom,
@@ -56,6 +61,8 @@ export default function MainLayout() {
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
   const notificationSettings = useAtomValue(notificationSettingsAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  const kickDesktopStateRefresh = useSetAtom(kickDesktopStateRefreshAtom);
+  const kickProjectApiViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const kickNotificationFeedRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
   const markNotificationRecordsObserved = useSetAtom(markNotificationRecordsObservedAtom);
   const store = useStore();
@@ -309,6 +316,17 @@ export default function MainLayout() {
           token,
           onEvent: (event) => {
             if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
+              if (projectUpdateTouchesServiceView(event.views)) {
+                kickProjectApiViewRefresh();
+              }
+              if (
+                event.views.includes("desktop-state") ||
+                event.views.includes("agents") ||
+                event.views.includes("services") ||
+                event.views.includes("worktrees")
+              ) {
+                kickDesktopStateRefresh();
+              }
               if (event.views.includes("notifications") || event.views.includes("inbox")) {
                 kickNotificationFeedRefresh();
               }
@@ -359,6 +377,8 @@ export default function MainLayout() {
     effectiveProject?.name,
     effectiveProjectPath,
     endpointKey,
+    kickDesktopStateRefresh,
+    kickProjectApiViewRefresh,
     kickNotificationFeedRefresh,
     markNotificationRecordsObserved,
     notificationSettings,

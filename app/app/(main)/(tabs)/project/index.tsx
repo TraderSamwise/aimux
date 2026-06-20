@@ -2,25 +2,23 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
-import { ClipboardList, FileText, GitBranch, Network, RefreshCw } from "lucide-react-native";
+import { ClipboardList, FileText, Network, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
-import { listTasks, type TaskSummaryResponse } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
-import { buildProjectTopology } from "@/lib/openrig-topology";
 import {
-  buildProjectObservability,
-  type ProjectObservability,
-  type ProjectStoryItem,
-} from "@/lib/project-observability";
+  getProjectObservability,
+  listTasks,
+  type ProjectObservabilityResponse,
+  type TaskSummaryResponse,
+} from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
-import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
-import { notificationFeedFamily } from "@/stores/notifications";
+import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
 type ProjectSection =
@@ -41,6 +39,38 @@ const SECTIONS: Array<{ id: ProjectSection; label: string }> = [
   { id: "queue", label: "Queue" },
   { id: "topology", label: "Topology" },
 ];
+
+type ProjectObservabilityModel = ProjectObservabilityResponse["project"];
+type ProjectStoryItem = ProjectObservabilityModel["story"][number];
+
+function emptyProjectObservability(): ProjectObservabilityModel {
+  return {
+    summary: {
+      agentsRunning: 0,
+      agentsWaiting: 0,
+      agentsOffline: 0,
+      services: 0,
+      worktrees: 0,
+      openTasks: 0,
+      doneTasks: 0,
+      unreadNotifications: 0,
+    },
+    progress: {
+      pending: 0,
+      assigned: 0,
+      in_progress: 0,
+      blocked: 0,
+      done: 0,
+      failed: 0,
+      total: 0,
+    },
+    story: [],
+  };
+}
+
+function matchesStoryTerms(item: ProjectStoryItem, terms: RegExp): boolean {
+  return terms.test([item.title, item.meta, item.body].filter(Boolean).join(" "));
+}
 
 function resolveProjectSection(value: string | null): ProjectSection {
   return SECTIONS.some((section) => section.id === value) ? (value as ProjectSection) : "dashboard";
@@ -144,13 +174,13 @@ function TaskList({ tasks }: { tasks: TaskSummaryResponse[] }) {
   );
 }
 
-function ProgressSection({ model }: { model: ProjectObservability }) {
+function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
   return (
     <View>
       <View className="mb-4 flex-row flex-wrap">
-        <SummaryTile label="Running" value={model.summary.running} />
-        <SummaryTile label="Waiting" value={model.summary.waiting} />
-        <SummaryTile label="Offline" value={model.summary.offline} />
+        <SummaryTile label="Running" value={model.summary.agentsRunning} />
+        <SummaryTile label="Waiting" value={model.summary.agentsWaiting} />
+        <SummaryTile label="Offline" value={model.summary.agentsOffline} />
         <SummaryTile label="Open Tasks" value={model.summary.openTasks} />
       </View>
       <StoryList items={model.story} />
@@ -164,11 +194,12 @@ export default function ProjectScreen() {
   const [tasks, setTasks] = useState<TaskSummaryResponse[]>([]);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [model, setModel] = useState<ProjectObservabilityModel>(() => emptyProjectObservability());
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [loadingProject, setLoadingProject] = useState(false);
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
-  const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
-  const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
-  const notificationFeed = useAtomValue(notificationFeedFamily(project?.path ?? ""));
+  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
@@ -177,11 +208,36 @@ export default function ProjectScreen() {
   const endpointRef = useRef(endpoint);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
+  const projectRefreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
     getTokenRef.current = getToken;
   }, [endpoint, getToken]);
+
+  const refreshProject = useCallback(async () => {
+    const seq = ++projectRefreshSeqRef.current;
+    const currentEndpoint = endpointRef.current;
+    if (!currentEndpoint) {
+      setModel(emptyProjectObservability());
+      setProjectError(null);
+      setLoadingProject(false);
+      return;
+    }
+    setLoadingProject(true);
+    try {
+      const token = await getTokenRef.current();
+      const response = await getProjectObservability(currentEndpoint, { token });
+      if (seq !== projectRefreshSeqRef.current) return;
+      setModel(response.project);
+      setProjectError(null);
+    } catch (err) {
+      if (seq !== projectRefreshSeqRef.current) return;
+      setProjectError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (seq === projectRefreshSeqRef.current) setLoadingProject(false);
+    }
+  }, []);
 
   const refreshTasks = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
@@ -209,24 +265,28 @@ export default function ProjectScreen() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
+      void refreshProject();
       void refreshTasks();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, refreshTasks]);
+  }, [endpointKey, projectViewRefreshNonce, refreshProject, refreshTasks]);
 
-  const model = useMemo(
+  const artifactHints = useMemo(
+    () => model.story.filter((item) => matchesStoryTerms(item, /artifact|file|doc|plan|handoff/i)),
+    [model.story],
+  );
+  const verificationHints = useMemo(
     () =>
-      buildProjectObservability({
-        desktopState,
-        notifications: notificationFeed?.notifications ?? [],
-        tasks,
-      }),
-    [desktopState, notificationFeed?.notifications, tasks],
+      model.story.filter((item) => matchesStoryTerms(item, /test|verify|lint|build|typecheck/i)),
+    [model.story],
   );
-  const topology = useMemo(
-    () => (project ? buildProjectTopology(project, groups, desktopState) : null),
-    [desktopState, groups, project],
+  const openTasks = useMemo(
+    () => tasks.filter((task) => task.status !== "done" && task.status !== "failed"),
+    [tasks],
   );
+  const agentCount =
+    model.summary.agentsRunning + model.summary.agentsWaiting + model.summary.agentsOffline;
+  const taskCount = model.summary.openTasks + model.summary.doneTasks;
 
   return (
     <Page>
@@ -238,9 +298,12 @@ export default function ProjectScreen() {
           <Button
             variant="outline"
             size="icon"
-            disabled={!endpoint || loadingTasks}
-            onPress={() => void refreshTasks()}
-            accessibilityLabel="Refresh project tasks"
+            disabled={!endpoint || loadingTasks || loadingProject}
+            onPress={() => {
+              void refreshProject();
+              void refreshTasks();
+            }}
+            accessibilityLabel="Refresh project"
           >
             <RefreshCw size={18} color={foregroundIconColor} />
           </Button>
@@ -248,10 +311,10 @@ export default function ProjectScreen() {
       />
 
       <View className="mb-5 flex-row flex-wrap">
-        <SummaryTile label="Agents" value={model.summary.agents} />
+        <SummaryTile label="Agents" value={agentCount} />
         <SummaryTile label="Services" value={model.summary.services} />
         <SummaryTile label="Worktrees" value={model.summary.worktrees} />
-        <SummaryTile label="Tasks" value={model.summary.tasks} />
+        <SummaryTile label="Tasks" value={taskCount} />
         <SummaryTile label="Unread" value={model.summary.unreadNotifications} />
       </View>
 
@@ -273,7 +336,15 @@ export default function ProjectScreen() {
       {!project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
-        <EmptyCard title="Project host offline" body="Start the project host to load tasks." />
+        <EmptyCard
+          title="Project host offline"
+          body="Start the project host to load project state."
+        />
+      ) : projectError ? (
+        <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
+          <Text className="text-sm font-semibold text-foreground">Project state failed</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">{projectError}</Text>
+        </Card>
       ) : taskError ? (
         <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
           <Text className="text-sm font-semibold text-foreground">Project queue failed</Text>
@@ -286,9 +357,9 @@ export default function ProjectScreen() {
           {section === "dashboard" ? <WorktreeDashboard padded={false} /> : null}
           {section === "story" ? <StoryList items={model.story} /> : null}
           {section === "progress" ? <ProgressSection model={model} /> : null}
-          {section === "artifacts" ? <StoryList items={model.artifactHints} /> : null}
-          {section === "tests" ? <StoryList items={model.verificationHints} /> : null}
-          {section === "queue" ? <TaskList tasks={model.openTasks} /> : null}
+          {section === "artifacts" ? <StoryList items={artifactHints} /> : null}
+          {section === "tests" ? <StoryList items={verificationHints} /> : null}
+          {section === "queue" ? <TaskList tasks={openTasks} /> : null}
           {section === "topology" ? (
             <View>
               <Card className="mb-3 rounded-lg p-4">
@@ -299,28 +370,10 @@ export default function ProjectScreen() {
                   </Text>
                 </View>
                 <Text className="mt-2 text-[13px] text-muted-foreground">
-                  {topology?.summary.worktrees ?? 0} worktrees · {topology?.summary.agents ?? 0}{" "}
-                  agents · {topology?.summary.services ?? 0} services
+                  {model.summary.worktrees} worktrees · {agentCount} agents ·{" "}
+                  {model.summary.services} services
                 </Text>
               </Card>
-              {groups.map((bucket) => (
-                <Card key={bucket.key} className="mb-3 rounded-lg p-4">
-                  <View className="flex-row items-center">
-                    <GitBranch size={15} color="#a1a1aa" />
-                    <Text className="ml-2 flex-1 text-[14px] font-semibold text-foreground">
-                      {bucket.name}
-                    </Text>
-                    <Text className="text-[11px] text-muted-foreground">
-                      {bucket.sessions.length + bucket.services.length} nodes
-                    </Text>
-                  </View>
-                  {bucket.branch ? (
-                    <Text className="mt-2 text-[11px] font-mono text-muted-foreground">
-                      {bucket.branch}
-                    </Text>
-                  ) : null}
-                </Card>
-              ))}
             </View>
           ) : null}
         </>

@@ -111,4 +111,11 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
 }
 
 // Re-exports so callers can type-narrow without importing from events directly.
-export type { AgentOutputEvent, AlertEvent, ReadyEvent, ProjectUpdateEvent, StreamErrorEvent, StreamEvent };
+export type {
+  AgentOutputEvent,
+  AlertEvent,
+  ReadyEvent,
+  ProjectUpdateEvent,
+  StreamErrorEvent,
+  StreamEvent,
+};

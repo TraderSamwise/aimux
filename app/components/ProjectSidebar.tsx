@@ -61,6 +61,7 @@ type SidebarMode = "dashboard" | "views";
 function routePrefersViews(tab: MainTabId): boolean {
   return (
     tab === "project" ||
+    tab === "coordination" ||
     tab === "topology" ||
     tab === "library" ||
     tab === "inbox" ||
@@ -481,6 +482,7 @@ function WorktreeTree({
 
 const PRIMARY_NAV = [
   { id: "project", label: "Project", Icon: FolderKanban },
+  { id: "coordination", label: "Coordination", Icon: Bell },
   { id: "topology", label: "Topology", Icon: Network },
   { id: "library", label: "Library", Icon: BookOpen },
   { id: "inbox", label: "Inbox", Icon: Bell },
