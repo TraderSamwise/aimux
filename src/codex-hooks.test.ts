@@ -19,7 +19,8 @@ describe("buildCodexHookCommand", () => {
   it("is self-gating on AIMUX_SESSION_ID and falls back to empty JSON", () => {
     const cmd = buildCodexHookCommand("permission-request");
     expect(cmd).toContain('[ -n "$AIMUX_SESSION_ID" ]');
-    expect(cmd).toContain("codex-hook permission-request");
+    expect(cmd).toContain("codex-hook");
+    expect(cmd).toContain("permission-request");
     expect(cmd).toContain('--session "$AIMUX_SESSION_ID"');
     expect(cmd).toContain('--project "$AIMUX_PROJECT_ROOT"');
     expect(cmd.endsWith("|| echo '{}'")).toBe(true);

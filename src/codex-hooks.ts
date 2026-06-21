@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { getAimuxCliEntryPath } from "./claude-hooks.js";
+import { buildAimuxCliShellCommand } from "./cli-launcher.js";
 
 export interface CodexHookPayload {
   session_id?: string;
@@ -36,10 +36,6 @@ const CODEX_HOOK_EVENTS: ReadonlyArray<{ event: string; action: string; timeoutM
 
 const AIMUX_CODEX_HOOK_MARKER = "codex-hook";
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 export function getCodexHome(codexHome?: string): string {
   return codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
 }
@@ -52,8 +48,8 @@ export function codexHooksPath(codexHome?: string): string {
  * identity comes from AIMUX_SESSION_ID at runtime; the guard no-ops for
  * non-aimux Codex sessions. */
 export function buildCodexHookCommand(action: string): string {
-  const cli = `${shellQuote(process.execPath)} ${shellQuote(getAimuxCliEntryPath())}`;
-  return `[ -n "$AIMUX_SESSION_ID" ] && ${cli} codex-hook ${action} --session "$AIMUX_SESSION_ID" --project "$AIMUX_PROJECT_ROOT" || echo '{}'`;
+  const cli = buildAimuxCliShellCommand(["codex-hook", action]);
+  return `[ -n "$AIMUX_SESSION_ID" ] && ${cli} --session "$AIMUX_SESSION_ID" --project "$AIMUX_PROJECT_ROOT" || echo '{}'`;
 }
 
 export function isAimuxOwnedCodexHookCommand(command: unknown): boolean {
