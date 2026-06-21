@@ -30,13 +30,11 @@ import {
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
-  loadMetadataState,
   type MetadataTone,
   type SessionContextMetadata,
   type SessionServiceMetadata,
   removeMetadataEndpoint,
 } from "./metadata-store.js";
-import { contextualizeAlertInput, metadataDisplayContext } from "./alert-display.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { listDesktopProjects } from "./project-scanner.js";
@@ -55,35 +53,17 @@ import {
 } from "./daemon.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import {
-  createThread,
   listThreadSummaries,
-  markThreadSeen,
   readMessages,
   readThread,
-  setThreadStatus,
   type MessageKind,
   type ThreadKind,
   type ThreadStatus,
 } from "./threads.js";
-import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
-import {
-  acceptHandoff,
-  approveReview,
-  acceptTask,
-  assignTask,
-  blockTask,
-  completeHandoff,
-  completeTask,
-  reopenTask,
-  requestTaskChanges,
-  sendHandoff,
-} from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
-import { upsertNotification, unreadNotificationCount } from "./notifications.js";
-import { notifyAlert } from "./notify.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
@@ -117,7 +97,7 @@ import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
 } from "./runtime-core/topology-worktrees.js";
-import { buildGraveyardCleanupPlan, runGraveyardCleanup, type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
+import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
   importRuntimeMigration,
@@ -340,11 +320,9 @@ function rewriteLocalStatuslineArtifacts(
 }
 
 async function postProjectServiceJson(path: string, body: unknown, options?: { timeoutMs?: number }): Promise<any> {
-  let endpoint = await resolveProjectServiceEndpoint();
-  if (!endpoint) {
-    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
-    endpoint = await resolveProjectServiceEndpoint();
-  }
+  const projectRoot = resolveProjectRoot(process.cwd());
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
@@ -385,20 +363,35 @@ function notificationQuery(opts: { unread?: boolean; session?: string }): string
   return rendered ? `?${rendered}` : "";
 }
 
-async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallback: () => any): Promise<any> {
+async function getProjectServiceJsonOrReadFallback(path: string, fallback: () => any): Promise<any> {
+  let endpoint;
   try {
-    return await postProjectServiceJson(path, body);
+    endpoint = await resolveProjectServiceEndpoint();
+    if (!endpoint) {
+      await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
+      endpoint = await resolveProjectServiceEndpoint();
+    }
+  } catch (error) {
+    if (error instanceof ProjectServiceVersionError) throw error;
+    return fallback();
+  }
+  if (!endpoint) {
+    return fallback();
+  }
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`));
   } catch {
     return fallback();
   }
-}
-
-async function getProjectServiceJsonOrLocal(path: string, fallback: () => any): Promise<any> {
-  try {
-    return await getProjectServiceJson(path);
-  } catch {
+  if (status === 404 || status === 405 || status === 501) {
     return fallback();
   }
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
 }
 
 function exitAfterOpen(): never {
@@ -417,7 +410,7 @@ async function resolvePermissionRequestOutput(
     // The hook runs in the agent's working dir, which is the worktree (or the
     // project root if no worktree). Carry it so clients can show project/worktree.
     const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
-    const result = await postHookProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrSafetyFallback(
       projectRoot,
       "/agents/interaction/request",
       { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
@@ -432,12 +425,28 @@ async function resolvePermissionRequestOutput(
   return {};
 }
 
-async function postLiveProjectServiceJsonOrLocal(
+async function postLiveProjectServiceJson(projectRoot: string, path: string, body: unknown): Promise<any> {
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+  if (!endpoint) {
+    throw new Error("no live project service metadata endpoint");
+  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
+}
+
+async function postHookProjectServiceJsonOrSafetyFallback(
   projectRoot: string,
   path: string,
   body: unknown,
   fallback: () => any,
-  options: { fallbackOnRequestError?: boolean } = {},
 ): Promise<any> {
   let endpoint;
   try {
@@ -456,8 +465,7 @@ async function postLiveProjectServiceJsonOrLocal(
       headers: { "content-type": "application/json" },
       body,
     }));
-  } catch (error) {
-    if (!options.fallbackOnRequestError) throw error;
+  } catch {
     return fallback();
   }
   if (status === 404 || status === 405 || status === 501) {
@@ -469,20 +477,9 @@ async function postLiveProjectServiceJsonOrLocal(
   return json;
 }
 
-async function postHookProjectServiceJsonOrLocal(
-  projectRoot: string,
-  path: string,
-  body: unknown,
-  fallback: () => any,
-): Promise<any> {
-  return postLiveProjectServiceJsonOrLocal(projectRoot, path, body, fallback, { fallbackOnRequestError: true });
-}
-
 async function clearHookNotificationsViaService(projectRoot: string, sessionId: string): Promise<void> {
   try {
-    await postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => {
-      throw new Error("project service unavailable");
-    });
+    await postLiveProjectServiceJson(projectRoot, "/notifications/clear", { sessionId });
   } catch (error) {
     debug(
       `failed to clear notifications via project service for ${sessionId}: ${
@@ -493,7 +490,11 @@ async function clearHookNotificationsViaService(projectRoot: string, sessionId: 
   }
 }
 
-async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
+async function getLiveProjectServiceJsonOrReadFallback(
+  projectRoot: string,
+  path: string,
+  fallback: () => any,
+): Promise<any> {
   let endpoint;
   try {
     endpoint = await resolveProjectServiceEndpoint(projectRoot);
@@ -544,7 +545,7 @@ async function recordBackendSessionIdForHook(
   backendSessionId: string,
 ): Promise<{ ok: boolean; sessionId: string; backendSessionId?: string; error?: string }> {
   try {
-    const result = await postHookProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrSafetyFallback(
       projectRoot,
       "/agents/record-backend-session",
       { sessionId, backendSessionId },
@@ -986,10 +987,7 @@ program
       if (sessionId) {
         const projectRoot = await prepareProjectContext(opts.project);
         await ensureDaemonProjectReady(projectRoot);
-        const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/stop", { sessionId }, () => {
-          const mux = new Multiplexer();
-          return mux.stopAgent(sessionId);
-        });
+        const result = await postLiveProjectServiceJson(projectRoot, "/agents/stop", { sessionId });
         if (opts.json) {
           console.log(
             JSON.stringify(
@@ -1079,9 +1077,7 @@ program
     }
   });
 
-const hostCmd = program
-  .command("host")
-  .description("Advanced compatibility wrappers for legacy daemon-managed project services");
+const hostCmd = program.command("host").description("Advanced project-service inspection commands");
 
 program
   .command("ui")
@@ -1126,7 +1122,7 @@ program
 
 program
   .command("serve")
-  .description("Advanced: ensure the legacy daemon-backed project control service is running")
+  .description("Advanced: ensure the daemon-backed project control service is running")
   .action(async () => {
     const projectRoot = resolveProjectRoot(process.cwd());
     if (projectRoot !== process.cwd()) {
@@ -1380,7 +1376,7 @@ hostCmd
   });
 
 hostCmd.action(() => {
-  console.log("`aimux host` is a compatibility alias for daemon-managed project services.");
+  console.log("Use `aimux host status` or `aimux host --help` to inspect project services.");
 });
 
 const daemonCmd = program.command("daemon").description("Advanced: manage the global aimux control-plane daemon");
@@ -1883,7 +1879,7 @@ function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
-async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
+async function tryEnsureDaemonProjectReadyForReadFallback(projectRoot: string): Promise<void> {
   try {
     await ensureDaemonProjectReady(projectRoot);
   } catch (err) {
@@ -1895,8 +1891,8 @@ async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise
 
 worktreeCmd.action(async () => {
   const projectRoot = await prepareProjectContext();
-  await ensureDaemonProjectReadyForFallback(projectRoot);
-  const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
+  await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
+  const result = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/worktrees", () => ({
     ok: true,
     worktrees: listVisibleLocalWorktrees(projectRoot),
   }));
@@ -1911,7 +1907,9 @@ program
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
+    const summaries = await getProjectServiceJsonOrReadFallback(`/threads${query}`, () =>
+      listThreadSummaries(opts.session),
+    );
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1940,7 +1938,9 @@ threadCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
+    const summaries = await getProjectServiceJsonOrReadFallback(`/threads${query}`, () =>
+      listThreadSummaries(opts.session),
+    );
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1968,7 +1968,7 @@ threadCmd
   .argument("<threadId>")
   .option("--json", "Emit JSON")
   .action(async (threadId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrLocal(`/threads/${encodeURIComponent(threadId)}`, () => {
+    const detail = await getProjectServiceJsonOrReadFallback(`/threads/${encodeURIComponent(threadId)}`, () => {
       const thread = readThread(threadId);
       if (!thread) return null;
       return { thread, messages: readMessages(threadId) };
@@ -2007,23 +2007,12 @@ threadCmd
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const result = await postProjectServiceJsonOrLocal(
-      "/threads/open",
-      {
-        title: opts.title,
-        from: opts.from,
-        participants,
-        kind: (opts.kind as ThreadKind) ?? "conversation",
-      },
-      () => ({
-        thread: createThread({
-          title: opts.title,
-          kind: (opts.kind as ThreadKind) ?? "conversation",
-          createdBy: opts.from,
-          participants: [...new Set([opts.from, ...participants])],
-        }),
-      }),
-    );
+    const result = await postProjectServiceJson("/threads/open", {
+      title: opts.title,
+      from: opts.from,
+      participants,
+      kind: (opts.kind as ThreadKind) ?? "conversation",
+    });
     console.log(result.thread.id);
   });
 
@@ -2040,29 +2029,13 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const result = await postProjectServiceJsonOrLocal(
-      "/threads/send",
-      {
-        threadId,
-        from: opts.from,
-        to,
-        kind: (opts.kind as MessageKind) ?? "note",
-        body,
-      },
-      () => {
-        if (!readThread(threadId)) {
-          console.error(`aimux: thread not found: ${threadId}`);
-          process.exit(1);
-        }
-        return sendThreadMessage({
-          threadId,
-          from: opts.from,
-          to,
-          kind: (opts.kind as MessageKind) ?? "note",
-          body,
-        });
-      },
-    );
+    const result = await postProjectServiceJson("/threads/send", {
+      threadId,
+      from: opts.from,
+      to,
+      kind: (opts.kind as MessageKind) ?? "note",
+      body,
+    });
     console.log(result.message.id);
   });
 
@@ -2072,14 +2045,7 @@ threadCmd
   .argument("<threadId>")
   .requiredOption("--session <sessionId>", "Participant session id")
   .action(async (threadId: string, opts: { session: string }) => {
-    await postProjectServiceJsonOrLocal("/threads/mark-seen", { threadId, session: opts.session }, () => {
-      const thread = markThreadSeen(threadId, opts.session);
-      if (!thread) {
-        console.error(`aimux: thread not found: ${threadId}`);
-        process.exit(1);
-      }
-      return { ok: true, thread };
-    });
+    await postProjectServiceJson("/threads/mark-seen", { threadId, session: opts.session });
     console.log("ok");
   });
 
@@ -2095,28 +2061,14 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    try {
-      const result = await postProjectServiceJson("/threads/status", {
-        threadId,
-        status: opts.status,
-        owner: opts.owner,
-        waitingOn,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`status ${result.thread.status}`);
-      return;
-    } catch {
-      const thread = setThreadStatus(threadId, opts.status, {
-        owner: opts.owner?.trim(),
-        waitingOn,
-      });
-      if (!thread) {
-        console.error(`aimux: thread not found: ${threadId}`);
-        process.exit(1);
-      }
-      console.log(`thread ${thread.id}`);
-      console.log(`status ${thread.status}`);
-    }
+    const result = await postProjectServiceJson("/threads/status", {
+      threadId,
+      status: opts.status,
+      owner: opts.owner,
+      waitingOn,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`status ${result.thread.status}`);
   });
 
 program
@@ -2290,42 +2242,21 @@ messageCmd
         console.error("aimux: message send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      try {
-        const result = await postProjectServiceJson("/threads/send", {
-          threadId: opts.thread,
-          from: opts.from ?? "user",
-          to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          worktreePath: opts.worktree,
-          kind: (opts.kind as MessageKind) ?? "request",
-          body,
-          title: opts.title,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
-        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-          console.log(`delivered ${result.deliveredTo.join(",")}`);
-        }
-        return;
-      } catch {
-        const result = opts.thread
-          ? sendThreadMessage({
-              threadId: opts.thread,
-              from: opts.from ?? "user",
-              to,
-              kind: (opts.kind as MessageKind) ?? "request",
-              body,
-            })
-          : sendDirectMessage({
-              from: opts.from ?? "user",
-              to: to ?? [],
-              body,
-              title: opts.title,
-              kind: (opts.kind as any) ?? "request",
-            });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
+      const result = await postProjectServiceJson("/threads/send", {
+        threadId: opts.thread,
+        from: opts.from ?? "user",
+        to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        worktreePath: opts.worktree,
+        kind: (opts.kind as MessageKind) ?? "request",
+        body,
+        title: opts.title,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
       }
     },
   );
@@ -2355,36 +2286,19 @@ handoffCmd
         console.error("aimux: handoff send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      try {
-        const result = await postProjectServiceJson("/handoff", {
-          from: opts.from ?? "user",
-          to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          body,
-          title: opts.title,
-          worktreePath: opts.worktree,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
-        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-          console.log(`delivered ${result.deliveredTo.join(",")}`);
-        }
-        return;
-      } catch {
-        const result = sendHandoff({
-          from: opts.from ?? "user",
-          to: to?.length
-            ? to
-            : [opts.assignee, opts.tool]
-                .map((value) => value?.trim())
-                .filter((value): value is string => Boolean(value)),
-          body,
-          title: opts.title,
-          worktreePath: opts.worktree,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
+      const result = await postProjectServiceJson("/handoff", {
+        from: opts.from ?? "user",
+        to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        body,
+        title: opts.title,
+        worktreePath: opts.worktree,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
       }
     },
   );
@@ -2396,24 +2310,13 @@ handoffCmd
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
   .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/handoff/accept", {
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      return;
-    } catch {
-      const result = acceptHandoff({
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
+    const result = await postProjectServiceJson("/handoff/accept", {
+      threadId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`message ${result.message.id}`);
   });
 
 handoffCmd
@@ -2423,24 +2326,13 @@ handoffCmd
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Optional completion note")
   .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/handoff/complete", {
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      return;
-    } catch {
-      const result = completeHandoff({
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
+    const result = await postProjectServiceJson("/handoff/complete", {
+      threadId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`message ${result.message.id}`);
   });
 
 const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
@@ -2456,7 +2348,7 @@ taskCmd
     if (opts.session) params.set("session", opts.session);
     if (opts.status) params.set("status", opts.status);
     const query = params.toString();
-    const result = await getProjectServiceJsonOrLocal(`/tasks${query ? `?${query}` : ""}`, () => ({
+    const result = await getProjectServiceJsonOrReadFallback(`/tasks${query ? `?${query}` : ""}`, () => ({
       ok: true,
       tasks: readAllTasks()
         .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
@@ -2485,7 +2377,7 @@ taskCmd
   .argument("<taskId>")
   .option("--json", "Emit JSON")
   .action(async (taskId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrLocal(`/tasks/${encodeURIComponent(taskId)}`, () => {
+    const detail = await getProjectServiceJsonOrReadFallback(`/tasks/${encodeURIComponent(taskId)}`, () => {
       const task = readTask(taskId);
       if (!task) return null;
       return {
@@ -2546,36 +2438,19 @@ taskCmd
         worktree?: string;
       },
     ) => {
-      try {
-        const result = await postProjectServiceJson("/tasks/assign", {
-          from: opts.from ?? "user",
-          to: opts.to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          description,
-          prompt: opts.prompt,
-          type: opts.type,
-          diff: opts.diff,
-          worktreePath: opts.worktree,
-        });
-        console.log(`task ${result.task.id}`);
-        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-        return;
-      } catch {
-        const result = await assignTask({
-          from: opts.from ?? "user",
-          to: opts.to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          description,
-          prompt: opts.prompt,
-          type: opts.type,
-          diff: opts.diff,
-          worktreePath: opts.worktree,
-        });
-        console.log(`task ${result.task.id}`);
-        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      }
+      const result = await postProjectServiceJson("/tasks/assign", {
+        from: opts.from ?? "user",
+        to: opts.to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        description,
+        prompt: opts.prompt,
+        type: opts.type,
+        diff: opts.diff,
+        worktreePath: opts.worktree,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
     },
   );
 
@@ -2586,24 +2461,13 @@ taskCmd
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/accept", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await acceptTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/accept", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2613,24 +2477,13 @@ taskCmd
   .option("--from <sessionId>", "Blocking session id", "user")
   .option("--body <text>", "Blocking reason")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/block", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await blockTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/block", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2640,24 +2493,13 @@ taskCmd
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Completion summary/result")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/complete", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await completeTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/complete", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2667,24 +2509,13 @@ taskCmd
   .option("--from <sessionId>", "Reopening session id", "user")
   .option("--body <text>", "Optional reopening note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/reopen", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await reopenTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/reopen", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 const reviewCmd = program.command("review").description("Manage review workflow tasks");
@@ -2696,24 +2527,13 @@ reviewCmd
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Optional approval note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/reviews/approve", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await approveReview({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/reviews/approve", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 reviewCmd
@@ -2723,26 +2543,14 @@ reviewCmd
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Requested changes")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/reviews/request-changes", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await requestTaskChanges({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/reviews/request-changes", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 worktreeCmd
@@ -2752,8 +2560,8 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReadyForFallback(projectRoot);
-    const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
+    await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
+    const result = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/worktrees", () => ({
       ok: true,
       worktrees: listVisibleLocalWorktrees(projectRoot),
     }));
@@ -2773,12 +2581,10 @@ worktreeCmd
   .action(async (name: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees/create", { name }, () => {
-        const mux = new Multiplexer();
-        return mux.createDesktopWorktree(name);
-      });
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/create", { name });
       const createdPath = result.path;
+      const status = result.status === "creating" ? "creating" : "created";
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2786,12 +2592,17 @@ worktreeCmd
               ok: true,
               name,
               path: createdPath,
+              status,
               projectRoot,
             },
             null,
             2,
           ),
         );
+        return;
+      }
+      if (status === "creating") {
+        console.log(`Creating worktree "${name}"${createdPath ? ` (${createdPath})` : ""}.`);
         return;
       }
       console.log(`Created worktree "${name}" at ${createdPath}`);
@@ -2812,16 +2623,8 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/worktrees/remove",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.removeDesktopWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/remove", { path: resolvedPath });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2844,16 +2647,8 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/worktrees/graveyard",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.graveyardDesktopWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/graveyard", { path: resolvedPath });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2876,16 +2671,10 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/worktrees/resurrect",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.resurrectGraveyardWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/worktrees/resurrect", {
+        path: resolvedPath,
+      });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2908,16 +2697,10 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/worktrees/delete",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.deleteGraveyardWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/worktrees/delete", {
+        path: resolvedPath,
+      });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2941,13 +2724,10 @@ program
   .action(async (opts: { tool: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
-      initProject();
-      const mux = new Multiplexer();
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.spawnAgent({
-        toolConfigKey: opts.tool,
-        targetWorktreePath,
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+        tool: opts.tool,
+        worktreePath: targetWorktreePath,
         open: opts.open,
       });
       if (opts.json) {
@@ -2988,14 +2768,12 @@ overseerCmd
   .action(async (opts: { tool?: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
       initProject();
-      const mux = new Multiplexer();
       const tool = opts.tool ?? loadConfig().defaultTool;
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.spawnAgent({
-        toolConfigKey: tool,
-        targetWorktreePath,
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+        tool,
+        worktreePath: targetWorktreePath,
         open: opts.open,
         overseer: true,
       });
@@ -3040,15 +2818,12 @@ program
     ) => {
       try {
         const projectRoot = await prepareProjectContext(opts.project);
-        await ensureDaemonProjectReady(projectRoot);
-        initProject();
-        const mux = new Multiplexer();
         const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-        const result = await mux.forkAgent({
+        const result = await postLiveProjectServiceJson(projectRoot, "/agents/fork", {
           sourceSessionId,
-          targetToolConfigKey: opts.tool,
+          tool: opts.tool,
           instruction: opts.instruction,
-          targetWorktreePath,
+          worktreePath: targetWorktreePath,
           open: opts.open,
         });
         if (opts.json) {
@@ -3089,9 +2864,9 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReadyForFallback(projectRoot);
+    await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
     try {
-      const graveyard = await getLiveProjectServiceJsonOrLocal(projectRoot, "/graveyard", () => ({
+      const graveyard = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/graveyard", () => ({
         ok: true,
         entries: listTopologySessionStates({ statuses: ["graveyard"] }),
         worktrees: listTopologyWorktreeGraveyard(),
@@ -3128,10 +2903,7 @@ graveyardCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId: id }, () => {
-        const mux = new Multiplexer();
-        return mux.sendAgentToGraveyard(id);
-      });
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/kill", { sessionId: id });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3165,15 +2937,7 @@ graveyardCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/resurrect",
-        { sessionId: id },
-        () => {
-          const mux = new Multiplexer();
-          return mux.resurrectGraveyardSession(id);
-        },
-      );
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/resurrect", { sessionId: id });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3206,22 +2970,10 @@ graveyardCmd
   .action(async (opts: { project?: string; dryRun?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/cleanup",
-        { dryRun: opts.dryRun === true },
-        async () => {
-          const mux = new Multiplexer();
-          return runGraveyardCleanup(
-            buildGraveyardCleanupPlan(),
-            {
-              deleteWorktree: (path) => mux.deleteGraveyardWorktree(path),
-            },
-            { dryRun: opts.dryRun === true },
-          );
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/cleanup", {
+        dryRun: opts.dryRun === true,
+      });
       const cleanupResult = (result.result ?? result) as GraveyardCleanupRunResult;
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, ...cleanupResult }, null, 2));
@@ -3245,15 +2997,10 @@ program
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/rename",
-        { sessionId, label: opts.label },
-        () => {
-          const mux = new Multiplexer();
-          return mux.renameAgent(sessionId, opts.label);
-        },
-      );
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/rename", {
+        sessionId,
+        label: opts.label,
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3401,10 +3148,7 @@ program
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId }, () => {
-        const mux = new Multiplexer();
-        return mux.sendAgentToGraveyard(sessionId);
-      });
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/kill", { sessionId });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3438,9 +3182,11 @@ program
   .action(async (sessionId: string, opts: { worktree: string; project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
       const targetWorktreePath = pathResolve(opts.worktree);
-      const result = await mux.migrateAgentSession(sessionId, targetWorktreePath);
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/migrate", {
+        sessionId,
+        worktreePath: targetWorktreePath,
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3448,7 +3194,7 @@ program
               ok: true,
               projectRoot,
               sessionId: result.sessionId,
-              worktreePath: result.worktreePath ?? projectRoot,
+              worktreePath: result.worktreePath ?? targetWorktreePath,
             },
             null,
             2,
@@ -3456,7 +3202,7 @@ program
         );
         return;
       }
-      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? projectRoot}`);
+      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? targetWorktreePath}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
@@ -3745,81 +3491,19 @@ program
       await initPaths();
       const title = opts.title.trim();
       const body = opts.body?.trim() || title;
-      const result = await postProjectServiceJsonOrLocal(
-        "/notify",
-        {
-          title,
-          subtitle: opts.subtitle?.trim() || undefined,
-          message: body,
-          sessionId: opts.session?.trim() || undefined,
-          kind: opts.kind?.trim() || "notification",
-          force: true,
-        },
-        () => {
-          const kind = (opts.kind?.trim() || "notification") as
-            | "notification"
-            | "needs_input"
-            | "next_step"
-            | "task_done"
-            | "task_failed"
-            | "blocked"
-            | "message_waiting"
-            | "handoff_waiting"
-            | "task_assigned"
-            | "review_waiting";
-          const sessionId = opts.session?.trim() || undefined;
-          const context = sessionId ? metadataDisplayContext(loadMetadataState().sessions[sessionId]) : undefined;
-          const alert = contextualizeAlertInput(
-            {
-              kind,
-              sessionId,
-              title,
-              message: [opts.subtitle?.trim(), body].filter(Boolean).join(" — "),
-              forceNotify: true,
-            },
-            context,
-          );
-          const notification = upsertNotification({
-            title: alert.title,
-            subtitle: opts.subtitle?.trim() || undefined,
-            body: alert.message,
-            sessionId,
-            kind,
-            projectName: alert.projectName,
-            projectRoot: alert.projectRoot,
-            worktreePath: alert.worktreePath,
-            worktreeName: alert.worktreeName,
-            branch: alert.branch,
-            categoryLabel: alert.categoryLabel,
-            reasonLabel: alert.reasonLabel,
-          });
-          notifyAlert({
-            type: "alert",
-            kind,
-            projectId: getProjectId(),
-            sessionId,
-            title: alert.title,
-            message: alert.message,
-            notificationId: notification.id,
-            projectName: alert.projectName,
-            projectRoot: alert.projectRoot,
-            worktreePath: alert.worktreePath,
-            worktreeName: alert.worktreeName,
-            branch: alert.branch,
-            categoryLabel: alert.categoryLabel,
-            reasonLabel: alert.reasonLabel,
-            ts: notification.createdAt,
-            forceNotify: true,
-          });
-          return { ok: true, notification };
-        },
-      );
+      const result = await postProjectServiceJson("/notify", {
+        title,
+        subtitle: opts.subtitle?.trim() || undefined,
+        message: body,
+        sessionId: opts.session?.trim() || undefined,
+        kind: opts.kind?.trim() || "notification",
+        force: true,
+      });
       if (opts.json) {
         console.log(JSON.stringify(result));
         return;
       }
-      const count = unreadNotificationCount();
-      console.log(`Queued notification "${title}" (${count} unread).`);
+      console.log(`Queued notification "${title}".`);
     },
   );
 
@@ -3845,15 +3529,15 @@ program
     }
 
     const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrSafetyFallback(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
@@ -3863,20 +3547,25 @@ program
     const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
     if (transcriptPath) {
       const context: SessionContextMetadata = { transcriptPath };
-      await postHookProjectServiceJsonOrLocal(projectRoot, "/set-context", { session: sessionId, context }, () => {
-        updateSessionMetadata(
-          sessionId,
-          (current) => ({
-            ...current,
-            context: {
-              ...(current.context ?? {}),
-              ...context,
-            },
-          }),
-          projectRoot,
-        );
-        return { ok: true };
-      });
+      await postHookProjectServiceJsonOrSafetyFallback(
+        projectRoot,
+        "/set-context",
+        { session: sessionId, context },
+        () => {
+          updateSessionMetadata(
+            sessionId,
+            (current) => ({
+              ...current,
+              context: {
+                ...(current.context ?? {}),
+                ...context,
+              },
+            }),
+            projectRoot,
+          );
+          return { ok: true };
+        },
+      );
       result.transcriptPath = transcriptPath;
     }
 
@@ -3889,7 +3578,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3937,15 +3626,15 @@ program
 
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrSafetyFallback(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
@@ -3967,7 +3656,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3981,7 +3670,7 @@ program
         const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
         // Best-effort: a telemetry transport failure must never break the hook —
         // it always falls through to `console.log({})` and the native prompt.
-        await postHookProjectServiceJsonOrLocal(
+        await postHookProjectServiceJsonOrSafetyFallback(
           projectRoot,
           "/agents/interaction/notify",
           { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
