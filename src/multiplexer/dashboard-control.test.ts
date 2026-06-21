@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requestJson: vi.fn(),
-  resolveProjectServiceEndpoint: vi.fn(),
+  loadMetadataEndpoint: vi.fn(),
   removeMetadataEndpoint: vi.fn(),
   ensureDaemonRunning: vi.fn(),
   ensureProjectService: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock("../http-client.js", () => ({
 
 vi.mock("../metadata-store.js", () => ({
   loadMetadataState: vi.fn(() => ({ sessions: {} })),
-  resolveProjectServiceEndpoint: mocks.resolveProjectServiceEndpoint,
+  loadMetadataEndpoint: mocks.loadMetadataEndpoint,
   removeMetadataEndpoint: mocks.removeMetadataEndpoint,
 }));
 
@@ -31,14 +31,22 @@ vi.mock("node:child_process", () => ({
 describe("postToProjectService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveProjectServiceEndpoint.mockReturnValue({ host: "127.0.0.1", port: 43444 });
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
     mocks.ensureDaemonRunning.mockResolvedValue({ pid: 1, port: 43190 });
     mocks.ensureProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
   });
 
   it("recovers from a stale refused project-service endpoint", async () => {
     const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:43444"), { code: "ECONNREFUSED" });
-    mocks.requestJson.mockRejectedValueOnce(refused).mockResolvedValueOnce({ status: 200, json: { ok: true } });
+    mocks.requestJson
+      .mockRejectedValueOnce(refused)
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2 } })
+      .mockResolvedValueOnce({ status: 200, json: { ok: true } });
     const { postToProjectService } = await import("./dashboard-control.js");
 
     const result = await postToProjectService({ dashboardServiceRecovery: null }, "/agents/resume", {
@@ -48,11 +56,13 @@ describe("postToProjectService", () => {
     expect(result).toEqual({ ok: true });
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 
   it("does not retry non-retryable HTTP failures", async () => {
-    mocks.requestJson.mockResolvedValueOnce({ status: 409, json: { ok: false, error: "already exists" } });
+    mocks.requestJson
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2 } })
+      .mockResolvedValueOnce({ status: 409, json: { ok: false, error: "already exists" } });
     const { postToProjectService } = await import("./dashboard-control.js");
 
     await expect(
@@ -60,13 +70,30 @@ describe("postToProjectService", () => {
     ).rejects.toThrow("already exists");
 
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
-    expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers before requesting when endpoint health reports a different pid", async () => {
+    mocks.requestJson
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 99 } })
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2 } })
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 1 } });
+    const { getFromProjectService } = await import("./dashboard-control.js");
+
+    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
+      ok: true,
+      value: 1,
+    });
+
+    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 
   it("bounds control-plane recovery by the project-service request timeout", async () => {
     vi.useFakeTimers();
     try {
-      mocks.resolveProjectServiceEndpoint.mockReturnValue(null);
+      mocks.loadMetadataEndpoint.mockReturnValue(null);
       mocks.ensureDaemonRunning.mockImplementation(() => new Promise(() => {}));
       const { postToProjectService } = await import("./dashboard-control.js");
 

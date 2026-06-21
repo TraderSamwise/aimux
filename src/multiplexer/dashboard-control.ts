@@ -8,7 +8,7 @@ import { updateNotificationContext } from "../notification-context.js";
 import { markSessionViewed } from "../session-viewed.js";
 import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
-import { removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { loadMetadataEndpoint, removeMetadataEndpoint, type MetadataApiEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
@@ -678,8 +678,14 @@ async function requestProjectService(
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
   for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
-    const endpoint = resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     if (!endpoint) {
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    if (!(await verifyProjectServiceEndpoint(endpoint, deadline))) {
+      removeMetadataEndpoint(projectRoot);
       await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
@@ -751,6 +757,17 @@ function isProjectServiceRetryableStatus(status: number): boolean {
 
 function remainingProjectServiceDeadline(deadline: number): number {
   return Math.max(1, deadline - Date.now());
+}
+
+async function verifyProjectServiceEndpoint(endpoint: MetadataApiEndpoint, deadline: number): Promise<boolean> {
+  try {
+    const { status, json } = await requestJson<{ pid?: number }>(`http://${endpoint.host}:${endpoint.port}/health`, {
+      timeoutMs: Math.max(1, Math.min(250, deadline - Date.now())),
+    });
+    return status >= 200 && status < 300 && json?.pid === endpoint.pid;
+  } catch {
+    return false;
+  }
 }
 
 async function sleepProjectServiceRetry(attempt: number, deadline: number): Promise<void> {

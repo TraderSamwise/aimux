@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
-import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { writeJsonAtomic } from "./atomic-write.js";
 import {
   getDaemonInfoPath,
@@ -164,6 +164,18 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+function isAimuxProjectServiceProcess(pid: number): boolean {
+  try {
+    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return args.includes("__project-service-internal");
+  } catch {
+    return false;
+  }
+}
+
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -239,15 +251,25 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<St
   const info = loadDaemonInfo();
   if (!info) return null;
   const state = loadDaemonState();
-  const stoppedProjectServices = Object.values(state.projects);
+  const projectServiceStates = Object.values(state.projects);
   log.info("stopping daemon", "daemon", {
     pid: info.pid,
     signal,
     projectCount: Object.keys(state.projects).length,
   });
-  for (const entry of stoppedProjectServices) {
+  const stoppedProjectServices: ProjectServiceState[] = [];
+  for (const entry of projectServiceStates) {
+    if (!isAimuxProjectServiceProcess(entry.pid)) {
+      log.warn("skipping unverified project service pid during daemon stop", "daemon", {
+        projectId: entry.projectId,
+        projectRoot: entry.projectRoot,
+        pid: entry.pid,
+      });
+      continue;
+    }
     try {
       process.kill(entry.pid, signal);
+      stoppedProjectServices.push(entry);
     } catch {}
   }
   try {
@@ -724,6 +746,15 @@ export class AimuxDaemon {
 
   private async terminateProjectService(projectId: string, existing: ProjectServiceState): Promise<boolean> {
     const child = this.children.get(projectId);
+    const trackedChild = child?.pid === existing.pid;
+    if (!trackedChild && !isAimuxProjectServiceProcess(existing.pid)) {
+      log.warn("skipping unverified project service pid during replacement", "daemon", {
+        projectId,
+        projectRoot: existing.projectRoot,
+        pid: existing.pid,
+      });
+      return true;
+    }
     log.info("terminating project service", "daemon", {
       projectId,
       projectRoot: existing.projectRoot,
