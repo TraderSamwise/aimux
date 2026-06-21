@@ -307,20 +307,19 @@ export const dashboardInteractionMethods = {
 
     const event = events[0];
     const key = commandKey(event);
-    const lowerKey = commandKey(event);
-    const isTabToggle = lowerKey === "tab" || event.raw === "\t" || (event.ctrl && lowerKey === "i");
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
 
-    if (hasWorktrees && this.dashboardState.quickJumpDigits && !(lowerKey >= "1" && lowerKey <= "9")) {
+    if (hasWorktrees && this.dashboardState.quickJumpDigits && !(key >= "1" && key <= "9")) {
       this.commitDashboardQuickJump();
     }
 
-    if (hasWorktrees && this.isDashboardScreen("dashboard") && this.handleDashboardQuickJumpDigit(lowerKey)) {
+    if (hasWorktrees && this.isDashboardScreen("dashboard") && this.handleDashboardQuickJumpDigit(key)) {
       return;
     }
 
-    if (!hasWorktrees && lowerKey >= "1" && lowerKey <= "9") {
-      const index = parseInt(lowerKey, 10) - 1;
+    if (!hasWorktrees && key >= "1" && key <= "9") {
+      const index = parseInt(key, 10) - 1;
       void this.activateDashboardEntryByNumber(index);
       return;
     }
@@ -338,23 +337,23 @@ export const dashboardInteractionMethods = {
       }
     }
 
-    if (lowerKey === "s") {
+    if (key === "s") {
       this.showOrchestrationRoutePicker("message");
       return;
     }
-    if (lowerKey === "h") {
+    if (key === "h") {
       this.showOrchestrationRoutePicker("handoff");
       return;
     }
-    if (isShiftedCommand(event, lowerKey, "t")) {
+    if (isShiftedCommand(event, key, "t")) {
       this.showOrchestrationRoutePicker("task");
       return;
     }
-    if (isShiftedCommand(event, lowerKey, "w")) {
+    if (isShiftedCommand(event, key, "w")) {
       this.showWorktreeList();
       return;
     }
-    if (isShiftedCommand(event, lowerKey, "r")) {
+    if (isShiftedCommand(event, key, "r")) {
       const selected = this.getSelectedDashboardSessionForActions();
       if (selected) {
         if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
@@ -368,7 +367,7 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    switch (lowerKey) {
+    switch (key) {
       case "?":
         this.showHelp();
         return;
