@@ -321,24 +321,50 @@ function preview(value: string | null | undefined, max = 260): string | null {
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
-function nativePathHints(args: string | null | undefined): string[] {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nativeInstallParent(cliLaunch: AimuxCliLaunchCommand): string | null {
+  const currentRoot = currentNativeInstallRoot(cliLaunch);
+  if (!currentRoot) return null;
+  const trimmed = currentRoot.replace(/\/+$/, "");
+  const lastSlash = trimmed.lastIndexOf("/");
+  if (lastSlash < 0) return null;
+  return `${trimmed.slice(0, lastSlash)}/`;
+}
+
+function nativePathHints(args: string | null | undefined, cliLaunch?: AimuxCliLaunchCommand): string[] {
   if (!args) return [];
-  return [...new Set(args.match(/\S*\.aimux\/native\/\S+/g) ?? [])].slice(0, 8);
+  const hints: string[] = args.match(/\S*\.aimux\/native\/[^\s'"]+/g) ?? [];
+  const parent = cliLaunch ? nativeInstallParent(cliLaunch) : null;
+  if (parent && !parent.includes(".aimux/native/")) {
+    hints.push(...(args.match(new RegExp(`${escapeRegExp(parent)}[^\\s'"]+`, "g")) ?? []));
+  }
+  return [...new Set(hints)].slice(0, 8);
 }
 
 function currentNativeInstallRoot(cliLaunch: AimuxCliLaunchCommand): string | null {
   const marker = ".aimux/native/";
   const index = cliLaunch.currentEntryPath.indexOf(marker);
-  if (index < 0) return null;
-  const prefixEnd = index + marker.length;
-  const versionEnd = cliLaunch.currentEntryPath.indexOf("/", prefixEnd);
-  if (versionEnd < 0) return null;
-  return cliLaunch.currentEntryPath.slice(0, versionEnd + 1);
+  if (index >= 0) {
+    const prefixEnd = index + marker.length;
+    const versionEnd = cliLaunch.currentEntryPath.indexOf("/", prefixEnd);
+    if (versionEnd < 0) return null;
+    return cliLaunch.currentEntryPath.slice(0, versionEnd + 1);
+  }
+  if (cliLaunch.source !== "stable-shim") return null;
+  for (const suffix of ["/dist/main.js", "/bin/aimux"]) {
+    if (cliLaunch.currentEntryPath.endsWith(suffix)) {
+      return `${cliLaunch.currentEntryPath.slice(0, -suffix.length)}/`;
+    }
+  }
+  return null;
 }
 
 function hasStaleNativePath(args: string | null | undefined, cliLaunch: AimuxCliLaunchCommand): boolean {
   const currentRoot = currentNativeInstallRoot(cliLaunch);
-  return nativePathHints(args).some((path) => {
+  return nativePathHints(args, cliLaunch).some((path) => {
     if (path.includes(cliLaunch.currentEntryPath)) return false;
     if (currentRoot && path.includes(currentRoot)) return false;
     return true;
@@ -355,7 +381,7 @@ function buildProcessReport(input: {
   return {
     pid: input.pid,
     argsPreview: preview(input.args),
-    pathHints: nativePathHints(input.args),
+    pathHints: nativePathHints(input.args, input.cliLaunch),
     staleNativePath: hasStaleNativePath(input.args, input.cliLaunch),
     error: input.error ?? null,
   };
