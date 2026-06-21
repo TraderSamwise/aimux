@@ -808,13 +808,24 @@ export class TmuxRuntimeManager {
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
     const insideTmux = options.insideTmux === true;
+    const targetHostSession =
+      insideTmux && this.isClientSessionName(target.sessionName)
+        ? this.getSessionOption(target.sessionName, "@aimux-host-session")
+        : null;
+    const openSessionName = targetHostSession || target.sessionName;
+    const openProjectRoot =
+      insideTmux && !this.isClientSessionName(openSessionName)
+        ? this.getSessionOption(openSessionName, "@aimux-project-root")
+        : null;
     const shouldResolveManagedClient =
-      insideTmux && this.isManagedSessionName(target.sessionName) && !this.isClientSessionName(target.sessionName);
+      insideTmux &&
+      !this.isClientSessionName(openSessionName) &&
+      (this.isManagedSessionName(openSessionName) || Boolean(openProjectRoot));
     const sessionName = shouldResolveManagedClient
-      ? this.resolveOpenSessionName(target.sessionName, true, options.clientSuffix, options.clientTty)
+      ? this.resolveOpenSessionName(openSessionName, true, options.clientSuffix, options.clientTty)
       : options.alreadyResolved
-        ? target.sessionName
-        : this.resolveOpenSessionName(target.sessionName, insideTmux, options.clientSuffix, options.clientTty);
+        ? openSessionName
+        : this.resolveOpenSessionName(openSessionName, insideTmux, options.clientSuffix, options.clientTty);
     const effectiveTarget =
       sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
         ? this.ensureLinkedWindow(sessionName, target)
@@ -1107,11 +1118,13 @@ export class TmuxRuntimeManager {
     suffixOverride?: string,
     clientTty?: string,
   ): string {
-    if (!this.isManagedSessionName(sessionName) || this.isClientSessionName(sessionName)) return sessionName;
+    if (this.isClientSessionName(sessionName)) return sessionName;
+    const managed = this.isManagedSessionName(sessionName);
+    const projectRoot = managed || insideTmux ? this.getSessionOption(sessionName, "@aimux-project-root") : null;
+    if (!managed && !projectRoot) return sessionName;
     const clientSuffix = suffixOverride ?? this.resolveClientSuffix(insideTmux, clientTty);
     if (!clientSuffix) return sessionName;
     const clientSessionName = this.getProjectClientSessionName(sessionName, clientSuffix);
-    const projectRoot = this.getSessionOption(sessionName, "@aimux-project-root");
     if (projectRoot) {
       this.ensureClientSession(sessionName, clientSessionName, projectRoot);
     }

@@ -46,9 +46,19 @@ export interface MetaDashboardDeps {
 
 const MAIN_KEY = "__main__";
 
-function isProjectRunning(tmux: TmuxRuntimeManager, repoRoot: string, sessionNames: string[]): boolean {
-  const host = tmux.getProjectSession(repoRoot).sessionName;
-  return sessionNames.some((name) => name === host || name.startsWith(`${host}-client-`));
+function buildSessionsByProjectRoot(tmux: TmuxRuntimeManager, sessionNames: string[]): Map<string, string[]> {
+  const sessionsByRoot = new Map<string, string[]>();
+  for (const sessionName of sessionNames) {
+    try {
+      const sessionRoot = tmux.getSessionOption(sessionName, "@aimux-project-root");
+      if (!sessionRoot) continue;
+      const root = pathResolve(sessionRoot);
+      sessionsByRoot.set(root, [...(sessionsByRoot.get(root) ?? []), sessionName]);
+    } catch {
+      continue;
+    }
+  }
+  return sessionsByRoot;
 }
 
 function worktreeKey(repoRoot: string, worktreePath?: string): string {
@@ -106,14 +116,15 @@ export function buildMetaDashboardModel(deps: MetaDashboardDeps = {}): MetaDashb
   const listWorktreesFn = deps.listWorktreesFn ?? listWorktrees;
 
   const sessionNames = tmux.listSessionNames();
+  const sessionsByRoot = buildSessionsByProjectRoot(tmux, sessionNames);
   const projects = [...listProjectsFn()].sort((a, b) => a.name.localeCompare(b.name));
 
   const metaProjects: MetaProject[] = projects.map((project) => {
-    const running = isProjectRunning(tmux, project.repoRoot, sessionNames);
-    if (!running) {
+    const projectSessionNames = sessionsByRoot.get(pathResolve(project.repoRoot)) ?? [];
+    if (projectSessionNames.length === 0) {
       return { id: project.id, name: project.name, repoRoot: project.repoRoot, running: false, worktreeGroups: [] };
     }
-    const context: FastControlContext = { projectRoot: project.repoRoot };
+    const context: FastControlContext = { projectRoot: project.repoRoot, sessionNames: projectSessionNames };
     // A project's session can vanish between the snapshot and listing; degrade
     // that one project to empty rather than failing the whole build.
     let worktreeGroups: MetaWorktreeGroup[] = [];
@@ -142,14 +153,16 @@ export function listAllProjectsExposeItems(deps: MetaDashboardDeps = {}): MetaEx
   const listItemsFn = deps.listItemsFn ?? listSwitchableAgentItems;
 
   const sessionNames = tmux.listSessionNames();
+  const sessionsByRoot = buildSessionsByProjectRoot(tmux, sessionNames);
   const projects = [...listProjectsFn()].sort((a, b) => a.name.localeCompare(b.name));
 
   const result: MetaExposeItem[] = [];
   for (const project of projects) {
-    if (!isProjectRunning(tmux, project.repoRoot, sessionNames)) continue;
+    const projectSessionNames = sessionsByRoot.get(pathResolve(project.repoRoot)) ?? [];
+    if (projectSessionNames.length === 0) continue;
     let items: FastControlItem[];
     try {
-      items = listItemsFn({ projectRoot: project.repoRoot }, tmux, { scope: "all" });
+      items = listItemsFn({ projectRoot: project.repoRoot, sessionNames: projectSessionNames }, tmux, { scope: "all" });
     } catch {
       continue;
     }

@@ -534,15 +534,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         // openTarget's explicit-client path.
         const suffix = options.currentClientSession?.match(/-client-([a-f0-9]{8})$/)?.[1];
         try {
-          tmux.openTarget(
-            { ...item.target, sessionName: tmux.getProjectSession(item.projectRoot).sessionName },
-            {
-              insideTmux: true,
-              clientTty: options.clientTty,
-              clientSuffix: suffix,
-              returnSessionName: options.currentClientSession,
-            },
-          );
+          tmux.openTarget(item.target, {
+            insideTmux: true,
+            clientTty: options.clientTty,
+            clientSuffix: suffix,
+            returnSessionName: options.currentClientSession,
+          });
         } catch {
           /* target vanished mid-jump; close Exposé regardless */
         }

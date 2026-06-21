@@ -18,6 +18,7 @@ export interface FastControlContext {
   currentWindow?: string;
   currentWindowId?: string;
   currentClientSession?: string;
+  sessionNames?: string[];
 }
 
 export interface FastControlItem {
@@ -144,9 +145,24 @@ function buildSwitchableAgentItems(
   opts: { scope?: AgentListScope } = {},
 ): InternalFastControlItem[] {
   const scope = opts.scope ?? "worktree";
-  const tmuxSession = tmux.getProjectSession(context.projectRoot);
+  const sessionNames = context.sessionNames?.length
+    ? context.sessionNames
+    : [tmux.getProjectSession(context.projectRoot).sessionName];
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
-  const allManagedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
+  const allManagedWindows: ManagedWindowEntry[] = [];
+  for (const sessionName of sessionNames) {
+    for (const entry of tmux.listManagedWindows(sessionName)) {
+      const existingIndex = allManagedWindows.findIndex(({ target }) => target.windowId === entry.target.windowId);
+      if (existingIndex >= 0) {
+        const existing = allManagedWindows[existingIndex];
+        if (tmux.isClientSessionName(existing.target.sessionName) && !tmux.isClientSessionName(entry.target.sessionName)) {
+          allManagedWindows[existingIndex] = entry;
+        }
+        continue;
+      }
+      allManagedWindows.push(entry);
+    }
+  }
   const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, allManagedWindows);
   const aliveByWindowId = new Map(
     allManagedWindows.map((entry) => [entry.target.windowId, tmux.isWindowAlive(entry.target)] as const),
@@ -186,7 +202,9 @@ function buildSwitchableAgentItems(
     }));
 
   const activityByWindowId = new Map(
-    tmux.listWindows(tmuxSession.sessionName).map((window) => [window.id, window.activity ?? 0] as const),
+    sessionNames.flatMap((sessionName) =>
+      tmux.listWindows(sessionName).map((window) => [window.id, window.activity ?? 0] as const),
+    ),
   );
   managed = managed.map((entry) => ({
     ...entry,

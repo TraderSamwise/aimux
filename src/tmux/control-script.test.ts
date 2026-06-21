@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -550,6 +550,7 @@ describe("tmux-control.sh", () => {
     expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(existsSync(join(envRoot.projectStateDir, "last-used.json"))).toBe(false);
   });
 
   it("uses a dead current host window only for next ordering", () => {

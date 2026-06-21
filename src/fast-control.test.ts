@@ -534,4 +534,76 @@ describe("fast-control worktree scoping", () => {
     expect(resolveNextAgent(context, tmux)?.target.windowId).toBe("@3");
     expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@1");
   });
+
+  it("can list root-matched sessions without the canonical host name", () => {
+    const windowsBySession = {
+      "renamed-host": [
+        {
+          target: { sessionName: "renamed-host", windowId: "@1", windowIndex: 1, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "claude-a",
+            label: "Claude A",
+            command: "claude",
+            worktreePath: "/repo",
+          },
+        },
+        {
+          target: { sessionName: "renamed-host", windowId: "@2", windowIndex: 2, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "codex-b",
+            label: "Codex B",
+            command: "codex",
+            worktreePath: "/repo",
+          },
+        },
+      ],
+      "renamed-host-client-268eff9c": [
+        {
+          target: { sessionName: "renamed-host-client-268eff9c", windowId: "@2", windowIndex: 1, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "codex-b",
+            label: "Codex B",
+            command: "codex",
+            worktreePath: "/repo",
+          },
+        },
+      ],
+    };
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn((sessionName: keyof typeof windowsBySession) => windowsBySession[sessionName] ?? []),
+      isClientSessionName: vi.fn((sessionName: string) => /-client-[a-f0-9]{8}$/.test(sessionName)),
+      isWindowAlive: vi.fn(() => true),
+      listWindows: vi.fn((sessionName: keyof typeof windowsBySession) =>
+        (windowsBySession[sessionName] ?? []).map(({ target }) => ({
+          id: target.windowId,
+          index: target.windowIndex,
+          name: target.windowName,
+          active: target.windowId === "@1",
+          activity: target.windowIndex,
+        })),
+      ),
+    } as unknown as TmuxRuntimeManager;
+
+    const items = listSwitchableAgentItems(
+      {
+        projectRoot: "/repo",
+        currentWindow: "claude",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        sessionNames: ["renamed-host-client-268eff9c", "renamed-host"],
+      },
+      tmux,
+      { scope: "all" },
+    );
+
+    expect(items.map((item) => item.target.windowId)).toEqual(["@1", "@2"]);
+    expect(items.find((item) => item.target.windowId === "@2")?.target.sessionName).toBe("renamed-host");
+    expect(tmux.getProjectSession).not.toHaveBeenCalled();
+    expect(tmux.listManagedWindows).toHaveBeenCalledWith("renamed-host-client-268eff9c");
+    expect(tmux.listManagedWindows).toHaveBeenCalledWith("renamed-host");
+  });
 });
