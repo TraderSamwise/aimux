@@ -97,7 +97,7 @@ import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
 } from "./runtime-core/topology-worktrees.js";
-import { buildGraveyardCleanupPlan, runGraveyardCleanup, type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
+import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
   importRuntimeMigration,
@@ -435,6 +435,22 @@ async function postLiveProjectServiceJsonOrLocal(
   if (status === 404 || status === 405 || status === 501) {
     return fallback();
   }
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
+}
+
+async function postLiveProjectServiceJson(projectRoot: string, path: string, body: unknown): Promise<any> {
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+  if (!endpoint) {
+    throw new Error("no live project service metadata endpoint");
+  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
   }
@@ -958,10 +974,7 @@ program
       if (sessionId) {
         const projectRoot = await prepareProjectContext(opts.project);
         await ensureDaemonProjectReady(projectRoot);
-        const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/stop", { sessionId }, () => {
-          const mux = new Multiplexer();
-          return mux.stopAgent(sessionId);
-        });
+        const result = await postLiveProjectServiceJson(projectRoot, "/agents/stop", { sessionId });
         if (opts.json) {
           console.log(
             JSON.stringify(
@@ -2553,11 +2566,8 @@ worktreeCmd
   .action(async (name: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees/create", { name }, () => {
-        const mux = new Multiplexer();
-        return mux.createDesktopWorktree(name);
-      });
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/create", { name });
       const createdPath = result.path;
       if (opts.json) {
         console.log(
@@ -2592,16 +2602,8 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/worktrees/remove",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.removeDesktopWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/remove", { path: resolvedPath });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2624,16 +2626,8 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/worktrees/graveyard",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.graveyardDesktopWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/graveyard", { path: resolvedPath });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2656,16 +2650,10 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/worktrees/resurrect",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.resurrectGraveyardWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/worktrees/resurrect", {
+        path: resolvedPath,
+      });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2688,16 +2676,10 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/worktrees/delete",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.deleteGraveyardWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/worktrees/delete", {
+        path: resolvedPath,
+      });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2908,10 +2890,7 @@ graveyardCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId: id }, () => {
-        const mux = new Multiplexer();
-        return mux.sendAgentToGraveyard(id);
-      });
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/kill", { sessionId: id });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2945,15 +2924,7 @@ graveyardCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/resurrect",
-        { sessionId: id },
-        () => {
-          const mux = new Multiplexer();
-          return mux.resurrectGraveyardSession(id);
-        },
-      );
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/resurrect", { sessionId: id });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2986,22 +2957,10 @@ graveyardCmd
   .action(async (opts: { project?: string; dryRun?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/cleanup",
-        { dryRun: opts.dryRun === true },
-        async () => {
-          const mux = new Multiplexer();
-          return runGraveyardCleanup(
-            buildGraveyardCleanupPlan(),
-            {
-              deleteWorktree: (path) => mux.deleteGraveyardWorktree(path),
-            },
-            { dryRun: opts.dryRun === true },
-          );
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/cleanup", {
+        dryRun: opts.dryRun === true,
+      });
       const cleanupResult = (result.result ?? result) as GraveyardCleanupRunResult;
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, ...cleanupResult }, null, 2));
@@ -3025,15 +2984,10 @@ program
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/rename",
-        { sessionId, label: opts.label },
-        () => {
-          const mux = new Multiplexer();
-          return mux.renameAgent(sessionId, opts.label);
-        },
-      );
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/rename", {
+        sessionId,
+        label: opts.label,
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3181,10 +3135,7 @@ program
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId }, () => {
-        const mux = new Multiplexer();
-        return mux.sendAgentToGraveyard(sessionId);
-      });
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/kill", { sessionId });
       if (opts.json) {
         console.log(
           JSON.stringify(
