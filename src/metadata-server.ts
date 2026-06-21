@@ -681,6 +681,8 @@ const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
   PROJECT_API_ROUTES.events,
   PROJECT_API_ROUTES.agents.outputStream,
   PROJECT_API_ROUTES.agents.interactionStream,
+  PROJECT_API_ROUTES.agents.interactionRequest,
+  PROJECT_API_ROUTES.agents.interactionWait,
 ]);
 const DESKTOP_STATE_CACHE_TTL_MS = 100;
 

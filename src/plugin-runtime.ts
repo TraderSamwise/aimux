@@ -241,7 +241,10 @@ export class PluginRuntime {
     instance: AimuxPluginInstance | void,
     input: { source: "builtin" | "user"; name: string; path?: string },
   ): Promise<boolean> {
-    if (!instance) return false;
+    if (!instance) {
+      this.recordPluginStatus({ ...input, status: "failed", error: "plugin factory returned no instance" });
+      return false;
+    }
     try {
       await instance.start?.();
       this.instances.push(instance);
@@ -391,7 +394,16 @@ export class PluginRuntime {
       let instance: AimuxPluginInstance | void;
       try {
         const mod = (await import(pathToFileURL(file).href)) as { default?: AimuxPluginFactory };
-        if (typeof mod.default !== "function") continue;
+        if (typeof mod.default !== "function") {
+          this.recordPluginStatus({
+            source: "user",
+            name: file,
+            path: file,
+            status: "failed",
+            error: "default export must be a function",
+          });
+          continue;
+        }
         instance = await mod.default(api);
       } catch (error) {
         this.recordPluginStatus({

@@ -178,4 +178,44 @@ describe("deriveAlertFromAgentEvent", () => {
 
     expect((globalThis as { __aimuxFailedPluginStopped?: number }).__aimuxFailedPluginStopped).toBe(1);
   });
+
+  it("reports invalid user plugin module shapes as failed statuses", async () => {
+    originalAimuxHome = process.env.AIMUX_HOME;
+    capturedAimuxHome = true;
+    originalCwd = process.cwd();
+    tempDir = mkdtempSync(join(tmpdir(), "aimux-plugin-runtime-invalid-shape-"));
+    const repoRoot = join(tempDir, "repo");
+    const aimuxHome = join(tempDir, "home");
+    const pluginDir = join(aimuxHome, "plugins");
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    mkdirSync(pluginDir, { recursive: true });
+    process.env.AIMUX_HOME = aimuxHome;
+    await initPaths(repoRoot);
+
+    const noDefaultPath = join(pluginDir, "no-default.js");
+    const noInstancePath = join(pluginDir, "no-instance.js");
+    writeFileSync(noDefaultPath, "export const plugin = true;\n");
+    writeFileSync(noInstancePath, "export default function plugin() {}\n");
+
+    const runtime = new PluginRuntime({
+      host: "127.0.0.1",
+      port: 43190,
+      pid: process.pid,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await runtime.start();
+    const statuses = runtime.getPluginStatuses();
+
+    expect(statuses.find((status) => status.path === noDefaultPath)).toMatchObject({
+      source: "user",
+      status: "failed",
+      error: "default export must be a function",
+    });
+    expect(statuses.find((status) => status.path === noInstancePath)).toMatchObject({
+      source: "user",
+      status: "failed",
+      error: "plugin factory returned no instance",
+    });
+  });
 });
