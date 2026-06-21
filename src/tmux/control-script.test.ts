@@ -288,7 +288,7 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
   });
 
-  it("tries the control API before recovering dashboard switching locally when the endpoint is stale", () => {
+  it("switches dashboard locally before trying the control API", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
       windows: {
@@ -325,8 +325,48 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
-    expect(curlLog.length).toBeGreaterThan(0);
-    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/open-dashboard");
+    expect(curlLog).toEqual([]);
+  });
+
+  it("hydrates project context from the host session for global prefix bindings", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-project-root": "/repo/project",
+          "@aimux-project-state-dir": "/repo/project/.aimux-state",
+        },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+
+    runControl(envRoot, [
+      "dashboard",
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).toContain("show-options -v -t aimux-proj @aimux-project-root");
+    expect(log).toContain("show-options -v -t aimux-proj @aimux-project-state-dir");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(curlLog).toEqual([]);
   });
 
   it("keeps dashboard switching local when no endpoint is available", () => {
@@ -368,7 +408,7 @@ describe("tmux-control.sh", () => {
     expect(curlLog).toEqual([]);
   });
 
-  it("requests explicit focus when falling through to the control API", () => {
+  it("fails fast locally instead of falling through to the control API", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
       windows: {},
@@ -393,12 +433,10 @@ describe("tmux-control.sh", () => {
       "/repo/project/worktree",
     ]);
 
+    const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(curlLog.length).toBeGreaterThan(0);
-    expect(curlLog[0]).toContain("--data-urlencode currentClientSession=aimux-proj-client-live");
-    expect(curlLog[0]).toContain("--data-urlencode clientTty=/dev/live");
-    expect(curlLog[0]).toContain("--data-urlencode focus=true");
-    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/switch-next");
+    expect(curlLog).toEqual([]);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("falls back to host tmux metadata for next when statusline is empty", () => {
@@ -457,9 +495,7 @@ describe("tmux-control.sh", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
       windows: {
-        "aimux-proj": [
-          { id: "@wrong", index: 2, name: "wrong" },
-        ],
+        "aimux-proj": [{ id: "@wrong", index: 2, name: "wrong" }],
         "aimux-proj-client-live": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@current", index: 1, name: "current" },
@@ -496,8 +532,9 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(curlLog.length).toBeGreaterThan(0);
+    expect(curlLog).toEqual([]);
     expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("skips dead host tmux metadata candidates for next", () => {
@@ -865,9 +902,8 @@ describe("tmux-control.sh", () => {
     const curlLog = readCurlLog(envRoot);
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
-    expect(curlLog.length).toBeGreaterThan(0);
-    expect(curlLog[0]).toContain("--data-urlencode windowId=@codex");
-    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/focus-window");
+    expect(curlLog).toEqual([]);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("hydrates current context from explicit pane id", () => {
@@ -1272,7 +1308,7 @@ describe("tmux-control.sh", () => {
     expect(output).toBe("");
     const log = readLog(envRoot);
     expect(log.some((line) => line.includes("aimux") && line.includes("couldn't switch window"))).toBe(true);
-    expect(log.some((line) => line.includes("runtime is not responding"))).toBe(true);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("reports the runtime as unavailable when no endpoint file exists", () => {
@@ -1309,7 +1345,7 @@ describe("tmux-control.sh", () => {
     expect(output).toBe("");
     const log = readLog(envRoot);
     expect(log.some((line) => line.includes("couldn't switch window"))).toBe(true);
-    expect(log.some((line) => line.includes("runtime is unavailable"))).toBe(true);
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("keeps next scoped to main checkout items when current window has no explicit worktree path", () => {
@@ -1387,9 +1423,7 @@ describe("tmux-control.sh", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
       windows: {
-        "aimux-proj": [
-          { id: "@wrong", index: 2, name: "wrong" },
-        ],
+        "aimux-proj": [{ id: "@wrong", index: 2, name: "wrong" }],
         "aimux-proj-client-live": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@current", index: 1, name: "current" },
@@ -1433,8 +1467,9 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(curlLog.length).toBeGreaterThan(0);
+    expect(curlLog).toEqual([]);
     expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("switches from a focused parent agent to its first teammate in statusline order", () => {

@@ -37,6 +37,7 @@ function parseStatusHeadline(content: string): string | null {
 class DirectoryWatcher implements AimuxPluginInstance {
   private watcher: FSWatcher | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
+  private poller: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly dir: string,
@@ -46,14 +47,36 @@ class DirectoryWatcher implements AimuxPluginInstance {
   start(): void {
     mkdirSync(this.dir, { recursive: true });
     this.onScan();
-    this.watcher = watch(this.dir, () => this.scheduleScan());
+    try {
+      this.watcher = watch(this.dir, () => this.scheduleScan());
+      this.watcher.on("error", (error) => {
+        debug(`metadata watcher falling back to polling for ${this.dir}: ${error.message}`, "plugin");
+        this.watcher?.close();
+        this.watcher = null;
+        this.startPolling();
+      });
+    } catch (error) {
+      debug(
+        `metadata watcher falling back to polling for ${this.dir}: ${error instanceof Error ? error.message : String(error)}`,
+        "plugin",
+      );
+      this.startPolling();
+    }
   }
 
   async stop(): Promise<void> {
     this.watcher?.close();
     this.watcher = null;
+    if (this.poller) clearInterval(this.poller);
+    this.poller = null;
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = null;
+  }
+
+  private startPolling(): void {
+    if (this.poller) return;
+    this.poller = setInterval(() => this.scheduleScan(), 2_000);
+    this.poller.unref?.();
   }
 
   private scheduleScan(): void {

@@ -1,4 +1,4 @@
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { type OrchestrationThread, type ThreadStatus } from "../threads.js";
 import { type ThreadEntry } from "../workflow.js";
 import { applyCoordinationFilter } from "./notifications.js";
@@ -166,9 +166,7 @@ export async function runThreadStatusAction(
     host.footerFlash = `Thread marked ${status}`;
     host.footerFlashTicks = 3;
   } catch (error) {
-    host.showDashboardError("Failed to update thread status", [
-      error instanceof Error ? error.message : String(error),
-    ]);
+    host.showDashboardError("Failed to update thread status", [error instanceof Error ? error.message : String(error)]);
     return;
   }
   void refreshCoordinationThreads(host).catch(() => {});
@@ -228,7 +226,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();
@@ -248,7 +246,12 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
     }
     // Reply through the service (sole writer) rather than mutating the thread store in-process.
     void host
-      .postToProjectService(PROJECT_API_ROUTES.threads.send, { threadId: entry.thread.id, from: "user", kind: "reply", body })
+      .postToProjectService(PROJECT_API_ROUTES.threads.send, {
+        threadId: entry.thread.id,
+        from: "user",
+        kind: "reply",
+        body,
+      })
       .then(() => refreshCoordinationThreads(host))
       .catch((error: unknown) =>
         host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]),

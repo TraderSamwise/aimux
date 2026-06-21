@@ -860,7 +860,12 @@ export class TmuxRuntimeManager {
     const controlScript = this.getControlScriptShellCommand();
     const statuslineCommand = this.getStatuslineCommandSpec();
     const projectStateDir = getProjectStateDirFor(projectRoot);
+    const controlContextArgs =
+      "--current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}'";
+    const controlCommand = (action: string, args = "") =>
+      `${controlScript} ${action}${args ? ` ${args}` : ""} ${controlContextArgs} >/dev/null 2>&1`;
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
+    this.exec(["set-option", "-t", sessionName, "@aimux-project-state-dir", projectStateDir]);
     this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_OWNER_OPTION, getRuntimeOwnerId()]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
@@ -870,13 +875,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "copy-command", "pbcopy"]);
     this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);
     this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
-    this.exec([
-      "set-hook",
-      "-t",
-      sessionName,
-      "pane-focus-in",
-      `run-shell -b ${shellQuote(`${controlScript} active --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`)}`,
-    ]);
+    this.exec(["set-hook", "-t", sessionName, "pane-focus-in", `run-shell -b ${shellQuote(controlCommand("active"))}`]);
     this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
     this.exec(["set-window-option", "-t", sessionName, "monitor-bell", "off"]);
     this.exec([
@@ -942,100 +941,18 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
     this.exec(["bind-key", "-T", "prefix", "0", "run-shell", "-b", "true"]);
     for (const digit of ["1", "2", "3", "4", "5", "6", "7", "8", "9"]) {
-      this.exec([
-        "bind-key",
-        "-T",
-        "prefix",
-        digit,
-        "run-shell",
-        "-b",
-        `${controlScript} window --index ${digit} --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-      ]);
+      this.exec(["bind-key", "-T", "prefix", digit, "run-shell", "-b", controlCommand("window", `--index ${digit}`)]);
     }
-    this.exec([
-      "bind-key",
-      "-r",
-      "-T",
-      "prefix",
-      "n",
-      "run-shell",
-      "-b",
-      `${controlScript} next --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-r",
-      "-T",
-      "prefix",
-      "p",
-      "run-shell",
-      "-b",
-      `${controlScript} prev --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "s",
-      "run-shell",
-      "-b",
-      `${controlScript} menu --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "u",
-      "run-shell",
-      "-b",
-      `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
+    this.exec(["bind-key", "-r", "-T", "prefix", "n", "run-shell", "-b", controlCommand("next")]);
+    this.exec(["bind-key", "-r", "-T", "prefix", "p", "run-shell", "-b", controlCommand("prev")]);
+    this.exec(["bind-key", "-T", "prefix", "s", "run-shell", "-b", controlCommand("menu")]);
+    this.exec(["bind-key", "-T", "prefix", "u", "run-shell", "-b", controlCommand("attention")]);
     const metaHomeArg = process.env.AIMUX_HOME ? ` --aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "";
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "g",
-      "run-shell",
-      "-b",
-      `${controlScript} expose --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}'${metaHomeArg} >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "m",
-      "run-shell",
-      "-b",
-      `${controlScript} meta --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}'${metaHomeArg} >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "e",
-      "run-shell",
-      "-b",
-      `${controlScript} team --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "d",
-      "run-shell",
-      "-b",
-      `${controlScript} dashboard --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "i",
-      "run-shell",
-      "-b",
-      `${controlScript} inbox --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
+    this.exec(["bind-key", "-T", "prefix", "g", "run-shell", "-b", controlCommand("expose", metaHomeArg.trim())]);
+    this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", metaHomeArg.trim())]);
+    this.exec(["bind-key", "-T", "prefix", "e", "run-shell", "-b", controlCommand("team")]);
+    this.exec(["bind-key", "-T", "prefix", "d", "run-shell", "-b", controlCommand("dashboard")]);
+    this.exec(["bind-key", "-T", "prefix", "i", "run-shell", "-b", controlCommand("inbox")]);
     this.exec(["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"]);
     this.exec(["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"]);
     this.exec([

@@ -47,6 +47,22 @@ export function runtimeGuardEquals(a: RuntimeGuardState, b: RuntimeGuardState): 
   return a.kind === "stale" ? a.reason === (b as { reason: string }).reason : true;
 }
 
+export function stabilizeRuntimeGuardProbe(
+  current: RuntimeGuardState,
+  next: RuntimeGuardState,
+  disconnectedProbeCount: number,
+  threshold = 2,
+): { state: RuntimeGuardState; disconnectedProbeCount: number } {
+  if (next.kind !== "disconnected") {
+    return { state: next, disconnectedProbeCount: 0 };
+  }
+  const count = disconnectedProbeCount + 1;
+  if (current.kind !== "ok" || count >= threshold) {
+    return { state: next, disconnectedProbeCount: count };
+  }
+  return { state: current, disconnectedProbeCount: count };
+}
+
 // Keys that are non-mutating on EVERY screen (selection/scroll/quit/help). Screen-switch
 // letters (d/c/p/l/t/g) are excluded because they mutate on their target subscreen (e.g. "c"
 // is clear-all on Coordination), so under the guard you reload rather than browse.
@@ -54,8 +70,9 @@ const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape",
 
 /** What a keystroke should do while the dashboard is guarded (stale/disconnected). */
 export function runtimeGuardKeyDisposition(key: string): "reload" | "passthrough" | "swallow" {
-  if (key === "R") return "reload";
-  if (GUARD_PASSTHROUGH_KEYS.has(key)) return "passthrough";
+  const command = key.length === 1 ? key.toLowerCase() : key;
+  if (command === "r") return "reload";
+  if (GUARD_PASSTHROUGH_KEYS.has(command)) return "passthrough";
   return "swallow";
 }
 

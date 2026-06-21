@@ -1,11 +1,9 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
 import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
-import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
@@ -34,24 +32,7 @@ import {
 const AIMUX_MANAGED_BLOCK_ID = "aimux-agent-instructions";
 const AIMUX_MANAGED_BLOCK_START = `<!-- BEGIN Aimux MANAGED BLOCK: ${AIMUX_MANAGED_BLOCK_ID} -->`;
 const AIMUX_MANAGED_BLOCK_END = `<!-- END Aimux MANAGED BLOCK: ${AIMUX_MANAGED_BLOCK_ID} -->`;
-const LEGACY_DEFAULT_INSTRUCTION_FILES = ["AGENTS.md"];
-
-function managedInstructionBlock(content: string): string {
-  return `${AIMUX_MANAGED_BLOCK_START}\n${content.trim()}\n${AIMUX_MANAGED_BLOCK_END}`;
-}
-
-function mergeManagedInstructionBlock(existing: string, content: string): string {
-  const block = managedInstructionBlock(content);
-  const pattern = new RegExp(
-    `${escapeRegex(AIMUX_MANAGED_BLOCK_START)}[\\s\\S]*?${escapeRegex(AIMUX_MANAGED_BLOCK_END)}`,
-    "m",
-  );
-  if (pattern.test(existing)) {
-    return `${existing.replace(pattern, block).trim()}\n`;
-  }
-  const prefix = existing.trimEnd();
-  return `${prefix ? `${prefix}\n\n` : ""}${block}\n`;
-}
+const LEGACY_DEFAULT_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", "CODEX.md"];
 
 function stripManagedInstructionBlock(existing: string): string {
   const pattern = new RegExp(
@@ -205,33 +186,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         } catch {}
       }
     }
-
-    const preamble =
-      "# aimux Agent Instructions\n\n" +
-      buildAimuxAgentInstructions() +
-      "\n\nThis managed block is written by aimux. User-authored content outside the block is preserved.\n";
-
-    let fullPreamble = preamble;
-    for (const mdPath of [join(homedir(), "AIMUX.md"), join(process.cwd(), "AIMUX.md")]) {
-      if (existsSync(mdPath)) {
-        try {
-          const userContent = readFileSync(mdPath, "utf-8").trim();
-          if (userContent) {
-            fullPreamble += "\n## User Instructions\n\n" + userContent + "\n";
-            debug(`loaded ${mdPath} for instructions file (${userContent.length} chars)`, "preamble");
-          }
-        } catch {}
-      }
-    }
-
-    for (const [, tool] of Object.entries(config.tools)) {
-      if (!tool.instructionsFile || !tool.enabled) continue;
-      const filePath = join(process.cwd(), tool.instructionsFile);
-      const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
-      writeFileSync(filePath, mergeManagedInstructionBlock(existing, fullPreamble));
-      mux.writtenInstructionFiles.add(filePath);
-      debug(`merged aimux managed block into ${tool.instructionsFile}`, "context");
-    }
+    mux.writtenInstructionFiles.clear();
   },
   removeInstructionFiles(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
