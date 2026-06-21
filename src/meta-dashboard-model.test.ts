@@ -32,9 +32,12 @@ function item(
   };
 }
 
-function fakeTmux(sessionNames: string[]): TmuxRuntimeManager {
+function fakeTmux(sessionNames: string[], sessionRoots: Record<string, string> = {}): TmuxRuntimeManager {
   return {
     listSessionNames: vi.fn(() => sessionNames),
+    getSessionOption: vi.fn((sessionName: string, key: string) =>
+      key === "@aimux-project-root" ? (sessionRoots[sessionName] ?? "") : "",
+    ),
     getProjectSession: vi.fn((repoRoot: string) => ({
       projectRoot: repoRoot,
       projectId: "id",
@@ -69,8 +72,12 @@ const worktreesByRoot: Record<string, ReturnType<typeof import("./worktree.js").
 };
 
 function deps() {
+  const tmux = fakeTmux(["renamed-alpha-host", "renamed-bravo-client"], {
+    "renamed-alpha-host": "/repos/alpha",
+    "renamed-bravo-client": "/repos/bravo",
+  });
   return {
-    tmux: fakeTmux(["aimux-alpha-id", "aimux-bravo-id"]),
+    tmux,
     listProjectsFn: vi.fn(() => projects),
     listItemsFn: vi.fn((ctx: { projectRoot: string }) => itemsByRoot[ctx.projectRoot] ?? []),
     listWorktreesFn: vi.fn((root: string) => worktreesByRoot[root] ?? []),
@@ -106,16 +113,46 @@ describe("buildMetaDashboardModel", () => {
     expect(svc.kind).toBe("service");
     expect(svc.target.sessionName).toBe("aimux-alpha-id");
   });
+
+  it("passes root-matched session names to item discovery and reads roots once", () => {
+    const localDeps = deps();
+    buildMetaDashboardModel(localDeps);
+
+    expect(localDeps.listItemsFn).toHaveBeenCalledWith(
+      { projectRoot: "/repos/alpha", sessionNames: ["renamed-alpha-host"] },
+      localDeps.tmux,
+      { scope: "all" },
+    );
+    expect(localDeps.listItemsFn).toHaveBeenCalledWith(
+      { projectRoot: "/repos/bravo", sessionNames: ["renamed-bravo-client"] },
+      localDeps.tmux,
+      { scope: "all" },
+    );
+    expect(localDeps.tmux.getSessionOption).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not treat derived session names as running without project-root metadata", () => {
+    const localDeps = deps();
+    localDeps.tmux = fakeTmux(["aimux-alpha-id", "aimux-alpha-id-client-live"]);
+    const model = buildMetaDashboardModel(localDeps);
+    expect(model.projects.find((project) => project.name === "alpha")?.running).toBe(false);
+  });
 });
 
 describe("listAllProjectsExposeItems", () => {
   it("spans only running projects and tags each item with its project", () => {
-    const items = listAllProjectsExposeItems(deps());
+    const localDeps = deps();
+    const items = listAllProjectsExposeItems(localDeps);
     const byProject = items.reduce<Record<string, number>>((acc, it) => {
       acc[it.projectName] = (acc[it.projectName] ?? 0) + 1;
       return acc;
     }, {});
     expect(byProject).toEqual({ alpha: 4, bravo: 1 });
     expect(items.every((it) => it.projectRoot && it.projectId)).toBe(true);
+    expect(localDeps.listItemsFn).toHaveBeenCalledWith(
+      { projectRoot: "/repos/alpha", sessionNames: ["renamed-alpha-host"] },
+      localDeps.tmux,
+      { scope: "all" },
+    );
   });
 });
