@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { loadConfig } from "../config.js";
@@ -14,7 +14,7 @@ import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
-import { writeJsonAtomic } from "../atomic-write.js";
+import { writeJsonAtomic, writeTextAtomicFast } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import {
   buildGraveyardCleanupPlan,
@@ -270,7 +270,7 @@ export const persistenceMethods = {
         return;
       }
       this.lastStatuslineSnapshotKey = snapshotKey;
-      writeFileSync(filePath, JSON.stringify(data) + "\n");
+      writeTextAtomicFast(filePath, JSON.stringify(data) + "\n");
       this.writePrecomputedTmuxStatuslineFiles(data);
       if (input?.refreshTmux) {
         this.tmuxRuntimeManager.refreshStatus();
@@ -313,7 +313,7 @@ export const persistenceMethods = {
     // Cosmetic per-window statusline text, written concurrently from the refresh
     // path: unique-temp atomic write (never a shared ".tmp"), and never fatal.
     try {
-      writeFileSync(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
+      writeTextAtomicFast(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
     } catch (error) {
       debug(
         `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,

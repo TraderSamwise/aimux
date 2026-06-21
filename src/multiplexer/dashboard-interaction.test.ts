@@ -997,6 +997,30 @@ describe("dashboardInteractionMethods", () => {
     expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true });
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
+
+  it("handles shifted dashboard command keys from printable uppercase input", () => {
+    const selected = { id: "codex-1", command: "codex", threadWaitingOnMeCount: 1 };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => false,
+        quickJumpDigits: "",
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      showOrchestrationRoutePicker: vi.fn(),
+      showWorktreeList: vi.fn(),
+      getSelectedDashboardSessionForActions: vi.fn(() => selected),
+      openRelevantThreadForSession: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("T"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("W"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("R"));
+
+    expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("task");
+    expect(host.showWorktreeList).toHaveBeenCalledOnce();
+    expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
+  });
 });
 
 function dashboardActionWaitStub(kind: "entry" | "service") {
