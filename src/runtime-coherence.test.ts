@@ -131,6 +131,48 @@ describe("runtime coherence report", () => {
     expect(renderRuntimeCoherenceReport(report)).toContain("service: unreachable");
   });
 
+  it("retries a slow health probe before marking a service unreachable", async () => {
+    const requestJson = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("request timed out after 1000ms"))
+      .mockResolvedValueOnce({
+        status: 200,
+        json: { ok: true, pid: 1001, serviceInfo: expectedManifest },
+      });
+
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => []),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          alpha: {
+            projectId: "alpha",
+            projectRoot: "/repo/alpha",
+            pid: 1001,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43211,
+        pid: 1001,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson,
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(requestJson).toHaveBeenNthCalledWith(1, "http://127.0.0.1:43211/health", { timeoutMs: 1000 });
+    expect(requestJson).toHaveBeenNthCalledWith(2, "http://127.0.0.1:43211/health", { timeoutMs: 4000 });
+    expect(report.projects[0]?.service.status).toBe("ok");
+  });
+
   it("marks dashboards stale when the tmux runtime owner differs", async () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
