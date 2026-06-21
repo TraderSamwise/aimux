@@ -112,6 +112,39 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
+  it("exposes plugin startup diagnostics in health", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      diagnostics: {
+        pluginStatuses: () => [
+          {
+            source: "user",
+            name: "file-watch-plugin",
+            path: "/tmp/file-watch-plugin.js",
+            status: "failed",
+            error: "EMFILE: too many open files, watch",
+            resourceFailure: true,
+            stoppedAfterFailedStart: true,
+          },
+        ],
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await health.json();
+
+    expect(json.plugins).toEqual([
+      expect.objectContaining({
+        name: "file-watch-plugin",
+        status: "failed",
+        resourceFailure: true,
+      }),
+    ]);
+  });
+
   it("budgets rapid desktop-state reads and invalidates on project changes", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
