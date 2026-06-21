@@ -187,6 +187,15 @@ describe("restartAimuxControlPlane", () => {
         startedAt: "after",
         updatedAt: "after",
       })),
+      isPidAlive: (pid) => {
+        if (pid !== 9001) return false;
+        try {
+          processKill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
       createTmux: () => ({ isAvailable: () => true }),
       resolveDashboardTarget: vi.fn(() => ({
         dashboardSession: { sessionName: "aimux-alpha-111" },
@@ -387,12 +396,15 @@ describe("restartAimuxControlPlane", () => {
     expect(killPid).not.toHaveBeenCalled();
   });
 
-  it("does not wait pids that were not signaled by stopDaemon", async () => {
+  it("signals and waits service pids from the pre-restart report even when stopDaemon missed them", async () => {
+    const calls: string[] = [];
     const isPidAlive = vi.fn((pid: number) => {
-      if (pid === 9001) return false;
-      throw new Error(`should not inspect unsignaled service pid ${pid}`);
+      calls.push(`pid:${pid}`);
+      return false;
     });
-    const killPid = vi.fn();
+    const killPid = vi.fn((pid: number, signal: NodeJS.Signals) => {
+      calls.push(`kill:${pid}:${signal}`);
+    });
 
     await restartAimuxControlPlane({
       now: () => new Date("2026-06-20T00:00:01.000Z"),
@@ -416,6 +428,9 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(isPidAlive).toHaveBeenCalledWith(9001);
-    expect(killPid).not.toHaveBeenCalled();
+    expect(killPid).toHaveBeenCalledWith(1001, "SIGTERM");
+    expect(killPid).toHaveBeenCalledWith(1002, "SIGTERM");
+    expect(calls.indexOf("kill:1001:SIGTERM")).toBeLessThan(calls.indexOf("pid:1001"));
+    expect(calls.indexOf("kill:1002:SIGTERM")).toBeLessThan(calls.indexOf("pid:1002"));
   });
 });

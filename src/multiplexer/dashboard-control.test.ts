@@ -62,6 +62,29 @@ describe("postToProjectService", () => {
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
     expect(mocks.requestJson).toHaveBeenCalledTimes(1);
   });
+
+  it("bounds control-plane recovery by the project-service request timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.resolveProjectServiceEndpoint.mockReturnValue(null);
+      mocks.ensureDaemonRunning.mockImplementation(() => new Promise(() => {}));
+      const { postToProjectService } = await import("./dashboard-control.js");
+
+      const request = postToProjectService(
+        { dashboardServiceRecovery: null },
+        "/agents/resume",
+        { sessionId: "claude-1" },
+        { timeoutMs: 25 },
+      );
+      const rejection = expect(request).rejects.toThrow("project service recovery timed out");
+      await vi.advanceTimersByTimeAsync(30);
+
+      await rejection;
+      expect(mocks.requestJson).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("dashboard live target activation", () => {

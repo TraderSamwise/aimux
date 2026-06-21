@@ -1,7 +1,7 @@
 import { buildProjectObservability, type ProjectObservability } from "../project-observability.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderProjectScreen } from "../tui/screens/subscreen-renderers.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 
 type ProjectHost = any;
 
@@ -104,7 +104,7 @@ export function handleProjectKey(host: ProjectHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
   const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
   if (isTabToggle) {

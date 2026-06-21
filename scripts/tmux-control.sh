@@ -71,7 +71,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$action" ] || exit 1
-[ -n "$project_state_dir" ] || exit 1
 
 hydrate_from_tmux_pane() {
   pane_target="$pane_id"
@@ -97,22 +96,37 @@ hydrate_from_tmux_pane() {
 
 hydrate_from_tmux_pane || true
 
-endpoint_file="$project_state_dir/metadata-api.txt"
-project_root_file="$project_state_dir/project-root.txt"
-statusline_json="$project_state_dir/statusline.json"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
-debug_log_line() {
-  printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
+project_context_session() {
+  context_session="$current_client_session"
+  [ -n "$context_session" ] || return 1
+  case "$context_session" in
+    *-client-*) context_session=${context_session%-client-*} ;;
+  esac
+  printf '%s' "$context_session"
 }
 
-load_endpoint() {
-  [ -f "$endpoint_file" ] || return 1
-  endpoint=$(tr -d '\n' < "$endpoint_file")
-  [ -n "$endpoint" ] || return 1
-  return 0
+hydrate_project_context() {
+  context_session=$(project_context_session) || return 1
+  if [ -z "$project_root" ]; then
+    project_root=$(tmux show-options -v -t "$context_session" @aimux-project-root 2>/dev/null || true)
+  fi
+  if [ -z "$project_state_dir" ]; then
+    project_state_dir=$(tmux show-options -v -t "$context_session" @aimux-project-state-dir 2>/dev/null || true)
+  fi
+}
+
+hydrate_project_context || true
+
+[ -n "$project_state_dir" ] || exit 1
+
+statusline_json="$project_state_dir/statusline.json"
+
+debug_log_line() {
+  printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
 }
 
 shell_quote() {
@@ -150,25 +164,34 @@ resolve_live_client() {
   return 1
 }
 
-request_control() {
-  max_time="$1"
-  resolve_live_client || true
-  request_client_session="${live_client_session:-$current_client_session}"
-  request_client_tty="${live_client_tty:-$client_tty}"
-  curl \
-    --silent \
-    --show-error \
-    --fail \
-    --max-time "$max_time" \
-    --get \
-    --data-urlencode "currentClientSession=$request_client_session" \
-    --data-urlencode "clientTty=$request_client_tty" \
-    --data-urlencode "currentWindow=$current_window" \
-    --data-urlencode "currentWindowId=$current_window_id" \
-    --data-urlencode "currentPath=$current_path" \
-    --data-urlencode "windowId=$window_id" \
-    --data-urlencode "focus=true" \
-    "${endpoint}${path}" >/dev/null 2>>"$debug_log"
+switch_client_to_target() {
+  switch_target="$1"
+  switch_tty="${2-}"
+  if [ -n "$switch_tty" ]; then
+    tmux switch-client -c "$switch_tty" -t "$switch_target" >/dev/null 2>&1 || return 1
+  else
+    tmux switch-client -t "$switch_target" >/dev/null 2>&1 || return 1
+  fi
+}
+
+refresh_navigation_client() {
+  refresh_tty="${1-}"
+  if [ -n "$refresh_tty" ]; then
+    tmux refresh-client -t "$refresh_tty" -S >/dev/null 2>&1 || true
+  else
+    tmux refresh-client -S >/dev/null 2>&1 || true
+  fi
+}
+
+switch_fast_current_session_dashboard() {
+  [ -n "$current_client_session" ] || return 1
+  dashboard_index=$(tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
+  [ -n "$dashboard_index" ] || return 1
+  dashboard_switch_target="${current_client_session}:${dashboard_index}"
+  switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
+  refresh_navigation_client "$client_tty"
+  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  exit 0
 }
 
 focus_local_dashboard_target() {
@@ -231,21 +254,22 @@ focus_local_dashboard_target() {
 }
 
 switch_local_dashboard() {
+  switch_fast_current_session_dashboard || true
   focus_local_dashboard_target || return 1
 
   if [ -n "${live_client_tty-}" ]; then
-    tmux switch-client -c "$live_client_tty" -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
+    switch_client_to_target "$dashboard_switch_target" "$live_client_tty" || return 1
   elif [ -n "$client_tty" ]; then
-    tmux switch-client -c "$client_tty" -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
+    switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
   else
-    tmux switch-client -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
+    switch_client_to_target "$dashboard_switch_target" "" || return 1
   fi
   if [ -n "${live_client_tty-}" ]; then
-    tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
+    refresh_navigation_client "$live_client_tty"
   elif [ -n "$client_tty" ]; then
-    tmux refresh-client -t "$client_tty" -S >/dev/null 2>&1 || true
+    refresh_navigation_client "$client_tty"
   else
-    tmux refresh-client -S >/dev/null 2>&1 || true
+    refresh_navigation_client ""
   fi
   tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
   exit 0
@@ -265,21 +289,6 @@ show_local_inbox_popup() {
   else
     tmux display-popup -T "aimux inbox" -x P -y P -w 96 -h 18 -E "$inbox_cmd" >/dev/null 2>&1 || return 1
   fi
-  exit 0
-}
-
-open_dashboard_via_aimux() {
-  if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
-    project_root=$(tr -d '\n' < "$project_root_file")
-  fi
-  if [ -z "$project_root" ] && [ -n "$current_client_session" ]; then
-    project_root=$(tmux show-options -v -t "$current_client_session" @aimux-project-root 2>/dev/null || true)
-  fi
-  [ -n "$project_root" ] || return 1
-  [ -x "$aimux_bin" ] || return 1
-  (cd "$project_root" && "$aimux_bin" dashboard-reload --open >/dev/null 2>&1) ||
-    (cd "$project_root" && "$aimux_bin" >/dev/null 2>&1) ||
-    return 1
   exit 0
 }
 
@@ -347,7 +356,7 @@ report_control_failure() {
     team) action_label="reach teammate" ;;
     *) action_label="$action" ;;
   esac
-  debug_log_line "control failure action=$action endpoint_available=${endpoint_available:-0} reason=$failure_reason"
+  debug_log_line "control failure action=$action reason=$failure_reason"
   show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label — $failure_reason"
 }
 
@@ -868,7 +877,7 @@ fallback_local_control() {
   case "$action" in
     dashboard)
       printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
-      switch_local_dashboard || open_dashboard_via_aimux
+      switch_local_dashboard
       ;;
     inbox)
       show_local_inbox_popup
@@ -902,68 +911,11 @@ fallback_local_control() {
   return 1
 }
 
-repair_control_plane() {
-  if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
-    project_root=$(tr -d '\n' < "$project_root_file")
-  fi
-  if [ -z "$project_root" ] && [ -n "$current_client_session" ]; then
-    project_root=$(tmux show-options -v -t "$current_client_session" @aimux-project-root 2>/dev/null || true)
-  fi
-  [ -n "$project_root" ] || return 1
-  [ -x "$aimux_bin" ] || return 1
-  "$aimux_bin" daemon project-ensure --project "$project_root" >/dev/null 2>&1 || return 1
-  load_endpoint
-}
-
-endpoint_available=0
-if load_endpoint; then
-  endpoint_available=1
-fi
-
 case "$action" in
-  next) path="/control/switch-next" ;;
-  prev) path="/control/switch-prev" ;;
-  attention) path="/control/switch-attention" ;;
-  dashboard) path="/control/open-dashboard" ;;
-  inbox) path="/control/open-inbox" ;;
-  window) path="/control/focus-window" ;;
-  active) path="/control/active-window" ;;
-  team) path="" ;;
-  menu) path="" ;;
-  expose) path="" ;;
-  meta) path="" ;;
+  next|prev|attention|dashboard|inbox|menu|expose|meta|window|active|team)
+    fallback_local_control && exit 0
+    report_control_failure "no local tmux target available"
+    exit 0
+    ;;
   *) exit 1 ;;
 esac
-
-case "$action" in
-  next|prev|attention|inbox|menu|expose|meta|window|active|team)
-    fallback_local_control && exit 0
-    ;;
-esac
-
-if [ "$endpoint_available" -eq 1 ] && [ -n "$path" ]; then
-  if request_control 0.35; then
-    exit 0
-  fi
-
-  if request_control 1.2; then
-    exit 0
-  fi
-
-  if repair_control_plane; then
-    if request_control 1.5; then
-      exit 0
-    fi
-  fi
-fi
-
-fallback_local_control && exit 0
-
-if [ -z "$path" ]; then
-  report_control_failure "no tmux target available"
-elif [ "$endpoint_available" -eq 1 ]; then
-  report_control_failure "runtime is not responding"
-else
-  report_control_failure "runtime is unavailable (restarting or stopped)"
-fi
-exit 0

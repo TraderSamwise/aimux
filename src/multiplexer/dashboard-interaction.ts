@@ -6,7 +6,7 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
@@ -301,20 +301,21 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
-    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
+    const key = commandKey(event);
+    const lowerKey = commandKey(event);
+    const isTabToggle = lowerKey === "tab" || event.raw === "\t" || (event.ctrl && lowerKey === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
 
-    if (hasWorktrees && this.dashboardState.quickJumpDigits && !(key >= "1" && key <= "9")) {
+    if (hasWorktrees && this.dashboardState.quickJumpDigits && !(lowerKey >= "1" && lowerKey <= "9")) {
       this.commitDashboardQuickJump();
     }
 
-    if (hasWorktrees && this.isDashboardScreen("dashboard") && this.handleDashboardQuickJumpDigit(key)) {
+    if (hasWorktrees && this.isDashboardScreen("dashboard") && this.handleDashboardQuickJumpDigit(lowerKey)) {
       return;
     }
 
-    if (!hasWorktrees && key >= "1" && key <= "9") {
-      const index = parseInt(key, 10) - 1;
+    if (!hasWorktrees && lowerKey >= "1" && lowerKey <= "9") {
+      const index = parseInt(lowerKey, 10) - 1;
       void this.activateDashboardEntryByNumber(index);
       return;
     }
@@ -332,7 +333,37 @@ export const dashboardInteractionMethods = {
       }
     }
 
-    switch (key) {
+    if (lowerKey === "s") {
+      this.showOrchestrationRoutePicker("message");
+      return;
+    }
+    if (lowerKey === "h") {
+      this.showOrchestrationRoutePicker("handoff");
+      return;
+    }
+    if (key === "T") {
+      this.showOrchestrationRoutePicker("task");
+      return;
+    }
+    if (key === "W") {
+      this.showWorktreeList();
+      return;
+    }
+    if (key === "R") {
+      const selected = this.getSelectedDashboardSessionForActions();
+      if (selected) {
+        if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
+          void this.openRelevantThreadForSession(selected.id);
+        } else {
+          this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
+          this.footerFlashTicks = 3;
+          this.renderDashboard();
+        }
+      }
+      return;
+    }
+
+    switch (lowerKey) {
       case "?":
         this.showHelp();
         return;
@@ -359,32 +390,10 @@ export const dashboardInteractionMethods = {
         }
         return;
       }
-      case "S":
-        this.showOrchestrationRoutePicker("message");
-        return;
-      case "H":
-        this.showOrchestrationRoutePicker("handoff");
-        return;
-      case "T":
-        this.showOrchestrationRoutePicker("task");
-        return;
       case "o": {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected) {
           void this.openRelevantThreadForSession(selected.id);
-        }
-        return;
-      }
-      case "R": {
-        const selected = this.getSelectedDashboardSessionForActions();
-        if (selected) {
-          if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
-            void this.openRelevantThreadForSession(selected.id);
-          } else {
-            this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-          }
         }
         return;
       }
@@ -393,9 +402,6 @@ export const dashboardInteractionMethods = {
         return;
       case "w":
         this.showWorktreeCreatePrompt();
-        return;
-      case "W":
-        this.showWorktreeList();
         return;
       case "g":
         this.showGraveyard();
@@ -779,7 +785,7 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
     const teammates = teammatePickerEntries(this);
     const visibleTeammates = teammates.slice(0, teammatePickerVisibleCount(teammates.length));
     const selectedIndex = Math.max(0, Math.min(this.teammatePickerState?.index ?? 0, visibleTeammates.length - 1));
@@ -836,7 +842,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
 
     if (key === "escape") {
       this.clearDashboardOverlay();
@@ -872,7 +878,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
 
     if (key === "escape") {
       this.clearDashboardOverlay();

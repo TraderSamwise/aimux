@@ -1,5 +1,5 @@
 import { debug } from "../debug.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
@@ -34,7 +34,7 @@ export function handleGraveyardKey(host: ArchivesHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
   const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
   if (isTabToggle) {
@@ -116,10 +116,20 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
   const promise =
     item.kind === "worktree"
       ? host.mode === "dashboard"
-        ? postToProjectService(host, PROJECT_API_ROUTES.graveyardActions.resurrectWorktree, { path: item.entry.path }, { timeoutMs: 10_000 })
+        ? postToProjectService(
+            host,
+            PROJECT_API_ROUTES.graveyardActions.resurrectWorktree,
+            { path: item.entry.path },
+            { timeoutMs: 10_000 },
+          )
         : host.resurrectGraveyardWorktree(item.entry.path)
       : host.mode === "dashboard"
-        ? postToProjectService(host, PROJECT_API_ROUTES.graveyardActions.resurrectAgent, { sessionId: item.entry.id }, { timeoutMs: 10_000 })
+        ? postToProjectService(
+            host,
+            PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
+            { sessionId: item.entry.id },
+            { timeoutMs: 10_000 },
+          )
         : host.resurrectGraveyardSession(item.entry.id);
   void promise
     .then(async () => {
@@ -171,7 +181,12 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   if (!entry) return;
   try {
     if (host.mode === "dashboard") {
-      await postToProjectService(host, PROJECT_API_ROUTES.graveyardActions.deleteWorktree, { path: entry.path }, { timeoutMs: 10_000 });
+      await postToProjectService(
+        host,
+        PROJECT_API_ROUTES.graveyardActions.deleteWorktree,
+        { path: entry.path },
+        { timeoutMs: 10_000 },
+      );
     } else {
       await host.deleteGraveyardWorktree(entry.path);
     }

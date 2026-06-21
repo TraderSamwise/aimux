@@ -1,5 +1,5 @@
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import {
   buildHelpOverlayOutput,
   buildMigratePickerOverlayOutput,
@@ -95,7 +95,7 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "q") {
     host.exitDashboardClientOrProcess();
@@ -149,7 +149,7 @@ export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "s") {
     const list = getSwitcherList(host);
@@ -228,7 +228,7 @@ export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   host.clearDashboardOverlay();
 

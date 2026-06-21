@@ -88,6 +88,9 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "new-session")).toBe(true);
     const createCall = exec.calls.find((call) => call.args[0] === "new-session");
     expect(createCall?.cwd).toBe("/repo/mobile");
+    expect(
+      exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-project-state-dir"),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "mouse")).toBe(true);
@@ -222,9 +225,15 @@ describe("TmuxRuntimeManager", () => {
           call.args[4] === "run-shell" &&
           !call.args.join(" ").includes("tmux select-window -t :0") &&
           call.args.join(" ").includes("scripts/tmux-control.sh") &&
-          call.args.join(" ").includes(" dashboard --project-root "),
+          call.args.join(" ").includes(" dashboard --current-client-session "),
       ),
     ).toBe(true);
+    const globalControlBindings = exec.calls.filter(
+      (call) =>
+        call.args[0] === "bind-key" && call.args.includes("prefix") && call.args.join(" ").includes("tmux-control.sh"),
+    );
+    expect(globalControlBindings.some((call) => call.args.join(" ").includes("--project-root"))).toBe(false);
+    expect(globalControlBindings.some((call) => call.args.join(" ").includes("--project-state-dir"))).toBe(false);
     expect(
       exec.calls.some(
         (call) =>

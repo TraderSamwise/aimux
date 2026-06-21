@@ -193,6 +193,9 @@ export async function restartAimuxControlPlane(
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
+  const beforeServicePids = before.projects
+    .map((project) => project.service.pid)
+    .filter((pid): pid is number => typeof pid === "number" && Number.isInteger(pid) && pid > 0);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -206,8 +209,13 @@ export async function restartAimuxControlPlane(
       sleep,
       killPid,
     });
+    const signaledServicePids = new Set(previousDaemon.stoppedProjectServices.map((service) => service.pid));
+    for (const pid of beforeServicePids) {
+      if (signaledServicePids.has(pid)) continue;
+      killPid(pid, "SIGTERM");
+    }
     await waitForPidsExit({
-      pids: previousDaemon.stoppedProjectServices.map((service) => service.pid),
+      pids: [...previousDaemon.stoppedProjectServices.map((service) => service.pid), ...beforeServicePids],
       timeoutMs: options.serviceExitTimeoutMs ?? 5000,
       killGraceMs: options.killGraceMs ?? 2000,
       isPidAlive,
