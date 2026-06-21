@@ -199,10 +199,13 @@ async function waitForVerifiedProjectService(
             endpoint,
             healthPid: health.pid,
           });
-          removeMetadataEndpoint(projectRoot);
           if (!respawnAttempted) {
             respawnAttempted = true;
+            await stopProjectService(projectRoot);
+            removeMetadataEndpoint(projectRoot);
             await ensureProjectService(projectRoot);
+          } else {
+            removeMetadataEndpoint(projectRoot);
           }
           await new Promise((resolve) => setTimeout(resolve, 150));
           continue;
