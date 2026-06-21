@@ -69,6 +69,7 @@ export interface RestartAimuxControlPlaneOptions {
     dashboardTarget: TmuxTarget;
   };
   isPidAlive?: (pid: number) => boolean;
+  isAimuxProjectServiceProcess?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
   daemonExitTimeoutMs?: number;
@@ -142,6 +143,18 @@ function defaultIsPidAlive(pid: number): boolean {
   return true;
 }
 
+function defaultIsAimuxProjectServiceProcess(pid: number): boolean {
+  try {
+    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return args.includes("__project-service-internal");
+  } catch {
+    return false;
+  }
+}
+
 async function waitForPidExit(input: {
   pid: number;
   timeoutMs: number;
@@ -198,6 +211,7 @@ export async function restartAimuxControlPlane(
     .filter((pid): pid is number => typeof pid === "number" && Number.isInteger(pid) && pid > 0);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const killPid = options.killPid ?? defaultKillPid;
   let stoppedServicePids: number[] = [];
@@ -213,14 +227,17 @@ export async function restartAimuxControlPlane(
     stoppedServicePids = previousDaemon.stoppedProjectServices.map((service) => service.pid);
   }
   const signaledServicePids = new Set(stoppedServicePids);
+  const verifiedBeforeServicePids = beforeServicePids.filter((pid) => isAimuxProjectServiceProcess(pid));
+  const verifiedBeforeServicePidSet = new Set(verifiedBeforeServicePids);
   for (const pid of beforeServicePids) {
     if (signaledServicePids.has(pid)) continue;
+    if (!verifiedBeforeServicePidSet.has(pid)) continue;
     try {
       killPid(pid, "SIGTERM");
     } catch {}
   }
   await waitForPidsExit({
-    pids: [...new Set([...stoppedServicePids, ...beforeServicePids])],
+    pids: [...new Set([...stoppedServicePids, ...verifiedBeforeServicePids])],
     timeoutMs: options.serviceExitTimeoutMs ?? 5000,
     killGraceMs: options.killGraceMs ?? 2000,
     isPidAlive,
