@@ -241,10 +241,7 @@ export class PluginRuntime {
     instance: AimuxPluginInstance | void,
     input: { source: "builtin" | "user"; name: string; path?: string },
   ): Promise<boolean> {
-    if (!instance) {
-      this.recordPluginStatus({ ...input, status: "failed", error: "plugin factory returned no instance" });
-      return false;
-    }
+    if (!instance) return false;
     try {
       await instance.start?.();
       this.instances.push(instance);
