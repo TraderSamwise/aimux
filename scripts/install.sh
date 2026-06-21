@@ -135,6 +135,8 @@ rm -rf "$DEST"
 mv "$TMP_DIR/aimux" "$DEST"
 NODE_BIN_QUOTED="$(shell_quote "$NODE_BIN")"
 DEST_QUOTED="$(shell_quote "$DEST")"
+BIN_SHIM_QUOTED="$(shell_quote "$BIN_DIR/aimux")"
+INSTALL_ROOT_QUOTED="$(shell_quote "$INSTALL_ROOT")"
 cat > "$DEST/bin/aimux" <<EOF
 #!/usr/bin/env sh
 set -eu
@@ -142,6 +144,8 @@ set -eu
 AIMUX_NODE_BIN=$NODE_BIN_QUOTED
 AIMUX_ROOT=$DEST_QUOTED
 
+if [ -z "\${AIMUX_CLI_BIN:-}" ]; then AIMUX_CLI_BIN=$BIN_SHIM_QUOTED; export AIMUX_CLI_BIN; fi
+if [ -z "\${AIMUX_INSTALL_ROOT:-}" ]; then AIMUX_INSTALL_ROOT=$INSTALL_ROOT_QUOTED; export AIMUX_INSTALL_ROOT; fi
 if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME; fi
 if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
