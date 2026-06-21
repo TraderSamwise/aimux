@@ -353,13 +353,13 @@ describe("TmuxRuntimeManager", () => {
       }
       if (
         joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@3\t3\tcodex\t1\t100\n@9\t9\tshell\t0\t90";
       }
       if (
         joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@3\t3\tcodex\t0\t100\n@10\t10\tdashboard\t1\t110";
       }
@@ -411,7 +411,7 @@ describe("TmuxRuntimeManager", () => {
       if (joined === "-V") return "tmux 3.5a";
       if (
         joined ===
-        "list-windows -t aimux-mobile-abc -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}"
+        "list-windows -t aimux-mobile-abc -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}"
       ) {
         return "@3\t3\tcodex\t1\t100";
       }
@@ -591,13 +591,13 @@ describe("TmuxRuntimeManager", () => {
       if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
       if (
         joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90";
       }
       if (
         joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return linked ? "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90" : "@0\t0\tdashboard-268eff9c\t1\t100";
       }
@@ -682,13 +682,13 @@ describe("TmuxRuntimeManager", () => {
       if (joined === `has-session -t ${clientSessionName}`) return "";
       if (
         joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@0\t0\tdashboard-268eff9c\t1\t100";
       }
       if (
         joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@1\t1\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90";
       }

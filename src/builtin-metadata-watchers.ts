@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getPlansDir, getStatusDir, getHistoryDir, getRuntimeExchangePath } from "./paths.js";
 import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
@@ -34,8 +34,7 @@ function parseStatusHeadline(content: string): string | null {
   return first || null;
 }
 
-class DirectoryWatcher implements AimuxPluginInstance {
-  private watcher: FSWatcher | null = null;
+class DirectoryPoller implements AimuxPluginInstance {
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private poller: ReturnType<typeof setInterval> | null = null;
 
@@ -47,26 +46,10 @@ class DirectoryWatcher implements AimuxPluginInstance {
   start(): void {
     mkdirSync(this.dir, { recursive: true });
     this.onScan();
-    try {
-      this.watcher = watch(this.dir, () => this.scheduleScan());
-      this.watcher.on("error", (error) => {
-        debug(`metadata watcher falling back to polling for ${this.dir}: ${error.message}`, "plugin");
-        this.watcher?.close();
-        this.watcher = null;
-        this.startPolling();
-      });
-    } catch (error) {
-      debug(
-        `metadata watcher falling back to polling for ${this.dir}: ${error instanceof Error ? error.message : String(error)}`,
-        "plugin",
-      );
-      this.startPolling();
-    }
+    this.startPolling();
   }
 
   async stop(): Promise<void> {
-    this.watcher?.close();
-    this.watcher = null;
     if (this.poller) clearInterval(this.poller);
     this.poller = null;
     if (this.debounce) clearTimeout(this.debounce);
@@ -94,7 +77,8 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
   const lastTaskBySession = new Map<string, string>();
   const lastHistoryBySession = new Map<string, string>();
   let taskWatcherPrimed = false;
-  const planWatcher = new DirectoryWatcher(getPlansDir(), () => {
+  let historyWatcherPrimed = false;
+  const planWatcher = new DirectoryPoller(getPlansDir(), () => {
     for (const file of existsSync(getPlansDir()) ? readdirSync(getPlansDir()) : []) {
       const sessionId = sessionIdFromFile(file, ".md");
       if (!sessionId) continue;
@@ -105,7 +89,7 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     }
   });
 
-  const statusWatcher = new DirectoryWatcher(getStatusDir(), () => {
+  const statusWatcher = new DirectoryPoller(getStatusDir(), () => {
     for (const file of existsSync(getStatusDir()) ? readdirSync(getStatusDir()) : []) {
       const sessionId = sessionIdFromFile(file, ".md");
       if (!sessionId) continue;
@@ -120,7 +104,7 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     }
   });
 
-  const taskWatcher = new DirectoryWatcher(dirname(getRuntimeExchangePath()), () => {
+  const taskWatcher = new DirectoryPoller(dirname(getRuntimeExchangePath()), () => {
     const tasks = readAllTasks();
     const latestBySession = new Map<string, { message: string; tone?: "warn" | "success" | "error" }>();
     for (const task of tasks) {
@@ -139,66 +123,60 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     }
     for (const [sessionId, entry] of latestBySession) {
       if (lastTaskBySession.get(sessionId) !== entry.message) {
-        metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
-        if (taskWatcherPrimed) {
-          metadata.emitEvent(sessionId, {
-            kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",
-            message: entry.message,
-            tone: entry.tone,
-            source: "tasks",
-          });
-        }
         lastTaskBySession.set(sessionId, entry.message);
+        if (!taskWatcherPrimed) continue;
+        metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
+        metadata.emitEvent(sessionId, {
+          kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",
+          message: entry.message,
+          tone: entry.tone,
+          source: "tasks",
+        });
       }
     }
     taskWatcherPrimed = true;
   });
 
-  const historyWatcher = new DirectoryWatcher(getHistoryDir(), () => {
+  const historyWatcher = new DirectoryPoller(getHistoryDir(), () => {
     for (const sessionId of listSessionIds()) {
       const turns = readHistory(sessionId, { lastN: 1, maxBytes: 16 * 1024 });
       const turn = turns.at(-1);
       if (!turn) continue;
       const historyKey = `${turn.ts}:${turn.type}:${turn.content}`;
+      if (lastHistoryBySession.get(sessionId) === historyKey) continue;
+      lastHistoryBySession.set(sessionId, historyKey);
+      if (!historyWatcherPrimed) continue;
       if (turn.type === "prompt") {
         metadata.log(sessionId, `Prompt: ${turn.content.slice(0, 80)}`, { source: "history", tone: "info" });
-        if (lastHistoryBySession.get(sessionId) !== historyKey) {
-          metadata.emitEvent(sessionId, {
-            kind: "prompt",
-            message: turn.content.slice(0, 120),
-            tone: "info",
-            source: "history",
-            ts: turn.ts,
-          });
-          lastHistoryBySession.set(sessionId, historyKey);
-        }
+        metadata.emitEvent(sessionId, {
+          kind: "prompt",
+          message: turn.content.slice(0, 120),
+          tone: "info",
+          source: "history",
+          ts: turn.ts,
+        });
       } else if (turn.type === "response") {
         metadata.log(sessionId, `Response: ${turn.content.slice(0, 80)}`, { source: "history" });
-        if (lastHistoryBySession.get(sessionId) !== historyKey) {
-          metadata.emitEvent(sessionId, {
-            kind: "response",
-            message: turn.content.slice(0, 120),
-            source: "history",
-            ts: turn.ts,
-          });
-          lastHistoryBySession.set(sessionId, historyKey);
-        }
+        metadata.emitEvent(sessionId, {
+          kind: "response",
+          message: turn.content.slice(0, 120),
+          source: "history",
+          ts: turn.ts,
+        });
       } else if (turn.type === "git") {
         metadata.log(sessionId, `Git: ${turn.content.slice(0, 80)}`, { source: "git", tone: "success" });
-        if (lastHistoryBySession.get(sessionId) !== historyKey) {
-          metadata.emitEvent(sessionId, {
-            kind: "notify",
-            message: turn.content.slice(0, 120),
-            source: "git",
-            tone: "success",
-            ts: turn.ts,
-          });
-          lastHistoryBySession.set(sessionId, historyKey);
-        }
+        metadata.emitEvent(sessionId, {
+          kind: "notify",
+          message: turn.content.slice(0, 120),
+          source: "git",
+          tone: "success",
+          ts: turn.ts,
+        });
       }
     }
+    historyWatcherPrimed = true;
   });
 
-  debug("registered builtin metadata watchers", "plugin");
+  debug("registered builtin metadata pollers", "plugin");
   return [planWatcher, statusWatcher, taskWatcher, historyWatcher];
 }

@@ -223,7 +223,7 @@ export async function restartAimuxControlPlane(
       killPid,
     });
   }
-  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
+  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)({ adoptExisting: false });
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
   const resolveDashboard =

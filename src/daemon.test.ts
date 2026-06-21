@@ -116,6 +116,29 @@ describe("daemon supervision", () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
+  it("replaces a live project service when its health manifest is stale", async () => {
+    vi.mocked(requestJson).mockResolvedValue({
+      status: 200,
+      json: {
+        ok: true,
+        serviceInfo: { apiVersion: 4, capabilities: {}, buildStamp: "old-build" },
+      },
+    });
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = await (daemon as any).ensureProject(projectRoot);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(first.pid);
+
+    const second = await (daemon as any).ensureProject(projectRoot);
+
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(livePids.has(first.pid)).toBe(false);
+    expect(livePids.has(second.pid)).toBe(true);
+  });
+
   it("respawns a dead project service on the next ensure call", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 

@@ -19,6 +19,7 @@ import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -84,6 +85,10 @@ export interface ProjectServiceState {
 
 export interface StoppedDaemonInfo extends AimuxDaemonInfo {
   stoppedProjectServices: ProjectServiceState[];
+}
+
+export interface EnsureDaemonRunningOptions {
+  adoptExisting?: boolean;
 }
 
 interface DaemonState {
@@ -157,6 +162,26 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isPidAlive(pid);
+}
+
+async function terminateDaemonOnDefaultPort(pid: number): Promise<void> {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {}
+  if (await waitForPidExit(pid, 2_000)) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+  await waitForPidExit(pid, 2_000);
 }
 
 async function readJson(req: IncomingMessage): Promise<any> {
@@ -279,12 +304,18 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
   return json;
 }
 
-export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
+export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = {}): Promise<AimuxDaemonInfo> {
   const existing = loadDaemonInfo();
   if (existing) {
     try {
       await requestDaemonJson("/health");
+      if (options.adoptExisting === false) {
+        log.warn("terminating stored daemon instead of adopting", "daemon", { pid: existing.pid });
+        await terminateDaemonOnDefaultPort(existing.pid);
+        clearFile(getDaemonInfoPath());
+      } else {
       return existing;
+      }
     } catch (error) {
       log.warn("stored daemon info failed health check", "daemon", {
         pid: existing.pid,
@@ -297,15 +328,21 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
   try {
     const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`);
     if (status >= 200 && status < 300 && json?.ok !== false && typeof json?.pid === "number") {
-      const adopted: AimuxDaemonInfo = {
-        pid: json.pid,
-        port: typeof json?.port === "number" ? json.port : getDaemonPort(),
-        startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      saveJson(getDaemonInfoPath(), adopted);
-      log.info("adopted existing daemon on default port", "daemon", { ...adopted });
-      return adopted;
+      if (options.adoptExisting === false) {
+        log.warn("terminating daemon on default port instead of adopting", "daemon", { pid: json.pid });
+        await terminateDaemonOnDefaultPort(json.pid);
+        clearFile(getDaemonInfoPath());
+      } else {
+        const adopted: AimuxDaemonInfo = {
+          pid: json.pid,
+          port: typeof json?.port === "number" ? json.port : getDaemonPort(),
+          startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        saveJson(getDaemonInfoPath(), adopted);
+        log.info("adopted existing daemon on default port", "daemon", { ...adopted });
+        return adopted;
+      }
     }
   } catch (error) {
     log.debug("default daemon health probe failed", "daemon", {
@@ -595,6 +632,16 @@ export class AimuxDaemon {
         });
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
+        }
+        if (json?.serviceInfo && !manifestsMatch(getProjectServiceManifest(), json.serviceInfo)) {
+          log.warn("project service manifest mismatch", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            expected: getProjectServiceManifest(),
+            actual: json.serviceInfo,
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
         }
       } catch (error) {
         if (withinStartupGrace) {
