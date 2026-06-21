@@ -825,9 +825,7 @@ export function computeDashboardServices(
     .filter(({ metadata }: any) => !(metadata.worktreePath && hiddenWorktreePaths.has(metadata.worktreePath)))
     .map(({ target, metadata }: any) => {
       const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
-      const alive = includeRuntimeInfo
-        ? host.tmuxRuntimeManager.isWindowAlive(target)
-        : true;
+      const alive = includeRuntimeInfo ? host.tmuxRuntimeManager.isWindowAlive(target) : target.paneDead !== true;
       const info = includeRuntimeInfo ? readTmuxProcessInfo(host, target) : {};
       const shellMetadata = sessionMetadata[metadata.sessionId]?.derived;
       return {
@@ -845,7 +843,7 @@ export function computeDashboardServices(
         active: false,
         label: metadata.label,
         cwd: includeRuntimeInfo
-          ? host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath
+          ? (host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath)
           : metadata.worktreePath,
         foregroundCommand: info.command,
         shellCommand: shellMetadata?.shellCommand,
@@ -907,10 +905,7 @@ export function readTmuxProcessInfo(
   };
 }
 
-export function buildDesktopStateSnapshot(
-  host: DashboardModelHost,
-  options: DashboardStateSnapshotOptions = {},
-) {
+export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
   host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
   const realizedWorktreePaths = new Set(

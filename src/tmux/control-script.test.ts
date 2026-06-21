@@ -18,9 +18,11 @@ function createFakeEnvironment(state: Record<string, unknown>) {
   const statePath = join(root, "tmux-state.json");
   const logPath = join(root, "tmux-log.jsonl");
   const curlLogPath = join(root, "curl-log.jsonl");
+  const aimuxLogPath = join(root, "aimux-log.txt");
   writeFileSync(statePath, JSON.stringify(state, null, 2));
   writeFileSync(logPath, "");
   writeFileSync(curlLogPath, "");
+  writeFileSync(aimuxLogPath, "");
 
   writeExecutable(
     join(binDir, "tmux"),
@@ -178,6 +180,7 @@ exit 28
   writeExecutable(
     join(binDir, "aimux"),
     `#!/bin/sh
+printf '%s|%s\\n' "$PWD" "$*" >> "$TMUX_FAKE_AIMUX_LOG"
 exit 0
 `,
   );
@@ -188,6 +191,7 @@ exit 0
     statePath,
     logPath,
     curlLogPath,
+    aimuxLogPath,
     projectStateDir,
   };
 }
@@ -205,6 +209,7 @@ function runControl(
       TMUX_FAKE_STATE: envRoot.statePath,
       TMUX_FAKE_LOG: envRoot.logPath,
       TMUX_FAKE_CURL_LOG: envRoot.curlLogPath,
+      TMUX_FAKE_AIMUX_LOG: envRoot.aimuxLogPath,
       AIMUX_BIN: join(envRoot.binDir, "aimux"),
       TMPDIR: envRoot.root,
       ...extraEnv,
@@ -224,6 +229,15 @@ function readLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
 
 function readCurlLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
   return readFileSync(envRoot.curlLogPath, "utf8").trim().split("\n").filter(Boolean);
+}
+
+function readAimuxLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const lines = readFileSync(envRoot.aimuxLogPath, "utf8").trim().split("\n").filter(Boolean);
+    if (lines.length) return lines;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  return [];
 }
 
 const tempRoots: string[] = [];
@@ -286,6 +300,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(readAimuxLog(envRoot)).toEqual([`${projectRoot}|dashboard-reload --open`]);
   });
 
   it("does not use the current-session fast dashboard path for a failed-start pane", () => {
@@ -311,13 +326,17 @@ describe("tmux-control.sh", () => {
       },
     });
     tempRoots.push(envRoot.root);
+    const projectRoot = join(envRoot.root, "repo-project");
+    mkdirSync(projectRoot);
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
-    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), `${projectRoot}\n`);
 
     runControl(envRoot, [
       "dashboard",
       "--project-state-dir",
       envRoot.projectStateDir,
+      "--project-root",
+      projectRoot,
       "--current-client-session",
       "aimux-proj-client-1234abcd",
       "--client-tty",
@@ -332,6 +351,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(readAimuxLog(envRoot)).toEqual([`${projectRoot}|dashboard-reload --open`]);
   });
 
   it("does not strip project session names that merely contain client", () => {
