@@ -569,6 +569,60 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("resolves noncanonical root-metadata hosts through this client's session", () => {
+    const hostSessionName = "renamed-host";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      const linked = calls.some((call) => call.args[0] === "link-window");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (
+        joined ===
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+      ) {
+        return "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90";
+      }
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+      ) {
+        return linked ? "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90" : "@0\t0\tdashboard-268eff9c\t1\t100";
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+
+    manager.openTarget(
+      { sessionName: hostSessionName, windowId: "@3", windowIndex: 3, windowName: "codex" },
+      { insideTmux: true, clientTty: "/dev/ttys999", clientSuffix: "268eff9c", returnSessionName: "origin-client" },
+    );
+
+    expect(
+      calls.some(
+        (call) =>
+          call.args.join(" ") ===
+          `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard sh -lc tail -f /dev/null`,
+      ),
+    ).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @3 -t ${clientSessionName}`)).toBe(true);
+    expect(interactiveCalls.at(-1)?.args).toEqual([
+      "switch-client",
+      "-c",
+      "/dev/ttys999",
+      "-t",
+      `${clientSessionName}:3`,
+    ]);
+  });
+
   it("still resolves the client session for already-resolved managed targets inside tmux", () => {
     const exec = createExecMock();
     const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
