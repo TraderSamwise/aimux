@@ -401,6 +401,7 @@ describe("restartAimuxControlPlane", () => {
 
   it("signals and waits service pids from the pre-restart report even when stopDaemon missed them", async () => {
     const calls: string[] = [];
+    const isAimuxProjectServiceProcess = vi.fn(() => true);
     const isPidAlive = vi.fn((pid: number) => {
       calls.push(`pid:${pid}`);
       return false;
@@ -427,10 +428,20 @@ describe("restartAimuxControlPlane", () => {
         dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
       })),
       isPidAlive,
-      isAimuxProjectServiceProcess: vi.fn(() => true),
+      isAimuxProjectServiceProcess,
       killPid,
     });
 
+    expect(isAimuxProjectServiceProcess).toHaveBeenCalledWith(1001, {
+      pid: 1001,
+      projectId: "alpha",
+      projectRoot: "/repo/alpha",
+    });
+    expect(isAimuxProjectServiceProcess).toHaveBeenCalledWith(1002, {
+      pid: 1002,
+      projectId: "beta",
+      projectRoot: "/repo/beta",
+    });
     expect(isPidAlive).toHaveBeenCalledWith(9001);
     expect(killPid).toHaveBeenCalledWith(1001, "SIGTERM");
     expect(killPid).toHaveBeenCalledWith(1002, "SIGTERM");

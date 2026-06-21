@@ -1522,8 +1522,11 @@ daemonCmd
 program
   .command("__project-service-internal")
   .description("Internal daemon-managed project service entrypoint")
-  .action(async () => {
-    const projectRoot = resolveProjectRoot(process.cwd());
+  .option("--project-id <id>", "Internal project id")
+  .option("--project-root <path>", "Internal project root")
+  .action(async (opts: { projectId?: string; projectRoot?: string }) => {
+    void opts.projectId;
+    const projectRoot = resolveProjectRoot(opts.projectRoot ? pathResolve(opts.projectRoot) : process.cwd());
     if (projectRoot !== process.cwd()) {
       process.chdir(projectRoot);
     }

@@ -5,7 +5,6 @@ import {
   loadMetadataEndpoint,
   loadMetadataState,
   removeMetadataEndpoint,
-  resolveProjectServiceEndpoint,
 } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
 import { PluginRuntime } from "../plugin-runtime.js";
@@ -17,7 +16,6 @@ import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { isNotificationStale } from "../coordination-model.js";
-import { requestJson } from "../http-client.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
@@ -995,24 +993,19 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
   const deadline = force ? Date.now() + 8000 : Date.now();
   try {
     for (;;) {
-      const endpoint = resolveProjectServiceEndpoint(process.cwd());
-      if (endpoint) {
+      if (typeof host.getFromProjectService === "function") {
         try {
-          const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-            timeoutMs: force ? 2000 : 750,
-          });
-          if (status >= 200 && status < 300) {
-            if (!isDesktopStateDashboardModel(json)) return false;
-            return applyDashboardModel(
-              host,
-              json.sessions,
-              json.teammates,
-              json.services,
-              json.worktreeGroups,
-              json.mainCheckoutInfo,
-              json.operationFailures ?? [],
-            );
-          }
+          const json = await host.getFromProjectService("/desktop-state", { timeoutMs: force ? 2000 : 750 });
+          if (!isDesktopStateDashboardModel(json)) return false;
+          return applyDashboardModel(
+            host,
+            json.sessions,
+            json.teammates,
+            json.services,
+            json.worktreeGroups,
+            json.mainCheckoutInfo,
+            json.operationFailures ?? [],
+          );
         } catch {
           await ensureDashboardControlPlane(host);
         }

@@ -63,6 +63,16 @@ function writeMetadataEndpointFor(pid: number) {
   );
 }
 
+function daemonHealth(pid: number, port = 43190) {
+  return {
+    ok: true,
+    kind: "aimux-daemon",
+    pid,
+    port,
+    serviceInfo: getProjectServiceManifest(),
+  };
+}
+
 describe("daemon supervision", () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "aimux-daemon-"));
@@ -401,12 +411,21 @@ describe("daemon supervision", () => {
 
     const daemon = new AimuxDaemon();
     const project = await (daemon as any).ensureProject(projectRoot);
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
     const options = spawnMock.mock.calls[0]?.[2] as {
       env?: Record<string, string | undefined>;
       stdio?: unknown;
     };
 
     expect(project.pid).toBe(20_000);
+    expect(args).toEqual([
+      expect.any(String),
+      "__project-service-internal",
+      "--project-id",
+      `proj-${basename(projectRoot)}`,
+      "--project-root",
+      projectRoot,
+    ]);
     expect(options.env).toMatchObject({
       AIMUX_LOG: "1",
       AIMUX_LOG_LEVEL: "debug",
@@ -462,7 +481,7 @@ describe("daemon supervision", () => {
       process.env.AIMUX_DAEMON_PORT = "44191";
       vi.mocked(requestJson).mockResolvedValueOnce({
         status: 200,
-        json: { ok: true, pid: 50_001, port: 44191 },
+        json: daemonHealth(50_001, 44191),
       });
       const { ensureDaemonRunning } = await import("./daemon.js");
 
@@ -489,14 +508,50 @@ describe("daemon supervision", () => {
         JSON.stringify({ pid: 111, port: 44191, startedAt: "then", updatedAt: "then" }),
       );
       vi.mocked(requestJson)
-        .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 222, port: 44191 } })
-        .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 222, port: 44191 } });
+        .mockResolvedValueOnce({ status: 200, json: daemonHealth(222, 44191) })
+        .mockResolvedValueOnce({ status: 200, json: daemonHealth(222, 44191) });
       const { ensureDaemonRunning } = await import("./daemon.js");
 
       const info = await ensureDaemonRunning();
 
       expect(info.pid).toBe(222);
       expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
+  it("does not terminate a default-port process without Aimux daemon identity", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_PORT = "44191";
+      livePids.add(50_001);
+      vi.mocked(requestJson)
+        .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 50_001, port: 44191 } })
+        .mockResolvedValueOnce({ status: 200, json: daemonHealth(20_000, 44191) });
+      spawnMock.mockImplementationOnce(() => {
+        const child = new EventEmitter() as EventEmitter & { pid: number; unref: () => void };
+        child.pid = 20_000;
+        child.unref = () => {};
+        livePids.add(child.pid);
+        childrenByPid.set(child.pid, child);
+        writeFileSync(
+          join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+          JSON.stringify({ pid: child.pid, port: 44191, startedAt: "after", updatedAt: "after" }),
+        );
+        return child;
+      });
+      const { ensureDaemonRunning } = await import("./daemon.js");
+
+      const info = await ensureDaemonRunning({ adoptExisting: false });
+
+      expect(info.pid).toBe(20_000);
+      expect(process.kill).not.toHaveBeenCalledWith(50_001, "SIGTERM");
+      expect(spawnMock).toHaveBeenCalled();
     } finally {
       if (previousPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;

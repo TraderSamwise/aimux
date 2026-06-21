@@ -69,7 +69,7 @@ export interface RestartAimuxControlPlaneOptions {
     dashboardTarget: TmuxTarget;
   };
   isPidAlive?: (pid: number) => boolean;
-  isAimuxProjectServiceProcess?: (pid: number) => boolean;
+  isAimuxProjectServiceProcess?: (pid: number, expected?: ProjectServiceIdentity) => boolean;
   sleep?: (ms: number) => Promise<void>;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
   daemonExitTimeoutMs?: number;
@@ -143,13 +143,25 @@ function defaultIsPidAlive(pid: number): boolean {
   return true;
 }
 
-function defaultIsAimuxProjectServiceProcess(pid: number): boolean {
+interface ProjectServiceIdentity {
+  projectId?: string;
+  projectRoot?: string;
+}
+
+interface ProjectServiceIdentityWithPid extends ProjectServiceIdentity {
+  pid: number;
+}
+
+function defaultIsAimuxProjectServiceProcess(pid: number, expected: ProjectServiceIdentity = {}): boolean {
   try {
     const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return args.includes("__project-service-internal");
+    if (!args.includes("__project-service-internal")) return false;
+    if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
+    if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
+    return true;
   } catch {
     return false;
   }
@@ -206,9 +218,17 @@ export async function restartAimuxControlPlane(
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
-  const beforeServicePids = before.projects
-    .map((project) => project.service.pid)
-    .filter((pid): pid is number => typeof pid === "number" && Number.isInteger(pid) && pid > 0);
+  const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
+    const pid = project.service.pid;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return [];
+    return [
+      {
+        pid,
+        projectId: project.service.daemonState?.projectId,
+        projectRoot: project.service.daemonState?.projectRoot ?? project.projectRoot,
+      },
+    ];
+  });
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
@@ -227,7 +247,9 @@ export async function restartAimuxControlPlane(
     stoppedServicePids = previousDaemon.stoppedProjectServices.map((service) => service.pid);
   }
   const signaledServicePids = new Set(stoppedServicePids);
-  const verifiedBeforeServicePids = beforeServicePids.filter((pid) => isAimuxProjectServiceProcess(pid));
+  const verifiedBeforeServices = beforeServices.filter((service) => isAimuxProjectServiceProcess(service.pid, service));
+  const beforeServicePids = beforeServices.map((service) => service.pid);
+  const verifiedBeforeServicePids = verifiedBeforeServices.map((service) => service.pid);
   const verifiedBeforeServicePidSet = new Set(verifiedBeforeServicePids);
   for (const pid of beforeServicePids) {
     if (signaledServicePids.has(pid)) continue;
