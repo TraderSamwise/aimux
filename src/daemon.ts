@@ -21,6 +21,7 @@ import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js"
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 import { commandArgValueMatches } from "./process-args.js";
+import { getAimuxCliLaunchCommand } from "./cli-launcher.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -426,7 +427,8 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   const stdio = loggingChildStdio(getDaemonStdioLogPath());
   let child: ChildProcess;
   try {
-    child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
+    const launch = getAimuxCliLaunchCommand(["daemon", "run"]);
+    child = spawn(launch.command, launch.args, {
       detached: true,
       env: loggingChildEnv(),
       stdio: stdio.stdio,
@@ -621,9 +623,16 @@ export class AimuxDaemon {
     const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
     let child: ChildProcess;
     try {
+      const launch = getAimuxCliLaunchCommand([
+        "__project-service-internal",
+        "--project-id",
+        projectId,
+        "--project-root",
+        projectRoot,
+      ]);
       child = spawn(
-        process.execPath,
-        [process.argv[1]!, "__project-service-internal", "--project-id", projectId, "--project-root", projectRoot],
+        launch.command,
+        launch.args,
         {
           cwd: projectRoot,
           env: loggingChildEnv(),
