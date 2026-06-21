@@ -1,6 +1,7 @@
+const HEARTBEAT_INTERVAL_MS = 5_000;
+
 export class MultiplexerRuntimeSync {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly deps: {
@@ -19,7 +20,6 @@ export class MultiplexerRuntimeSync {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
       if (this.deps.getMode() === "project-service") {
-        this.deps.syncSessionsFromTopology();
         return;
       }
       const offlineChanged = this.deps.loadOfflineTopologySessions();
@@ -29,7 +29,8 @@ export class MultiplexerRuntimeSync {
       if (this.deps.getMode() === "dashboard") {
         this.deps.refreshRuntimeGuard?.();
       }
-    }, 5000);
+    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatInterval.unref?.();
   }
 
   stopHeartbeat(): void {
@@ -40,16 +41,10 @@ export class MultiplexerRuntimeSync {
   }
 
   startProjectServiceRefresh(): void {
-    if (this.projectServiceInterval) return;
-    this.projectServiceInterval = setInterval(() => {
-      this.deps.syncSessionsFromTopology();
-    }, 2000);
+    // Kept as a lifecycle hook; explicit repair/restart owns tmux reconciliation.
   }
 
   stopProjectServiceRefresh(): void {
-    if (this.projectServiceInterval) {
-      clearInterval(this.projectServiceInterval);
-      this.projectServiceInterval = null;
-    }
+    // No background project-service timer to stop.
   }
 }

@@ -5,19 +5,33 @@ import { buildDashboardRuntimeGuardOverlayOutput } from "../tui/screens/overlay-
 import { handleRuntimeGuardKey } from "./dashboard-control.js";
 import {
   evaluateRuntimeGuard,
+  probeRuntimeGuard,
   runtimeGuardEquals,
   runtimeGuardKeyDisposition,
   runtimeGuardOverlayCopy,
+  stabilizeRuntimeGuardProbe,
   type RuntimeGuardState,
 } from "./runtime-guard.js";
+
+const loadMetadataEndpointMock = vi.hoisted(() => vi.fn());
+const requestJsonMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../metadata-store.js", () => ({
+  loadMetadataEndpoint: loadMetadataEndpointMock,
+}));
+
+vi.mock("../http-client.js", () => ({
+  requestJson: requestJsonMock,
+}));
 
 const liveManifest = getProjectServiceManifest();
 
 describe("evaluateRuntimeGuard", () => {
   it("flags self-drift above everything, even when the service matches", () => {
-    expect(
-      evaluateRuntimeGuard({ selfDrift: true, endpointPresent: true, serviceManifest: liveManifest }),
-    ).toEqual({ kind: "stale", reason: "self-drift" });
+    expect(evaluateRuntimeGuard({ selfDrift: true, endpointPresent: true, serviceManifest: liveManifest })).toEqual({
+      kind: "stale",
+      reason: "self-drift",
+    });
   });
 
   it("reports disconnected when there is no endpoint", () => {
@@ -27,9 +41,9 @@ describe("evaluateRuntimeGuard", () => {
   });
 
   it("reports disconnected when the service is unreachable", () => {
-    expect(
-      evaluateRuntimeGuard({ selfDrift: false, endpointPresent: true, serviceManifest: "unreachable" }),
-    ).toEqual({ kind: "disconnected" });
+    expect(evaluateRuntimeGuard({ selfDrift: false, endpointPresent: true, serviceManifest: "unreachable" })).toEqual({
+      kind: "disconnected",
+    });
   });
 
   it("reports disconnected when an endpoint is present but no manifest came back", () => {
@@ -39,9 +53,9 @@ describe("evaluateRuntimeGuard", () => {
   });
 
   it("reports ok when the live service manifest matches ours", () => {
-    expect(
-      evaluateRuntimeGuard({ selfDrift: false, endpointPresent: true, serviceManifest: liveManifest }),
-    ).toEqual({ kind: "ok" });
+    expect(evaluateRuntimeGuard({ selfDrift: false, endpointPresent: true, serviceManifest: liveManifest })).toEqual({
+      kind: "ok",
+    });
   });
 
   it("flags a service-mismatch when build stamps differ", () => {
@@ -60,18 +74,55 @@ describe("runtimeGuardEquals", () => {
     expect(runtimeGuardEquals({ kind: "ok" }, { kind: "ok" })).toBe(true);
     expect(runtimeGuardEquals({ kind: "disconnected" }, { kind: "disconnected" })).toBe(true);
     expect(runtimeGuardEquals({ kind: "ok" }, { kind: "disconnected" })).toBe(false);
-    expect(
-      runtimeGuardEquals({ kind: "stale", reason: "self-drift" }, { kind: "stale", reason: "self-drift" }),
-    ).toBe(true);
+    expect(runtimeGuardEquals({ kind: "stale", reason: "self-drift" }, { kind: "stale", reason: "self-drift" })).toBe(
+      true,
+    );
     expect(
       runtimeGuardEquals({ kind: "stale", reason: "self-drift" }, { kind: "stale", reason: "service-mismatch" }),
     ).toBe(false);
   });
 });
 
+describe("stabilizeRuntimeGuardProbe", () => {
+  it("keeps an ok dashboard unguarded for one missed disconnected probe", () => {
+    expect(stabilizeRuntimeGuardProbe({ kind: "ok" }, { kind: "disconnected" }, 0)).toEqual({
+      state: { kind: "ok" },
+      disconnectedProbeCount: 1,
+    });
+  });
+
+  it("reports disconnected after repeated misses", () => {
+    expect(stabilizeRuntimeGuardProbe({ kind: "ok" }, { kind: "disconnected" }, 1)).toEqual({
+      state: { kind: "disconnected" },
+      disconnectedProbeCount: 2,
+    });
+  });
+
+  it("resets the missed-probe count on ok or stale probes", () => {
+    expect(stabilizeRuntimeGuardProbe({ kind: "ok" }, { kind: "ok" }, 1)).toEqual({
+      state: { kind: "ok" },
+      disconnectedProbeCount: 0,
+    });
+    expect(stabilizeRuntimeGuardProbe({ kind: "ok" }, { kind: "stale", reason: "service-mismatch" }, 1)).toEqual({
+      state: { kind: "stale", reason: "service-mismatch" },
+      disconnectedProbeCount: 0,
+    });
+  });
+
+  it("does not replace stale with disconnected until repeated misses", () => {
+    expect(
+      stabilizeRuntimeGuardProbe({ kind: "stale", reason: "service-mismatch" }, { kind: "disconnected" }, 0),
+    ).toEqual({
+      state: { kind: "stale", reason: "service-mismatch" },
+      disconnectedProbeCount: 1,
+    });
+  });
+});
+
 describe("runtimeGuardKeyDisposition", () => {
   it("reloads on R, passes safe nav keys, swallows everything else", () => {
     expect(runtimeGuardKeyDisposition("R")).toBe("reload");
+    expect(runtimeGuardKeyDisposition("r")).toBe("reload");
     for (const key of ["up", "down", "j", "k", "tab", "escape", "q", "?"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("passthrough");
     }
@@ -91,6 +142,38 @@ describe("runtimeGuardOverlayCopy", () => {
     expect(new Set(titles).size).toBe(3);
     expect(titles.every((t) => t.length > 0)).toBe(true);
     expect(runtimeGuardOverlayCopy({ kind: "ok" }).title).toBe("");
+  });
+});
+
+describe("probeRuntimeGuard", () => {
+  it("reports ok only when endpoint and health pids match", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+  });
+
+  it("reports disconnected when health comes from a different pid", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 9999, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
   });
 });
 

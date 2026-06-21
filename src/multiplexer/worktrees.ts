@@ -1,6 +1,6 @@
 import { getWorktreeCreatePath } from "../worktree.js";
 import { debug } from "../debug.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   buildWorktreeListOverlayOutput,
@@ -232,7 +232,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();
@@ -408,7 +408,7 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
 export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
-  const key = events[0].name || events[0].char;
+  const key = commandKey(events[0]);
 
   if (key === "y" || key === "enter" || key === "return") {
     const confirm = host.worktreeRemoveConfirm;
@@ -433,7 +433,7 @@ export function handleWorktreeListKey(host: WorktreeHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();

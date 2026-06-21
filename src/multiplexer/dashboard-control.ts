@@ -8,14 +8,15 @@ import { updateNotificationContext } from "../notification-context.js";
 import { markSessionViewed } from "../session-viewed.js";
 import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
-import { removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
-import { parseKeys } from "../key-parser.js";
-import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
+import { loadMetadataEndpoint, removeMetadataEndpoint, type MetadataApiEndpoint } from "../metadata-store.js";
+import { commandKey, parseKeys } from "../key-parser.js";
+import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
+import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -35,7 +36,12 @@ import { keycap, style } from "../tui/render/theme.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
 import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
-import { probeRuntimeGuard, runtimeGuardEquals, runtimeGuardKeyDisposition } from "./runtime-guard.js";
+import {
+  probeRuntimeGuard,
+  runtimeGuardEquals,
+  runtimeGuardKeyDisposition,
+  stabilizeRuntimeGuardProbe,
+} from "./runtime-guard.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
@@ -136,7 +142,7 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   // Unrecognized/empty sequences can't mutate (no handler acts on them); let them fall through
   // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
   if (events.length === 0) return false;
-  const key = events[0].name || events[0].char;
+  const key = commandKey(events[0]);
   const disposition = runtimeGuardKeyDisposition(key);
   if (disposition === "reload") {
     host.reloadDashboardFromGuard();
@@ -154,9 +160,12 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
   if (host.runtimeGuardProbing) return;
   host.runtimeGuardProbing = true;
   try {
-    const next = await probeRuntimeGuard(host.projectRoot ?? process.cwd());
-    if (!runtimeGuardEquals(host.runtimeGuardState ?? { kind: "ok" }, next)) {
-      host.runtimeGuardState = next;
+    const current = host.runtimeGuardState ?? { kind: "ok" };
+    const probed = await probeRuntimeGuard(host.projectRoot ?? process.cwd());
+    const next = stabilizeRuntimeGuardProbe(current, probed, host.runtimeGuardDisconnectProbeCount ?? 0);
+    host.runtimeGuardDisconnectProbeCount = next.disconnectedProbeCount;
+    if (!runtimeGuardEquals(current, next.state)) {
+      host.runtimeGuardState = next.state;
       host.renderCurrentDashboardView();
     }
   } finally {
@@ -198,7 +207,7 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
   if (host.dashboardErrorState) {
     const events = parseKeys(data);
     if (events.length === 0) return true;
-    const key = events[0].name || events[0].char;
+    const key = commandKey(events[0]);
     if (key === "escape" || key === "enter" || key === "return") {
       host.dismissDashboardError();
     }
@@ -670,10 +679,21 @@ async function requestProjectService(
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
   for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
-    const endpoint = resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     if (!endpoint) {
-      await ensureDashboardControlPlane(host);
-      await sleepProjectServiceRetry(attempt);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    const verification = await verifyProjectServiceEndpoint(endpoint, deadline);
+    if (verification === "stale") {
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    if (verification === "retry") {
+      await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
     try {
@@ -688,8 +708,8 @@ async function requestProjectService(
       }
       lastError = new Error(json?.error || `request failed: ${status}`);
       if (isProjectServiceRetryableStatus(status) && Date.now() < deadline) {
-        await ensureDashboardControlPlane(host);
-        await sleepProjectServiceRetry(attempt);
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+        await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
       throw lastError;
@@ -697,8 +717,8 @@ async function requestProjectService(
       lastError = error;
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
         removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host);
-        await sleepProjectServiceRetry(attempt);
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+        await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
       throw error;
@@ -741,23 +761,80 @@ function isProjectServiceRetryableStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
-async function sleepProjectServiceRetry(attempt: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, Math.min(250, 50 + attempt * 25)));
+function remainingProjectServiceDeadline(deadline: number): number {
+  return Math.max(1, deadline - Date.now());
 }
 
-export async function ensureDashboardControlPlane(host: DashboardControlHost): Promise<void> {
+type ProjectServiceEndpointVerification = "ok" | "retry" | "stale";
+
+async function verifyProjectServiceEndpoint(
+  endpoint: MetadataApiEndpoint,
+  deadline: number,
+): Promise<ProjectServiceEndpointVerification> {
+  try {
+    const { status, json } = await requestJson<{ ok?: boolean; pid?: number; serviceInfo?: ProjectServiceManifest }>(
+      `http://${endpoint.host}:${endpoint.port}/health`,
+      {
+        timeoutMs: Math.max(1, Math.min(250, deadline - Date.now())),
+      },
+    );
+    if (status < 200 || status >= 300 || json?.ok === false) return "retry";
+    if (json?.pid !== endpoint.pid) return "stale";
+    if (!manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) return "stale";
+    return "ok";
+  } catch (error) {
+    if (isProjectServiceConnectionError(error)) return "stale";
+    return "retry";
+  }
+}
+
+async function sleepProjectServiceRetry(attempt: number, deadline: number): Promise<void> {
+  const delayMs = Math.min(250, 50 + attempt * 25, Math.max(0, deadline - Date.now()));
+  if (delayMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function withProjectServiceTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`project service recovery timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function ensureDashboardControlPlane(
+  host: DashboardControlHost,
+  timeoutMs = 10_000,
+  opts: { restartProjectService?: boolean } = {},
+): Promise<void> {
   if (host.dashboardServiceRecovery) {
-    await host.dashboardServiceRecovery;
+    await withProjectServiceTimeout(host.dashboardServiceRecovery, timeoutMs);
     return;
   }
-  host.dashboardServiceRecovery = (async () => {
+  const recovery = (async () => {
     await ensureDaemonRunning();
+    if (opts.restartProjectService) {
+      await stopProjectService(process.cwd());
+      removeMetadataEndpoint(process.cwd());
+    }
     await ensureProjectService(process.cwd());
   })();
+  host.dashboardServiceRecovery = recovery;
   try {
-    await host.dashboardServiceRecovery;
+    await withProjectServiceTimeout(recovery, timeoutMs);
   } finally {
-    host.dashboardServiceRecovery = null;
+    if (host.dashboardServiceRecovery === recovery) {
+      host.dashboardServiceRecovery = null;
+    }
   }
 }
 
@@ -765,7 +842,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();
@@ -809,7 +886,7 @@ export function handleOrchestrationRoutePickerKey(host: DashboardControlHost, da
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();

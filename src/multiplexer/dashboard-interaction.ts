@@ -6,7 +6,7 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
@@ -77,6 +77,11 @@ function isCreatingDashboardWorktree(group: any | undefined): boolean {
 
 function isFailedDashboardWorktree(group: any | undefined): boolean {
   return Boolean(group?.operationFailure);
+}
+
+function isShiftedCommand(event: KeyEvent, lowerKey: string, letter: string): boolean {
+  const rawKey = event.name || event.char;
+  return lowerKey === letter && (event.shift || rawKey === letter.toUpperCase());
 }
 
 function failedWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
@@ -301,7 +306,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
     const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
 
@@ -332,6 +337,36 @@ export const dashboardInteractionMethods = {
       }
     }
 
+    if (key === "s") {
+      this.showOrchestrationRoutePicker("message");
+      return;
+    }
+    if (key === "h") {
+      this.showOrchestrationRoutePicker("handoff");
+      return;
+    }
+    if (isShiftedCommand(event, key, "t")) {
+      this.showOrchestrationRoutePicker("task");
+      return;
+    }
+    if (isShiftedCommand(event, key, "w")) {
+      this.showWorktreeList();
+      return;
+    }
+    if (isShiftedCommand(event, key, "r")) {
+      const selected = this.getSelectedDashboardSessionForActions();
+      if (selected) {
+        if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
+          void this.openRelevantThreadForSession(selected.id);
+        } else {
+          this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
+          this.footerFlashTicks = 3;
+          this.renderDashboard();
+        }
+      }
+      return;
+    }
+
     switch (key) {
       case "?":
         this.showHelp();
@@ -359,32 +394,10 @@ export const dashboardInteractionMethods = {
         }
         return;
       }
-      case "S":
-        this.showOrchestrationRoutePicker("message");
-        return;
-      case "H":
-        this.showOrchestrationRoutePicker("handoff");
-        return;
-      case "T":
-        this.showOrchestrationRoutePicker("task");
-        return;
       case "o": {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected) {
           void this.openRelevantThreadForSession(selected.id);
-        }
-        return;
-      }
-      case "R": {
-        const selected = this.getSelectedDashboardSessionForActions();
-        if (selected) {
-          if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
-            void this.openRelevantThreadForSession(selected.id);
-          } else {
-            this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-          }
         }
         return;
       }
@@ -393,9 +406,6 @@ export const dashboardInteractionMethods = {
         return;
       case "w":
         this.showWorktreeCreatePrompt();
-        return;
-      case "W":
-        this.showWorktreeList();
         return;
       case "g":
         this.showGraveyard();
@@ -779,7 +789,7 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
     const teammates = teammatePickerEntries(this);
     const visibleTeammates = teammates.slice(0, teammatePickerVisibleCount(teammates.length));
     const selectedIndex = Math.max(0, Math.min(this.teammatePickerState?.index ?? 0, visibleTeammates.length - 1));
@@ -836,7 +846,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
 
     if (key === "escape") {
       this.clearDashboardOverlay();
@@ -872,7 +882,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
 
     if (key === "escape") {
       this.clearDashboardOverlay();

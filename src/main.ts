@@ -114,6 +114,7 @@ import {
 } from "./local-ui-server.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
+import { isAimuxBuildDriftError } from "./runtime-drift.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -173,7 +174,7 @@ async function waitForVerifiedProjectService(
   projectRoot: string,
   opts?: { timeoutMs?: number },
 ): Promise<{
-  endpoint: { host: string; port: number };
+  endpoint: { host: string; port: number; pid: number };
   health: { serviceInfo?: ProjectServiceManifest; pid?: number };
 }> {
   const expected = getProjectServiceManifest();
@@ -186,12 +187,30 @@ async function waitForVerifiedProjectService(
   let missingEndpointSince = 0;
 
   while (Date.now() < deadline) {
-    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     if (endpoint) {
       missingEndpointSince = 0;
       try {
         const health = await fetchProjectServiceHealth(endpoint);
         lastServiceInfo = health.serviceInfo ?? null;
+        if (health.pid !== endpoint.pid) {
+          lastError = `project service pid mismatch: endpoint ${endpoint.pid} health ${health.pid ?? "unknown"}`;
+          log.warn("project service pid mismatch", "runtime", {
+            projectRoot,
+            endpoint,
+            healthPid: health.pid,
+          });
+          if (!respawnAttempted) {
+            respawnAttempted = true;
+            await stopProjectService(projectRoot);
+            removeMetadataEndpoint(projectRoot);
+            await ensureProjectService(projectRoot);
+          } else {
+            removeMetadataEndpoint(projectRoot);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          continue;
+        }
         if (manifestsMatch(expected, health.serviceInfo)) {
           log.info("project service verified", "runtime", {
             projectRoot,
@@ -590,7 +609,14 @@ async function readAllStdin(): Promise<string> {
 }
 
 async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVersionDrift?: boolean }): Promise<void> {
-  await ensureDaemonRunning();
+  try {
+    await ensureDaemonRunning();
+  } catch (error) {
+    if (opts?.repairVersionDrift === false || !isAimuxBuildDriftError(error)) {
+      throw error;
+    }
+    await restartStaleControlPlane(projectRoot);
+  }
   await ensureProjectService(projectRoot);
   try {
     await waitForVerifiedProjectService(projectRoot);
@@ -1522,8 +1548,11 @@ daemonCmd
 program
   .command("__project-service-internal")
   .description("Internal daemon-managed project service entrypoint")
-  .action(async () => {
-    const projectRoot = resolveProjectRoot(process.cwd());
+  .option("--project-id <id>", "Internal project id")
+  .option("--project-root <path>", "Internal project root")
+  .action(async (opts: { projectId?: string; projectRoot?: string }) => {
+    void opts.projectId;
+    const projectRoot = resolveProjectRoot(opts.projectRoot ? pathResolve(opts.projectRoot) : process.cwd());
     if (projectRoot !== process.cwd()) {
       process.chdir(projectRoot);
     }

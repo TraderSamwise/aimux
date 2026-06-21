@@ -264,9 +264,9 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
+  await host.startProjectServices();
   reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
-  await host.startProjectServices();
   host.startStatusRefresh();
   host.startGraveyardCleanup?.();
   if (host.cleanupGraveyard && !host.graveyardCleanupRunning) {

@@ -1,4 +1,4 @@
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
@@ -108,7 +108,7 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
   const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
   if (isTabToggle) {
