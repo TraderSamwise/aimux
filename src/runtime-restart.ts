@@ -148,10 +148,16 @@ function selectRuntimeRebuildProjectRoots(before: RuntimeCoherenceReport): Set<s
   );
 }
 
-function stopPreRestartDashboards(before: RuntimeCoherenceReport, tmux: RuntimeRestartTmux): void {
+function stopPreRestartDashboards(
+  before: RuntimeCoherenceReport,
+  tmux: RuntimeRestartTmux,
+  dashboardProjectRoots: Set<string>,
+): void {
   if (!tmux.isAvailable() || !tmux.killWindow || !tmux.hasWindow) return;
   const seen = new Set<string>();
-  for (const dashboard of before.projects.flatMap((project) => project.dashboards)) {
+  for (const dashboard of before.projects
+    .filter((project) => dashboardProjectRoots.has(project.projectRoot))
+    .flatMap((project) => project.dashboards)) {
     if (seen.has(dashboard.windowId)) continue;
     seen.add(dashboard.windowId);
     const target: TmuxTarget = {
@@ -338,6 +344,7 @@ async function waitForPidsExit(input: {
 async function verifyPostRestartCoherence(input: {
   buildRuntimeCoherenceReport: typeof buildRuntimeCoherenceReport;
   coherence: BuildRuntimeCoherenceReportOptions | undefined;
+  projectRoots: Set<string>;
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
   intervalMs: number;
@@ -352,6 +359,7 @@ async function verifyPostRestartCoherence(input: {
       const after = await input.buildRuntimeCoherenceReport(input.coherence);
       latestAfter = after;
       const failedProjects = after.projects
+        .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
           if (project.status === "ok") return false;
           const runtimeOnly =
@@ -393,6 +401,7 @@ export async function restartAimuxControlPlane(
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
+  const verificationProjectRoots = options.projectRoot ? new Set([options.projectRoot]) : new Set(projectRoots);
   const runtimeRebuildProjectRoots = selectRuntimeRebuildProjectRoots(before);
   const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
     const pid = project.service.pid;
@@ -406,7 +415,7 @@ export async function restartAimuxControlPlane(
     ];
   });
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
-  stopPreRestartDashboards(before, tmux);
+  stopPreRestartDashboards(before, tmux, dashboardProjectRoots);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
@@ -499,6 +508,7 @@ export async function restartAimuxControlPlane(
     verification = await verifyPostRestartCoherence({
       buildRuntimeCoherenceReport: options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport,
       coherence: options.coherence,
+      projectRoots: verificationProjectRoots,
       sleep,
       timeoutMs: options.verificationTimeoutMs ?? 5000,
       intervalMs: options.verificationIntervalMs ?? 250,

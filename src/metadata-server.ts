@@ -94,6 +94,7 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
 import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
@@ -676,6 +677,11 @@ function desiredPort(): number {
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
 const PROJECT_SERVICE_SLOW_REQUEST_MS = 250;
 const PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT = 25;
+const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
+  PROJECT_API_ROUTES.events,
+  PROJECT_API_ROUTES.agents.outputStream,
+  PROJECT_API_ROUTES.agents.interactionStream,
+]);
 const DESKTOP_STATE_CACHE_TTL_MS = 100;
 
 interface ProjectServiceResourceSnapshot {
@@ -1551,7 +1557,7 @@ export class MetadataServer {
     const startedAt = Date.now();
     const method = req.method ?? "GET";
     const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-    if (path !== PROJECT_API_ROUTES.events) {
+    if (!PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS.has(path)) {
       res.once("finish", () => {
         const durationMs = Date.now() - startedAt;
         if (durationMs < PROJECT_SERVICE_SLOW_REQUEST_MS) return;
@@ -2201,10 +2207,17 @@ export class MetadataServer {
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+        const currentOwner = getRuntimeOwnerId();
+        if (
+          !tmux.isWindowAlive(target) ||
+          currentBuildStamp !== dashboardBuildStamp ||
+          currentDashboardOwner !== currentOwner
+        ) {
           tmux.respawnWindow(target, dashboardCommand);
-          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
+        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
         return;
@@ -2258,10 +2271,17 @@ export class MetadataServer {
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+        const currentOwner = getRuntimeOwnerId();
+        if (
+          !tmux.isWindowAlive(target) ||
+          currentBuildStamp !== dashboardBuildStamp ||
+          currentDashboardOwner !== currentOwner
+        ) {
           tmux.respawnWindow(target, dashboardCommand);
-          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
+        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-inbox", target, focusResult);
         return;
