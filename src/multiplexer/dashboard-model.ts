@@ -5,7 +5,6 @@ import {
   loadMetadataEndpoint,
   loadMetadataState,
   removeMetadataEndpoint,
-  resolveProjectServiceEndpoint,
 } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
 import { PluginRuntime } from "../plugin-runtime.js";
@@ -17,7 +16,6 @@ import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { isNotificationStale } from "../coordination-model.js";
-import { requestJson } from "../http-client.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
@@ -35,9 +33,13 @@ import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } fr
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
+import { log } from "../debug.js";
 
 type DashboardModelHost = any;
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
+interface DashboardStateSnapshotOptions {
+  includeRuntimeInfo?: boolean;
+}
 
 const METADATA_PENDING_SETTLE_TIMEOUT_MS = 10_000;
 const METADATA_PENDING_SETTLE_INTERVAL_MS = 100;
@@ -615,14 +617,18 @@ export function invalidateDesktopStateSnapshot(host: DashboardModelHost): void {
   host.desktopStateSnapshot = null;
 }
 
-export function refreshDesktopStateSnapshot(host: DashboardModelHost): void {
-  host.desktopStateSnapshot = buildDesktopStateSnapshot(host);
+export function refreshDesktopStateSnapshot(
+  host: DashboardModelHost,
+  options: DashboardStateSnapshotOptions = {},
+): void {
+  host.desktopStateSnapshot = buildDesktopStateSnapshot(host, options);
 }
 
 export function computeDashboardSessions(
   host: DashboardModelHost,
-  options: { includeTeammates?: boolean } = {},
+  options: { includeTeammates?: boolean; includeRuntimeInfo?: boolean } = {},
 ): DashboardSession[] {
+  const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const lastUsedState = loadLastUsedState(process.cwd());
   const metadata = loadMetadataState().sessions;
   // Notification records are exchange threads tagged `notification`; they are surfaced by the
@@ -737,7 +743,9 @@ export function computeDashboardSessions(
   const notificationsBySessionId = summarizeUnreadNotificationsBySession();
   for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "agent") continue;
-    if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
+    if (includeRuntimeInfo && host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) {
+      continue;
+    }
     metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
   }
   return sessions.map((session) => {
@@ -746,7 +754,7 @@ export function computeDashboardSessions(
     const metadata = metadataBySessionId.get(session.id);
     const target = host.sessionTmuxTargets.get(session.id) ?? metadata?.target;
     const notifications = notificationsBySessionId.get(session.id);
-    const runtimeInfo = target ? readTmuxProcessInfo(host, target) : {};
+    const runtimeInfo = includeRuntimeInfo && target ? readTmuxProcessInfo(host, target) : {};
     const semantic = deriveSessionSemantics({
       status: session.status,
       pendingAction: session.pendingAction,
@@ -798,7 +806,9 @@ export function computeDashboardSessions(
 export function computeDashboardServices(
   host: DashboardModelHost,
   worktrees = host.listDesktopWorktrees(),
+  options: { includeRuntimeInfo?: boolean } = {},
 ): DashboardService[] {
+  const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
   const lastUsedState = loadLastUsedState(process.cwd());
   const sessionMetadata = loadMetadataState().sessions;
@@ -813,7 +823,8 @@ export function computeDashboardServices(
     .filter(({ metadata }: any) => !(metadata.worktreePath && hiddenWorktreePaths.has(metadata.worktreePath)))
     .map(({ target, metadata }: any) => {
       const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
-      const info = readTmuxProcessInfo(host, target);
+      const alive = includeRuntimeInfo ? host.tmuxRuntimeManager.isWindowAlive(target) : target.paneDead !== true;
+      const info = includeRuntimeInfo ? readTmuxProcessInfo(host, target) : {};
       const shellMetadata = sessionMetadata[metadata.sessionId]?.derived;
       return {
         id: metadata.sessionId,
@@ -826,10 +837,12 @@ export function computeDashboardServices(
         worktreePath: metadata.worktreePath,
         worktreeName: worktree?.name,
         worktreeBranch: worktree?.branch,
-        status: host.tmuxRuntimeManager.isWindowAlive(target) ? ("running" as const) : ("exited" as const),
+        status: alive ? ("running" as const) : ("exited" as const),
         active: false,
         label: metadata.label,
-        cwd: host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
+        cwd: includeRuntimeInfo
+          ? (host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath)
+          : metadata.worktreePath,
         foregroundCommand: info.command,
         shellCommand: shellMetadata?.shellCommand,
         shellCommandState: shellMetadata?.shellCommandState,
@@ -890,8 +903,8 @@ export function readTmuxProcessInfo(
   };
 }
 
-export function buildDesktopStateSnapshot(host: DashboardModelHost) {
-  host.syncSessionsFromTopology();
+export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
+  if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
@@ -914,11 +927,11 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost) {
   if (mainWorktree) {
     mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
   }
-  const sessions = computeDashboardSessions(host);
-  const teammates = computeDashboardSessions(host, { includeTeammates: true }).filter((session) =>
+  const sessions = computeDashboardSessions(host, options);
+  const teammates = computeDashboardSessions(host, { ...options, includeTeammates: true }).filter((session) =>
     isTeammateSession(session),
   );
-  const services = computeDashboardServices(host, worktrees);
+  const services = computeDashboardServices(host, worktrees, options);
   const worktreeGroups = buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath);
   return {
     sessions,
@@ -980,24 +993,23 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
   const deadline = force ? Date.now() + 8000 : Date.now();
   try {
     for (;;) {
-      const endpoint = resolveProjectServiceEndpoint(process.cwd());
-      if (endpoint) {
+      if (typeof host.getFromProjectService === "function") {
         try {
-          const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-            timeoutMs: force ? 2000 : 750,
-          });
-          if (status >= 200 && status < 300) {
-            if (!isDesktopStateDashboardModel(json)) return false;
-            return applyDashboardModel(
-              host,
-              json.sessions,
-              json.teammates,
-              json.services,
-              json.worktreeGroups,
-              json.mainCheckoutInfo,
-              json.operationFailures ?? [],
-            );
+          const json = await host.getFromProjectService("/desktop-state", { timeoutMs: force ? 2000 : 750 });
+          if (!isDesktopStateDashboardModel(json)) return false;
+          const applied = applyDashboardModel(
+            host,
+            json.sessions,
+            json.teammates,
+            json.services,
+            json.worktreeGroups,
+            json.mainCheckoutInfo,
+            json.operationFailures ?? [],
+          );
+          if (applied && typeof host.refreshRuntimeGuard === "function") {
+            void host.refreshRuntimeGuard();
           }
+          return applied;
         } catch {
           await ensureDashboardControlPlane(host);
         }
@@ -1041,7 +1053,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
   host.metadataServer = new MetadataServer({
     events: { bus: host.eventBus },
     desktop: {
-      getState: () => host.buildDesktopState(),
+      getState: () => host.buildDesktopState({ includeStatusline: false, includeRuntimeInfo: false }),
       listWorktrees: () => host.listProjectedDesktopWorktrees(),
       getSessionDisplayContext: (sessionId: string) => {
         const session =
@@ -1251,29 +1263,56 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
         scheduleProjectServiceUiRefresh(host);
       },
     );
-    await host.pluginRuntime.start();
-    host.loopWatcher = new LoopWatcher({
-      config: loadConfig().loop,
-      loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
-      loadMetadata: () => loadMetadataState(),
-      hasPendingInteraction: (sessionId: string) =>
-        (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
-      sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
-    });
-    host.loopWatcher.start();
+    try {
+      await host.pluginRuntime.start();
+    } catch (error) {
+      log.warn("project service plugin runtime disabled after startup failure", "plugin", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      await Promise.resolve(host.pluginRuntime.stop?.()).catch(() => {});
+      host.pluginRuntime = null;
+    }
+    try {
+      host.loopWatcher = new LoopWatcher({
+        config: loadConfig().loop,
+        loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
+        loadMetadata: () => loadMetadataState(),
+        hasPendingInteraction: (sessionId: string) =>
+          (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
+        sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
+      });
+      host.loopWatcher.start();
+    } catch (error) {
+      log.warn("project service loop watcher disabled after startup failure", "runtime", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      host.loopWatcher?.stop?.();
+      host.loopWatcher = null;
+    }
   }
   // The reconciler talks to host.metadataServer in-process, so it must start with
   // the project service regardless of whether the HTTP endpoint bound — it is not
   // gated on `endpoint` like the plugin runtime and loop watcher above.
-  host.transcriptReconciler = new TranscriptReconciler({
-    loadMetadata: () => loadMetadataState(),
-    loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
-    hasPendingInteraction: (sessionId: string) =>
-      (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
-    settleActivity: (sessionId: string) => host.metadataServer?.reconcileSettleActivity(sessionId),
-    clearStaleResponse: (sessionId: string) => host.metadataServer?.reconcileClearResponse(sessionId),
-  });
-  host.transcriptReconciler.start();
+  try {
+    host.transcriptReconciler = new TranscriptReconciler({
+      loadMetadata: () => loadMetadataState(),
+      loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
+      hasPendingInteraction: (sessionId: string) =>
+        (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
+      settleActivity: (sessionId: string) => host.metadataServer?.reconcileSettleActivity(sessionId),
+      clearStaleResponse: (sessionId: string) => host.metadataServer?.reconcileClearResponse(sessionId),
+    });
+    host.transcriptReconciler.start();
+  } catch (error) {
+    log.warn("project service transcript reconciler disabled after startup failure", "runtime", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    host.transcriptReconciler?.stop?.();
+    host.transcriptReconciler = null;
+  }
   host.projectServiceStartupMetadataSettling = false;
   if (host.projectServiceUiRefreshPending) {
     host.projectServiceUiRefreshPending = false;

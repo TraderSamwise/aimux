@@ -1,4 +1,4 @@
-import { parseKeys, matchKey, type KeyEvent } from "./key-parser.js";
+import { commandKey, parseKeys, matchKey, type KeyEvent } from "./key-parser.js";
 import { debug } from "./debug.js";
 
 export const HOTKEY_TIMEOUT_MS = 1000;
@@ -72,8 +72,14 @@ export class HotkeyHandler {
     }
 
     const key = event.name || event.char;
+    const lowerKey = commandKey(event);
 
-    switch (key) {
+    if (key === "W") {
+      this.onAction({ type: "worktree-list" });
+      return null;
+    }
+
+    switch (lowerKey) {
       case "d":
         this.onAction({ type: "dashboard" });
         return null;
@@ -103,9 +109,6 @@ export class HotkeyHandler {
         return null;
       case "w":
         this.onAction({ type: "worktree-create" });
-        return null;
-      case "W":
-        this.onAction({ type: "worktree-list" });
         return null;
       case "v":
         this.onAction({ type: "review" });

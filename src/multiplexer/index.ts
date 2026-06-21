@@ -284,6 +284,7 @@ export class Multiplexer {
   private runtimeSync!: MultiplexerRuntimeSync;
   private _runtimeGuard: RuntimeGuardState = { kind: "ok" };
   private runtimeGuardProbing = false;
+  private runtimeGuardDisconnectProbeCount = 0;
 
   constructor() {
     this.projectRoot = (() => {

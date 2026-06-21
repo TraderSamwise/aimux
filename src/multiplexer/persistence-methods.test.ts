@@ -102,6 +102,63 @@ describe("persistenceMethods", () => {
     rmSync(pathsRoot, { recursive: true, force: true });
   });
 
+  function createStatuslineHost(overrides: Record<string, unknown> = {}) {
+    return {
+      mode: "project-service",
+      sessions: [{ id: "codex-1" }],
+      dashboardState: { screen: "dashboard" },
+      dashboardUiStateStore: { loadSharedState: vi.fn() },
+      repairManagedTmuxTargets: vi.fn(),
+      syncTmuxWindowMetadata: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildStatuslineSnapshot: vi.fn(() => ({
+        project: "repo",
+        dashboardScreen: "dashboard",
+        sessions: [],
+        teammates: [],
+        tasks: { pending: 0, assigned: 0 },
+        controlPlane: { daemonAlive: true, projectServiceAlive: true },
+        flash: null,
+        metadata: {},
+        updatedAt: "2026-06-21T00:00:00.000Z",
+      })),
+      lastStatuslineSnapshotKey: null,
+      writePrecomputedTmuxStatuslineFiles: vi.fn(),
+      tmuxRuntimeManager: { refreshStatus: vi.fn() },
+      ...overrides,
+    };
+  }
+
+  it("writes automatic statusline snapshots without live tmux repair or refresh", () => {
+    const host = createStatuslineHost();
+
+    persistenceMethods.writeStatuslineFile.call(host);
+
+    expect(host.repairManagedTmuxTargets).not.toHaveBeenCalled();
+    expect(host.syncTmuxWindowMetadata).not.toHaveBeenCalled();
+    expect(host.refreshDesktopStateSnapshot).toHaveBeenCalledWith({ includeRuntimeInfo: false });
+    expect(host.writePrecomputedTmuxStatuslineFiles).toHaveBeenCalledOnce();
+    expect(host.tmuxRuntimeManager.refreshStatus).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit statusline repair on the forced refresh path", () => {
+    const host = createStatuslineHost();
+    Object.assign(host, {
+      writeStatuslineFile: (input?: { force?: boolean; repairTmux?: boolean; refreshTmux?: boolean }) =>
+        persistenceMethods.writeStatuslineFile.call(host, input),
+    });
+
+    const result = persistenceMethods.refreshProjectStatusline.call(host, { force: true });
+
+    expect(result).toEqual({ ok: true });
+    expect(host.repairManagedTmuxTargets).toHaveBeenCalledOnce();
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("codex-1");
+    expect(host.refreshDesktopStateSnapshot).toHaveBeenCalledWith({ includeRuntimeInfo: false });
+    expect(host.writePrecomputedTmuxStatuslineFiles).toHaveBeenCalledOnce();
+    expect(host.tmuxRuntimeManager.refreshStatus).toHaveBeenCalledOnce();
+  });
+
   it("seeds desktop state when creating a worktree", () => {
     const child = new EventEmitter() as EventEmitter & {
       stderr: EventEmitter;
@@ -309,6 +366,32 @@ describe("persistenceMethods", () => {
     expect(state.worktreeGroups).toEqual([
       expect.objectContaining({ name: "demo", path: worktreePath, pending: true, pendingAction: "creating" }),
     ]);
+    expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("can build API desktop state without the statusline snapshot", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [],
+        teammates: [],
+        services: [],
+        worktrees: [],
+        worktreeGroups: [],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        mainCheckoutPath: "/repo",
+      },
+      dashboardPendingActions: pending,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+      buildStatuslineSnapshot: vi.fn(() => ({ sessions: [] })),
+    };
+
+    const state = persistenceMethods.buildDesktopState.call(host, { includeStatusline: false });
+
+    expect(state).not.toHaveProperty("statusline");
+    expect(host.buildStatuslineSnapshot).not.toHaveBeenCalled();
     expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
   });
 

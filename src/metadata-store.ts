@@ -151,6 +151,12 @@ function scrubProjectionAuthorityFields(state: MetadataState): MetadataState {
   return state;
 }
 
+function stableMetadataPayload(session: SessionMetadata | undefined): string {
+  if (!session || typeof session !== "object") return "";
+  const { updatedAt: _updatedAt, ...payload } = session;
+  return JSON.stringify(payload);
+}
+
 export function loadMetadataState(projectRoot?: string): MetadataState {
   const state = loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
   return scrubProjectionAuthorityFields(state);
@@ -167,8 +173,12 @@ export function updateSessionMetadata(
 ): MetadataState {
   const state = loadMetadataState(projectRoot);
   const current = state.sessions[sessionId] ?? { updatedAt: new Date().toISOString() };
+  const next = updater(current);
+  if (stableMetadataPayload(current) === stableMetadataPayload(next)) {
+    return state;
+  }
   state.sessions[sessionId] = {
-    ...updater(current),
+    ...next,
     updatedAt: new Date().toISOString(),
   };
   saveMetadataState(state, projectRoot);

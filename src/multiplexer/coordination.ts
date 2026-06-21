@@ -1,4 +1,4 @@
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderCoordinationScreen } from "../tui/screens/subscreen-renderers.js";
 import type { WorklistItem } from "../coordination-model.js";
@@ -100,9 +100,10 @@ function dispatchNotificationItem(host: CoordinationHost, key: string, item: Wor
 }
 
 function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistItem): void {
+  const lowerKey = key.length === 1 ? key.toLowerCase() : key;
   const entry = item.thread;
   if (!entry) return;
-  if (key === "s") {
+  if (lowerKey === "s") {
     syncThreadIndex(host, item);
     host.openDashboardOverlay("thread-reply");
     host.threadReplyBuffer = "";
@@ -114,22 +115,22 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     else if (entry.thread.kind === "handoff") void runThreadHandoffAction(host, "accept", entry.thread.id);
     return;
   }
-  if (key === "c") {
+  if (lowerKey === "c") {
     if (entry.task) void runTaskLifecycleAction(host, "complete", entry.task.id);
     else if (entry.thread.kind === "handoff") void runThreadHandoffAction(host, "complete", entry.thread.id);
     else void runThreadStatusAction(host, entry.thread.id, "done");
     return;
   }
-  if (key === "b") {
+  if (lowerKey === "b") {
     if (entry.task) void runTaskLifecycleAction(host, "block", entry.task.id);
     else void runThreadStatusAction(host, entry.thread.id, "blocked");
     return;
   }
-  if (key === "o") {
+  if (lowerKey === "o") {
     void runThreadStatusAction(host, entry.thread.id, "open");
     return;
   }
-  if (key === "x") {
+  if (lowerKey === "x") {
     void runThreadStatusAction(host, entry.thread.id, "done");
     return;
   }
@@ -165,7 +166,8 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const rawKey = event.name || event.char;
+  const key = commandKey(event);
   const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
   if (isTabToggle) {
@@ -191,14 +193,14 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
   }
 
   const items: WorklistItem[] = host.coordinationWorklist ?? [];
-  if (key === "down" || key === "j") {
+  if (key === "down" || (key === "j" && rawKey !== "J")) {
     if (items.length > 1) {
       host.coordinationIndex = (host.coordinationIndex + 1) % items.length;
       renderCoordination(host);
     }
     return;
   }
-  if (key === "up" || key === "k") {
+  if (key === "up" || (key === "k" && rawKey !== "K")) {
     if (items.length > 1) {
       host.coordinationIndex = (host.coordinationIndex - 1 + items.length) % items.length;
       renderCoordination(host);
@@ -213,17 +215,17 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
     }
     return;
   }
-  if (key === "R") {
+  if (rawKey === "R") {
     applyNotificationMutation(host, host.postToProjectService(PROJECT_API_ROUTES.notifications.read, {}));
     return;
   }
-  if (key === "C") {
+  if (rawKey === "C") {
     applyNotificationMutation(host, host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, {}));
     return;
   }
 
   const item = items[host.coordinationIndex];
   if (!item) return;
-  if (item.kind === "thread") dispatchThreadItem(host, key, item);
+  if (item.kind === "thread") dispatchThreadItem(host, rawKey, item);
   else dispatchNotificationItem(host, key, item);
 }

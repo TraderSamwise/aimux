@@ -2,6 +2,8 @@ import { debug } from "../debug.js";
 import type { SessionStatus } from "../status-detector.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./runtime-manager.js";
 
+const LIVENESS_POLL_INTERVAL_MS = 15_000;
+
 export class TmuxSessionTransport {
   readonly command: string;
   backendSessionId?: string;
@@ -24,7 +26,8 @@ export class TmuxSessionTransport {
     this.command = command;
     this.cols = cols;
     this.rows = rows;
-    this.pollInterval = setInterval(() => this.pollLiveness(), 1000);
+    this.pollInterval = setInterval(() => this.pollLiveness(), LIVENESS_POLL_INTERVAL_MS);
+    this.pollInterval.unref?.();
   }
 
   get exited(): boolean {
@@ -117,7 +120,7 @@ export class TmuxSessionTransport {
         return;
       }
       this.target = resolved;
-      if (!this.manager.isWindowAlive(this.target)) {
+      if (resolved.paneDead) {
         this.markExited(0);
         return;
       }

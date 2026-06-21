@@ -267,23 +267,27 @@ export const dashboardStateMethods = {
     invalidateDesktopStateSnapshotImpl(this);
   },
 
-  refreshDesktopStateSnapshot(this: any): void {
-    refreshDesktopStateSnapshotImpl(this);
+  refreshDesktopStateSnapshot(this: any, options: { includeRuntimeInfo?: boolean } = {}): void {
+    refreshDesktopStateSnapshotImpl(this, options);
   },
 
   computeDashboardSessions(this: any): DashboardSession[] {
     return computeDashboardSessionsImpl(this);
   },
 
-  computeDashboardServices(this: any, worktrees = this.listDesktopWorktrees()): DashboardService[] {
-    return computeDashboardServicesImpl(this, worktrees);
+  computeDashboardServices(
+    this: any,
+    worktrees = this.listDesktopWorktrees(),
+    options: { includeRuntimeInfo?: boolean } = {},
+  ): DashboardService[] {
+    return computeDashboardServicesImpl(this, worktrees, options);
   },
 
   readTmuxProcessInfo(this: any, target: TmuxTarget): { command?: string; pid?: number; previewLine?: string } {
     return readTmuxProcessInfoImpl(this, target);
   },
 
-  buildDesktopStateSnapshot(this: any): {
+  buildDesktopStateSnapshot(this: any, options: { includeRuntimeInfo?: boolean } = {}): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
     services: DashboardService[];
@@ -292,7 +296,7 @@ export const dashboardStateMethods = {
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    return buildDesktopStateSnapshotImpl(this);
+    return buildDesktopStateSnapshotImpl(this, options);
   },
 
   async refreshDashboardModelFromService(this: any, force = false): Promise<boolean> {

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { resolve as pathResolve } from "node:path";
 import {
   ensureDaemonRunning,
   ensureProjectService,
@@ -14,6 +15,7 @@ import {
   type RuntimeCoherenceReport,
 } from "./runtime-coherence.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { commandArgValueMatches } from "./process-args.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "skipped" | "failed";
 
@@ -69,6 +71,7 @@ export interface RestartAimuxControlPlaneOptions {
     dashboardTarget: TmuxTarget;
   };
   isPidAlive?: (pid: number) => boolean;
+  isAimuxProjectServiceProcess?: (pid: number, expected?: ProjectServiceIdentity) => boolean;
   sleep?: (ms: number) => Promise<void>;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
   daemonExitTimeoutMs?: number;
@@ -142,6 +145,50 @@ function defaultIsPidAlive(pid: number): boolean {
   return true;
 }
 
+interface ProjectServiceIdentity {
+  projectId?: string;
+  projectRoot?: string;
+}
+
+interface ProjectServiceIdentityWithPid extends ProjectServiceIdentity {
+  pid: number;
+}
+
+function readProcessCwd(pid: number): string | null {
+  try {
+    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const cwd = output
+      .split("\n")
+      .find((line) => line.startsWith("n"))
+      ?.slice(1)
+      .trim();
+    return cwd || null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultIsAimuxProjectServiceProcess(pid: number, expected: ProjectServiceIdentity = {}): boolean {
+  try {
+    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (!args.includes("__project-service-internal")) return false;
+    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
+      return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
+    }
+    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
+    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForPidExit(input: {
   pid: number;
   timeoutMs: number;
@@ -193,10 +240,23 @@ export async function restartAimuxControlPlane(
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
+  const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
+    const pid = project.service.pid;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return [];
+    return [
+      {
+        pid,
+        projectId: project.service.daemonState?.projectId,
+        projectRoot: project.service.daemonState?.projectRoot ?? project.projectRoot,
+      },
+    ];
+  });
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const killPid = options.killPid ?? defaultKillPid;
+  let stoppedServicePids: number[] = [];
   if (previousDaemon) {
     await waitForPidExit({
       pid: previousDaemon.pid,
@@ -206,16 +266,29 @@ export async function restartAimuxControlPlane(
       sleep,
       killPid,
     });
-    await waitForPidsExit({
-      pids: previousDaemon.stoppedProjectServices.map((service) => service.pid),
-      timeoutMs: options.serviceExitTimeoutMs ?? 5000,
-      killGraceMs: options.killGraceMs ?? 2000,
-      isPidAlive,
-      sleep,
-      killPid,
-    });
+    stoppedServicePids = previousDaemon.stoppedProjectServices.map((service) => service.pid);
   }
-  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
+  const signaledServicePids = new Set(stoppedServicePids);
+  const verifiedBeforeServices = beforeServices.filter((service) => isAimuxProjectServiceProcess(service.pid, service));
+  const beforeServicePids = beforeServices.map((service) => service.pid);
+  const verifiedBeforeServicePids = verifiedBeforeServices.map((service) => service.pid);
+  const verifiedBeforeServicePidSet = new Set(verifiedBeforeServicePids);
+  for (const pid of beforeServicePids) {
+    if (signaledServicePids.has(pid)) continue;
+    if (!verifiedBeforeServicePidSet.has(pid)) continue;
+    try {
+      killPid(pid, "SIGTERM");
+    } catch {}
+  }
+  await waitForPidsExit({
+    pids: [...new Set([...stoppedServicePids, ...verifiedBeforeServicePids])],
+    timeoutMs: options.serviceExitTimeoutMs ?? 5000,
+    killGraceMs: options.killGraceMs ?? 2000,
+    isPidAlive,
+    sleep,
+    killPid,
+  });
+  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)({ adoptExisting: false });
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
   const resolveDashboard =

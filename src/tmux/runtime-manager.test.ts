@@ -88,6 +88,9 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "new-session")).toBe(true);
     const createCall = exec.calls.find((call) => call.args[0] === "new-session");
     expect(createCall?.cwd).toBe("/repo/mobile");
+    expect(
+      exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-project-state-dir"),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "mouse")).toBe(true);
@@ -189,8 +192,8 @@ describe("TmuxRuntimeManager", () => {
         (call) =>
           call.args[0] === "bind-key" &&
           call.args.includes("n") &&
-          call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
-          call.args.join(" ").includes("--pane-id '#{pane_id}'"),
+          call.args.join(" ").includes("--current-window-id #{q:window_id}") &&
+          call.args.join(" ").includes("--pane-id #{q:pane_id}"),
       ),
     ).toBe(true);
     expect(
@@ -214,17 +217,24 @@ describe("TmuxRuntimeManager", () => {
           call.args.join(" ").includes("scripts/tmux-control.sh' team"),
       ),
     ).toBe(true);
-    expect(
-      exec.calls.some(
-        (call) =>
-          call.args[0] === "bind-key" &&
-          call.args.join(" ").includes(" prefix d ") &&
-          call.args[4] === "run-shell" &&
-          !call.args.join(" ").includes("tmux select-window -t :0") &&
-          call.args.join(" ").includes("scripts/tmux-control.sh") &&
-          call.args.join(" ").includes(" dashboard --project-root "),
-      ),
-    ).toBe(true);
+    const dashboardBinding = exec.calls.find(
+      (call) =>
+        call.args[0] === "bind-key" &&
+        call.args.join(" ").includes(" prefix d ") &&
+        call.args[4] === "run-shell" &&
+        !call.args.join(" ").includes("tmux select-window -t :0") &&
+        call.args.join(" ").includes("scripts/tmux-control.sh") &&
+        call.args.join(" ").includes(" dashboard --current-client-session "),
+    );
+    expect(dashboardBinding).toBeTruthy();
+    expect(dashboardBinding?.args.join(" ")).toContain("--current-client-session #{q:client_session}");
+    expect(dashboardBinding?.args.join(" ")).toContain("--current-path #{q:pane_current_path}");
+    const globalControlBindings = exec.calls.filter(
+      (call) =>
+        call.args[0] === "bind-key" && call.args.includes("prefix") && call.args.join(" ").includes("tmux-control.sh"),
+    );
+    expect(globalControlBindings.some((call) => call.args.join(" ").includes("--project-root"))).toBe(false);
+    expect(globalControlBindings.some((call) => call.args.join(" ").includes("--project-state-dir"))).toBe(false);
     expect(
       exec.calls.some(
         (call) =>
@@ -344,15 +354,15 @@ describe("TmuxRuntimeManager", () => {
       }
       if (
         joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
-        return "@3\t3\tcodex\t1\t100\n@9\t9\tshell\t0\t90";
+        return "@3\t3\tcodex\t1\t100\t0\n@9\t9\tshell\t0\t90\t0";
       }
       if (
         joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
-        return "@3\t3\tcodex\t0\t100\n@10\t10\tdashboard\t1\t110";
+        return "@3\t3\tcodex\t0\t100\t0\n@10\t10\tdashboard\t1\t110\t1";
       }
       if (joined === "show-window-options -v -t @3 @aimux-meta") {
         return JSON.stringify({
@@ -389,6 +399,7 @@ describe("TmuxRuntimeManager", () => {
 
     const entries = manager.listProjectManagedWindows("/repo/mobile");
     expect(entries.map((entry) => entry.target.windowId)).toEqual(["@3", "@9", "@10"]);
+    expect(entries.find((entry) => entry.target.windowId === "@10")?.target.paneDead).toBe(true);
     expect(entries.map((entry) => entry.target.sessionName)).toEqual([
       hostSessionName,
       hostSessionName,
@@ -402,7 +413,7 @@ describe("TmuxRuntimeManager", () => {
       if (joined === "-V") return "tmux 3.5a";
       if (
         joined ===
-        "list-windows -t aimux-mobile-abc -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}"
+        "list-windows -t aimux-mobile-abc -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}"
       ) {
         return "@3\t3\tcodex\t1\t100";
       }
@@ -582,13 +593,13 @@ describe("TmuxRuntimeManager", () => {
       if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
       if (
         joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90";
       }
       if (
         joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return linked ? "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90" : "@0\t0\tdashboard-268eff9c\t1\t100";
       }
@@ -673,13 +684,13 @@ describe("TmuxRuntimeManager", () => {
       if (joined === `has-session -t ${clientSessionName}`) return "";
       if (
         joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@0\t0\tdashboard-268eff9c\t1\t100";
       }
       if (
         joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
         return "@1\t1\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90";
       }
