@@ -6,6 +6,7 @@ import {
   type TmuxExec,
   type TmuxInteractiveExec,
 } from "./runtime-manager.js";
+import { AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_RUNTIME_CONTRACT_OPTION } from "../runtime-owner.js";
 
 function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> } {
   const calls: Array<{ args: string[]; cwd?: string }> = [];
@@ -90,6 +91,14 @@ describe("TmuxRuntimeManager", () => {
     expect(createCall?.cwd).toBe("/repo/mobile");
     expect(
       exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-project-state-dir"),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION &&
+          call.args[4] === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      ),
     ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);
@@ -286,6 +295,34 @@ describe("TmuxRuntimeManager", () => {
           call.args[3] === "status-format[0]" &&
           call.args[4]?.includes("#{?pane_in_mode") &&
           call.args[4]?.includes("scroll"),
+      ),
+    ).toBe(true);
+  });
+
+  it("stamps missing runtime contract on an existing project session", () => {
+    const sessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${sessionName}`) return "";
+      if (joined === `show-options -v -t ${sessionName} ${TMUX_RUNTIME_CONTRACT_OPTION}`) return "";
+      if (joined.startsWith("list-windows -t ")) return "";
+      if (joined.startsWith("show-options -v -t ") && joined.endsWith(" terminal-features")) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec);
+
+    manager.ensureProjectSession("/repo/mobile");
+
+    expect(calls.some((call) => call.args[0] === "new-session")).toBe(false);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION &&
+          call.args[4] === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
       ),
     ).toBe(true);
   });
@@ -670,6 +707,58 @@ describe("TmuxRuntimeManager", () => {
     expect(interactiveCalls.at(-1)?.args?.[0]).toBe("switch-client");
     expect(interactiveCalls.at(-1)?.args?.[1]).toBe("-t");
     expect(interactiveCalls.at(-1)?.args?.[2]).toMatch(/^aimux-mobile-abc-client-[a-f0-9]{8}:0$/);
+  });
+
+  it("links a host dashboard into the client dashboard slot when opening from inside tmux", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @121 -t ${clientSessionName}:0`);
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) return "";
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} @aimux-host-session`) return hostSessionName;
+      if (joined === `show-options -v -t ${clientSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} @aimux-runtime-build`) return "";
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      if (joined === "display-message -p #{client_session}") return clientSessionName;
+      if (
+        joined ===
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        return "@121\t0\tdashboard\t1\t100\t0\n@46\t2\tcodex\t0\t90\t0";
+      }
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        return linked ? "@121\t0\tdashboard\t1\t100\t0" : "@125\t0\tdashboard\t1\t100\t0";
+      }
+      return "";
+    };
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+
+    manager.openTarget(
+      { sessionName: hostSessionName, windowId: "@121", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: true, clientTty: "/dev/ttys999", clientSuffix: "268eff9c" },
+    );
+
+    expect(calls.some((call) => call.args.join(" ") === "kill-window -t @125")).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @121 -t ${clientSessionName}:0`)).toBe(true);
+    expect(interactiveCalls.at(-1)?.args).toEqual([
+      "switch-client",
+      "-c",
+      "/dev/ttys999",
+      "-t",
+      `${clientSessionName}:0`,
+    ]);
   });
 
   it("recreates a stale reused client session when its runtime contract drifts", () => {

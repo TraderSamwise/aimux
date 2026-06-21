@@ -7,7 +7,12 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import { debug, log } from "../debug.js";
 import { getProjectStateDirFor } from "../paths.js";
-import { getRuntimeOwnerId, TMUX_RUNTIME_OWNER_OPTION } from "../runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  getRuntimeOwnerId,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "../runtime-owner.js";
 import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -249,7 +254,6 @@ export class TmuxRuntimeManager {
     const dashboardName = this.getDashboardWindowName();
     const clientSessionExists = this.hasSession(clientSessionName);
     const runtimeBuildStamp = this.getManagedRuntimeBuildStamp();
-    const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
     const clientWindows = clientSessionExists ? this.listWindows(clientSessionName) : [];
     const existingDashboard = clientWindows.find((window) => isDashboardWindowName(window.name));
     const currentHostSession = clientSessionExists
@@ -269,8 +273,7 @@ export class TmuxRuntimeManager {
         dashboardAtZero?.id !== existingDashboard.id ||
         currentHostSession !== hostSessionName ||
         currentProjectRoot !== projectRoot ||
-        currentRuntimeBuild !== runtimeBuildStamp ||
-        (!!hostDashboard && existingDashboard.id === hostDashboard.id));
+        currentRuntimeBuild !== runtimeBuildStamp);
 
     if (needsRecreate) {
       this.exec(["kill-session", "-t", clientSessionName]);
@@ -294,25 +297,48 @@ export class TmuxRuntimeManager {
         { cwd: projectRoot },
       );
       this.configureSession(clientSessionName, projectRoot);
+      this.setCurrentRuntimeContract(clientSessionName);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
       return;
     }
 
     this.configureSession(clientSessionName, projectRoot);
+    this.setCurrentRuntimeContract(clientSessionName);
     this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
     this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
   }
 
-  private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget): TmuxTarget {
+  private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (existing) return existing;
-    this.exec(["link-window", "-d", "-s", target.windowId, "-t", clientSessionName]);
+    if (windowIndex !== undefined) {
+      const occupying = this.listWindows(clientSessionName).find((window) => window.index === windowIndex);
+      if (occupying && occupying.id !== target.windowId) {
+        if (!isDashboardWindowName(occupying.name)) {
+          throw new Error(
+            `Cannot replace non-dashboard tmux window ${occupying.id} at ${clientSessionName}:${windowIndex}`,
+          );
+        }
+        this.killWindow({
+          sessionName: clientSessionName,
+          windowId: occupying.id,
+          windowIndex: occupying.index,
+          windowName: occupying.name,
+        });
+      }
+    }
+    const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
+    this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
     const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (!linked) {
       throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
     }
     return linked;
+  }
+
+  linkWindowToSession(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
+    return this.ensureLinkedWindow(clientSessionName, target, windowIndex);
   }
 
   private getSessionPrefix(): string {
@@ -339,6 +365,9 @@ export class TmuxRuntimeManager {
   ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
     const exists = this.hasSession(session.sessionName);
+    const currentRuntimeContract = exists
+      ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
+      : null;
     if (!exists) {
       const argv =
         dashboardCommand && dashboardCommand.args.length >= 0
@@ -370,6 +399,7 @@ export class TmuxRuntimeManager {
       this.exec(argv, { cwd: projectRoot });
     }
     this.configureSession(session.sessionName, projectRoot);
+    if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);
     return session;
   }
 
@@ -832,8 +862,8 @@ export class TmuxRuntimeManager {
         ? openSessionName
         : this.resolveOpenSessionName(openSessionName, insideTmux, options.clientSuffix, options.clientTty);
     const effectiveTarget =
-      sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
-        ? this.ensureLinkedWindow(sessionName, target)
+      sessionName !== target.sessionName
+        ? this.ensureLinkedWindow(sessionName, target, isDashboardWindowName(target.windowName) ? 0 : undefined)
         : {
             ...target,
             sessionName,
@@ -1007,6 +1037,10 @@ export class TmuxRuntimeManager {
       "status-format[1]",
       `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
     ]);
+  }
+
+  private setCurrentRuntimeContract(sessionName: string): void {
+    this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_CONTRACT_OPTION, AIMUX_TMUX_RUNTIME_CONTRACT_VERSION]);
   }
 
   private applyDefaultRootMouseBindings(): void {

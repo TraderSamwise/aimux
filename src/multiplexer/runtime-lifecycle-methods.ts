@@ -144,7 +144,7 @@ export type RuntimeLifecycleMethods = {
   stopProjectServiceRefresh(this: Multiplexer): void;
   saveState(this: Multiplexer): void;
   teardown(this: Multiplexer): void;
-  cleanup(this: Multiplexer): void;
+  cleanup(this: Multiplexer): Promise<void>;
   cleanupTerminalOnly(this: Multiplexer): void;
   exitDashboardClientOrProcess(this: Multiplexer): void;
 };
@@ -353,13 +353,15 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     mux.hotkeys.destroy();
     mux.terminalHost.restoreTerminalState();
   },
-  cleanup(this: Multiplexer) {
+  async cleanup(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
     this.teardown();
     for (const session of mux.sessions) {
       session.destroy();
     }
-    void this.stopProjectServices().catch(() => {});
+    await this.stopProjectServices().catch((error: unknown) => {
+      debug(`project service cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "runtime");
+    });
   },
   cleanupTerminalOnly(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
@@ -376,7 +378,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       });
       return;
     }
-    this.cleanup();
-    process.exit(0);
+    void this.cleanup().finally(() => process.exit(0));
   },
 };

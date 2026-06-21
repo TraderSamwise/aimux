@@ -328,13 +328,17 @@ describe("reloadDashboardFromGuard", () => {
   it("uses PATH aimux for dashboard reloads", async () => {
     const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
     const originalArgv = process.argv[1];
+    const originalCliBin = process.env.AIMUX_CLI_BIN;
     process.argv[1] = "/Users/sam/cs/aimux/dist/main.js";
+    delete process.env.AIMUX_CLI_BIN;
     const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
 
     try {
       reloadDashboardFromGuard(host as never);
     } finally {
       process.argv[1] = originalArgv;
+      if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
+      else process.env.AIMUX_CLI_BIN = originalCliBin;
     }
 
     expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["dashboard-reload", "--open"], {
@@ -361,16 +365,90 @@ describe("reloadDashboardFromGuard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 
-  it("uses PATH aimux instead of a versioned stable install path", async () => {
+  it("uses AIMUX_CLI_BIN when the install shim exported a custom path", async () => {
     const { resolveDashboardReloadCommand } = await import("./dashboard-control.js");
-    const originalArgv = process.argv[1];
-    process.argv[1] = "/Users/sam/.aimux/native/1.2.3/bin/aimux";
+    const originalCliBin = process.env.AIMUX_CLI_BIN;
+    process.env.AIMUX_CLI_BIN = "/custom/bin/aimux";
 
     try {
-      expect(resolveDashboardReloadCommand()).toBe("aimux");
+      expect(resolveDashboardReloadCommand()).toBe("/custom/bin/aimux");
     } finally {
-      process.argv[1] = originalArgv;
+      if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
+      else process.env.AIMUX_CLI_BIN = originalCliBin;
     }
+  });
+});
+
+describe("restartRuntimeFromGuard", () => {
+  it("uses PATH aimux for guarded runtime rebuilds", async () => {
+    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
+    const originalCliBin = process.env.AIMUX_CLI_BIN;
+    delete process.env.AIMUX_CLI_BIN;
+    const host = {
+      projectRoot: "/repo/app",
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      restartRuntimeFromGuard(host as never);
+    } finally {
+      if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
+      else process.env.AIMUX_CLI_BIN = originalCliBin;
+    }
+
+    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart-runtime", "--project-root", "/repo/app", "--open"], {
+      detached: true,
+      stdio: "ignore",
+    });
+  });
+
+  it("passes the active tmux client tty when rebuilding from the guard", async () => {
+    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderCurrentDashboardView: vi.fn(),
+      tmuxRuntimeManager: {
+        displayMessage: vi.fn(() => "/dev/ttys123"),
+      },
+    };
+
+    restartRuntimeFromGuard(host as never);
+
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "aimux",
+      ["restart-runtime", "--project-root", "/repo/app", "--open", "--client-tty", "/dev/ttys123"],
+      {
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+  });
+
+  it("shows a footer failure when the runtime rebuild child emits an error", async () => {
+    let onError: (() => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: () => void) => {
+        if (event === "error") onError = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    restartRuntimeFromGuard(host as never);
+    onError?.();
+
+    expect(host.footerFlash).toContain("Runtime rebuild failed");
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 });
 

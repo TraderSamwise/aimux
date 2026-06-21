@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { existsSync, statSync } from "node:fs";
+import { buildAimuxCliShellCommand } from "../cli-launcher.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
 function shellQuote(value: string): string {
@@ -25,9 +26,7 @@ export function getDashboardCommandSpec(projectRoot: string): DashboardCommandSp
     ";",
     "set -o pipefail",
     ";",
-    shellQuote(process.execPath),
-    shellQuote(scriptPath),
-    "--tmux-dashboard-internal",
+    buildAimuxCliShellCommand(["--tmux-dashboard-internal"]),
     "2>&1",
     "|",
     "tee",

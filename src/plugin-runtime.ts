@@ -12,7 +12,7 @@ import {
   type SessionServiceMetadata,
   type SessionStatuslineSegment,
 } from "./metadata-store.js";
-import { debug } from "./debug.js";
+import { debug, log } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { AgentTracker } from "./agent-tracker.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
@@ -53,12 +53,49 @@ export interface AimuxPluginInstance {
 
 type AimuxPluginFactory = (api: AimuxPluginAPI) => void | AimuxPluginInstance | Promise<void | AimuxPluginInstance>;
 
+export interface PluginRuntimePluginStatus {
+  source: "builtin" | "user";
+  name: string;
+  path?: string;
+  status: "loaded" | "failed";
+  error?: string;
+  resourceFailure?: boolean;
+  stoppedAfterFailedStart?: boolean;
+}
+
 function listPluginFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((entry) => entry.endsWith(".js") || entry.endsWith(".mjs"))
     .map((entry) => join(dir, entry))
     .filter((path) => statSync(path).isFile());
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isPluginResourceFailure(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  const message = errorMessage(error);
+  return /\b(EMFILE|ENFILE|ENOSPC)\b/i.test(`${code} ${message}`) || /too many open files/i.test(message);
+}
+
+async function stopPluginAfterFailedStart(
+  instance: AimuxPluginInstance,
+  input: { source: "builtin" | "user"; name: string; path?: string },
+): Promise<boolean> {
+  if (!instance.stop) return false;
+  try {
+    await instance.stop();
+    return true;
+  } catch (error) {
+    log.warn("plugin cleanup failed after startup failure", "plugin", {
+      ...input,
+      error: errorMessage(error),
+    });
+    return false;
+  }
 }
 
 interface BundledPluginManifest {
@@ -131,6 +168,7 @@ export function ensureBundledDefaultPluginWrappers(baseDir = getGlobalAimuxDir()
 export class PluginRuntime {
   private instances: AimuxPluginInstance[] = [];
   private readonly statuslineSegments = new Set<string>();
+  private pluginStatuses: PluginRuntimePluginStatus[] = [];
 
   constructor(
     private readonly endpoint: MetadataApiEndpoint,
@@ -191,7 +229,45 @@ export class PluginRuntime {
     this.eventBus.publishAlert(contextualizeAlertInput(alert, context));
   }
 
+  getPluginStatuses(): PluginRuntimePluginStatus[] {
+    return this.pluginStatuses.map((status) => ({ ...status }));
+  }
+
+  private recordPluginStatus(status: PluginRuntimePluginStatus): void {
+    this.pluginStatuses.push(status);
+  }
+
+  private async startPluginInstance(
+    instance: AimuxPluginInstance | void,
+    input: { source: "builtin" | "user"; name: string; path?: string },
+  ): Promise<boolean> {
+    if (!instance) return false;
+    try {
+      await instance.start?.();
+      this.instances.push(instance);
+      this.recordPluginStatus({ ...input, status: "loaded" });
+      return true;
+    } catch (error) {
+      const stoppedAfterFailedStart = await stopPluginAfterFailedStart(instance, input);
+      this.recordPluginStatus({
+        ...input,
+        status: "failed",
+        error: errorMessage(error),
+        resourceFailure: isPluginResourceFailure(error),
+        stoppedAfterFailedStart,
+      });
+      log.warn("plugin disabled after startup failure", "plugin", {
+        ...input,
+        error: errorMessage(error),
+        resourceFailure: isPluginResourceFailure(error),
+        stoppedAfterFailedStart,
+      });
+      return false;
+    }
+  }
+
   async start(): Promise<void> {
+    this.pluginStatuses = [];
     const tracker = new AgentTracker();
     const api: AimuxPluginAPI = {
       projectRoot: getRepoRoot(),
@@ -297,9 +373,10 @@ export class PluginRuntime {
       },
     };
 
+    let builtinIndex = 0;
     for (const watcher of createBuiltinMetadataWatchers(api)) {
-      if (watcher.start) await watcher.start();
-      this.instances.push(watcher);
+      builtinIndex += 1;
+      await this.startPluginInstance(watcher, { source: "builtin", name: `metadata-poller-${builtinIndex}` });
     }
 
     // Keep the PR context implementation in userland: ship a default wrapper once,
@@ -311,16 +388,40 @@ export class PluginRuntime {
       ...listPluginFiles(join(getLocalAimuxDir(), "plugins")),
     ];
     for (const file of pluginFiles) {
+      let instance: AimuxPluginInstance | void;
       try {
         const mod = (await import(pathToFileURL(file).href)) as { default?: AimuxPluginFactory };
-        if (typeof mod.default !== "function") continue;
-        const instance = await mod.default(api);
-        if (instance?.start) await instance.start();
-        if (instance) this.instances.push(instance);
-        debug(`loaded plugin ${file}`, "plugin");
+        if (typeof mod.default !== "function") {
+          this.recordPluginStatus({
+            source: "user",
+            name: file,
+            path: file,
+            status: "failed",
+            error: "default export must be a function",
+          });
+          continue;
+        }
+        instance = await mod.default(api);
       } catch (error) {
-        debug(`failed plugin ${file}: ${error instanceof Error ? error.message : String(error)}`, "plugin");
+        this.recordPluginStatus({
+          source: "user",
+          name: file,
+          path: file,
+          status: "failed",
+          error: errorMessage(error),
+          resourceFailure: isPluginResourceFailure(error),
+        });
+        log.warn("plugin disabled after load failure", "plugin", {
+          source: "user",
+          name: file,
+          path: file,
+          error: errorMessage(error),
+          resourceFailure: isPluginResourceFailure(error),
+        });
+        continue;
       }
+      const loaded = await this.startPluginInstance(instance, { source: "user", name: file, path: file });
+      if (loaded) debug(`loaded plugin ${file}`, "plugin");
     }
   }
 

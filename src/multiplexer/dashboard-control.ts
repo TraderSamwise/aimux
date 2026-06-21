@@ -143,13 +143,20 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
   if (events.length === 0) return false;
   const key = commandKey(events[0]);
-  const disposition = runtimeGuardKeyDisposition(key);
+  const disposition = runtimeGuardKeyDisposition(key, host.runtimeGuardState);
   if (disposition === "reload") {
     host.reloadDashboardFromGuard();
     return true;
   }
+  if (disposition === "rebuild-runtime") {
+    host.restartRuntimeFromGuard();
+    return true;
+  }
   if (disposition === "passthrough") return false;
-  host.footerFlash = "Stale dashboard — press R to reload";
+  host.footerFlash =
+    host.runtimeGuardState.kind === "runtime-rebuild-required"
+      ? "Runtime rebuild required — press B to rebuild"
+      : "Stale dashboard — press R to reload";
   host.footerFlashTicks = 3;
   host.renderCurrentDashboardView();
   return true;
@@ -174,8 +181,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
 }
 
 // Recreate the dashboard window with the freshly-installed binary: a detached `dashboard-reload`
-// rebuilds this tmux window, which replaces (kills) the current stale process. PATH-resolved so
-// it picks up the new install, not this process's old entrypoint.
+// rebuilds this tmux window, which replaces (kills) the current stale process.
 export function reloadDashboardFromGuard(host: DashboardControlHost): void {
   host.footerFlash = "Reloading dashboard…";
   host.footerFlashTicks = 5;
@@ -196,8 +202,35 @@ export function reloadDashboardFromGuard(host: DashboardControlHost): void {
   }
 }
 
+export function restartRuntimeFromGuard(host: DashboardControlHost): void {
+  const projectRoot = host.projectRoot ?? process.cwd();
+  const clientTty = host.tmuxRuntimeManager?.displayMessage?.("#{client_tty}")?.trim();
+  host.footerFlash = "Restarting project runtime…";
+  host.footerFlashTicks = 5;
+  host.renderCurrentDashboardView();
+  const command = resolveDashboardReloadCommand();
+  const args = ["restart-runtime", "--project-root", projectRoot, "--open"];
+  if (clientTty) args.push("--client-tty", clientTty);
+  try {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", () => {
+      host.footerFlash = `Runtime rebuild failed — run: ${command} restart-runtime --project-root ${projectRoot} --open`;
+      host.footerFlashTicks = 6;
+      host.renderCurrentDashboardView();
+    });
+    child.unref();
+  } catch {
+    host.footerFlash = `Runtime rebuild failed — run: ${command} restart-runtime --project-root ${projectRoot} --open`;
+    host.footerFlashTicks = 6;
+    host.renderCurrentDashboardView();
+  }
+}
+
 export function resolveDashboardReloadCommand(): string {
-  return "aimux";
+  return process.env.AIMUX_CLI_BIN?.trim() || "aimux";
 }
 
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {
@@ -688,7 +721,9 @@ async function requestProjectService(
     const verification = await verifyProjectServiceEndpoint(endpoint, deadline);
     if (verification === "stale") {
       removeMetadataEndpoint(projectRoot);
-      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
@@ -717,7 +752,9 @@ async function requestProjectService(
       lastError = error;
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
         removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
         await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }

@@ -202,7 +202,7 @@ validate_dashboard_target() {
 
   dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
   case "$dashboard_command" in
-    sh|bash|cat|tail)
+    cat|tail)
       return 1
       ;;
   esac

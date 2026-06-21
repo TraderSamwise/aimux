@@ -6,6 +6,7 @@ VERSION="${AIMUX_VERSION:-latest}"
 INSTALL_ROOT="${AIMUX_INSTALL_ROOT:-$HOME/.aimux/native}"
 BIN_DIR="${AIMUX_BIN_DIR:-$HOME/.local/bin}"
 LOCAL_ARCHIVE="${AIMUX_ARCHIVE:-${1:-}}"
+HAD_EXISTING_INSTALL=0
 
 fail() {
   printf 'aimux install failed: %s\n' "$*" >&2
@@ -59,8 +60,24 @@ download_optional() {
 need node
 need tar
 
+if [ -e "$BIN_DIR/aimux" ] || [ -L "$BIN_DIR/aimux" ]; then
+  HAD_EXISTING_INSTALL=1
+elif [ -d "$INSTALL_ROOT" ]; then
+  for existing_install in "$INSTALL_ROOT"/*; do
+    if [ -e "$existing_install" ]; then
+      HAD_EXISTING_INSTALL=1
+      break
+    fi
+  done
+fi
+
 node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(major >= 24 ? 0 : 1)' \
   || fail "Node.js >= 24 is required"
+NODE_BIN="$(command -v node)"
+
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 
 PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
@@ -116,11 +133,50 @@ DEST="$INSTALL_ROOT/$INSTALLED_VERSION"
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
 rm -rf "$DEST"
 mv "$TMP_DIR/aimux" "$DEST"
+NODE_BIN_QUOTED="$(shell_quote "$NODE_BIN")"
+DEST_QUOTED="$(shell_quote "$DEST")"
+BIN_SHIM_QUOTED="$(shell_quote "$BIN_DIR/aimux")"
+INSTALL_ROOT_QUOTED="$(shell_quote "$INSTALL_ROOT")"
+cat > "$DEST/bin/aimux" <<EOF
+#!/usr/bin/env sh
+set -eu
+
+AIMUX_NODE_BIN=$NODE_BIN_QUOTED
+AIMUX_ROOT=$DEST_QUOTED
+
+if [ -z "\${AIMUX_CLI_BIN:-}" ]; then AIMUX_CLI_BIN=$BIN_SHIM_QUOTED; export AIMUX_CLI_BIN; fi
+if [ -z "\${AIMUX_INSTALL_ROOT:-}" ]; then AIMUX_INSTALL_ROOT=$INSTALL_ROOT_QUOTED; export AIMUX_INSTALL_ROOT; fi
+if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME; fi
+if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
+if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
+if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
+
+if [ "\${1:-}" = "expose" ]; then
+  AIMUX_POPUP_EXPOSE_ENTRY="\$AIMUX_ROOT/dist/popup-expose.js"
+  export AIMUX_POPUP_EXPOSE_ENTRY
+  exec "\$AIMUX_NODE_BIN" --input-type=module -e 'import("node:url").then(({ pathToFileURL }) => import(pathToFileURL(process.env.AIMUX_POPUP_EXPOSE_ENTRY).href)).then((m) => m.runExpose()).catch((error) => { console.error(error); process.exit(1); });' "\$0" "\$@"
+fi
+
+exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/main.js" "\$@"
+EOF
 chmod +x "$DEST/bin/aimux"
 ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"
 
 printf 'Installed aimux %s to %s\n' "$INSTALLED_VERSION" "$DEST"
 printf 'Linked %s/aimux\n' "$BIN_DIR"
+
+if [ "$HAD_EXISTING_INSTALL" = "1" ]; then
+  if [ "${AIMUX_SKIP_POST_INSTALL_RESTART:-}" = "1" ]; then
+    printf 'Skipped post-install aimux restart because AIMUX_SKIP_POST_INSTALL_RESTART=1\n'
+  else
+    printf 'Repairing running aimux control plane...\n'
+    if "$BIN_DIR/aimux" restart; then
+      printf 'Aimux control plane repaired.\n'
+    else
+      printf 'Installed aimux, but post-install restart failed. Run: %s/aimux restart\n' "$BIN_DIR" >&2
+    fi
+  fi
+fi
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
