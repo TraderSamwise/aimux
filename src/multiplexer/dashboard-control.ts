@@ -16,6 +16,7 @@ import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
+import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -761,10 +762,18 @@ function remainingProjectServiceDeadline(deadline: number): number {
 
 async function verifyProjectServiceEndpoint(endpoint: MetadataApiEndpoint, deadline: number): Promise<boolean> {
   try {
-    const { status, json } = await requestJson<{ pid?: number }>(`http://${endpoint.host}:${endpoint.port}/health`, {
-      timeoutMs: Math.max(1, Math.min(250, deadline - Date.now())),
-    });
-    return status >= 200 && status < 300 && json?.pid === endpoint.pid;
+    const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
+      `http://${endpoint.host}:${endpoint.port}/health`,
+      {
+        timeoutMs: Math.max(1, Math.min(250, deadline - Date.now())),
+      },
+    );
+    return (
+      status >= 200 &&
+      status < 300 &&
+      json?.pid === endpoint.pid &&
+      manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
+    );
   } catch {
     return false;
   }

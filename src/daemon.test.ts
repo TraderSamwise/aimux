@@ -368,6 +368,25 @@ describe("daemon supervision", () => {
     expect(readFileSync(daemonInfoPath, "utf-8")).toBe("");
   });
 
+  it("does not signal unverified project service pids when the daemon instance stops", async () => {
+    execFileSyncMock.mockReturnValue("node unrelated-process.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const stalePid = 42_001;
+    livePids.add(stalePid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: stalePid,
+      startedAt: "2026-06-21T00:00:00.000Z",
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    };
+
+    daemon.stop();
+
+    expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
+  });
+
   it("inherits logging env and captures project service stdio when logging is enabled", async () => {
     configureLogging({
       enabled: true,
@@ -519,6 +538,26 @@ describe("daemon supervision", () => {
     expect(stopped?.stoppedProjectServices).toEqual([]);
     expect(process.kill).not.toHaveBeenCalledWith(50_002, "SIGTERM");
     expect(process.kill).toHaveBeenCalledWith(50_001, "SIGTERM");
+  });
+
+  it("does not signal unverified project service pids for /projects/stop", async () => {
+    execFileSyncMock.mockReturnValue("node unrelated-process.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const stalePid = 43_001;
+    livePids.add(stalePid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: stalePid,
+      startedAt: "2026-06-21T00:00:00.000Z",
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    };
+
+    const res = await daemon.routeRequest("POST", "/projects/stop", { projectRoot });
+
+    expect(res.status).toBe(200);
+    expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
   });
 });
 

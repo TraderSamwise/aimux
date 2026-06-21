@@ -516,6 +516,16 @@ export class AimuxDaemon {
     this.relayClient?.disconnect();
     this.relayClient = null;
     for (const entry of Object.values(this.state.projects)) {
+      const child = this.children.get(entry.projectId);
+      const trackedChild = child?.pid === entry.pid;
+      if (!trackedChild && !isAimuxProjectServiceProcess(entry.pid)) {
+        log.warn("skipping unverified project service pid during daemon shutdown", "daemon", {
+          projectId: entry.projectId,
+          projectRoot: entry.projectRoot,
+          pid: entry.pid,
+        });
+        continue;
+      }
       try {
         process.kill(entry.pid, "SIGTERM");
       } catch {}
@@ -811,9 +821,19 @@ export class AimuxDaemon {
     const projectId = getProjectIdFor(pathResolve(projectRoot));
     const existing = this.state.projects[projectId];
     if (!existing) return null;
-    try {
-      process.kill(existing.pid, "SIGTERM");
-    } catch {}
+    const child = this.children.get(projectId);
+    const trackedChild = child?.pid === existing.pid;
+    if (trackedChild || isAimuxProjectServiceProcess(existing.pid)) {
+      try {
+        process.kill(existing.pid, "SIGTERM");
+      } catch {}
+    } else {
+      log.warn("skipping unverified project service pid during project stop", "daemon", {
+        projectId,
+        projectRoot: existing.projectRoot,
+        pid: existing.pid,
+      });
+    }
     delete this.state.projects[projectId];
     this.projectHealthFailures.delete(projectId);
     if (this.children.get(projectId)?.pid === existing.pid) {
