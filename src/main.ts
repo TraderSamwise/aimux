@@ -320,11 +320,9 @@ function rewriteLocalStatuslineArtifacts(
 }
 
 async function postProjectServiceJson(path: string, body: unknown, options?: { timeoutMs?: number }): Promise<any> {
-  let endpoint = await resolveProjectServiceEndpoint();
-  if (!endpoint) {
-    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
-    endpoint = await resolveProjectServiceEndpoint();
-  }
+  const projectRoot = resolveProjectRoot(process.cwd());
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
@@ -366,11 +364,34 @@ function notificationQuery(opts: { unread?: boolean; session?: string }): string
 }
 
 async function getProjectServiceJsonOrReadFallback(path: string, fallback: () => any): Promise<any> {
+  let endpoint;
   try {
-    return await getProjectServiceJson(path);
+    endpoint = await resolveProjectServiceEndpoint();
+    if (!endpoint) {
+      await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
+      endpoint = await resolveProjectServiceEndpoint();
+    }
+  } catch (error) {
+    if (error instanceof ProjectServiceVersionError) throw error;
+    return fallback();
+  }
+  if (!endpoint) {
+    return fallback();
+  }
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`));
   } catch {
     return fallback();
   }
+  if (status === 404 || status === 405 || status === 501) {
+    return fallback();
+  }
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
 }
 
 function exitAfterOpen(): never {
@@ -405,6 +426,7 @@ async function resolvePermissionRequestOutput(
 }
 
 async function postLiveProjectServiceJson(projectRoot: string, path: string, body: unknown): Promise<any> {
+  await ensureDaemonProjectReady(projectRoot);
   const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
@@ -2562,6 +2584,7 @@ worktreeCmd
       await ensureDaemonProjectReady(projectRoot);
       const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/create", { name });
       const createdPath = result.path;
+      const status = result.status === "creating" ? "creating" : "created";
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2569,12 +2592,17 @@ worktreeCmd
               ok: true,
               name,
               path: createdPath,
+              status,
               projectRoot,
             },
             null,
             2,
           ),
         );
+        return;
+      }
+      if (status === "creating") {
+        console.log(`Creating worktree "${name}"${createdPath ? ` (${createdPath})` : ""}.`);
         return;
       }
       console.log(`Created worktree "${name}" at ${createdPath}`);
