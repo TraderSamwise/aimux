@@ -902,7 +902,7 @@ fallback_local_control() {
   case "$action" in
     dashboard)
       printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
-      switch_local_dashboard || reload_local_dashboard
+      switch_local_dashboard || { reload_local_dashboard && return 0; }
       ;;
     inbox)
       show_local_inbox_popup

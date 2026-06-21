@@ -232,10 +232,10 @@ function readCurlLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[
 }
 
 function readAimuxLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     const lines = readFileSync(envRoot.aimuxLogPath, "utf8").trim().split("\n").filter(Boolean);
     if (lines.length) return lines;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
   return [];
 }
@@ -300,6 +300,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
     expect(readAimuxLog(envRoot)).toEqual([`${projectRoot}|dashboard-reload --open`]);
   });
 
@@ -351,6 +352,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
     expect(readAimuxLog(envRoot)).toEqual([`${projectRoot}|dashboard-reload --open`]);
   });
 

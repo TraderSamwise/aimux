@@ -5,12 +5,24 @@ import { buildDashboardRuntimeGuardOverlayOutput } from "../tui/screens/overlay-
 import { handleRuntimeGuardKey } from "./dashboard-control.js";
 import {
   evaluateRuntimeGuard,
+  probeRuntimeGuard,
   runtimeGuardEquals,
   runtimeGuardKeyDisposition,
   runtimeGuardOverlayCopy,
   stabilizeRuntimeGuardProbe,
   type RuntimeGuardState,
 } from "./runtime-guard.js";
+
+const loadMetadataEndpointMock = vi.hoisted(() => vi.fn());
+const requestJsonMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../metadata-store.js", () => ({
+  loadMetadataEndpoint: loadMetadataEndpointMock,
+}));
+
+vi.mock("../http-client.js", () => ({
+  requestJson: requestJsonMock,
+}));
 
 const liveManifest = getProjectServiceManifest();
 
@@ -130,6 +142,38 @@ describe("runtimeGuardOverlayCopy", () => {
     expect(new Set(titles).size).toBe(3);
     expect(titles.every((t) => t.length > 0)).toBe(true);
     expect(runtimeGuardOverlayCopy({ kind: "ok" }).title).toBe("");
+  });
+});
+
+describe("probeRuntimeGuard", () => {
+  it("reports ok only when endpoint and health pids match", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+  });
+
+  it("reports disconnected when health comes from a different pid", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 9999, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
   });
 });
 
