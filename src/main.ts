@@ -30,13 +30,11 @@ import {
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
-  loadMetadataState,
   type MetadataTone,
   type SessionContextMetadata,
   type SessionServiceMetadata,
   removeMetadataEndpoint,
 } from "./metadata-store.js";
-import { contextualizeAlertInput, metadataDisplayContext } from "./alert-display.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { listDesktopProjects } from "./project-scanner.js";
@@ -55,35 +53,17 @@ import {
 } from "./daemon.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import {
-  createThread,
   listThreadSummaries,
-  markThreadSeen,
   readMessages,
   readThread,
-  setThreadStatus,
   type MessageKind,
   type ThreadKind,
   type ThreadStatus,
 } from "./threads.js";
-import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
-import {
-  acceptHandoff,
-  approveReview,
-  acceptTask,
-  assignTask,
-  blockTask,
-  completeHandoff,
-  completeTask,
-  reopenTask,
-  requestTaskChanges,
-  sendHandoff,
-} from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
-import { upsertNotification, unreadNotificationCount } from "./notifications.js";
-import { notifyAlert } from "./notify.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
@@ -383,14 +363,6 @@ function notificationQuery(opts: { unread?: boolean; session?: string }): string
   if (sessionId) query.set("sessionId", sessionId);
   const rendered = query.toString();
   return rendered ? `?${rendered}` : "";
-}
-
-async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallback: () => any): Promise<any> {
-  try {
-    return await postProjectServiceJson(path, body);
-  } catch {
-    return fallback();
-  }
 }
 
 async function getProjectServiceJsonOrLocal(path: string, fallback: () => any): Promise<any> {
@@ -2007,23 +1979,12 @@ threadCmd
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const result = await postProjectServiceJsonOrLocal(
-      "/threads/open",
-      {
-        title: opts.title,
-        from: opts.from,
-        participants,
-        kind: (opts.kind as ThreadKind) ?? "conversation",
-      },
-      () => ({
-        thread: createThread({
-          title: opts.title,
-          kind: (opts.kind as ThreadKind) ?? "conversation",
-          createdBy: opts.from,
-          participants: [...new Set([opts.from, ...participants])],
-        }),
-      }),
-    );
+    const result = await postProjectServiceJson("/threads/open", {
+      title: opts.title,
+      from: opts.from,
+      participants,
+      kind: (opts.kind as ThreadKind) ?? "conversation",
+    });
     console.log(result.thread.id);
   });
 
@@ -2040,29 +2001,13 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const result = await postProjectServiceJsonOrLocal(
-      "/threads/send",
-      {
-        threadId,
-        from: opts.from,
-        to,
-        kind: (opts.kind as MessageKind) ?? "note",
-        body,
-      },
-      () => {
-        if (!readThread(threadId)) {
-          console.error(`aimux: thread not found: ${threadId}`);
-          process.exit(1);
-        }
-        return sendThreadMessage({
-          threadId,
-          from: opts.from,
-          to,
-          kind: (opts.kind as MessageKind) ?? "note",
-          body,
-        });
-      },
-    );
+    const result = await postProjectServiceJson("/threads/send", {
+      threadId,
+      from: opts.from,
+      to,
+      kind: (opts.kind as MessageKind) ?? "note",
+      body,
+    });
     console.log(result.message.id);
   });
 
@@ -2072,14 +2017,7 @@ threadCmd
   .argument("<threadId>")
   .requiredOption("--session <sessionId>", "Participant session id")
   .action(async (threadId: string, opts: { session: string }) => {
-    await postProjectServiceJsonOrLocal("/threads/mark-seen", { threadId, session: opts.session }, () => {
-      const thread = markThreadSeen(threadId, opts.session);
-      if (!thread) {
-        console.error(`aimux: thread not found: ${threadId}`);
-        process.exit(1);
-      }
-      return { ok: true, thread };
-    });
+    await postProjectServiceJson("/threads/mark-seen", { threadId, session: opts.session });
     console.log("ok");
   });
 
@@ -2095,28 +2033,14 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    try {
-      const result = await postProjectServiceJson("/threads/status", {
-        threadId,
-        status: opts.status,
-        owner: opts.owner,
-        waitingOn,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`status ${result.thread.status}`);
-      return;
-    } catch {
-      const thread = setThreadStatus(threadId, opts.status, {
-        owner: opts.owner?.trim(),
-        waitingOn,
-      });
-      if (!thread) {
-        console.error(`aimux: thread not found: ${threadId}`);
-        process.exit(1);
-      }
-      console.log(`thread ${thread.id}`);
-      console.log(`status ${thread.status}`);
-    }
+    const result = await postProjectServiceJson("/threads/status", {
+      threadId,
+      status: opts.status,
+      owner: opts.owner,
+      waitingOn,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`status ${result.thread.status}`);
   });
 
 program
@@ -2290,42 +2214,21 @@ messageCmd
         console.error("aimux: message send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      try {
-        const result = await postProjectServiceJson("/threads/send", {
-          threadId: opts.thread,
-          from: opts.from ?? "user",
-          to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          worktreePath: opts.worktree,
-          kind: (opts.kind as MessageKind) ?? "request",
-          body,
-          title: opts.title,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
-        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-          console.log(`delivered ${result.deliveredTo.join(",")}`);
-        }
-        return;
-      } catch {
-        const result = opts.thread
-          ? sendThreadMessage({
-              threadId: opts.thread,
-              from: opts.from ?? "user",
-              to,
-              kind: (opts.kind as MessageKind) ?? "request",
-              body,
-            })
-          : sendDirectMessage({
-              from: opts.from ?? "user",
-              to: to ?? [],
-              body,
-              title: opts.title,
-              kind: (opts.kind as any) ?? "request",
-            });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
+      const result = await postProjectServiceJson("/threads/send", {
+        threadId: opts.thread,
+        from: opts.from ?? "user",
+        to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        worktreePath: opts.worktree,
+        kind: (opts.kind as MessageKind) ?? "request",
+        body,
+        title: opts.title,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
       }
     },
   );
@@ -2355,36 +2258,19 @@ handoffCmd
         console.error("aimux: handoff send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      try {
-        const result = await postProjectServiceJson("/handoff", {
-          from: opts.from ?? "user",
-          to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          body,
-          title: opts.title,
-          worktreePath: opts.worktree,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
-        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-          console.log(`delivered ${result.deliveredTo.join(",")}`);
-        }
-        return;
-      } catch {
-        const result = sendHandoff({
-          from: opts.from ?? "user",
-          to: to?.length
-            ? to
-            : [opts.assignee, opts.tool]
-                .map((value) => value?.trim())
-                .filter((value): value is string => Boolean(value)),
-          body,
-          title: opts.title,
-          worktreePath: opts.worktree,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
+      const result = await postProjectServiceJson("/handoff", {
+        from: opts.from ?? "user",
+        to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        body,
+        title: opts.title,
+        worktreePath: opts.worktree,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
       }
     },
   );
@@ -2396,24 +2282,13 @@ handoffCmd
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
   .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/handoff/accept", {
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      return;
-    } catch {
-      const result = acceptHandoff({
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
+    const result = await postProjectServiceJson("/handoff/accept", {
+      threadId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`message ${result.message.id}`);
   });
 
 handoffCmd
@@ -2423,24 +2298,13 @@ handoffCmd
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Optional completion note")
   .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/handoff/complete", {
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      return;
-    } catch {
-      const result = completeHandoff({
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
+    const result = await postProjectServiceJson("/handoff/complete", {
+      threadId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`message ${result.message.id}`);
   });
 
 const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
@@ -2546,36 +2410,19 @@ taskCmd
         worktree?: string;
       },
     ) => {
-      try {
-        const result = await postProjectServiceJson("/tasks/assign", {
-          from: opts.from ?? "user",
-          to: opts.to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          description,
-          prompt: opts.prompt,
-          type: opts.type,
-          diff: opts.diff,
-          worktreePath: opts.worktree,
-        });
-        console.log(`task ${result.task.id}`);
-        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-        return;
-      } catch {
-        const result = await assignTask({
-          from: opts.from ?? "user",
-          to: opts.to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          description,
-          prompt: opts.prompt,
-          type: opts.type,
-          diff: opts.diff,
-          worktreePath: opts.worktree,
-        });
-        console.log(`task ${result.task.id}`);
-        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      }
+      const result = await postProjectServiceJson("/tasks/assign", {
+        from: opts.from ?? "user",
+        to: opts.to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        description,
+        prompt: opts.prompt,
+        type: opts.type,
+        diff: opts.diff,
+        worktreePath: opts.worktree,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
     },
   );
 
@@ -2586,24 +2433,13 @@ taskCmd
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/accept", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await acceptTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/accept", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2613,24 +2449,13 @@ taskCmd
   .option("--from <sessionId>", "Blocking session id", "user")
   .option("--body <text>", "Blocking reason")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/block", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await blockTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/block", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2640,24 +2465,13 @@ taskCmd
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Completion summary/result")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/complete", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await completeTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/complete", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2667,24 +2481,13 @@ taskCmd
   .option("--from <sessionId>", "Reopening session id", "user")
   .option("--body <text>", "Optional reopening note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/reopen", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await reopenTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/reopen", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 const reviewCmd = program.command("review").description("Manage review workflow tasks");
@@ -2696,24 +2499,13 @@ reviewCmd
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Optional approval note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/reviews/approve", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await approveReview({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/reviews/approve", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 reviewCmd
@@ -2723,26 +2515,14 @@ reviewCmd
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Requested changes")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/reviews/request-changes", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await requestTaskChanges({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/reviews/request-changes", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 worktreeCmd
@@ -3745,81 +3525,19 @@ program
       await initPaths();
       const title = opts.title.trim();
       const body = opts.body?.trim() || title;
-      const result = await postProjectServiceJsonOrLocal(
-        "/notify",
-        {
-          title,
-          subtitle: opts.subtitle?.trim() || undefined,
-          message: body,
-          sessionId: opts.session?.trim() || undefined,
-          kind: opts.kind?.trim() || "notification",
-          force: true,
-        },
-        () => {
-          const kind = (opts.kind?.trim() || "notification") as
-            | "notification"
-            | "needs_input"
-            | "next_step"
-            | "task_done"
-            | "task_failed"
-            | "blocked"
-            | "message_waiting"
-            | "handoff_waiting"
-            | "task_assigned"
-            | "review_waiting";
-          const sessionId = opts.session?.trim() || undefined;
-          const context = sessionId ? metadataDisplayContext(loadMetadataState().sessions[sessionId]) : undefined;
-          const alert = contextualizeAlertInput(
-            {
-              kind,
-              sessionId,
-              title,
-              message: [opts.subtitle?.trim(), body].filter(Boolean).join(" — "),
-              forceNotify: true,
-            },
-            context,
-          );
-          const notification = upsertNotification({
-            title: alert.title,
-            subtitle: opts.subtitle?.trim() || undefined,
-            body: alert.message,
-            sessionId,
-            kind,
-            projectName: alert.projectName,
-            projectRoot: alert.projectRoot,
-            worktreePath: alert.worktreePath,
-            worktreeName: alert.worktreeName,
-            branch: alert.branch,
-            categoryLabel: alert.categoryLabel,
-            reasonLabel: alert.reasonLabel,
-          });
-          notifyAlert({
-            type: "alert",
-            kind,
-            projectId: getProjectId(),
-            sessionId,
-            title: alert.title,
-            message: alert.message,
-            notificationId: notification.id,
-            projectName: alert.projectName,
-            projectRoot: alert.projectRoot,
-            worktreePath: alert.worktreePath,
-            worktreeName: alert.worktreeName,
-            branch: alert.branch,
-            categoryLabel: alert.categoryLabel,
-            reasonLabel: alert.reasonLabel,
-            ts: notification.createdAt,
-            forceNotify: true,
-          });
-          return { ok: true, notification };
-        },
-      );
+      const result = await postProjectServiceJson("/notify", {
+        title,
+        subtitle: opts.subtitle?.trim() || undefined,
+        message: body,
+        sessionId: opts.session?.trim() || undefined,
+        kind: opts.kind?.trim() || "notification",
+        force: true,
+      });
       if (opts.json) {
         console.log(JSON.stringify(result));
         return;
       }
-      const count = unreadNotificationCount();
-      console.log(`Queued notification "${title}" (${count} unread).`);
+      console.log(`Queued notification "${title}".`);
     },
   );
 
