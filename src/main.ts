@@ -977,7 +977,10 @@ program
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
-      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, {
+        forceReload: true,
+        openInHostSession: true,
+      });
       try {
         await postProjectServiceJson("/statusline/refresh", { force: true }, { timeoutMs: 1500 });
       } catch {}

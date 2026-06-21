@@ -249,7 +249,6 @@ export class TmuxRuntimeManager {
     const dashboardName = this.getDashboardWindowName();
     const clientSessionExists = this.hasSession(clientSessionName);
     const runtimeBuildStamp = this.getManagedRuntimeBuildStamp();
-    const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
     const clientWindows = clientSessionExists ? this.listWindows(clientSessionName) : [];
     const existingDashboard = clientWindows.find((window) => isDashboardWindowName(window.name));
     const currentHostSession = clientSessionExists
@@ -269,8 +268,7 @@ export class TmuxRuntimeManager {
         dashboardAtZero?.id !== existingDashboard.id ||
         currentHostSession !== hostSessionName ||
         currentProjectRoot !== projectRoot ||
-        currentRuntimeBuild !== runtimeBuildStamp ||
-        (!!hostDashboard && existingDashboard.id === hostDashboard.id));
+        currentRuntimeBuild !== runtimeBuildStamp);
 
     if (needsRecreate) {
       this.exec(["kill-session", "-t", clientSessionName]);
@@ -307,6 +305,22 @@ export class TmuxRuntimeManager {
   private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (existing) return existing;
+    if (windowIndex !== undefined) {
+      const occupying = this.listWindows(clientSessionName).find((window) => window.index === windowIndex);
+      if (occupying && occupying.id !== target.windowId) {
+        if (!isDashboardWindowName(occupying.name)) {
+          throw new Error(
+            `Cannot replace non-dashboard tmux window ${occupying.id} at ${clientSessionName}:${windowIndex}`,
+          );
+        }
+        this.killWindow({
+          sessionName: clientSessionName,
+          windowId: occupying.id,
+          windowIndex: occupying.index,
+          windowName: occupying.name,
+        });
+      }
+    }
     const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
     this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
     const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
@@ -837,8 +851,8 @@ export class TmuxRuntimeManager {
         ? openSessionName
         : this.resolveOpenSessionName(openSessionName, insideTmux, options.clientSuffix, options.clientTty);
     const effectiveTarget =
-      sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
-        ? this.ensureLinkedWindow(sessionName, target)
+      sessionName !== target.sessionName
+        ? this.ensureLinkedWindow(sessionName, target, isDashboardWindowName(target.windowName) ? 0 : undefined)
         : {
             ...target,
             sessionName,
