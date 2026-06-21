@@ -232,6 +232,27 @@ describe("runtime lifecycle state persistence", () => {
     expect(topologySessions()).toEqual([expect.objectContaining({ id: "codex-offline" })]);
   });
 
+  it("awaits project service shutdown during cleanup", async () => {
+    const order: string[] = [];
+    const stopProjectServices = vi.fn(async () => {
+      order.push("stop-start");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      order.push("stop-done");
+    });
+    const session = { destroy: vi.fn(() => order.push("destroy")) };
+    const lifecycleHost = {
+      teardown: vi.fn(() => order.push("teardown")),
+      stopProjectServices,
+      sessions: [session],
+    };
+
+    await runtimeLifecycleMethods.cleanup.call(lifecycleHost as never);
+
+    expect(order).toEqual(["teardown", "destroy", "stop-start", "stop-done"]);
+    expect(stopProjectServices).toHaveBeenCalledOnce();
+    expect(session.destroy).toHaveBeenCalledOnce();
+  });
+
   it("preserves topology sessions even when service state does not exist yet", () => {
     if (existsSync(getStatePath())) unlinkSync(getStatePath());
     saveRuntimeTopologySessions({
