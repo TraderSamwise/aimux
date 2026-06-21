@@ -1,8 +1,6 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
@@ -3466,10 +3464,6 @@ program
     }
   });
 
-// ── Statusline commands ────────────────────────────────────────────
-
-const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
-
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime state");
 const notificationsCmd = program.command("notifications").description("Manage desktop notification delivery");
 const repairCmd = program.command("repair").description("Repair the current project runtime in place");
@@ -4186,87 +4180,6 @@ metadataCmd
   .action(async (session: string) => {
     await initPaths();
     clearSessionLogs(session);
-  });
-
-statuslineCmd
-  .command("install")
-  .description("Install aimux statusline into Claude Code")
-  .action(() => {
-    const home = homedir();
-    const aimuxDir = pathJoin(home, ".aimux");
-    const targetScript = pathJoin(aimuxDir, "statusline.sh");
-
-    // Resolve source script relative to compiled JS location
-    const thisFile = fileURLToPath(import.meta.url);
-    const sourceScript = pathResolve(pathDirname(thisFile), "..", "scripts", "statusline.sh");
-
-    if (!existsSync(sourceScript)) {
-      console.error(`Source script not found: ${sourceScript}`);
-      process.exit(1);
-    }
-    mkdirSync(aimuxDir, { recursive: true });
-    copyFileSync(sourceScript, targetScript);
-    chmodSync(targetScript, 0o755);
-    console.log(`Copied statusline script to ${targetScript}`);
-
-    // Update Claude Code settings
-    const claudeDir = pathJoin(home, ".claude");
-    const settingsPath = pathJoin(claudeDir, "settings.json");
-    let settings: Record<string, any> = {};
-    if (existsSync(settingsPath)) {
-      try {
-        settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      } catch {}
-    }
-
-    const newCommand = `bash ${targetScript}`;
-    const oldCommand = settings.statusLine?.command;
-    if (oldCommand && oldCommand !== newCommand) {
-      const backupPath = pathJoin(aimuxDir, "statusline-previous.txt");
-      writeFileSync(backupPath, oldCommand + "\n");
-      console.log(`Backed up previous statusline command to ${backupPath}`);
-    }
-
-    settings.statusLine = { type: "command", command: newCommand };
-    mkdirSync(claudeDir, { recursive: true });
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-    console.log(`Updated ${settingsPath} → statusLine points to aimux script`);
-    console.log("Restart Claude Code to see aimux agent status in the toolbar.");
-  });
-
-statuslineCmd
-  .command("uninstall")
-  .description("Restore previous Claude Code statusline")
-  .action(() => {
-    const home = homedir();
-    const aimuxDir = pathJoin(home, ".aimux");
-    const settingsPath = pathJoin(home, ".claude", "settings.json");
-    const backupPath = pathJoin(aimuxDir, "statusline-previous.txt");
-
-    if (!existsSync(settingsPath)) {
-      console.error("No Claude Code settings found.");
-      process.exit(1);
-    }
-
-    let settings: Record<string, any> = {};
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-    } catch {
-      console.error("Could not parse settings.json");
-      process.exit(1);
-    }
-
-    if (existsSync(backupPath)) {
-      const prev = readFileSync(backupPath, "utf-8").trim();
-      settings.statusLine = { type: "command", command: prev };
-      console.log(`Restored previous statusline: ${prev}`);
-    } else {
-      delete settings.statusLine;
-      console.log("Removed aimux statusline (no previous config to restore).");
-    }
-
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-    console.log("Restart Claude Code for changes to take effect.");
   });
 
 // ── Team commands ──────────────────────────────────────────────────
