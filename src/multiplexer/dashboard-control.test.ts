@@ -48,6 +48,7 @@ describe("postToProjectService", () => {
   it("recovers from a stale refused project-service endpoint", async () => {
     const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:43444"), { code: "ECONNREFUSED" });
     mocks.requestJson
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() } })
       .mockRejectedValueOnce(refused)
       .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() } })
       .mockResolvedValueOnce({ status: 200, json: { ok: true } });
@@ -61,7 +62,7 @@ describe("postToProjectService", () => {
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(4);
   });
 
   it("does not retry non-retryable HTTP failures", async () => {
@@ -114,6 +115,24 @@ describe("postToProjectService", () => {
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not restart the project service after one transient health failure", async () => {
+    mocks.requestJson
+      .mockRejectedValueOnce(new Error("request timed out after 250ms"))
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() } })
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 3 } });
+    const { getFromProjectService } = await import("./dashboard-control.js");
+
+    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
+      ok: true,
+      value: 3,
+    });
+
+    expect(mocks.stopProjectService).not.toHaveBeenCalled();
+    expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
+    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 

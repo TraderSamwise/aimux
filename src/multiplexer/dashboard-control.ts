@@ -685,9 +685,14 @@ async function requestProjectService(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
-    if (!(await verifyProjectServiceEndpoint(endpoint, deadline))) {
+    const verification = await verifyProjectServiceEndpoint(endpoint, deadline);
+    if (verification === "stale") {
       removeMetadataEndpoint(projectRoot);
       await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    if (verification === "retry") {
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
@@ -760,22 +765,25 @@ function remainingProjectServiceDeadline(deadline: number): number {
   return Math.max(1, deadline - Date.now());
 }
 
-async function verifyProjectServiceEndpoint(endpoint: MetadataApiEndpoint, deadline: number): Promise<boolean> {
+type ProjectServiceEndpointVerification = "ok" | "retry" | "stale";
+
+async function verifyProjectServiceEndpoint(
+  endpoint: MetadataApiEndpoint,
+  deadline: number,
+): Promise<ProjectServiceEndpointVerification> {
   try {
-    const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
+    const { status, json } = await requestJson<{ ok?: boolean; pid?: number; serviceInfo?: ProjectServiceManifest }>(
       `http://${endpoint.host}:${endpoint.port}/health`,
       {
         timeoutMs: Math.max(1, Math.min(250, deadline - Date.now())),
       },
     );
-    return (
-      status >= 200 &&
-      status < 300 &&
-      json?.pid === endpoint.pid &&
-      manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
-    );
+    if (status < 200 || status >= 300 || json?.ok === false) return "retry";
+    if (typeof json?.pid === "number" && json.pid !== endpoint.pid) return "stale";
+    if (!manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) return "stale";
+    return "ok";
   } catch {
-    return false;
+    return "retry";
   }
 }
 
