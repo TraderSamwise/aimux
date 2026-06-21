@@ -141,6 +141,26 @@ function okCoherenceReport(): RuntimeCoherenceReport {
   return report;
 }
 
+function runtimeRebuildCoherenceReport(): RuntimeCoherenceReport {
+  const report = okCoherenceReport();
+  report.projects[0] = {
+    ...report.projects[0]!,
+    status: "needs-restart",
+    runtime: {
+      ...report.projects[0]!.runtime,
+      contract: "legacy-contract",
+      rebuildRequired: true,
+    },
+  };
+  report.summary = {
+    projects: report.projects.length,
+    ok: report.projects.length - 1,
+    needsRestart: 1,
+    runtimeRebuildRequired: 1,
+  };
+  return report;
+}
+
 function stoppedDaemon(
   stoppedProjectServices: NonNullable<RuntimeCoherenceReport["projects"][number]["service"]["daemonState"]>[] = [],
 ) {
@@ -289,7 +309,13 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(result.summary).toEqual({ projects: 2, servicesEnsured: 2, dashboardsReloaded: 1, failures: 0 });
+    expect(result.summary).toEqual({
+      projects: 2,
+      servicesEnsured: 2,
+      dashboardsReloaded: 1,
+      runtimeRebuildRequired: 0,
+      failures: 0,
+    });
     expect(ensureDaemonRunning).toHaveBeenCalledWith({ adoptExisting: false });
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
@@ -502,6 +528,50 @@ describe("restartAimuxControlPlane", () => {
     expect(result.verification.status).toBe("failed");
     expect(result.summary.failures).toBe(1);
     expect(renderRuntimeRestartResult(result)).toContain("Post-restart verification failed");
+  });
+
+  it("marks runtime rebuild requirements without failing control-plane verification", async () => {
+    const setSessionOption = vi.fn();
+    const tmux = {
+      isAvailable: () => true,
+      getProjectSession: vi.fn((projectRoot: string) => ({
+        sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+      })),
+      setSessionOption,
+    };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(runtimeRebuildCoherenceReport())
+      .mockResolvedValueOnce(runtimeRebuildCoherenceReport());
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => tmux,
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "1");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary).toMatchObject({ runtimeRebuildRequired: 1, failures: 0 });
+    expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
+    expect(renderRuntimeRestartResult(result)).toContain("Runtime rebuild required:");
   });
 
   it("waits for post-restart services to become coherent before failing verification", async () => {
