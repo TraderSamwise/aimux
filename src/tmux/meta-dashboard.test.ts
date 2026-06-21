@@ -68,18 +68,16 @@ describe("flattenSelectableRows", () => {
 });
 
 describe("resolveJumpTarget", () => {
-  const hostFor = (root: string) => `host:${root}`;
-
-  it("maps an index to that row's target with the project host session", () => {
-    const jump = resolveJumpTarget(model, 2, hostFor); // third selectable row = a3 (feat)
+  it("maps an index to that row's discovered target", () => {
+    const jump = resolveJumpTarget(model, 2); // third selectable row = a3 (feat)
     expect(jump).not.toBeNull();
     expect(jump!.projectRoot).toBe("/repos/alpha");
     expect(jump!.target.windowId).toBe("@3");
-    expect(jump!.target.sessionName).toBe("host:/repos/alpha");
+    expect(jump!.target.sessionName).toBe("aimux-alpha");
   });
 
   it("returns null for an out-of-range index", () => {
-    expect(resolveJumpTarget(model, 99, hostFor)).toBeNull();
+    expect(resolveJumpTarget(model, 99)).toBeNull();
   });
 });
 
