@@ -17,6 +17,7 @@ import {
   saveRuntimeTopologySessions,
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -110,6 +111,24 @@ describe("MetadataServer threads API", () => {
         }),
       }),
     ]);
+  });
+
+  it("does not record long-lived stream routes as slow requests", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const stream = await fetch(`${base}/agents/interaction/stream`, { signal: controller.signal });
+    expect(stream.ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    controller.abort();
+    await stream.body?.cancel().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const health = await fetch(`${base}/health`);
+    const json = await health.json();
+    expect(json.recentSlowRequests).toEqual([]);
   });
 
   it("exposes plugin startup diagnostics in health", async () => {
@@ -2459,6 +2478,7 @@ describe("MetadataServer threads API", () => {
     const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
+    const setWindowOptionMock = vi.fn();
 
     TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
@@ -2473,7 +2493,7 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
-    TmuxRuntimeManager.prototype.setWindowOption = () => undefined as any;
+    TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
         {
@@ -2505,6 +2525,16 @@ describe("MetadataServer threads API", () => {
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        TMUX_DASHBOARD_OWNER_OPTION,
+        getRuntimeOwnerId(),
+      );
 
       const snapshot = JSON.parse(
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),

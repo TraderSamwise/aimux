@@ -338,6 +338,7 @@ describe("restartAimuxControlPlane", () => {
       dashboardSession: { sessionName: "aimux-beta" },
       dashboardTarget: { sessionName: "aimux-beta", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
     }));
+    const killWindow = vi.fn();
 
     const result = await restartAimuxControlPlane({
       projectRoot: "/repo/beta",
@@ -346,7 +347,7 @@ describe("restartAimuxControlPlane", () => {
       stopDaemon: vi.fn(async () => stoppedDaemon()),
       ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
       ensureProjectService,
-      createTmux: () => ({ isAvailable: () => true }),
+      createTmux: () => ({ isAvailable: () => true, hasWindow: () => true, killWindow }),
       resolveDashboardTarget,
       isPidAlive: () => false,
     });
@@ -361,7 +362,39 @@ describe("restartAimuxControlPlane", () => {
     });
     expect(result.projects[0]?.dashboard.status).toBe("skipped");
     expect(result.projects[1]?.dashboard.status).toBe("reloaded");
+    expect(killWindow).not.toHaveBeenCalled();
     expect(renderRuntimeRestartResult(result)).toContain("dashboards reloaded: 1");
+  });
+
+  it("scoped restart verification ignores unrelated stale projects", async () => {
+    const buildRuntimeCoherenceReport = vi.fn(async () => coherenceReport());
+
+    const result = await restartAimuxControlPlane({
+      projectRoot: "/repo/beta",
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true, hasWindow: () => true, killWindow: vi.fn() }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-beta" },
+        dashboardTarget: { sessionName: "aimux-beta", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(buildRuntimeCoherenceReport).toHaveBeenCalledTimes(2);
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.failures).toBe(0);
   });
 
   it("waits for the old daemon pid to exit before ensuring the new daemon", async () => {
