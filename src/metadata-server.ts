@@ -672,6 +672,7 @@ function desiredPort(): number {
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
 const PROJECT_SERVICE_SLOW_REQUEST_MS = 250;
 const PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT = 25;
+const DESKTOP_STATE_CACHE_TTL_MS = 100;
 
 interface ProjectServiceResourceSnapshot {
   uptimeMs: number;
@@ -1154,6 +1155,7 @@ export class MetadataServer {
   private readonly eventBus: ProjectEventBus;
   private unsubscribeAlertSink: (() => void) | null = null;
   private readonly recentSlowRequests: ProjectServiceSlowRequest[] = [];
+  private desktopStateCache: { ts: number; state: Record<string, unknown> } | null = null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
@@ -1209,8 +1211,19 @@ export class MetadataServer {
       worktreePath?: string;
     } = {},
   ): void {
+    this.desktopStateCache = null;
     this.eventBus.publishProjectUpdate(input);
     this.options.onChange?.();
+  }
+
+  private getDesktopStateSnapshot(): Record<string, unknown> {
+    const now = Date.now();
+    if (this.desktopStateCache && now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS) {
+      return this.desktopStateCache.state;
+    }
+    const state = this.options.desktop?.getState?.() ?? {};
+    this.desktopStateCache = { ts: now, state };
+    return state;
   }
 
   // Settle a session the transcript reconciler found stuck "working": drop the
@@ -1742,7 +1755,7 @@ export class MetadataServer {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...this.options.desktop.getState(),
+        ...this.getDesktopStateSnapshot(),
       });
       return;
     }

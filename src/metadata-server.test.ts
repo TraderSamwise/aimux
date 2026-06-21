@@ -112,6 +112,33 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
+  it("budgets rapid desktop-state reads and invalidates on project changes", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    expect(second.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    server.notifyChange();
+    const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(third.seq).toBe(2);
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
+
   function seedAgentTopology(
     sessions: Array<{
       id: string;
