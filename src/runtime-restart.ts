@@ -38,6 +38,11 @@ export interface RuntimeRestartResult {
   startedAt: string;
   finishedAt: string;
   before: RuntimeCoherenceReport;
+  verification: {
+    status: "ok" | "failed" | "skipped";
+    after: RuntimeCoherenceReport | null;
+    error: string | null;
+  };
   daemon: {
     previous: AimuxDaemonInfo | null;
     current: AimuxDaemonInfo;
@@ -89,6 +94,7 @@ export interface RestartAimuxControlPlaneOptions {
   daemonExitTimeoutMs?: number;
   serviceExitTimeoutMs?: number;
   killGraceMs?: number;
+  verifyAfterRestart?: boolean;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -395,13 +401,38 @@ export async function restartAimuxControlPlane(
     projects.push(result);
   }
 
-  const failures = projects.filter(
+  const projectFailures = projects.filter(
     (project) => project.service.status === "failed" || project.dashboard.status === "failed",
   ).length;
+  const shouldVerifyAfterRestart = options.verifyAfterRestart ?? !options.buildRuntimeCoherenceReport;
+  let verification: RuntimeRestartResult["verification"] = {
+    status: "skipped",
+    after: null,
+    error: null,
+  };
+  if (shouldVerifyAfterRestart) {
+    try {
+      const after = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
+      const failedProjects = after.projects.filter((project) => project.status !== "ok").map((project) => project.projectRoot);
+      verification = {
+        status: failedProjects.length === 0 ? "ok" : "failed",
+        after,
+        error: failedProjects.length === 0 ? null : `post-restart version check failed for ${failedProjects.join(", ")}`,
+      };
+    } catch (error) {
+      verification = {
+        status: "failed",
+        after: null,
+        error: errorMessage(error),
+      };
+    }
+  }
+  const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
   return {
     startedAt: before.generatedAt,
     finishedAt: now().toISOString(),
     before,
+    verification,
     daemon: {
       previous: previousDaemon,
       current: currentDaemon,
@@ -437,6 +468,14 @@ export function renderRuntimeRestartResult(result: RuntimeRestartResult): string
 
   if (result.summary.failures > 0) {
     lines.push("");
+    if (result.verification.status === "failed") {
+      lines.push(`Post-restart verification failed: ${result.verification.error ?? "unknown error"}`);
+      if (result.verification.after) {
+        lines.push("After restart:");
+        lines.push(renderRuntimeCoherenceReport(result.verification.after));
+      }
+      lines.push("");
+    }
     lines.push("Before restart:");
     lines.push(renderRuntimeCoherenceReport(result.before));
   }
