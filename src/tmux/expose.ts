@@ -67,7 +67,9 @@ function queryClientSize(clientTty?: string): string {
     const result = spawnSync(
       "tmux",
       ["display-message", "-c", clientTty, "-p", "-F", "#{client_width}x#{client_height}"],
-      { encoding: "utf8" },
+      // Bounded so a hung tmux server fails open (no resize check) instead of freezing
+      // the popup's single-threaded refresh loop.
+      { encoding: "utf8", timeout: 500 },
     );
     if (result.status === 0) return (result.stdout ?? "").trim();
   } catch {}
