@@ -408,6 +408,45 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
+  it("fails restart when post-restart coherence still needs restart", async () => {
+    const after = coherenceReport();
+    after.projects[0] = {
+      ...after.projects[0]!,
+      status: "needs-restart",
+      service: {
+        ...after.projects[0]!.service,
+        status: "mismatch",
+      },
+    };
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(coherenceReport()).mockResolvedValueOnce(after);
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(buildRuntimeCoherenceReport).toHaveBeenCalledTimes(2);
+    expect(result.verification.status).toBe("failed");
+    expect(result.summary.failures).toBe(1);
+    expect(renderRuntimeRestartResult(result)).toContain("Post-restart verification failed");
+  });
+
   it("waits for old project service pids before ensuring services", async () => {
     const calls: string[] = [];
     const alive = new Map<number, number>([
