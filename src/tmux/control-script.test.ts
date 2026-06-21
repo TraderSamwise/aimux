@@ -80,6 +80,8 @@ function displayMessage() {
   if (!pane) fail();
   out(
     format
+      .replace("#{pane_in_mode}", pane.inMode ? "1" : "0")
+      .replace("#{pane_current_command}", pane.currentCommand || "")
       .replace("#{session_name}", pane.sessionName || "")
       .replace("#{window_id}", pane.windowId || "")
       .replace("#{window_name}", pane.windowName || "")
@@ -268,6 +270,7 @@ describe("tmux-control.sh", () => {
           windowName: "dashboard-live",
           clientTty: "/dev/live",
           currentPath: "/repo/project",
+          currentCommand: "bash",
         },
       },
       capturedPanes: {
@@ -320,6 +323,7 @@ describe("tmux-control.sh", () => {
           windowName: "dashboard-live",
           clientTty: "/dev/live",
           currentPath: "/repo/project",
+          currentCommand: "bash",
         },
       },
       capturedPanes: {
@@ -415,7 +419,16 @@ describe("tmux-control.sh", () => {
       sessionOptions: {
         "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
       },
-      panes: {},
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-live",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+          currentCommand: "bash",
+        },
+      },
     });
     tempRoots.push(envRoot.root);
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");

@@ -7,6 +7,7 @@ import {
   handleRuntimeGuardKey as handleRuntimeGuardKeyImpl,
   refreshRuntimeGuard as refreshRuntimeGuardImpl,
   reloadDashboardFromGuard as reloadDashboardFromGuardImpl,
+  restartRuntimeFromGuard as restartRuntimeFromGuardImpl,
   handleDashboardSubscreenNavigationKey as handleDashboardSubscreenNavigationKeyImpl,
   handleOrchestrationInputKey as handleOrchestrationInputKeyImpl,
   handleOrchestrationRoutePickerKey as handleOrchestrationRoutePickerKeyImpl,
@@ -163,6 +164,9 @@ export const dashboardActionMethods = {
   },
   reloadDashboardFromGuard(this: any): void {
     reloadDashboardFromGuardImpl(this);
+  },
+  restartRuntimeFromGuard(this: any): void {
+    restartRuntimeFromGuardImpl(this);
   },
   renderActiveDashboardOverlay(this: any): boolean {
     return renderActiveDashboardOverlayImpl(this);

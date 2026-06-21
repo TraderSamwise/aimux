@@ -697,7 +697,7 @@ async function stopProjectRuntime(
 
 async function restartProjectRuntime(
   projectRoot: string,
-  opts: { open?: boolean } = {},
+  opts: { open?: boolean; clientTty?: string } = {},
 ): Promise<{
   dashboardSessionName: string;
   dashboardTarget: ReturnType<typeof resolveDashboardTarget>["dashboardTarget"];
@@ -708,7 +708,11 @@ async function restartProjectRuntime(
   ensureTmuxAvailable(tmux);
   const resolved = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
   if (opts.open) {
-    tmux.openTarget(resolved.dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+    tmux.openTarget(resolved.dashboardTarget, {
+      insideTmux: tmux.isInsideTmux() || Boolean(opts.clientTty),
+      alreadyResolved: true,
+      clientTty: opts.clientTty,
+    });
   }
   return {
     dashboardSessionName: resolved.dashboardSession.sessionName,
@@ -877,37 +881,34 @@ program
       const mux = new Multiplexer();
       let cleanedUp = false;
       const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-      const cleanupAll = () => {
+      const cleanupAll = async () => {
         if (cleanedUp) return;
         cleanedUp = true;
-        mux.cleanup();
+        await mux.cleanup();
       };
 
       // Graceful shutdown on signals
       const shutdown = () => {
-        cleanupAll();
-        process.exit(0);
+        void cleanupAll().finally(() => process.exit(0));
       };
       process.on("exit", ensureTerminalRestored);
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
       process.on("uncaughtException", (err) => {
-        cleanupAll();
         log.error("uncaught exception", "runtime", {
           error: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
         console.error(err);
-        process.exit(1);
+        void cleanupAll().finally(() => process.exit(1));
       });
       process.on("unhandledRejection", (reason) => {
-        cleanupAll();
         log.error("unhandled rejection", "runtime", {
           error: reason instanceof Error ? reason.message : String(reason),
           stack: reason instanceof Error ? reason.stack : undefined,
         });
         console.error(reason);
-        process.exit(1);
+        void cleanupAll().finally(() => process.exit(1));
       });
 
       try {
@@ -921,10 +922,10 @@ program
         } else {
           exitCode = await mux.runDashboard();
         }
-        cleanupAll();
+        await cleanupAll();
         process.exit(exitCode);
       } catch (err: unknown) {
-        cleanupAll();
+        await cleanupAll();
         if (err instanceof ProjectServiceVersionError) {
           console.error(renderProjectServiceVersionHelp(err));
           process.exit(1);
@@ -980,7 +981,10 @@ program
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
-      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, {
+        forceReload: true,
+        openInHostSession: true,
+      });
       try {
         await postProjectServiceJson("/statusline/refresh", { force: true }, { timeoutMs: 1500 });
       } catch {}
@@ -1068,12 +1072,16 @@ program
   .description("Hard restart the current project runtime and rebuild its managed tmux topology")
   .option("--project-root <path>", "Project root", process.cwd())
   .option("--open", "Open the dashboard after restarting the runtime")
+  .option("--client-tty <tty>", "tmux client tty to switch after reopening")
   .option("--json", "Emit JSON")
-  .action(async (opts: { projectRoot: string; open?: boolean; json?: boolean }) => {
+  .action(async (opts: { projectRoot: string; open?: boolean; clientTty?: string; json?: boolean }) => {
     try {
       const projectRoot = resolveProjectRoot(opts.projectRoot);
       await initPaths(projectRoot);
-      const result = await restartProjectRuntime(projectRoot, { open: opts.open });
+      const result = await restartProjectRuntime(projectRoot, {
+        open: opts.open,
+        clientTty: opts.clientTty?.trim() || undefined,
+      });
       if (opts.open) exitAfterOpen();
       if (opts.json) {
         console.log(
@@ -1562,44 +1570,41 @@ program
     const mux = new Multiplexer();
     let cleanedUp = false;
     const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-    const cleanupAll = () => {
+    const cleanupAll = async () => {
       if (cleanedUp) return;
       cleanedUp = true;
-      mux.cleanup();
+      await mux.cleanup();
     };
 
     const shutdown = () => {
-      cleanupAll();
-      process.exit(0);
+      void cleanupAll().finally(() => process.exit(0));
     };
     process.on("exit", ensureTerminalRestored);
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
     process.on("uncaughtException", (err) => {
-      cleanupAll();
       log.error("project service uncaught exception", "runtime", {
         error: err instanceof Error ? err.message : String(err),
         stack: err instanceof Error ? err.stack : undefined,
       });
       console.error(err);
-      process.exit(1);
+      void cleanupAll().finally(() => process.exit(1));
     });
     process.on("unhandledRejection", (reason) => {
-      cleanupAll();
       log.error("project service unhandled rejection", "runtime", {
         error: reason instanceof Error ? reason.message : String(reason),
         stack: reason instanceof Error ? reason.stack : undefined,
       });
       console.error(reason);
-      process.exit(1);
+      void cleanupAll().finally(() => process.exit(1));
     });
 
     try {
       const exitCode = await mux.runProjectService();
-      cleanupAll();
+      await cleanupAll();
       process.exit(exitCode);
     } catch (err: unknown) {
-      cleanupAll();
+      await cleanupAll();
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`aimux project service: ${msg}`);
       process.exit(1);

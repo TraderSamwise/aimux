@@ -53,6 +53,10 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 
 This installs the bundled release under `~/.aimux/native/` and links `aimux` into `~/.local/bin`.
 It still requires Node.js >= 24 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
+When replacing an existing install, the installer automatically runs the safe `aimux restart`
+repair: daemon restart, project-service re-ensure, and dashboard reloads. It does not kill agent
+tmux windows. If a release ever requires a destructive tmux runtime rebuild, affected dashboards
+show a blocking rebuild warning instead.
 
 To install a specific version:
 
@@ -74,7 +78,7 @@ For development, remember the distinction:
 
 - `yarn build` updates this checkout's `dist/`, so `node dist/main.js ...` sees source changes.
 - Plain `aimux ...` runs the installed bundle behind `~/.local/bin/aimux`, so it will not see source changes until you build and install a local release archive.
-- After installing a new local CLI build, run `aimux restart` to move the daemon, project services, and existing dashboards onto that build.
+- Reinstalling a local release archive automatically runs the safe `aimux restart` repair. Set `AIMUX_SKIP_POST_INSTALL_RESTART=1` only when testing the installer itself.
 
 ### Build from source
 
@@ -89,7 +93,6 @@ yarn build
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
 ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
 scripts/install.sh "$ASSET"
-aimux restart
 aimux doctor versions
 ```
 
@@ -372,7 +375,6 @@ need a local release install before the daemon or project services can run them:
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
 ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
 scripts/install.sh "$ASSET"
-aimux restart
 cd app
 yarn dev:web:local
 ```

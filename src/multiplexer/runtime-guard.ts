@@ -1,5 +1,7 @@
 import { requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
+import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "../runtime-owner.js";
+import { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import {
   getProjectServiceManifest,
   hasProjectServiceBuildDrift,
@@ -18,10 +20,12 @@ const HEALTH_TIMEOUT_MS = 2500;
 export type RuntimeGuardState =
   | { kind: "ok" }
   | { kind: "stale"; reason: "self-drift" | "service-mismatch" }
+  | { kind: "runtime-rebuild-required" }
   | { kind: "disconnected" };
 
 export interface RuntimeGuardInput {
   selfDrift: boolean;
+  runtimeRebuildRequired?: boolean;
   endpointPresent: boolean;
   serviceManifest: ProjectServiceManifest | null | "unreachable";
 }
@@ -33,6 +37,7 @@ export interface RuntimeGuardInput {
  */
 export function evaluateRuntimeGuard(input: RuntimeGuardInput): RuntimeGuardState {
   if (input.selfDrift) return { kind: "stale", reason: "self-drift" };
+  if (input.runtimeRebuildRequired) return { kind: "runtime-rebuild-required" };
   if (!input.endpointPresent || input.serviceManifest === "unreachable" || input.serviceManifest === null) {
     return { kind: "disconnected" };
   }
@@ -69,8 +74,12 @@ export function stabilizeRuntimeGuardProbe(
 const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape", "q", "?"]);
 
 /** What a keystroke should do while the dashboard is guarded (stale/disconnected). */
-export function runtimeGuardKeyDisposition(key: string): "reload" | "passthrough" | "swallow" {
+export function runtimeGuardKeyDisposition(
+  key: string,
+  state?: RuntimeGuardState,
+): "reload" | "rebuild-runtime" | "passthrough" | "swallow" {
   const command = key.length === 1 ? key.toLowerCase() : key;
+  if (state?.kind === "runtime-rebuild-required" && command === "b") return "rebuild-runtime";
   if (command === "r") return "reload";
   if (GUARD_PASSTHROUGH_KEYS.has(command)) return "passthrough";
   return "swallow";
@@ -102,12 +111,33 @@ export function runtimeGuardOverlayCopy(state: RuntimeGuardState): { title: stri
       lines: ["The dashboard can't reach the project service.", "Actions are paused until it reconnects."],
     };
   }
+  if (state.kind === "runtime-rebuild-required") {
+    return {
+      title: "Tmux runtime rebuild required",
+      lines: [
+        "This update changed the managed tmux runtime contract.",
+        "Rebuild the project runtime to continue safely.",
+      ],
+    };
+  }
   return { title: "", lines: [] };
+}
+
+function readRuntimeRebuildRequired(projectRoot: string): boolean {
+  try {
+    const tmux = new TmuxRuntimeManager();
+    if (!tmux.isAvailable()) return false;
+    const sessionName = tmux.getProjectSession(projectRoot).sessionName;
+    return tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /** Best-effort probe. Never throws; any failure gathering inputs resolves to a safe state. */
 export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Promise<RuntimeGuardState> {
   const selfDrift = hasProjectServiceBuildDrift();
+  const runtimeRebuildRequired = readRuntimeRebuildRequired(projectRoot);
   let endpointPresent = false;
   let serviceManifest: ProjectServiceManifest | null | "unreachable" = null;
   try {
@@ -131,5 +161,5 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
     endpointPresent = false;
     serviceManifest = null;
   }
-  return evaluateRuntimeGuard({ selfDrift, endpointPresent, serviceManifest });
+  return evaluateRuntimeGuard({ selfDrift, runtimeRebuildRequired, endpointPresent, serviceManifest });
 }

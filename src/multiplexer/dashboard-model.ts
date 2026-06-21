@@ -1,11 +1,7 @@
 import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
 import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
-import {
-  loadMetadataEndpoint,
-  loadMetadataState,
-  removeMetadataEndpoint,
-} from "../metadata-store.js";
+import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
@@ -1052,6 +1048,9 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
   host.projectServiceUiRefreshPending = false;
   host.metadataServer = new MetadataServer({
     events: { bus: host.eventBus },
+    diagnostics: {
+      pluginStatuses: () => host.pluginRuntime?.getPluginStatuses() ?? [],
+    },
     desktop: {
       getState: () => host.buildDesktopState({ includeStatusline: false, includeRuntimeInfo: false }),
       listWorktrees: () => host.listProjectedDesktopWorktrees(),

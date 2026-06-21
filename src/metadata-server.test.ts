@@ -17,6 +17,7 @@ import {
   saveRuntimeTopologySessions,
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -50,6 +51,144 @@ describe("MetadataServer threads API", () => {
   afterEach(() => {
     server?.stop();
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("exposes project service resource diagnostics in health", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      pid: process.pid,
+      resources: {
+        uptimeMs: expect.any(Number),
+        memoryRssBytes: expect.any(Number),
+        memoryHeapUsedBytes: expect.any(Number),
+      },
+      recentSlowRequests: [],
+    });
+  });
+
+  it("records slow desktop-state requests for health diagnostics", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => {
+          const deadline = Date.now() + 275;
+          while (Date.now() < deadline) {
+            Date.now();
+          }
+          return {
+            sessions: [],
+            teammates: [],
+            services: [],
+            worktreeGroups: [],
+            mainCheckoutInfo: { name: "Main Checkout" },
+          };
+        },
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`);
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await health.json();
+
+    expect(json.recentSlowRequests).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/desktop-state",
+        statusCode: 200,
+        durationMs: expect.any(Number),
+        resources: expect.objectContaining({
+          memoryRssBytes: expect.any(Number),
+          memoryHeapUsedBytes: expect.any(Number),
+        }),
+      }),
+    ]);
+  });
+
+  it("does not record long-lived stream routes as slow requests", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const stream = await fetch(`${base}/agents/interaction/stream`, { signal: controller.signal });
+    expect(stream.ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    controller.abort();
+    await stream.body?.cancel().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const health = await fetch(`${base}/health`);
+    const json = await health.json();
+    expect(json.recentSlowRequests).toEqual([]);
+  });
+
+  it("exposes plugin startup diagnostics in health", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      diagnostics: {
+        pluginStatuses: () => [
+          {
+            source: "user",
+            name: "file-watch-plugin",
+            path: "/tmp/file-watch-plugin.js",
+            status: "failed",
+            error: "EMFILE: too many open files, watch",
+            resourceFailure: true,
+            stoppedAfterFailedStart: true,
+          },
+        ],
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await health.json();
+
+    expect(json.plugins).toEqual([
+      expect.objectContaining({
+        name: "file-watch-plugin",
+        status: "failed",
+        resourceFailure: true,
+      }),
+    ]);
+  });
+
+  it("budgets rapid desktop-state reads and invalidates on project changes", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    expect(second.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    server.notifyChange();
+    const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(third.seq).toBe(2);
+    expect(getState).toHaveBeenCalledTimes(2);
   });
 
   function seedAgentTopology(
@@ -2339,6 +2478,7 @@ describe("MetadataServer threads API", () => {
     const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
+    const setWindowOptionMock = vi.fn();
 
     TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
@@ -2353,7 +2493,7 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
-    TmuxRuntimeManager.prototype.setWindowOption = () => undefined as any;
+    TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
         {
@@ -2385,6 +2525,16 @@ describe("MetadataServer threads API", () => {
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        TMUX_DASHBOARD_OWNER_OPTION,
+        getRuntimeOwnerId(),
+      );
 
       const snapshot = JSON.parse(
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),

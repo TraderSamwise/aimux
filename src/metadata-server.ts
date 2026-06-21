@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
@@ -78,10 +78,12 @@ import {
   type ProjectApiView,
 } from "./project-api-contract.js";
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
+import { log } from "./debug.js";
 import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createUploadedAttachment,
   getAttachment,
@@ -92,6 +94,7 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
 import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
@@ -264,6 +267,9 @@ interface MetadataServerOptions {
   onChange?: () => void;
   events?: {
     bus?: ProjectEventBus;
+  };
+  diagnostics?: {
+    pluginStatuses?: () => PluginRuntimePluginStatus[];
   };
   desktop?: {
     getState?: () => Record<string, unknown>;
@@ -669,6 +675,34 @@ function desiredPort(): number {
 // conservative charset (no whitespace, no separators, no traversal) and
 // cap length so we don't produce surprising filenames.
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+const PROJECT_SERVICE_SLOW_REQUEST_MS = 250;
+const PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT = 25;
+const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
+  PROJECT_API_ROUTES.events,
+  PROJECT_API_ROUTES.agents.outputStream,
+  PROJECT_API_ROUTES.agents.interactionStream,
+  PROJECT_API_ROUTES.agents.interactionRequest,
+  PROJECT_API_ROUTES.agents.interactionWait,
+]);
+const DESKTOP_STATE_CACHE_TTL_MS = 100;
+
+interface ProjectServiceResourceSnapshot {
+  uptimeMs: number;
+  memoryRssBytes: number;
+  memoryHeapUsedBytes: number;
+  activeHandles?: number;
+  activeRequests?: number;
+  openFileDescriptors?: number;
+}
+
+interface ProjectServiceSlowRequest {
+  ts: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+  resources: ProjectServiceResourceSnapshot;
+}
 
 function validateSessionId(raw: string): { ok: true; value: string } | { ok: false } {
   if (!SESSION_ID_PATTERN.test(raw)) return { ok: false };
@@ -703,6 +737,39 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("connection", "close");
   res.end(body);
+}
+
+function countOpenFileDescriptors(): number | undefined {
+  try {
+    return readdirSync("/dev/fd").length;
+  } catch {
+    return undefined;
+  }
+}
+
+function activeProcessCount(kind: "_getActiveHandles" | "_getActiveRequests"): number | undefined {
+  const fn = (process as unknown as Record<string, unknown>)[kind];
+  if (typeof fn !== "function") return undefined;
+  try {
+    const value = (fn as () => unknown[])();
+    return Array.isArray(value) ? value.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function projectServiceResourceSnapshot(
+  options: { includeFileDescriptors?: boolean } = {},
+): ProjectServiceResourceSnapshot {
+  const memory = process.memoryUsage();
+  return {
+    uptimeMs: Math.round(process.uptime() * 1000),
+    memoryRssBytes: memory.rss,
+    memoryHeapUsedBytes: memory.heapUsed,
+    activeHandles: activeProcessCount("_getActiveHandles"),
+    activeRequests: activeProcessCount("_getActiveRequests"),
+    ...(options.includeFileDescriptors ? { openFileDescriptors: countOpenFileDescriptors() } : {}),
+  };
 }
 
 function controlFocusRequested(body: Record<string, unknown>, url: URL): boolean {
@@ -1099,6 +1166,8 @@ export class MetadataServer {
   private interactionWatchers = 0;
   private readonly eventBus: ProjectEventBus;
   private unsubscribeAlertSink: (() => void) | null = null;
+  private readonly recentSlowRequests: ProjectServiceSlowRequest[] = [];
+  private desktopStateCache: { ts: number; state: Record<string, unknown> } | null = null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
@@ -1154,8 +1223,19 @@ export class MetadataServer {
       worktreePath?: string;
     } = {},
   ): void {
+    this.desktopStateCache = null;
     this.eventBus.publishProjectUpdate(input);
     this.options.onChange?.();
+  }
+
+  private getDesktopStateSnapshot(): Record<string, unknown> {
+    const now = Date.now();
+    if (this.desktopStateCache && now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS) {
+      return this.desktopStateCache.state;
+    }
+    const state = this.options.desktop?.getState?.() ?? {};
+    this.desktopStateCache = { ts: now, state };
+    return state;
   }
 
   // Settle a session the transcript reconciler found stuck "working": drop the
@@ -1467,7 +1547,36 @@ export class MetadataServer {
     return [...new Set(fallbackRecipients.map((value) => value?.trim()).filter(Boolean))];
   }
 
+  private recordSlowRequest(entry: ProjectServiceSlowRequest): void {
+    this.recentSlowRequests.push(entry);
+    while (this.recentSlowRequests.length > PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT) {
+      this.recentSlowRequests.shift();
+    }
+    log.warn("slow project service request", "api", { ...entry });
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const startedAt = Date.now();
+    const method = req.method ?? "GET";
+    const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    if (!PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS.has(path)) {
+      res.once("finish", () => {
+        const durationMs = Date.now() - startedAt;
+        if (durationMs < PROJECT_SERVICE_SLOW_REQUEST_MS) return;
+        this.recordSlowRequest({
+          ts: new Date().toISOString(),
+          method,
+          path,
+          statusCode: res.statusCode,
+          durationMs,
+          resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
+        });
+      });
+    }
+    await this.handleRoute(req, res);
+  }
+
+  private async handleRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -1640,6 +1749,9 @@ export class MetadataServer {
         projectStateDir: getProjectStateDir(),
         pid: process.pid,
         serviceInfo: getProjectServiceManifest(),
+        resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
+        recentSlowRequests: this.recentSlowRequests.slice(-10),
+        plugins: this.options.diagnostics?.pluginStatuses?.() ?? [],
       });
       return;
     }
@@ -1656,7 +1768,7 @@ export class MetadataServer {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...this.options.desktop.getState(),
+        ...this.getDesktopStateSnapshot(),
       });
       return;
     }
@@ -2097,10 +2209,17 @@ export class MetadataServer {
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+        const currentOwner = getRuntimeOwnerId();
+        if (
+          !tmux.isWindowAlive(target) ||
+          currentBuildStamp !== dashboardBuildStamp ||
+          currentDashboardOwner !== currentOwner
+        ) {
           tmux.respawnWindow(target, dashboardCommand);
-          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
+        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
         return;
@@ -2154,10 +2273,17 @@ export class MetadataServer {
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+        const currentOwner = getRuntimeOwnerId();
+        if (
+          !tmux.isWindowAlive(target) ||
+          currentBuildStamp !== dashboardBuildStamp ||
+          currentDashboardOwner !== currentOwner
+        ) {
           tmux.respawnWindow(target, dashboardCommand);
-          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
+        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-inbox", target, focusResult);
         return;
