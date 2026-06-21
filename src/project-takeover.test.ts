@@ -32,7 +32,12 @@ describe("project takeover", () => {
     livePids = new Set([1001, 2001, 2002]);
     vi.mocked(requestJson).mockClear();
     execFileSyncMock.mockReset();
-    execFileSyncMock.mockReturnValue("node /opt/aimux/dist/main.js __project-service-internal");
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${join(tmpHome, "repo-a")}\n`;
+      return `node /opt/aimux/dist/main.js __project-service-internal --project-id ${getProjectIdFor(
+        join(tmpHome, "repo-a"),
+      )} --project-root ${join(tmpHome, "repo-a")}`;
+    });
     vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
       const numericPid = Number(pid);
       if (!livePids.has(numericPid)) throw new Error(`pid ${numericPid} not alive`);
@@ -146,5 +151,32 @@ describe("project takeover", () => {
       projects: Record<string, unknown>;
     };
     expect(state.projects[projectId]).toBeUndefined();
+  });
+
+  it("accepts legacy project service pids only when cwd matches the project", async () => {
+    const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
+    const projectRoot = join(tmpHome, "repo-a");
+    const projectId = getProjectIdFor(projectRoot);
+    const defaultHome = join(tmpHome, ".aimux");
+
+    vi.mocked(requestJson).mockRejectedValueOnce(new Error("other daemon unavailable"));
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
+      return "node /opt/aimux/dist/main.js __project-service-internal";
+    });
+    mkdirSync(join(defaultHome, "daemon"), { recursive: true });
+    writeJson(join(defaultHome, "daemon", "daemon.json"), { pid: 1001, port: 43190 });
+    writeJson(join(defaultHome, "daemon", "state.json"), {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      projects: {
+        [projectId]: { pid: 2001, projectRoot },
+      },
+    });
+
+    await takeOverProjectFromOtherOwners(projectRoot);
+
+    expect(livePids.has(2001)).toBe(false);
+    expect(process.kill).toHaveBeenCalledWith(2001, "SIGTERM");
   });
 });
