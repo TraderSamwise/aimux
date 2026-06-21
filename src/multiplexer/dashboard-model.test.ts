@@ -10,6 +10,7 @@ import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.j
 import { addNotification } from "../notifications.js";
 import {
   applyDashboardModel,
+  buildDesktopStateSnapshot,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
   computeDashboardServices,
@@ -1170,6 +1171,38 @@ describe("computeDashboardSessions thread stats", () => {
       expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.displayMessage).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.captureTarget).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run mutating topology sync for API runtime-light desktop snapshots", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-light-snapshot-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const syncSessionsFromTopology = vi.fn(() => {
+        throw new Error("should not sync runtime state");
+      });
+      const tmuxRuntimeManager = {
+        listProjectManagedWindows: vi.fn(() => []),
+        isWindowAlive: vi.fn(() => {
+          throw new Error("should not probe window liveness");
+        }),
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]),
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology,
+        tmuxRuntimeManager,
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions.map((session) => session.id)).toEqual(["claude-1"]);
+      expect(syncSessionsFromTopology).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
