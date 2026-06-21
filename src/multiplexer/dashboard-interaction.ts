@@ -6,7 +6,7 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { commandKey, parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
@@ -77,6 +77,11 @@ function isCreatingDashboardWorktree(group: any | undefined): boolean {
 
 function isFailedDashboardWorktree(group: any | undefined): boolean {
   return Boolean(group?.operationFailure);
+}
+
+function isShiftedCommand(event: KeyEvent, lowerKey: string, letter: string): boolean {
+  const rawKey = event.name || event.char;
+  return lowerKey === letter && (event.shift || rawKey === letter.toUpperCase());
 }
 
 function failedWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
@@ -341,15 +346,15 @@ export const dashboardInteractionMethods = {
       this.showOrchestrationRoutePicker("handoff");
       return;
     }
-    if (key === "T") {
+    if (isShiftedCommand(event, lowerKey, "t")) {
       this.showOrchestrationRoutePicker("task");
       return;
     }
-    if (key === "W") {
+    if (isShiftedCommand(event, lowerKey, "w")) {
       this.showWorktreeList();
       return;
     }
-    if (key === "R") {
+    if (isShiftedCommand(event, lowerKey, "r")) {
       const selected = this.getSelectedDashboardSessionForActions();
       if (selected) {
         if ((selected.threadWaitingOnMeCount ?? 0) > 0) {

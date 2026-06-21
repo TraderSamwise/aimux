@@ -52,6 +52,25 @@ export function writeTextAtomic(path: string, text: string): void {
   atomicWrite(path, text);
 }
 
+// Atomic visibility for derived caches; no fsync, so not for durable state.
+export function atomicWriteFast(path: string, data: string | Buffer, options?: { mode?: number }): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    writeFileSync(tmpPath, data, options?.mode !== undefined ? { mode: options.mode } : undefined);
+    renameSync(tmpPath, path);
+  } catch (error) {
+    try {
+      rmSync(tmpPath, { force: true });
+    } catch {}
+    throw error;
+  }
+}
+
+export function writeTextAtomicFast(path: string, text: string): void {
+  atomicWriteFast(path, text);
+}
+
 /**
  * Move a corrupt/unparseable state file aside (preserving it for diagnosis)
  * instead of silently letting a reader reset to empty and a later write
