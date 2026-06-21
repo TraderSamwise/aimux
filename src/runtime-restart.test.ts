@@ -102,6 +102,30 @@ function coherenceReport(): RuntimeCoherenceReport {
   };
 }
 
+function okCoherenceReport(): RuntimeCoherenceReport {
+  const report = coherenceReport();
+  report.projects = report.projects.map((project) => ({
+    ...project,
+    status: "ok",
+    service: {
+      ...project.service,
+      status: "ok",
+      error: null,
+    },
+    dashboards: project.dashboards.map((dashboard) => ({
+      ...dashboard,
+      buildStamp: project.expectedDashboardBuildStamp,
+      status: "ok",
+    })),
+  }));
+  report.summary = {
+    projects: report.projects.length,
+    ok: report.projects.length,
+    needsRestart: 0,
+  };
+  return report;
+}
+
 function stoppedDaemon(
   stoppedProjectServices: NonNullable<RuntimeCoherenceReport["projects"][number]["service"]["daemonState"]>[] = [],
 ) {
@@ -441,6 +465,7 @@ describe("restartAimuxControlPlane", () => {
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport,
       verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
       stopDaemon: vi.fn(async () => stoppedDaemon()),
       ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
       ensureProjectService: vi.fn(async (projectRoot: string) => ({
@@ -462,6 +487,55 @@ describe("restartAimuxControlPlane", () => {
     expect(result.verification.status).toBe("failed");
     expect(result.summary.failures).toBe(1);
     expect(renderRuntimeRestartResult(result)).toContain("Post-restart verification failed");
+  });
+
+  it("waits for post-restart services to become coherent before failing verification", async () => {
+    const transient = okCoherenceReport();
+    transient.projects[0] = {
+      ...transient.projects[0]!,
+      status: "needs-restart",
+      service: {
+        ...transient.projects[0]!.service,
+        status: "unreachable",
+        error: "request timed out after 1000ms",
+      },
+    };
+    transient.summary = { projects: 2, ok: 1, needsRestart: 1 };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(coherenceReport())
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(okCoherenceReport());
+    const sleep = vi.fn(async () => {});
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 1000,
+      verificationIntervalMs: 250,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      sleep,
+    });
+
+    expect(buildRuntimeCoherenceReport).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledWith(250);
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.failures).toBe(0);
   });
 
   it("waits for old project service pids before ensuring services", async () => {
