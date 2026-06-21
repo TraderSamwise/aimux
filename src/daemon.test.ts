@@ -13,8 +13,10 @@ let nextPid = 20_000;
 let livePids = new Set<number>();
 let childrenByPid = new Map<number, EventEmitter>();
 const spawnMock = vi.fn();
+const execFileSyncMock = vi.fn();
 
 vi.mock("node:child_process", () => ({
+  execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
   spawn: (...args: unknown[]) => spawnMock(...args),
 }));
 
@@ -72,6 +74,8 @@ describe("daemon supervision", () => {
     childrenByPid = new Map<number, EventEmitter>();
     resetLoggingForTests();
     spawnMock.mockReset();
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue("node /opt/aimux/dist/main.js __project-service-internal");
     vi.mocked(requestJson).mockReset();
     vi.mocked(requestJson).mockResolvedValue({
       status: 200,
@@ -192,6 +196,29 @@ describe("daemon supervision", () => {
 
     expect(second.pid).not.toBe(first.pid);
     expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops an unverified stale service pid without signaling it during replacement", async () => {
+    execFileSyncMock.mockReturnValue("node unrelated-process.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const stalePid = 41_001;
+    livePids.add(stalePid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: stalePid,
+      startedAt: "2026-06-21T00:00:00.000Z",
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    };
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(stalePid + 1);
+
+    const replacement = await (daemon as any).ensureProject(projectRoot);
+
+    expect(replacement.pid).not.toBe(stalePid);
+    expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
+    expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGKILL");
   });
 
   it("respawns a dead project service on the next ensure call", async () => {
@@ -458,6 +485,40 @@ describe("daemon supervision", () => {
         process.env.AIMUX_DAEMON_PORT = previousPort;
       }
     }
+  });
+
+  it("does not signal unverified project service pids while stopping the daemon", async () => {
+    execFileSyncMock.mockReturnValue("node unrelated-process.js");
+    const { stopDaemon } = await import("./daemon.js");
+    mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
+    livePids.add(50_001);
+    livePids.add(50_002);
+    writeFileSync(
+      join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+      JSON.stringify({ pid: 50_001, port: 43190, startedAt: "then", updatedAt: "then" }),
+    );
+    writeFileSync(
+      join(tmpRoot, ".aimux", "daemon", "state.json"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: "then",
+        projects: {
+          repo: {
+            projectId: "repo",
+            projectRoot,
+            pid: 50_002,
+            startedAt: "then",
+            updatedAt: "then",
+          },
+        },
+      }),
+    );
+
+    const stopped = await stopDaemon();
+
+    expect(stopped?.stoppedProjectServices).toEqual([]);
+    expect(process.kill).not.toHaveBeenCalledWith(50_002, "SIGTERM");
+    expect(process.kill).toHaveBeenCalledWith(50_001, "SIGTERM");
   });
 });
 
