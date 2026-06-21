@@ -289,6 +289,17 @@ switch_local_dashboard() {
   exit 0
 }
 
+reload_local_dashboard() {
+  [ -n "$project_root" ] || return 1
+  debug_log_line "dashboard reload fallback project_root=$project_root"
+  show_local_message "#[fg=colour220,bold]aimux#[default] reloading dashboard"
+  (
+    cd "$project_root" || exit 1
+    "$aimux_bin" dashboard-reload --open
+  ) >/dev/null 2>&1 &
+  return 0
+}
+
 show_local_inbox_popup() {
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
@@ -891,7 +902,7 @@ fallback_local_control() {
   case "$action" in
     dashboard)
       printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
-      switch_local_dashboard
+      switch_local_dashboard || reload_local_dashboard
       ;;
     inbox)
       show_local_inbox_popup

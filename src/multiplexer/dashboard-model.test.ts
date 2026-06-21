@@ -1128,7 +1128,7 @@ describe("computeDashboardSessions thread stats", () => {
       mkdirSync(join(repoRoot, ".git"), { recursive: true });
       await initPaths(repoRoot);
       const agentTarget = { windowId: "@1", windowIndex: 1, windowName: "claude" };
-      const serviceTarget = { windowId: "@2", windowIndex: 2, windowName: "server" };
+      const serviceTarget = { windowId: "@2", windowIndex: 2, windowName: "server", paneDead: true };
       const tmuxRuntimeManager = {
         listProjectManagedWindows: vi.fn(() => [
           {
@@ -1166,7 +1166,7 @@ describe("computeDashboardSessions thread stats", () => {
       const services = computeDashboardServices(host, [], { includeRuntimeInfo: false });
 
       expect(sessions.find((entry) => entry.id === "claude-1")?.tmuxWindowIndex).toBe(1);
-      expect(services.find((entry) => entry.id === "service-1")?.status).toBe("running");
+      expect(services.find((entry) => entry.id === "service-1")?.status).toBe("exited");
       expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.displayMessage).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.captureTarget).not.toHaveBeenCalled();
