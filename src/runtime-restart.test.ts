@@ -12,6 +12,13 @@ function coherenceReport(): RuntimeCoherenceReport {
   return {
     generatedAt: "2026-06-20T00:00:00.000Z",
     cliVersion: "0.1.21",
+    cliLaunch: {
+      command: "/Users/sam/.local/bin/aimux",
+      args: [],
+      source: "stable-shim",
+      currentEntryPath: "/Users/sam/.aimux/native/current/dist/main.js",
+      stableShimPath: "/Users/sam/.local/bin/aimux",
+    },
     expected: {
       projectService: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
       runtimeOwner: "owner-new",
@@ -19,6 +26,7 @@ function coherenceReport(): RuntimeCoherenceReport {
     daemon: {
       running: true,
       info: { pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" },
+      process: null,
       projectCount: 2,
     },
     tmux: {
@@ -42,6 +50,7 @@ function coherenceReport(): RuntimeCoherenceReport {
           },
           endpoint: null,
           pid: 1001,
+          process: null,
           serviceInfo: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
           error: null,
         },
@@ -55,6 +64,7 @@ function coherenceReport(): RuntimeCoherenceReport {
             buildStamp: "dashboard-old",
             owner: "owner-new",
             runtimeOwner: "owner-new",
+            process: null,
             status: "mismatch",
           },
         ],
@@ -75,6 +85,7 @@ function coherenceReport(): RuntimeCoherenceReport {
           },
           endpoint: null,
           pid: 1002,
+          process: null,
           serviceInfo: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
           error: null,
         },
@@ -82,6 +93,7 @@ function coherenceReport(): RuntimeCoherenceReport {
         status: "ok",
       },
     ],
+    staleHookProcesses: [],
     summary: {
       projects: 2,
       ok: 1,
@@ -360,7 +372,12 @@ describe("restartAimuxControlPlane", () => {
   });
 
   it("relinks recreated host dashboards into existing client sessions", async () => {
-    const dashboardTarget = { sessionName: "aimux-alpha-111", windowId: "@10", windowIndex: 0, windowName: "dashboard" };
+    const dashboardTarget = {
+      sessionName: "aimux-alpha-111",
+      windowId: "@10",
+      windowIndex: 0,
+      windowName: "dashboard",
+    };
     const tmux = {
       isAvailable: () => true,
       hasWindow: vi.fn(() => true),
