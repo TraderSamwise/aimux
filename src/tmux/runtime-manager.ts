@@ -690,6 +690,7 @@ export class TmuxRuntimeManager {
         windowId: window.id,
         windowIndex: window.index,
         windowName: window.name,
+        paneDead: window.paneDead,
       };
       const metadata = this.getWindowMetadata(target);
       if (!metadata) continue;
