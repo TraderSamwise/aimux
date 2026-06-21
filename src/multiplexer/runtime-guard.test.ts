@@ -96,6 +96,15 @@ describe("stabilizeRuntimeGuardProbe", () => {
       disconnectedProbeCount: 0,
     });
   });
+
+  it("does not replace stale with disconnected until repeated misses", () => {
+    expect(
+      stabilizeRuntimeGuardProbe({ kind: "stale", reason: "service-mismatch" }, { kind: "disconnected" }, 0),
+    ).toEqual({
+      state: { kind: "stale", reason: "service-mismatch" },
+      disconnectedProbeCount: 1,
+    });
+  });
 });
 
 describe("runtimeGuardKeyDisposition", () => {

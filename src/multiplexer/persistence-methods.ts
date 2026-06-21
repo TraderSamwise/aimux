@@ -497,14 +497,13 @@ export const persistenceMethods = {
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    if (!this.desktopStateSnapshot) {
-      if (input.includeRuntimeInfo === false && typeof this.buildDesktopStateSnapshot === "function") {
-        this.desktopStateSnapshot = this.buildDesktopStateSnapshot({ includeRuntimeInfo: false });
-      } else {
-        this.refreshDesktopStateSnapshot();
-      }
+    let desktopState;
+    if (input.includeRuntimeInfo === false) {
+      desktopState = this.buildDesktopStateSnapshot({ includeRuntimeInfo: false });
+    } else {
+      if (!this.desktopStateSnapshot) this.refreshDesktopStateSnapshot();
+      desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     }
-    const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     const sessions = this.dashboardPendingActions.applyToSessions(desktopState.sessions);
     const teammates = this.dashboardPendingActions
       .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })

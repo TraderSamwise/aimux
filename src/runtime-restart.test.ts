@@ -367,10 +367,8 @@ describe("restartAimuxControlPlane", () => {
     expect(calls.indexOf("ensure-daemon")).toBeLessThan(calls.indexOf("ensure-service:/repo/alpha"));
   });
 
-  it("does not wait or kill service pids when no daemon was stopped", async () => {
-    const isPidAlive = vi.fn(() => {
-      throw new Error("should not inspect service pids without a daemon stop");
-    });
+  it("cleans up known service pids even when no daemon was stopped", async () => {
+    const isPidAlive = vi.fn(() => false);
     const killPid = vi.fn();
 
     await restartAimuxControlPlane({
@@ -394,8 +392,10 @@ describe("restartAimuxControlPlane", () => {
       killPid,
     });
 
-    expect(isPidAlive).not.toHaveBeenCalled();
-    expect(killPid).not.toHaveBeenCalled();
+    expect(killPid).toHaveBeenCalledWith(1001, "SIGTERM");
+    expect(killPid).toHaveBeenCalledWith(1002, "SIGTERM");
+    expect(isPidAlive).toHaveBeenCalledWith(1001);
+    expect(isPidAlive).toHaveBeenCalledWith(1002);
   });
 
   it("signals and waits service pids from the pre-restart report even when stopDaemon missed them", async () => {

@@ -110,7 +110,7 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     renderThreadReply(host);
     return;
   }
-  if (lowerKey === "a") {
+  if (key === "A") {
     if (entry.task) void runTaskLifecycleAction(host, "accept", entry.task.id);
     else if (entry.thread.kind === "handoff") void runThreadHandoffAction(host, "accept", entry.thread.id);
     return;
@@ -142,7 +142,7 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     if (entry.task) void runReviewLifecycleAction(host, "request_changes", entry.task.id);
     return;
   }
-  if (lowerKey === "e") {
+  if (key === "E") {
     if (entry.task) void runTaskLifecycleAction(host, "reopen", entry.task.id);
     return;
   }
@@ -193,14 +193,14 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
   }
 
   const items: WorklistItem[] = host.coordinationWorklist ?? [];
-  if (key === "down" || key === "j") {
+  if (key === "down" || (key === "j" && rawKey !== "J")) {
     if (items.length > 1) {
       host.coordinationIndex = (host.coordinationIndex + 1) % items.length;
       renderCoordination(host);
     }
     return;
   }
-  if (key === "up" || key === "k") {
+  if (key === "up" || (key === "k" && rawKey !== "K")) {
     if (items.length > 1) {
       host.coordinationIndex = (host.coordinationIndex - 1 + items.length) % items.length;
       renderCoordination(host);

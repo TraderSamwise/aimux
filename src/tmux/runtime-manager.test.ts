@@ -192,8 +192,8 @@ describe("TmuxRuntimeManager", () => {
         (call) =>
           call.args[0] === "bind-key" &&
           call.args.includes("n") &&
-          call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
-          call.args.join(" ").includes("--pane-id '#{pane_id}'"),
+          call.args.join(" ").includes("--current-window-id #{q:window_id}") &&
+          call.args.join(" ").includes("--pane-id #{q:pane_id}"),
       ),
     ).toBe(true);
     expect(
@@ -217,17 +217,18 @@ describe("TmuxRuntimeManager", () => {
           call.args.join(" ").includes("scripts/tmux-control.sh' team"),
       ),
     ).toBe(true);
-    expect(
-      exec.calls.some(
-        (call) =>
-          call.args[0] === "bind-key" &&
-          call.args.join(" ").includes(" prefix d ") &&
-          call.args[4] === "run-shell" &&
-          !call.args.join(" ").includes("tmux select-window -t :0") &&
-          call.args.join(" ").includes("scripts/tmux-control.sh") &&
-          call.args.join(" ").includes(" dashboard --current-client-session "),
-      ),
-    ).toBe(true);
+    const dashboardBinding = exec.calls.find(
+      (call) =>
+        call.args[0] === "bind-key" &&
+        call.args.join(" ").includes(" prefix d ") &&
+        call.args[4] === "run-shell" &&
+        !call.args.join(" ").includes("tmux select-window -t :0") &&
+        call.args.join(" ").includes("scripts/tmux-control.sh") &&
+        call.args.join(" ").includes(" dashboard --current-client-session "),
+    );
+    expect(dashboardBinding).toBeTruthy();
+    expect(dashboardBinding?.args.join(" ")).toContain("--current-client-session #{q:client_session}");
+    expect(dashboardBinding?.args.join(" ")).toContain("--current-path #{q:pane_current_path}");
     const globalControlBindings = exec.calls.filter(
       (call) =>
         call.args[0] === "bind-key" && call.args.includes("prefix") && call.args.join(" ").includes("tmux-control.sh"),
