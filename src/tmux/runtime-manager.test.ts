@@ -299,6 +299,34 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
   });
 
+  it("stamps missing runtime contract on an existing project session", () => {
+    const sessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${sessionName}`) return "";
+      if (joined === `show-options -v -t ${sessionName} ${TMUX_RUNTIME_CONTRACT_OPTION}`) return "";
+      if (joined.startsWith("list-windows -t ")) return "";
+      if (joined.startsWith("show-options -v -t ") && joined.endsWith(" terminal-features")) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec);
+
+    manager.ensureProjectSession("/repo/mobile");
+
+    expect(calls.some((call) => call.args[0] === "new-session")).toBe(false);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION &&
+          call.args[4] === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      ),
+    ).toBe(true);
+  });
+
   it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
     const prev = process.env.AIMUX_HOME;
     process.env.AIMUX_HOME = "/home/user/.aimux-custom";
