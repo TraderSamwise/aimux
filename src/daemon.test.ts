@@ -75,7 +75,7 @@ describe("daemon supervision", () => {
     vi.mocked(requestJson).mockReset();
     vi.mocked(requestJson).mockResolvedValue({
       status: 200,
-      json: { ok: true, serviceInfo: getProjectServiceManifest() },
+      json: { ok: true, pid: 20_000, serviceInfo: getProjectServiceManifest() },
     });
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & { pid: number; unref: () => void };
@@ -122,6 +122,7 @@ describe("daemon supervision", () => {
       status: 200,
       json: {
         ok: true,
+        pid: 20_000,
         serviceInfo: { apiVersion: 4, capabilities: {}, buildStamp: "old-build" },
       },
     });
@@ -143,12 +144,47 @@ describe("daemon supervision", () => {
   it("replaces a live project service when health omits the manifest", async () => {
     vi.mocked(requestJson).mockResolvedValue({
       status: 200,
-      json: { ok: true },
+      json: { ok: true, pid: 20_000 },
     });
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
     const first = await (daemon as any).ensureProject(projectRoot);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(first.pid);
+
+    const second = await (daemon as any).ensureProject(projectRoot);
+
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces a live project service when endpoint pid points elsewhere", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = await (daemon as any).ensureProject(projectRoot);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`].startedAt = "2026-06-21T00:00:00.000Z";
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(first.pid + 1);
+
+    const second = await (daemon as any).ensureProject(projectRoot);
+
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(requestJson)).toHaveBeenCalledTimes(0);
+  });
+
+  it("replaces a live project service when health pid points elsewhere", async () => {
+    vi.mocked(requestJson).mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 20_001, serviceInfo: getProjectServiceManifest() },
+    });
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = await (daemon as any).ensureProject(projectRoot);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`].startedAt = "2026-06-21T00:00:00.000Z";
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(first.pid);
 

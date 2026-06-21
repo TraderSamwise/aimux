@@ -630,11 +630,31 @@ export class AimuxDaemon {
         return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       try {
+        if (endpoint.pid !== existing.pid) {
+          if (withinStartupGrace) return refreshExisting();
+          log.warn("project service metadata endpoint pid mismatch", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            endpointPid: endpoint.pid,
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
+        }
         const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
           timeoutMs: PROJECT_SERVICE_HEALTH_TIMEOUT_MS,
         });
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
+        }
+        if (json?.pid !== existing.pid) {
+          if (withinStartupGrace) return refreshExisting();
+          log.warn("project service health pid mismatch", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            healthPid: json?.pid,
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
         }
         const expectedManifest = getProjectServiceManifest();
         if (!manifestsMatch(expectedManifest, json?.serviceInfo)) {

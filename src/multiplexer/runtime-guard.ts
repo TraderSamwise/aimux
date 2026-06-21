@@ -1,5 +1,5 @@
 import { requestJson } from "../http-client.js";
-import { resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { loadMetadataEndpoint } from "../metadata-store.js";
 import {
   getProjectServiceManifest,
   hasProjectServiceBuildDrift,
@@ -111,15 +111,18 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
   let endpointPresent = false;
   let serviceManifest: ProjectServiceManifest | null | "unreachable" = null;
   try {
-    const endpoint = resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     endpointPresent = Boolean(endpoint);
     if (endpoint) {
       try {
-        const { status, json } = await requestJson<{ serviceInfo?: ProjectServiceManifest }>(
+        const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
           `http://${endpoint.host}:${endpoint.port}/health`,
           { timeoutMs: HEALTH_TIMEOUT_MS },
         );
-        serviceManifest = status >= 200 && status < 300 && json?.serviceInfo ? json.serviceInfo : "unreachable";
+        serviceManifest =
+          status >= 200 && status < 300 && json?.pid === endpoint.pid && json?.serviceInfo
+            ? json.serviceInfo
+            : "unreachable";
       } catch {
         serviceManifest = "unreachable";
       }
