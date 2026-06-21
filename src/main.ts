@@ -2724,13 +2724,10 @@ program
   .action(async (opts: { tool: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
-      initProject();
-      const mux = new Multiplexer();
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.spawnAgent({
-        toolConfigKey: opts.tool,
-        targetWorktreePath,
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+        tool: opts.tool,
+        worktreePath: targetWorktreePath,
         open: opts.open,
       });
       if (opts.json) {
@@ -2771,14 +2768,12 @@ overseerCmd
   .action(async (opts: { tool?: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
       initProject();
-      const mux = new Multiplexer();
       const tool = opts.tool ?? loadConfig().defaultTool;
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.spawnAgent({
-        toolConfigKey: tool,
-        targetWorktreePath,
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+        tool,
+        worktreePath: targetWorktreePath,
         open: opts.open,
         overseer: true,
       });
@@ -2823,15 +2818,12 @@ program
     ) => {
       try {
         const projectRoot = await prepareProjectContext(opts.project);
-        await ensureDaemonProjectReady(projectRoot);
-        initProject();
-        const mux = new Multiplexer();
         const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-        const result = await mux.forkAgent({
+        const result = await postLiveProjectServiceJson(projectRoot, "/agents/fork", {
           sourceSessionId,
-          targetToolConfigKey: opts.tool,
+          tool: opts.tool,
           instruction: opts.instruction,
-          targetWorktreePath,
+          worktreePath: targetWorktreePath,
           open: opts.open,
         });
         if (opts.json) {
@@ -3190,9 +3182,11 @@ program
   .action(async (sessionId: string, opts: { worktree: string; project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
       const targetWorktreePath = pathResolve(opts.worktree);
-      const result = await mux.migrateAgentSession(sessionId, targetWorktreePath);
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/migrate", {
+        sessionId,
+        worktreePath: targetWorktreePath,
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3200,7 +3194,7 @@ program
               ok: true,
               projectRoot,
               sessionId: result.sessionId,
-              worktreePath: result.worktreePath ?? projectRoot,
+              worktreePath: result.worktreePath ?? targetWorktreePath,
             },
             null,
             2,
@@ -3208,7 +3202,7 @@ program
         );
         return;
       }
-      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? projectRoot}`);
+      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? targetWorktreePath}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
