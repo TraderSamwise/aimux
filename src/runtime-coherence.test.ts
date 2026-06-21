@@ -274,7 +274,7 @@ describe("runtime coherence report", () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
         listSessionNames: vi.fn(() => ["aimux-beta-222"]),
-        displayMessage: vi.fn(() => "/Users/sam/.aimux/native/local-old/dist/main.js --tmux-dashboard-internal"),
+        displayMessage: vi.fn(() => "/opt/aimux/native/local-old/dist/main.js --tmux-dashboard-internal"),
       } as Partial<TmuxRuntimeManager>),
       loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
       loadDaemonState: () => ({
@@ -300,21 +300,21 @@ describe("runtime coherence report", () => {
       })),
       readProcessArgs: vi.fn((pid: number) =>
         pid === 9001
-          ? "/Users/sam/.aimux/native/local-current/bin/aimux daemon run"
-          : "/Users/sam/.aimux/native/local-old/dist/main.js __project-service-internal",
+          ? "/opt/aimux/native/local-current/bin/aimux daemon run"
+          : "/opt/aimux/native/local-old/dist/main.js __project-service-internal",
       ),
       listProcessArgs: vi.fn(() => [
         {
           pid: 77,
-          args: "/Users/sam/.volta/bin/claude --settings command='/Users/sam/.aimux/native/local-old/dist/main.js' claude-hook stop",
+          args: "/Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop",
         },
       ]),
       getAimuxCliLaunchCommand: vi.fn(() => ({
-        command: "/Users/sam/.local/bin/aimux",
+        command: "/opt/aimux/bin/aimux",
         args: [],
         source: "stable-shim",
-        currentEntryPath: "/Users/sam/.aimux/native/local-current/dist/main.js",
-        stableShimPath: "/Users/sam/.local/bin/aimux",
+        currentEntryPath: "/opt/aimux/native/local-current/dist/main.js",
+        stableShimPath: "/opt/aimux/bin/aimux",
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,

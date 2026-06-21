@@ -181,8 +181,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
 }
 
 // Recreate the dashboard window with the freshly-installed binary: a detached `dashboard-reload`
-// rebuilds this tmux window, which replaces (kills) the current stale process. PATH-resolved so
-// it picks up the new install, not this process's old entrypoint.
+// rebuilds this tmux window, which replaces (kills) the current stale process.
 export function reloadDashboardFromGuard(host: DashboardControlHost): void {
   host.footerFlash = "Reloading dashboard…";
   host.footerFlashTicks = 5;
@@ -228,7 +227,7 @@ export function restartRuntimeFromGuard(host: DashboardControlHost): void {
 }
 
 export function resolveDashboardReloadCommand(): string {
-  return "aimux";
+  return process.env.AIMUX_CLI_BIN?.trim() || "aimux";
 }
 
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {
