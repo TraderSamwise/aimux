@@ -40,21 +40,15 @@ export function flattenSelectableRows(model: MetaDashboardModel): SelectableRow[
   return out;
 }
 
-/**
- * Resolve the jump target for the Nth selectable row. The session is overridden
- * to the target project's HOST session so openTarget resolves THIS client's
- * session for that project (not some other terminal's client session).
- */
 export function resolveJumpTarget(
   model: MetaDashboardModel,
   index: number,
-  hostSessionFor: (projectRoot: string) => string,
 ): { target: TmuxTarget; projectRoot: string } | null {
   const sel = flattenSelectableRows(model)[index];
   if (!sel) return null;
   return {
     projectRoot: sel.projectRoot,
-    target: { ...sel.row.target, sessionName: hostSessionFor(sel.projectRoot) },
+    target: sel.row.target,
   };
 }
 
@@ -185,7 +179,7 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
     };
 
     const performJump = (i: number) => {
-      const jump = resolveJumpTarget(model, i, (root) => tmux.getProjectSession(root).sessionName);
+      const jump = resolveJumpTarget(model, i);
       if (!jump) return;
       // Switch the real client explicitly (robust with multiple attached clients).
       const suffix = options.currentClientSession?.match(/-client-([a-f0-9]{8})$/)?.[1];

@@ -296,50 +296,11 @@ ensure_linked_window() {
   printf '%s' "$linked_index"
 }
 
-mark_last_used_local() {
-  item_id="$1"
-  [ -n "$item_id" ] || return 0
-  [ -n "${project_state_dir-}" ] || return 0
-  python3 - "$project_state_dir" "$item_id" "${live_client_session-}" <<'PY' >/dev/null 2>&1
-import json, sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-project_state_dir, item_id, client_session = sys.argv[1:]
-state_path = Path(project_state_dir) / "last-used.json"
-try:
-    state = json.loads(state_path.read_text()) if state_path.exists() else {}
-except Exception:
-    state = {}
-
-state["version"] = 1
-state.setdefault("items", {})
-state.setdefault("clients", {})
-state.setdefault("projectRecentIds", [])
-
-used_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-state["items"][item_id] = {"lastUsedAt": used_at}
-state["projectRecentIds"] = [item_id] + [entry for entry in state.get("projectRecentIds", []) if entry != item_id]
-state["projectRecentIds"] = state["projectRecentIds"][:64]
-
-if client_session:
-    client = state["clients"].get(client_session) or {"recentIds": [], "updatedAt": used_at}
-    recent_ids = [item_id] + [entry for entry in client.get("recentIds", []) if entry != item_id]
-    client["recentIds"] = recent_ids[:64]
-    client["updatedAt"] = used_at
-    state["clients"][client_session] = client
-
-state["updatedAt"] = used_at
-state_path.write_text(json.dumps(state, indent=2) + "\n")
-PY
-}
-
 switch_local_window() {
   target_window_id="$1"
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
-  item_id="${2-}"
   is_live_window "$target_window_id" || return 1
   target_index=$(ensure_linked_window "$target_window_id") || return 1
   if [ -n "${live_client_tty-}" ]; then
@@ -347,7 +308,6 @@ switch_local_window() {
   else
     tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   fi
-  mark_last_used_local "$item_id"
   if [ -n "${live_client_tty-}" ]; then
     tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
   elif [ -n "$client_tty" ]; then
@@ -927,8 +887,7 @@ fallback_local_control() {
       ;;
     next|prev|attention|window)
       target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || return 1
-      target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; import sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
-      switch_local_window "$target_window_id" "$target_item_id"
+      switch_local_window "$target_window_id"
       ;;
     team)
       debug_log_line "team requested session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown} pane=${pane_id:-unknown}"
@@ -937,8 +896,7 @@ fallback_local_control() {
         show_local_message "aimux: no live teammate target"
         return 0
       }
-      target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
-      switch_local_window "$target_window_id" "$target_item_id"
+      switch_local_window "$target_window_id"
       ;;
   esac
   return 1
