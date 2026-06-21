@@ -95,6 +95,8 @@ export interface RestartAimuxControlPlaneOptions {
   serviceExitTimeoutMs?: number;
   killGraceMs?: number;
   verifyAfterRestart?: boolean;
+  verificationTimeoutMs?: number;
+  verificationIntervalMs?: number;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -304,6 +306,50 @@ async function waitForPidsExit(input: {
   }
 }
 
+async function verifyPostRestartCoherence(input: {
+  buildRuntimeCoherenceReport: typeof buildRuntimeCoherenceReport;
+  coherence: BuildRuntimeCoherenceReportOptions | undefined;
+  sleep: (ms: number) => Promise<void>;
+  timeoutMs: number;
+  intervalMs: number;
+}): Promise<RuntimeRestartResult["verification"]> {
+  const intervalMs = Math.max(1, input.intervalMs);
+  const attempts = Math.max(1, Math.floor(Math.max(0, input.timeoutMs) / intervalMs) + 1);
+  let latestAfter: RuntimeCoherenceReport | null = null;
+  let latestError: string | null = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const after = await input.buildRuntimeCoherenceReport(input.coherence);
+      latestAfter = after;
+      const failedProjects = after.projects
+        .filter((project) => project.status !== "ok")
+        .map((project) => project.projectRoot);
+      latestError =
+        failedProjects.length === 0 ? null : `post-restart version check failed for ${failedProjects.join(", ")}`;
+      if (!latestError) {
+        return {
+          status: "ok",
+          after,
+          error: null,
+        };
+      }
+    } catch (error) {
+      latestError = errorMessage(error);
+    }
+
+    if (attempt < attempts - 1) {
+      await input.sleep(intervalMs);
+    }
+  }
+
+  return {
+    status: "failed",
+    after: latestAfter,
+    error: latestError,
+  };
+}
+
 export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
@@ -411,21 +457,13 @@ export async function restartAimuxControlPlane(
     error: null,
   };
   if (shouldVerifyAfterRestart) {
-    try {
-      const after = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
-      const failedProjects = after.projects.filter((project) => project.status !== "ok").map((project) => project.projectRoot);
-      verification = {
-        status: failedProjects.length === 0 ? "ok" : "failed",
-        after,
-        error: failedProjects.length === 0 ? null : `post-restart version check failed for ${failedProjects.join(", ")}`,
-      };
-    } catch (error) {
-      verification = {
-        status: "failed",
-        after: null,
-        error: errorMessage(error),
-      };
-    }
+    verification = await verifyPostRestartCoherence({
+      buildRuntimeCoherenceReport: options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport,
+      coherence: options.coherence,
+      sleep,
+      timeoutMs: options.verificationTimeoutMs ?? 5000,
+      intervalMs: options.verificationIntervalMs ?? 250,
+    });
   }
   const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
   return {
