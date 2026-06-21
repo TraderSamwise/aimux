@@ -61,6 +61,11 @@ need tar
 
 node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(major >= 24 ? 0 : 1)' \
   || fail "Node.js >= 24 is required"
+NODE_BIN="$(command -v node)"
+
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 
 PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
@@ -116,6 +121,28 @@ DEST="$INSTALL_ROOT/$INSTALLED_VERSION"
 mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
 rm -rf "$DEST"
 mv "$TMP_DIR/aimux" "$DEST"
+NODE_BIN_QUOTED="$(shell_quote "$NODE_BIN")"
+DEST_QUOTED="$(shell_quote "$DEST")"
+cat > "$DEST/bin/aimux" <<EOF
+#!/usr/bin/env sh
+set -eu
+
+AIMUX_NODE_BIN=$NODE_BIN_QUOTED
+AIMUX_ROOT=$DEST_QUOTED
+
+if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME; fi
+if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
+if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
+if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
+
+if [ "\${1:-}" = "expose" ]; then
+  AIMUX_POPUP_EXPOSE_ENTRY="\$AIMUX_ROOT/dist/popup-expose.js"
+  export AIMUX_POPUP_EXPOSE_ENTRY
+  exec "\$AIMUX_NODE_BIN" --input-type=module -e 'import("node:url").then(({ pathToFileURL }) => import(pathToFileURL(process.env.AIMUX_POPUP_EXPOSE_ENTRY).href)).then((m) => m.runExpose()).catch((error) => { console.error(error); process.exit(1); });' "\$0" "\$@"
+fi
+
+exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/main.js" "\$@"
+EOF
 chmod +x "$DEST/bin/aimux"
 ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"
 
