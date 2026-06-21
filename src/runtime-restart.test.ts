@@ -216,6 +216,7 @@ describe("restartAimuxControlPlane", () => {
       startedAt: "after",
       updatedAt: "after",
     }));
+    const ensureDaemonRunning = vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" }));
     const resolveDashboardTarget = vi.fn((projectRoot: string) => ({
       dashboardSession: { sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222" },
       dashboardTarget: {
@@ -230,7 +231,7 @@ describe("restartAimuxControlPlane", () => {
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
       stopDaemon: vi.fn(async () => stoppedDaemon()),
-      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureDaemonRunning,
       ensureProjectService,
       createTmux: () => ({ isAvailable: () => true }),
       resolveDashboardTarget,
@@ -238,6 +239,7 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(result.summary).toEqual({ projects: 2, servicesEnsured: 2, dashboardsReloaded: 1, failures: 0 });
+    expect(ensureDaemonRunning).toHaveBeenCalledWith({ adoptExisting: false });
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
     expect(resolveDashboardTarget).toHaveBeenCalledOnce();

@@ -106,8 +106,9 @@ describe("TmuxSessionTransport", () => {
     const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
     const onExit = vi.fn();
     transport.onExit(onExit);
-    vi.advanceTimersByTime(2200);
+    vi.advanceTimersByTime(30_000);
     expect(onExit).toHaveBeenCalledWith(0);
+    expect(manager.isWindowAlive as any).not.toHaveBeenCalled();
     transport.destroy();
     vi.useRealTimers();
   });
@@ -123,15 +124,19 @@ describe("TmuxSessionTransport", () => {
       renameWindow: vi.fn(),
       openTarget: vi.fn(),
       isInsideTmux: vi.fn().mockReturnValue(false),
-      getTargetByWindowId: vi.fn().mockReturnValue(createTarget()),
+      getTargetByWindowId: vi.fn().mockReturnValueOnce(createTarget()).mockReturnValueOnce({
+        ...createTarget(),
+        paneDead: true,
+      }),
       isWindowAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
     } as unknown as TmuxRuntimeManager;
 
     const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
     const onExit = vi.fn();
     transport.onExit(onExit);
-    vi.advanceTimersByTime(2200);
+    vi.advanceTimersByTime(30_000);
     expect(onExit).toHaveBeenCalledWith(0);
+    expect(manager.isWindowAlive as any).not.toHaveBeenCalled();
     transport.destroy();
     vi.useRealTimers();
   });

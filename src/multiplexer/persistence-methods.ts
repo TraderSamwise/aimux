@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { loadConfig } from "../config.js";
@@ -14,7 +14,7 @@ import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
-import { writeJsonAtomic, writeTextAtomic } from "../atomic-write.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import {
   buildGraveyardCleanupPlan,
@@ -250,15 +250,17 @@ export const persistenceMethods = {
     clearInterval(this.inboxCleanupInterval);
     this.inboxCleanupInterval = null;
   },
-  writeStatuslineFile(this: any, input?: { force?: boolean }): void {
+  writeStatuslineFile(this: any, input?: { force?: boolean; repairTmux?: boolean; refreshTmux?: boolean }): void {
     try {
       if (this.mode !== "project-service") return;
-      this.repairManagedTmuxTargets();
-      for (const session of this.sessions) {
-        this.syncTmuxWindowMetadata(session.id);
+      if (input?.repairTmux) {
+        this.repairManagedTmuxTargets();
+        for (const session of this.sessions) {
+          this.syncTmuxWindowMetadata(session.id);
+        }
       }
       this.dashboardUiStateStore.loadSharedState(this.dashboardState);
-      this.refreshDesktopStateSnapshot();
+      this.refreshDesktopStateSnapshot({ includeRuntimeInfo: false });
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const data = this.buildStatuslineSnapshot();
@@ -268,9 +270,11 @@ export const persistenceMethods = {
         return;
       }
       this.lastStatuslineSnapshotKey = snapshotKey;
-      writeTextAtomic(filePath, JSON.stringify(data) + "\n");
+      writeFileSync(filePath, JSON.stringify(data) + "\n");
       this.writePrecomputedTmuxStatuslineFiles(data);
-      this.tmuxRuntimeManager.refreshStatus();
+      if (input?.refreshTmux) {
+        this.tmuxRuntimeManager.refreshStatus();
+      }
     } catch {}
   },
 
@@ -296,9 +300,8 @@ export const persistenceMethods = {
       invalidateTmuxStatuslineArtifacts(process.cwd());
       this.lastStatuslineSnapshotKey = null;
     }
-    this.repairManagedTmuxTargets();
     this.invalidateDesktopStateSnapshot();
-    this.writeStatuslineFile({ force: _input?.force === true });
+    this.writeStatuslineFile({ force: _input?.force === true, repairTmux: true, refreshTmux: true });
     return { ok: true };
   },
 
@@ -310,7 +313,7 @@ export const persistenceMethods = {
     // Cosmetic per-window statusline text, written concurrently from the refresh
     // path: unique-temp atomic write (never a shared ".tmp"), and never fatal.
     try {
-      writeTextAtomic(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
+      writeFileSync(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
     } catch (error) {
       debug(
         `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -483,11 +486,11 @@ export const persistenceMethods = {
     };
   },
 
-  buildDesktopState(this: any): {
+  buildDesktopState(this: any, input: { includeStatusline?: boolean; includeRuntimeInfo?: boolean } = {}): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
     services: DashboardService[];
-    statusline: ReturnType<any["buildStatuslineSnapshot"]>;
+    statusline?: ReturnType<any["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
     worktreeGroups: WorktreeGroup[];
     operationFailures: DashboardOperationFailure[];
@@ -495,7 +498,11 @@ export const persistenceMethods = {
     mainCheckoutPath?: string;
   } {
     if (!this.desktopStateSnapshot) {
-      this.refreshDesktopStateSnapshot();
+      if (input.includeRuntimeInfo === false && typeof this.buildDesktopStateSnapshot === "function") {
+        this.desktopStateSnapshot = this.buildDesktopStateSnapshot({ includeRuntimeInfo: false });
+      } else {
+        this.refreshDesktopStateSnapshot();
+      }
     }
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     const sessions = this.dashboardPendingActions.applyToSessions(desktopState.sessions);
@@ -509,17 +516,20 @@ export const persistenceMethods = {
       sessions,
       services,
     );
-    return {
+    const state = {
       sessions,
       teammates,
       services,
-      statusline: this.buildStatuslineSnapshot(),
       worktrees,
       worktreeGroups,
       operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
     };
+    if (input.includeStatusline !== false) {
+      return { ...state, statusline: this.buildStatuslineSnapshot() };
+    }
+    return state;
   },
 
   reapplyDashboardPendingActions(this: any): void {

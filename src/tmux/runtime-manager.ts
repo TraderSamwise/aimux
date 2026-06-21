@@ -24,6 +24,7 @@ export interface TmuxWindowInfo {
   name: string;
   active: boolean;
   activity?: number;
+  paneDead?: boolean;
 }
 
 export interface TmuxSessionRef {
@@ -37,6 +38,7 @@ export interface TmuxTarget {
   windowId: string;
   windowIndex: number;
   windowName: string;
+  paneDead?: boolean;
 }
 
 export interface TmuxClientInfo {
@@ -379,7 +381,7 @@ export class TmuxRuntimeManager {
         "-t",
         sessionName,
         "-F",
-        "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}",
+        "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}",
       ]);
     } catch {
       return [];
@@ -389,13 +391,14 @@ export class TmuxRuntimeManager {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [id, index, name, active, activity] = line.split("\t");
+        const [id, index, name, active, activity, paneDead] = line.split("\t");
         return {
           id,
           index: Number(index),
           name,
           active: active === "1",
           activity: activity ? Number(activity) : undefined,
+          paneDead: paneDead === "1",
         };
       });
   }
@@ -422,6 +425,7 @@ export class TmuxRuntimeManager {
       windowId: window.id,
       windowIndex: window.index,
       windowName: window.name,
+      paneDead: window.paneDead,
     };
   }
 

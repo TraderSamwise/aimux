@@ -12,6 +12,7 @@ import {
   applyDashboardModel,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
+  computeDashboardServices,
   computeDashboardSessions,
   startProjectServices,
   withMetadataServicePending,
@@ -1121,6 +1122,59 @@ describe("metadata pending actions", () => {
 });
 
 describe("computeDashboardSessions thread stats", () => {
+  it("can build API dashboard entries without live tmux process probes", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-no-runtime-probes-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const agentTarget = { windowId: "@1", windowIndex: 1, windowName: "claude" };
+      const serviceTarget = { windowId: "@2", windowIndex: 2, windowName: "server" };
+      const tmuxRuntimeManager = {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: agentTarget,
+            metadata: { kind: "agent", sessionId: "claude-1", createdAt: "2026-06-21T00:00:00.000Z" },
+          },
+          {
+            target: serviceTarget,
+            metadata: {
+              kind: "service",
+              sessionId: "service-1",
+              command: "yarn",
+              createdAt: "2026-06-21T00:00:00.000Z",
+            },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => {
+          throw new Error("should not probe window liveness");
+        }),
+        displayMessage: vi.fn(() => {
+          throw new Error("should not probe pane metadata");
+        }),
+        captureTarget: vi.fn(() => {
+          throw new Error("should not capture pane output");
+        }),
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]),
+        services: [],
+        offlineServices: [],
+        tmuxRuntimeManager,
+      };
+
+      const sessions = computeDashboardSessions(host, { includeRuntimeInfo: false });
+      const services = computeDashboardServices(host, [], { includeRuntimeInfo: false });
+
+      expect(sessions.find((entry) => entry.id === "claude-1")?.tmuxWindowIndex).toBe(1);
+      expect(services.find((entry) => entry.id === "service-1")?.status).toBe("running");
+      expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.displayMessage).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.captureTarget).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not count notification-tagged threads as session threads", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-threadstats-"));
     try {

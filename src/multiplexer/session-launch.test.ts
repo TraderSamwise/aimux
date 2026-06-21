@@ -1447,6 +1447,12 @@ describe("runProjectService", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.mode).toBe("project-service");
+    expect(host.startProjectServices.mock.invocationCallOrder[0]).toBeLessThan(
+      host.syncSessionsFromTopology.mock.invocationCallOrder[0],
+    );
+    expect(host.startProjectServices.mock.invocationCallOrder[0]).toBeLessThan(
+      host.writeInstructionFiles.mock.invocationCallOrder[0],
+    );
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
     expect(host.startGraveyardCleanup).toHaveBeenCalledOnce();
     expect(host.cleanupGraveyard).toHaveBeenCalledOnce();
