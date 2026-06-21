@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { loadDaemonInfo, loadDaemonState, type AimuxDaemonInfo, type ProjectServiceState } from "./daemon.js";
 import { requestJson } from "./http-client.js";
@@ -6,6 +7,7 @@ import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest 
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
 import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { AIMUX_VERSION } from "./version.js";
+import { getAimuxCliLaunchCommand, type AimuxCliLaunchCommand } from "./cli-launcher.js";
 
 export type RuntimeCoherenceStatus = "ok" | "missing" | "mismatch" | "unreachable";
 export type RuntimeCoherenceProjectStatus = "ok" | "needs-restart";
@@ -20,7 +22,16 @@ export interface RuntimeCoherenceDashboardReport {
   buildStamp: string | null;
   owner: string | null;
   runtimeOwner: string | null;
+  process: RuntimeCoherenceProcessReport | null;
   status: RuntimeCoherenceStatus;
+}
+
+export interface RuntimeCoherenceProcessReport {
+  pid: number | null;
+  argsPreview: string | null;
+  pathHints: string[];
+  staleNativePath: boolean;
+  error: string | null;
 }
 
 export interface RuntimeCoherenceProjectReport {
@@ -32,6 +43,7 @@ export interface RuntimeCoherenceProjectReport {
     daemonState: ProjectServiceState | null;
     endpoint: MetadataApiEndpoint | null;
     pid: number | null;
+    process: RuntimeCoherenceProcessReport | null;
     serviceInfo: Partial<ProjectServiceManifest> | null;
     error: string | null;
   };
@@ -42,6 +54,7 @@ export interface RuntimeCoherenceProjectReport {
 export interface RuntimeCoherenceReport {
   generatedAt: string;
   cliVersion: string;
+  cliLaunch: AimuxCliLaunchCommand;
   expected: {
     projectService: ProjectServiceManifest;
     runtimeOwner: string;
@@ -49,6 +62,7 @@ export interface RuntimeCoherenceReport {
   daemon: {
     running: boolean;
     info: AimuxDaemonInfo | null;
+    process: RuntimeCoherenceProcessReport | null;
     projectCount: number;
   };
   tmux: {
@@ -57,6 +71,7 @@ export interface RuntimeCoherenceReport {
     sessionCount: number;
   };
   projects: RuntimeCoherenceProjectReport[];
+  staleHookProcesses: RuntimeCoherenceProcessReport[];
   summary: {
     projects: number;
     ok: number;
@@ -79,6 +94,7 @@ type RuntimeCoherenceTmux = Pick<
   | "listSessionNames"
   | "listWindows"
   | "getWindowOption"
+  | "displayMessage"
 >;
 
 export interface BuildRuntimeCoherenceReportOptions {
@@ -88,6 +104,9 @@ export interface BuildRuntimeCoherenceReportOptions {
   loadDaemonState?: () => RuntimeCoherenceDaemonState;
   loadMetadataEndpoint?: (projectRoot?: string) => MetadataApiEndpoint | null;
   requestJson?: typeof requestJson;
+  readProcessArgs?: (pid: number) => string | null;
+  listProcessArgs?: () => Array<{ pid: number; args: string }>;
+  getAimuxCliLaunchCommand?: typeof getAimuxCliLaunchCommand;
   getDashboardBuildStamp?: (projectRoot: string) => string;
   getProjectServiceManifest?: () => ProjectServiceManifest;
   getRuntimeOwnerId?: () => string;
@@ -151,6 +170,7 @@ async function readProjectServiceHealth(input: {
       daemonState: null,
       endpoint: null,
       pid: null,
+      process: null,
       serviceInfo: null,
       error: null,
     };
@@ -175,6 +195,7 @@ async function readProjectServiceHealth(input: {
       daemonState: null,
       endpoint: input.endpoint,
       pid: typeof json?.pid === "number" ? json.pid : input.endpoint.pid,
+      process: null,
       serviceInfo,
       error: null,
     };
@@ -184,6 +205,7 @@ async function readProjectServiceHealth(input: {
       daemonState: null,
       endpoint: input.endpoint,
       pid: input.endpoint.pid,
+      process: null,
       serviceInfo: null,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -197,6 +219,7 @@ function listDashboardReports(input: {
   projectRoot: string;
   expectedDashboardBuildStamp: string;
   expectedRuntimeOwner: string;
+  cliLaunch: AimuxCliLaunchCommand;
 }): RuntimeCoherenceDashboardReport[] {
   if (!input.tmuxAvailable) return [];
 
@@ -222,6 +245,11 @@ function listDashboardReports(input: {
       const alive = input.tmux.isWindowAlive(target);
       const buildStamp = input.tmux.getWindowOption(target, "@aimux-dashboard-build");
       const owner = input.tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+      const process = buildProcessReport({
+        pid: null,
+        args: input.tmux.displayMessage("#{pane_start_command}", window.id),
+        cliLaunch: input.cliLaunch,
+      });
       const status =
         alive &&
         buildStamp === input.expectedDashboardBuildStamp &&
@@ -238,6 +266,7 @@ function listDashboardReports(input: {
         buildStamp,
         owner,
         runtimeOwner,
+        process,
         status,
       });
     }
@@ -246,6 +275,91 @@ function listDashboardReports(input: {
   return dashboards.sort((a, b) =>
     a.sessionName === b.sessionName ? a.windowIndex - b.windowIndex : a.sessionName.localeCompare(b.sessionName),
   );
+}
+
+function preview(value: string | null | undefined, max = 260): string | null {
+  const trimmed = value?.replace(/\s+/g, " ").trim();
+  if (!trimmed) return null;
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+}
+
+function nativePathHints(args: string | null | undefined): string[] {
+  if (!args) return [];
+  return [...new Set(args.match(/\S*\.aimux\/native\/\S+/g) ?? [])].slice(0, 8);
+}
+
+function currentNativeInstallRoot(cliLaunch: AimuxCliLaunchCommand): string | null {
+  const marker = ".aimux/native/";
+  const index = cliLaunch.currentEntryPath.indexOf(marker);
+  if (index < 0) return null;
+  const prefixEnd = index + marker.length;
+  const versionEnd = cliLaunch.currentEntryPath.indexOf("/", prefixEnd);
+  if (versionEnd < 0) return null;
+  return cliLaunch.currentEntryPath.slice(0, versionEnd + 1);
+}
+
+function hasStaleNativePath(args: string | null | undefined, cliLaunch: AimuxCliLaunchCommand): boolean {
+  const currentRoot = currentNativeInstallRoot(cliLaunch);
+  return nativePathHints(args).some((path) => {
+    if (path.includes(cliLaunch.currentEntryPath)) return false;
+    if (currentRoot && path.includes(currentRoot)) return false;
+    return true;
+  });
+}
+
+function buildProcessReport(input: {
+  pid: number | null;
+  args: string | null;
+  cliLaunch: AimuxCliLaunchCommand;
+  error?: string | null;
+}): RuntimeCoherenceProcessReport | null {
+  if (!input.args && !input.error && input.pid === null) return null;
+  return {
+    pid: input.pid,
+    argsPreview: preview(input.args),
+    pathHints: nativePathHints(input.args),
+    staleNativePath: hasStaleNativePath(input.args, input.cliLaunch),
+    error: input.error ?? null,
+  };
+}
+
+function defaultReadProcessArgs(pid: number): string | null {
+  try {
+    return execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function defaultListProcessArgs(): Array<{ pid: number; args: string }> {
+  try {
+    const raw = execFileSync("ps", ["-axo", "pid=,args="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return raw
+      .split("\n")
+      .map((line) => line.match(/^\s*(\d+)\s+(.+)$/))
+      .filter((match): match is RegExpMatchArray => Boolean(match))
+      .map((match) => ({ pid: Number(match[1]), args: match[2] ?? "" }))
+      .filter((entry) => Number.isInteger(entry.pid) && entry.pid > 0 && entry.args.trim());
+  } catch {
+    return [];
+  }
+}
+
+function listStaleHookProcesses(input: {
+  listProcessArgs: () => Array<{ pid: number; args: string }>;
+  cliLaunch: AimuxCliLaunchCommand;
+}): RuntimeCoherenceProcessReport[] {
+  return input
+    .listProcessArgs()
+    .filter((entry) => entry.args.includes("claude-hook") || entry.args.includes("codex-hook"))
+    .map((entry) => buildProcessReport({ pid: entry.pid, args: entry.args, cliLaunch: input.cliLaunch }))
+    .filter((entry): entry is RuntimeCoherenceProcessReport => Boolean(entry?.staleNativePath));
 }
 
 function projectStatus(
@@ -263,6 +377,9 @@ export async function buildRuntimeCoherenceReport(
   const daemonState = (options.loadDaemonState ?? loadDaemonState)();
   const expectedService = (options.getProjectServiceManifest ?? getProjectServiceManifest)();
   const expectedRuntimeOwner = (options.getRuntimeOwnerId ?? getRuntimeOwnerId)();
+  const cliLaunch = (options.getAimuxCliLaunchCommand ?? getAimuxCliLaunchCommand)();
+  const readProcessArgs = options.readProcessArgs ?? defaultReadProcessArgs;
+  const listProcessArgs = options.listProcessArgs ?? defaultListProcessArgs;
   const tmuxAvailable = tmux.isAvailable();
   const sessionNames = tmuxAvailable ? tmux.listSessionNames() : [];
   const knownProjects = collectKnownProjects({ daemonState, tmux, tmuxAvailable, sessionNames });
@@ -279,6 +396,11 @@ export async function buildRuntimeCoherenceReport(
       expected: expectedService,
     });
     service.daemonState = findProjectDaemonState(daemonState, knownProject.projectRoot);
+    service.process = buildProcessReport({
+      pid: service.pid,
+      args: service.pid ? readProcessArgs(service.pid) : null,
+      cliLaunch,
+    });
     if (!service.endpoint && service.daemonState) {
       service.status = "unreachable";
       service.pid = service.daemonState.pid;
@@ -292,6 +414,7 @@ export async function buildRuntimeCoherenceReport(
       projectRoot: knownProject.projectRoot,
       expectedDashboardBuildStamp,
       expectedRuntimeOwner,
+      cliLaunch,
     });
     const project = {
       projectRoot: knownProject.projectRoot,
@@ -309,6 +432,7 @@ export async function buildRuntimeCoherenceReport(
   return {
     generatedAt: (options.now ?? (() => new Date()))().toISOString(),
     cliVersion: AIMUX_VERSION,
+    cliLaunch,
     expected: {
       projectService: expectedService,
       runtimeOwner: expectedRuntimeOwner,
@@ -316,6 +440,11 @@ export async function buildRuntimeCoherenceReport(
     daemon: {
       running: Boolean(daemonInfo),
       info: daemonInfo,
+      process: buildProcessReport({
+        pid: daemonInfo?.pid ?? null,
+        args: daemonInfo?.pid ? readProcessArgs(daemonInfo.pid) : null,
+        cliLaunch,
+      }),
       projectCount: Object.keys(daemonState.projects).length,
     },
     tmux: {
@@ -324,6 +453,7 @@ export async function buildRuntimeCoherenceReport(
       sessionCount: sessionNames.length,
     },
     projects,
+    staleHookProcesses: listStaleHookProcesses({ listProcessArgs, cliLaunch }),
     summary: {
       projects: projects.length,
       ok,
@@ -341,13 +471,27 @@ function formatEndpoint(endpoint: MetadataApiEndpoint | null): string {
   return endpoint ? `${endpoint.host}:${endpoint.port}` : "(none)";
 }
 
+function renderProcess(label: string, process: RuntimeCoherenceProcessReport | null): string[] {
+  if (!process) return [`    ${label}: (unknown)`];
+  const stale = process.staleNativePath ? " stale-native-path=yes" : "";
+  const lines = [`    ${label}: pid=${process.pid ?? "(unknown)"}${stale}`];
+  if (process.argsPreview) lines.push(`      args: ${process.argsPreview}`);
+  if (process.pathHints.length > 0) lines.push(`      native paths: ${process.pathHints.join(", ")}`);
+  if (process.error) lines.push(`      error: ${process.error}`);
+  return lines;
+}
+
 export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): string {
   const lines = [
     "Aimux Versions",
     `  cli version: ${report.cliVersion}`,
+    `  cli launcher: ${report.cliLaunch.source} ${report.cliLaunch.command} ${report.cliLaunch.args.join(" ")}`.trim(),
+    `  cli current entry: ${report.cliLaunch.currentEntryPath}`,
+    `  cli stable shim: ${report.cliLaunch.stableShimPath}`,
     `  expected project service: ${formatManifest(report.expected.projectService)}`,
     `  expected runtime owner: ${report.expected.runtimeOwner}`,
     `  daemon: ${report.daemon.running ? `running pid=${report.daemon.info?.pid}` : "not running"}`,
+    ...renderProcess("daemon process", report.daemon.process),
     `  daemon projects: ${report.daemon.projectCount}`,
     `  tmux: ${report.tmux.available ? (report.tmux.version ?? "available") : "unavailable"}`,
     `  tmux sessions: ${report.tmux.sessionCount}`,
@@ -361,6 +505,7 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
     lines.push(
       `  service: ${project.service.status} endpoint=${formatEndpoint(project.service.endpoint)} pid=${project.service.pid ?? "(unknown)"}`,
     );
+    lines.push(...renderProcess("process", project.service.process));
     lines.push(`    running: ${formatManifest(project.service.serviceInfo)}`);
     lines.push(`    expected: ${formatManifest(report.expected.projectService)}`);
     if (project.service.error) lines.push(`    error: ${project.service.error}`);
@@ -373,10 +518,21 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
       lines.push(
         `    ${dashboard.status} ${dashboard.sessionName}:${dashboard.windowId} ${dashboard.windowName} alive=${dashboard.alive ? "yes" : "no"}`,
       );
+      if (dashboard.process) {
+        lines.push(...renderProcess("process", dashboard.process).map((line) => `  ${line}`));
+      }
       lines.push(`      build: ${dashboard.buildStamp ?? "(missing)"} expected=${project.expectedDashboardBuildStamp}`);
       lines.push(
         `      owner: ${dashboard.owner ?? "(missing)"} runtimeOwner=${dashboard.runtimeOwner ?? "(missing)"}`,
       );
+    }
+  }
+
+  if (report.staleHookProcesses.length > 0) {
+    lines.push("");
+    lines.push(`Stale hook processes: ${report.staleHookProcesses.length}`);
+    for (const process of report.staleHookProcesses.slice(0, 10)) {
+      lines.push(...renderProcess("hook process", process).map((line) => line.replace(/^ {4}/, "  ")));
     }
   }
 

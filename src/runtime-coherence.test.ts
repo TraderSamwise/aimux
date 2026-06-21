@@ -37,6 +37,7 @@ function createTmux(overrides: Partial<TmuxRuntimeManager> = {}): TmuxRuntimeMan
       return [];
     }),
     isWindowAlive: vi.fn(() => true),
+    displayMessage: vi.fn(() => "node /current/dist/main.js --tmux-dashboard-internal"),
     getWindowOption: vi.fn((target: { windowId: string }, key: string) => {
       if (key === "@aimux-dashboard-build") return target.windowId === "@1" ? "dashboard-old" : "dashboard-new";
       if (key === TMUX_DASHBOARD_OWNER_OPTION) return "owner-new";
@@ -171,5 +172,63 @@ describe("runtime coherence report", () => {
     expect(report.projects[0]?.status).toBe("needs-restart");
     expect(report.projects[0]?.dashboards[0]?.status).toBe("mismatch");
     expect(renderRuntimeCoherenceReport(report)).toContain("runtimeOwner=owner-old");
+  });
+
+  it("reports stale native paths in processes and hook commands", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => ["aimux-beta-222"]),
+        displayMessage: vi.fn(() => "/Users/sam/.aimux/native/local-old/dist/main.js --tmux-dashboard-internal"),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          beta: {
+            projectId: "beta",
+            projectRoot: "/repo/beta",
+            pid: 1002,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43212,
+        pid: 1002,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson: vi.fn(async () => ({
+        status: 200,
+        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+      })),
+      readProcessArgs: vi.fn((pid: number) =>
+        pid === 9001
+          ? "/Users/sam/.aimux/native/local-current/bin/aimux daemon run"
+          : "/Users/sam/.aimux/native/local-old/dist/main.js __project-service-internal",
+      ),
+      listProcessArgs: vi.fn(() => [
+        {
+          pid: 77,
+          args: "/Users/sam/.volta/bin/claude --settings command='/Users/sam/.aimux/native/local-old/dist/main.js' claude-hook stop",
+        },
+      ]),
+      getAimuxCliLaunchCommand: vi.fn(() => ({
+        command: "/Users/sam/.local/bin/aimux",
+        args: [],
+        source: "stable-shim",
+        currentEntryPath: "/Users/sam/.aimux/native/local-current/dist/main.js",
+        stableShimPath: "/Users/sam/.local/bin/aimux",
+      })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.daemon.process?.staleNativePath).toBe(false);
+    expect(report.projects[0]?.service.process?.staleNativePath).toBe(true);
+    expect(report.projects[0]?.dashboards[0]?.process?.staleNativePath).toBe(true);
+    expect(report.staleHookProcesses).toHaveLength(1);
+    expect(renderRuntimeCoherenceReport(report)).toContain("Stale hook processes: 1");
   });
 });
