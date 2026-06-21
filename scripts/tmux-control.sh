@@ -380,6 +380,8 @@ show_local_expose() {
   [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
   # tmux popups are fixed-size, so exposé exits 75 when it detects the terminal resized;
   # relaunch it at the new 100%×100% bounds. Each pass recaptures a fresh backdrop.
+  # Relies on display-popup -E propagating the command's exit code (tmux >= 3.3); on
+  # older tmux popup_status is always 0, so the loop simply never relaunches.
   while :; do
     # Snapshot the host BEFORE the popup opens; opening it transiently reflows the host pane,
     # so an in-popup capture would catch a mis-sized frame. Exposé reads then deletes this file.
