@@ -356,13 +356,13 @@ describe("TmuxRuntimeManager", () => {
         joined ===
         `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
-        return "@3\t3\tcodex\t1\t100\n@9\t9\tshell\t0\t90";
+        return "@3\t3\tcodex\t1\t100\t0\n@9\t9\tshell\t0\t90\t0";
       }
       if (
         joined ===
         `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
       ) {
-        return "@3\t3\tcodex\t0\t100\n@10\t10\tdashboard\t1\t110";
+        return "@3\t3\tcodex\t0\t100\t0\n@10\t10\tdashboard\t1\t110\t1";
       }
       if (joined === "show-window-options -v -t @3 @aimux-meta") {
         return JSON.stringify({
@@ -399,6 +399,7 @@ describe("TmuxRuntimeManager", () => {
 
     const entries = manager.listProjectManagedWindows("/repo/mobile");
     expect(entries.map((entry) => entry.target.windowId)).toEqual(["@3", "@9", "@10"]);
+    expect(entries.find((entry) => entry.target.windowId === "@10")?.target.paneDead).toBe(true);
     expect(entries.map((entry) => entry.target.sessionName)).toEqual([
       hostSessionName,
       hostSessionName,
