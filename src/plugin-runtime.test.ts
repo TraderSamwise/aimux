@@ -205,17 +205,21 @@ describe("deriveAlertFromAgentEvent", () => {
     });
 
     await runtime.start();
-    const statuses = runtime.getPluginStatuses();
+    try {
+      const statuses = runtime.getPluginStatuses();
 
-    expect(statuses.find((status) => status.path === noDefaultPath)).toMatchObject({
-      source: "user",
-      status: "failed",
-      error: "default export must be a function",
-    });
-    expect(statuses.find((status) => status.path === noInstancePath)).toMatchObject({
-      source: "user",
-      status: "failed",
-      error: "plugin factory returned no instance",
-    });
+      expect(statuses.find((status) => status.path === noDefaultPath)).toMatchObject({
+        source: "user",
+        status: "failed",
+        error: "default export must be a function",
+      });
+      expect(statuses.find((status) => status.path === noInstancePath)).toMatchObject({
+        source: "user",
+        status: "failed",
+        error: "plugin factory returned no instance",
+      });
+    } finally {
+      await runtime.stop();
+    }
   });
 });
