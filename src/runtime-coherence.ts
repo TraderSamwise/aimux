@@ -176,40 +176,41 @@ async function readProjectServiceHealth(input: {
     };
   }
 
-  try {
-    const { status, json } = await input.requestJsonImpl(
-      `http://${input.endpoint.host}:${input.endpoint.port}/health`,
-      {
-        timeoutMs: 1000,
-      },
-    );
-    if (status < 200 || status >= 300 || json?.ok === false) {
-      throw new Error(json?.error || `health request failed: ${status}`);
+  const healthUrl = `http://${input.endpoint.host}:${input.endpoint.port}/health`;
+  let latestError: unknown = null;
+  for (const timeoutMs of [1000, 4000]) {
+    try {
+      const { status, json } = await input.requestJsonImpl(healthUrl, { timeoutMs });
+      if (status < 200 || status >= 300 || json?.ok === false) {
+        throw new Error(json?.error || `health request failed: ${status}`);
+      }
+      const serviceInfo =
+        json?.serviceInfo && typeof json.serviceInfo === "object"
+          ? (json.serviceInfo as Partial<ProjectServiceManifest>)
+          : null;
+      return {
+        status: manifestsMatch(input.expected, serviceInfo) ? "ok" : "mismatch",
+        daemonState: null,
+        endpoint: input.endpoint,
+        pid: typeof json?.pid === "number" ? json.pid : input.endpoint.pid,
+        process: null,
+        serviceInfo,
+        error: null,
+      };
+    } catch (error) {
+      latestError = error;
     }
-    const serviceInfo =
-      json?.serviceInfo && typeof json.serviceInfo === "object"
-        ? (json.serviceInfo as Partial<ProjectServiceManifest>)
-        : null;
-    return {
-      status: manifestsMatch(input.expected, serviceInfo) ? "ok" : "mismatch",
-      daemonState: null,
-      endpoint: input.endpoint,
-      pid: typeof json?.pid === "number" ? json.pid : input.endpoint.pid,
-      process: null,
-      serviceInfo,
-      error: null,
-    };
-  } catch (error) {
-    return {
-      status: "unreachable",
-      daemonState: null,
-      endpoint: input.endpoint,
-      pid: input.endpoint.pid,
-      process: null,
-      serviceInfo: null,
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
+
+  return {
+    status: "unreachable",
+    daemonState: null,
+    endpoint: input.endpoint,
+    pid: input.endpoint.pid,
+    process: null,
+    serviceInfo: null,
+    error: latestError instanceof Error ? latestError.message : String(latestError),
+  };
 }
 
 function listDashboardReports(input: {
