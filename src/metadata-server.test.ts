@@ -52,6 +52,66 @@ describe("MetadataServer threads API", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("exposes project service resource diagnostics in health", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      pid: process.pid,
+      resources: {
+        uptimeMs: expect.any(Number),
+        memoryRssBytes: expect.any(Number),
+        memoryHeapUsedBytes: expect.any(Number),
+      },
+      recentSlowRequests: [],
+    });
+  });
+
+  it("records slow desktop-state requests for health diagnostics", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => {
+          const deadline = Date.now() + 275;
+          while (Date.now() < deadline) {
+            Date.now();
+          }
+          return {
+            sessions: [],
+            teammates: [],
+            services: [],
+            worktreeGroups: [],
+            mainCheckoutInfo: { name: "Main Checkout" },
+          };
+        },
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`);
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await health.json();
+
+    expect(json.recentSlowRequests).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/desktop-state",
+        statusCode: 200,
+        durationMs: expect.any(Number),
+        resources: expect.objectContaining({
+          memoryRssBytes: expect.any(Number),
+          memoryHeapUsedBytes: expect.any(Number),
+        }),
+      }),
+    ]);
+  });
+
   function seedAgentTopology(
     sessions: Array<{
       id: string;
