@@ -782,7 +782,8 @@ async function verifyProjectServiceEndpoint(
     if (typeof json?.pid === "number" && json.pid !== endpoint.pid) return "stale";
     if (!manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) return "stale";
     return "ok";
-  } catch {
+  } catch (error) {
+    if (isProjectServiceConnectionError(error)) return "stale";
     return "retry";
   }
 }
