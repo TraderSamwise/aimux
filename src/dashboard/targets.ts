@@ -119,7 +119,7 @@ export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeMa
 export function resolveDashboardTarget(
   projectRoot: string,
   tmux: TmuxRuntimeManager,
-  options: { forceReload?: boolean } = {},
+  options: { forceReload?: boolean; openInHostSession?: boolean } = {},
 ): DashboardTargetRef {
   const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
   pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
@@ -134,7 +134,9 @@ export function resolveDashboardTarget(
     command: dashboardCommand.command,
     args: dashboardCommand.args,
   });
-  const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  const openSessionName = options.openInHostSession
+    ? dashboardSession.sessionName
+    : tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
   const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
   const currentOwner = getRuntimeOwnerId();

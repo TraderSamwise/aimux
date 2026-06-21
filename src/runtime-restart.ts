@@ -51,7 +51,19 @@ export interface RuntimeRestartResult {
   };
 }
 
-type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable">;
+type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
+  Partial<
+    Pick<
+      TmuxRuntimeManager,
+      | "getProjectSession"
+      | "hasWindow"
+      | "killWindow"
+      | "listSessionNames"
+      | "listWindows"
+      | "linkWindowToSession"
+      | "selectWindow"
+    >
+  >;
 
 export interface RestartAimuxControlPlaneOptions {
   projectRoot?: string;
@@ -65,7 +77,7 @@ export interface RestartAimuxControlPlaneOptions {
   resolveDashboardTarget?: (
     projectRoot: string,
     tmux: RuntimeRestartTmux,
-    options: { forceReload: true },
+    options: { forceReload: true; openInHostSession: true },
   ) => {
     dashboardSession: { sessionName: string };
     dashboardTarget: TmuxTarget;
@@ -115,6 +127,59 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   return new Set(
     before.projects.filter((project) => project.dashboards.length > 0).map((project) => project.projectRoot),
   );
+}
+
+function stopPreRestartDashboards(before: RuntimeCoherenceReport, tmux: RuntimeRestartTmux): void {
+  if (!tmux.isAvailable() || !tmux.killWindow || !tmux.hasWindow) return;
+  const seen = new Set<string>();
+  for (const dashboard of before.projects.flatMap((project) => project.dashboards)) {
+    if (seen.has(dashboard.windowId)) continue;
+    seen.add(dashboard.windowId);
+    const target: TmuxTarget = {
+      sessionName: dashboard.sessionName,
+      windowId: dashboard.windowId,
+      windowIndex: dashboard.windowIndex,
+      windowName: dashboard.windowName,
+    };
+    try {
+      if (tmux.hasWindow(target)) tmux.killWindow(target);
+    } catch {}
+  }
+}
+
+function relinkDashboardToClientSessions(
+  projectRoot: string,
+  tmux: RuntimeRestartTmux,
+  dashboardTarget: TmuxTarget,
+): void {
+  if (
+    !tmux.isAvailable() ||
+    !tmux.getProjectSession ||
+    !tmux.listSessionNames ||
+    !tmux.listWindows ||
+    !tmux.linkWindowToSession
+  ) {
+    return;
+  }
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  for (const sessionName of tmux.listSessionNames()) {
+    if (!sessionName.startsWith(`${hostSession}-client-`)) continue;
+    const windows = tmux.listWindows(sessionName);
+    const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
+    const missingDashboard = !windows.some((window) => window.name.startsWith("dashboard"));
+    if (alreadyLinked) continue;
+    let linked: TmuxTarget;
+    try {
+      linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
+    } catch {
+      linked = tmux.linkWindowToSession(sessionName, dashboardTarget);
+    }
+    if (missingDashboard && tmux.selectWindow) {
+      try {
+        tmux.selectWindow(linked);
+      } catch {}
+    }
+  }
 }
 
 export function isExitedProcessState(state: string): boolean {
@@ -251,6 +316,8 @@ export async function restartAimuxControlPlane(
       },
     ];
   });
+  const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
+  stopPreRestartDashboards(before, tmux);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
@@ -290,7 +357,6 @@ export async function restartAimuxControlPlane(
   });
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)({ adoptExisting: false });
   const ensureService = options.ensureProjectService ?? ensureProjectService;
-  const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
   const resolveDashboard =
     options.resolveDashboardTarget ??
     ((projectRoot, tmux, resolveOptions) =>
@@ -315,7 +381,8 @@ export async function restartAimuxControlPlane(
       result.dashboard.error = "tmux is not installed or not available in PATH";
     } else {
       try {
-        const resolved = resolveDashboard(projectRoot, tmux, { forceReload: true });
+        const resolved = resolveDashboard(projectRoot, tmux, { forceReload: true, openInHostSession: true });
+        relinkDashboardToClientSessions(projectRoot, tmux, resolved.dashboardTarget);
         result.dashboard.status = "reloaded";
         result.dashboard.sessionName = resolved.dashboardSession.sessionName;
         result.dashboard.target = resolved.dashboardTarget;

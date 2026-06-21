@@ -304,15 +304,20 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
   }
 
-  private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget): TmuxTarget {
+  private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (existing) return existing;
-    this.exec(["link-window", "-d", "-s", target.windowId, "-t", clientSessionName]);
+    const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
+    this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
     const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (!linked) {
       throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
     }
     return linked;
+  }
+
+  linkWindowToSession(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
+    return this.ensureLinkedWindow(clientSessionName, target, windowIndex);
   }
 
   private getSessionPrefix(): string {
