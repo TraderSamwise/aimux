@@ -389,6 +389,7 @@ describe("restartAimuxControlPlane", () => {
         dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
       })),
       isPidAlive,
+      isAimuxProjectServiceProcess: vi.fn(() => true),
       killPid,
     });
 
@@ -426,6 +427,7 @@ describe("restartAimuxControlPlane", () => {
         dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
       })),
       isPidAlive,
+      isAimuxProjectServiceProcess: vi.fn(() => true),
       killPid,
     });
 
@@ -434,5 +436,38 @@ describe("restartAimuxControlPlane", () => {
     expect(killPid).toHaveBeenCalledWith(1002, "SIGTERM");
     expect(calls.indexOf("kill:1001:SIGTERM")).toBeLessThan(calls.indexOf("pid:1001"));
     expect(calls.indexOf("kill:1002:SIGTERM")).toBeLessThan(calls.indexOf("pid:1002"));
+  });
+
+  it("does not signal or wait for unverified pre-restart service pids", async () => {
+    const isPidAlive = vi.fn((pid: number) => pid === 1001 || pid === 1002);
+    const killPid = vi.fn();
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon([])),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive,
+      isAimuxProjectServiceProcess: vi.fn(() => false),
+      killPid,
+    });
+
+    expect(killPid).not.toHaveBeenCalledWith(1001, "SIGTERM");
+    expect(killPid).not.toHaveBeenCalledWith(1002, "SIGTERM");
+    expect(isPidAlive).toHaveBeenCalledWith(9001);
+    expect(isPidAlive).not.toHaveBeenCalledWith(1001);
+    expect(isPidAlive).not.toHaveBeenCalledWith(1002);
   });
 });
