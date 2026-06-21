@@ -153,6 +153,32 @@ describe("project takeover", () => {
     expect(state.projects[projectId]).toBeUndefined();
   });
 
+  it("does not signal a stale pid whose project root only prefix-matches", async () => {
+    const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
+    const projectRoot = join(tmpHome, "repo-a");
+    const projectId = getProjectIdFor(projectRoot);
+    const defaultHome = join(tmpHome, ".aimux");
+
+    vi.mocked(requestJson).mockRejectedValueOnce(new Error("other daemon unavailable"));
+    execFileSyncMock.mockReturnValue(
+      `node /opt/aimux/dist/main.js __project-service-internal --project-id ${projectId} --project-root ${projectRoot}-old`,
+    );
+    mkdirSync(join(defaultHome, "daemon"), { recursive: true });
+    writeJson(join(defaultHome, "daemon", "daemon.json"), { pid: 1001, port: 43190 });
+    writeJson(join(defaultHome, "daemon", "state.json"), {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      projects: {
+        [projectId]: { pid: 2001, projectRoot },
+      },
+    });
+
+    await takeOverProjectFromOtherOwners(projectRoot);
+
+    expect(livePids.has(2001)).toBe(true);
+    expect(process.kill).not.toHaveBeenCalledWith(2001, "SIGTERM");
+  });
+
   it("accepts legacy project service pids only when cwd matches the project", async () => {
     const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
     const projectRoot = join(tmpHome, "repo-a");

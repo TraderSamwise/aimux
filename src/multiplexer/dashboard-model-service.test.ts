@@ -9,6 +9,7 @@ function hostDouble(): any {
     dashboardModelRefreshedAt: 0,
     dashboardServiceSnapshotRefreshing: false,
     getFromProjectService: vi.fn(),
+    refreshRuntimeGuard: vi.fn(),
     dashboardPendingActions: new DashboardPendingActions(() => {}),
     dashboardUiStateStore: {
       orderWorktreeGroups: vi.fn((groups) => groups),
@@ -53,6 +54,7 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.dashboardWorktreeGroupsCache).toEqual([
       expect.objectContaining({ name: "Main Checkout", branch: "main", sessions: [session] }),
     ]);
+    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
   });
 
   it("rejects desktop-state payloads without service-composed worktree groups", async () => {
@@ -71,5 +73,6 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 750 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
+    expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
   });
 });

@@ -997,7 +997,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
         try {
           const json = await host.getFromProjectService("/desktop-state", { timeoutMs: force ? 2000 : 750 });
           if (!isDesktopStateDashboardModel(json)) return false;
-          return applyDashboardModel(
+          const applied = applyDashboardModel(
             host,
             json.sessions,
             json.teammates,
@@ -1006,6 +1006,10 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
             json.mainCheckoutInfo,
             json.operationFailures ?? [],
           );
+          if (applied && typeof host.refreshRuntimeGuard === "function") {
+            void host.refreshRuntimeGuard();
+          }
+          return applied;
         } catch {
           await ensureDashboardControlPlane(host);
         }

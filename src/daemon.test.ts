@@ -14,6 +14,7 @@ let livePids = new Set<number>();
 let childrenByPid = new Map<number, EventEmitter>();
 const spawnMock = vi.fn();
 const execFileSyncMock = vi.fn();
+const STALE_SERVICE_TIMESTAMP = new Date(0).toISOString();
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -101,7 +102,7 @@ describe("daemon supervision", () => {
     vi.mocked(requestJson).mockReset();
     vi.mocked(requestJson).mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 20_000, serviceInfo: getProjectServiceManifest() },
+      json: daemonHealth(20_000),
     });
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & { pid: number; unref: () => void };
@@ -190,7 +191,7 @@ describe("daemon supervision", () => {
 
     const daemon = new AimuxDaemon();
     const first = await (daemon as any).ensureProject(projectRoot);
-    (daemon as any).state.projects[`proj-${basename(projectRoot)}`].startedAt = "2026-06-21T00:00:00.000Z";
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`].startedAt = STALE_SERVICE_TIMESTAMP;
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(first.pid + 1);
 
@@ -210,7 +211,7 @@ describe("daemon supervision", () => {
 
     const daemon = new AimuxDaemon();
     const first = await (daemon as any).ensureProject(projectRoot);
-    (daemon as any).state.projects[`proj-${basename(projectRoot)}`].startedAt = "2026-06-21T00:00:00.000Z";
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`].startedAt = STALE_SERVICE_TIMESTAMP;
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(first.pid);
 
@@ -230,8 +231,8 @@ describe("daemon supervision", () => {
       projectId: `proj-${basename(projectRoot)}`,
       projectRoot,
       pid: stalePid,
-      startedAt: "2026-06-21T00:00:00.000Z",
-      updatedAt: "2026-06-21T00:00:00.000Z",
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
     };
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(stalePid + 1);
@@ -400,8 +401,8 @@ describe("daemon supervision", () => {
       projectId: `proj-${basename(projectRoot)}`,
       projectRoot,
       pid: stalePid,
-      startedAt: "2026-06-21T00:00:00.000Z",
-      updatedAt: "2026-06-21T00:00:00.000Z",
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
     };
 
     daemon.stop();
@@ -573,6 +574,41 @@ describe("daemon supervision", () => {
     }
   });
 
+  it("waits for spawned daemon health to match the written daemon info", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_PORT = "44191";
+      vi.mocked(requestJson)
+        .mockRejectedValueOnce(new Error("no daemon yet"))
+        .mockResolvedValueOnce({ status: 200, json: daemonHealth(99_999, 44191) })
+        .mockResolvedValueOnce({ status: 200, json: daemonHealth(20_000, 44191) });
+      spawnMock.mockImplementationOnce(() => {
+        const child = new EventEmitter() as EventEmitter & { pid: number; unref: () => void };
+        child.pid = 20_000;
+        child.unref = () => {};
+        livePids.add(child.pid);
+        childrenByPid.set(child.pid, child);
+        writeFileSync(
+          join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+          JSON.stringify({ pid: child.pid, port: 44191, startedAt: "after", updatedAt: "after" }),
+        );
+        return child;
+      });
+      const { ensureDaemonRunning } = await import("./daemon.js");
+
+      const info = await ensureDaemonRunning({ adoptExisting: false });
+
+      expect(info.pid).toBe(20_000);
+      expect(vi.mocked(requestJson)).toHaveBeenCalledTimes(3);
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
   it("terminates an identified stale-build daemon on restart", async () => {
     const previousPort = process.env.AIMUX_DAEMON_PORT;
     try {
@@ -699,6 +735,43 @@ describe("daemon supervision", () => {
     expect(process.kill).toHaveBeenCalledWith(50_002, "SIGTERM");
   });
 
+  it("does not signal project service pids whose project root only prefix-matches", async () => {
+    const { stopDaemon } = await import("./daemon.js");
+    mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
+    livePids.add(50_001);
+    livePids.add(50_002);
+    execFileSyncMock.mockReturnValue(
+      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
+        projectRoot,
+      )} --project-root ${projectRoot}-old`,
+    );
+    writeFileSync(
+      join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+      JSON.stringify({ pid: 50_001, port: 43190, startedAt: "then", updatedAt: "then" }),
+    );
+    writeFileSync(
+      join(tmpRoot, ".aimux", "daemon", "state.json"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: "then",
+        projects: {
+          [`proj-${basename(projectRoot)}`]: {
+            projectId: `proj-${basename(projectRoot)}`,
+            projectRoot,
+            pid: 50_002,
+            startedAt: "then",
+            updatedAt: "then",
+          },
+        },
+      }),
+    );
+
+    const stopped = await stopDaemon();
+
+    expect(stopped?.stoppedProjectServices).toEqual([]);
+    expect(process.kill).not.toHaveBeenCalledWith(50_002, "SIGTERM");
+  });
+
   it("does not signal unverified project service pids for /projects/stop", async () => {
     execFileSyncMock.mockReturnValue("node unrelated-process.js");
     const { AimuxDaemon } = await import("./daemon.js");
@@ -709,8 +782,8 @@ describe("daemon supervision", () => {
       projectId: `proj-${basename(projectRoot)}`,
       projectRoot,
       pid: stalePid,
-      startedAt: "2026-06-21T00:00:00.000Z",
-      updatedAt: "2026-06-21T00:00:00.000Z",
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
     };
 
     const res = await daemon.routeRequest("POST", "/projects/stop", { projectRoot });
