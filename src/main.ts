@@ -173,7 +173,7 @@ async function waitForVerifiedProjectService(
   projectRoot: string,
   opts?: { timeoutMs?: number },
 ): Promise<{
-  endpoint: { host: string; port: number };
+  endpoint: { host: string; port: number; pid: number };
   health: { serviceInfo?: ProjectServiceManifest; pid?: number };
 }> {
   const expected = getProjectServiceManifest();
@@ -186,12 +186,27 @@ async function waitForVerifiedProjectService(
   let missingEndpointSince = 0;
 
   while (Date.now() < deadline) {
-    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     if (endpoint) {
       missingEndpointSince = 0;
       try {
         const health = await fetchProjectServiceHealth(endpoint);
         lastServiceInfo = health.serviceInfo ?? null;
+        if (health.pid !== endpoint.pid) {
+          lastError = `project service pid mismatch: endpoint ${endpoint.pid} health ${health.pid ?? "unknown"}`;
+          log.warn("project service pid mismatch", "runtime", {
+            projectRoot,
+            endpoint,
+            healthPid: health.pid,
+          });
+          removeMetadataEndpoint(projectRoot);
+          if (!respawnAttempted) {
+            respawnAttempted = true;
+            await ensureProjectService(projectRoot);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          continue;
+        }
         if (manifestsMatch(expected, health.serviceInfo)) {
           log.info("project service verified", "runtime", {
             projectRoot,

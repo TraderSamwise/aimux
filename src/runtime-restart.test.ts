@@ -399,6 +399,42 @@ describe("restartAimuxControlPlane", () => {
     expect(isPidAlive).toHaveBeenCalledWith(1002);
   });
 
+  it("cleans up legacy project service pids when cwd matches the pre-restart report", async () => {
+    const isPidAlive = vi.fn(() => false);
+    const killPid = vi.fn();
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "lsof") {
+        const pid = Number(args[2]);
+        return `p${pid}\nfcwd\nn${pid === 1001 ? "/repo/alpha" : "/repo/beta"}\n`;
+      }
+      return "node /opt/aimux/dist/main.js __project-service-internal";
+    });
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => null),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive,
+      killPid,
+    });
+
+    expect(killPid).toHaveBeenCalledWith(1001, "SIGTERM");
+    expect(killPid).toHaveBeenCalledWith(1002, "SIGTERM");
+  });
+
   it("signals and waits service pids from the pre-restart report even when stopDaemon missed them", async () => {
     const calls: string[] = [];
     const isAimuxProjectServiceProcess = vi.fn(() => true);

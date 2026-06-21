@@ -47,6 +47,23 @@ function writeJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
 }
 
+function readProcessCwd(pid: number): string | null {
+  try {
+    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const cwd = output
+      .split("\n")
+      .find((line) => line.startsWith("n"))
+      ?.slice(1)
+      .trim();
+    return cwd || null;
+  } catch {
+    return null;
+  }
+}
+
 function isAimuxProjectServiceProcess(
   pid: number,
   expected: { projectId?: string; projectRoot?: string } = {},
@@ -57,6 +74,9 @@ function isAimuxProjectServiceProcess(
       stdio: ["ignore", "pipe", "ignore"],
     });
     if (!args.includes("__project-service-internal")) return false;
+    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
+      return resolve(readProcessCwd(pid) ?? "") === resolve(expected.projectRoot);
+    }
     if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
     if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
     return true;

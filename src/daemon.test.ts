@@ -85,7 +85,12 @@ describe("daemon supervision", () => {
     resetLoggingForTests();
     spawnMock.mockReset();
     execFileSyncMock.mockReset();
-    execFileSyncMock.mockReturnValue("node /opt/aimux/dist/main.js __project-service-internal");
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
+      return `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
+        projectRoot,
+      )} --project-root ${projectRoot}`;
+    });
     vi.mocked(requestJson).mockReset();
     vi.mocked(requestJson).mockResolvedValue({
       status: 200,
@@ -593,6 +598,42 @@ describe("daemon supervision", () => {
     expect(stopped?.stoppedProjectServices).toEqual([]);
     expect(process.kill).not.toHaveBeenCalledWith(50_002, "SIGTERM");
     expect(process.kill).toHaveBeenCalledWith(50_001, "SIGTERM");
+  });
+
+  it("accepts legacy project service pids only when cwd matches the project", async () => {
+    const { stopDaemon } = await import("./daemon.js");
+    mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
+    livePids.add(50_001);
+    livePids.add(50_002);
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
+      return "node /opt/aimux/dist/main.js __project-service-internal";
+    });
+    writeFileSync(
+      join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+      JSON.stringify({ pid: 50_001, port: 43190, startedAt: "then", updatedAt: "then" }),
+    );
+    writeFileSync(
+      join(tmpRoot, ".aimux", "daemon", "state.json"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: "then",
+        projects: {
+          [`proj-${basename(projectRoot)}`]: {
+            projectId: `proj-${basename(projectRoot)}`,
+            projectRoot,
+            pid: 50_002,
+            startedAt: "then",
+            updatedAt: "then",
+          },
+        },
+      }),
+    );
+
+    const stopped = await stopDaemon();
+
+    expect(stopped?.stoppedProjectServices.map((service) => service.pid)).toEqual([50_002]);
+    expect(process.kill).toHaveBeenCalledWith(50_002, "SIGTERM");
   });
 
   it("does not signal unverified project service pids for /projects/stop", async () => {
