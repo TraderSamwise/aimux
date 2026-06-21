@@ -6,6 +6,7 @@ import {
   type TmuxExec,
   type TmuxInteractiveExec,
 } from "./runtime-manager.js";
+import { AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_RUNTIME_CONTRACT_OPTION } from "../runtime-owner.js";
 
 function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> } {
   const calls: Array<{ args: string[]; cwd?: string }> = [];
@@ -90,6 +91,14 @@ describe("TmuxRuntimeManager", () => {
     expect(createCall?.cwd).toBe("/repo/mobile");
     expect(
       exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-project-state-dir"),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION &&
+          call.args[4] === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      ),
     ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);

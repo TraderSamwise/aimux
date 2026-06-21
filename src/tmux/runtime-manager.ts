@@ -7,7 +7,12 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import { debug, log } from "../debug.js";
 import { getProjectStateDirFor } from "../paths.js";
-import { getRuntimeOwnerId, TMUX_RUNTIME_OWNER_OPTION } from "../runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  getRuntimeOwnerId,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "../runtime-owner.js";
 import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -897,6 +902,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
     this.exec(["set-option", "-t", sessionName, "@aimux-project-state-dir", projectStateDir]);
     this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_OWNER_OPTION, getRuntimeOwnerId()]);
+    this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_CONTRACT_OPTION, AIMUX_TMUX_RUNTIME_CONTRACT_VERSION]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);

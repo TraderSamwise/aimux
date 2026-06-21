@@ -22,6 +22,7 @@ function coherenceReport(): RuntimeCoherenceReport {
     expected: {
       projectService: { apiVersion: 4, capabilities: {}, buildStamp: "service-new" },
       runtimeOwner: "owner-new",
+      runtimeContract: "1",
     },
     daemon: {
       running: true,
@@ -39,6 +40,12 @@ function coherenceReport(): RuntimeCoherenceReport {
         projectRoot: "/repo/alpha",
         sources: ["daemon-state", "tmux"],
         expectedDashboardBuildStamp: "dashboard-new",
+        runtime: {
+          sessionName: "aimux-alpha-111",
+          contract: "1",
+          expectedContract: "1",
+          rebuildRequired: false,
+        },
         service: {
           status: "ok",
           daemonState: {
@@ -74,6 +81,12 @@ function coherenceReport(): RuntimeCoherenceReport {
         projectRoot: "/repo/beta",
         sources: ["daemon-state"],
         expectedDashboardBuildStamp: "dashboard-new",
+        runtime: {
+          sessionName: "aimux-beta-222",
+          contract: "1",
+          expectedContract: "1",
+          rebuildRequired: false,
+        },
         service: {
           status: "ok",
           daemonState: {
@@ -98,6 +111,7 @@ function coherenceReport(): RuntimeCoherenceReport {
       projects: 2,
       ok: 1,
       needsRestart: 1,
+      runtimeRebuildRequired: 0,
     },
   };
 }
@@ -122,6 +136,7 @@ function okCoherenceReport(): RuntimeCoherenceReport {
     projects: report.projects.length,
     ok: report.projects.length,
     needsRestart: 0,
+    runtimeRebuildRequired: 0,
   };
   return report;
 }
@@ -500,7 +515,7 @@ describe("restartAimuxControlPlane", () => {
         error: "request timed out after 1000ms",
       },
     };
-    transient.summary = { projects: 2, ok: 1, needsRestart: 1 };
+    transient.summary = { projects: 2, ok: 1, needsRestart: 1, runtimeRebuildRequired: 0 };
     const buildRuntimeCoherenceReport = vi
       .fn()
       .mockResolvedValueOnce(coherenceReport())

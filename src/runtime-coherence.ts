@@ -4,7 +4,13 @@ import { loadDaemonInfo, loadDaemonState, type AimuxDaemonInfo, type ProjectServ
 import { requestJson } from "./http-client.js";
 import { loadMetadataEndpoint, type MetadataApiEndpoint } from "./metadata-store.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  getRuntimeOwnerId,
+  TMUX_DASHBOARD_OWNER_OPTION,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "./runtime-owner.js";
 import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { AIMUX_VERSION } from "./version.js";
 import { getAimuxCliLaunchCommand, type AimuxCliLaunchCommand } from "./cli-launcher.js";
@@ -38,6 +44,12 @@ export interface RuntimeCoherenceProjectReport {
   projectRoot: string;
   sources: RuntimeCoherenceSource[];
   expectedDashboardBuildStamp: string;
+  runtime: {
+    sessionName: string | null;
+    contract: string | null;
+    expectedContract: string;
+    rebuildRequired: boolean;
+  };
   service: {
     status: RuntimeCoherenceStatus;
     daemonState: ProjectServiceState | null;
@@ -58,6 +70,7 @@ export interface RuntimeCoherenceReport {
   expected: {
     projectService: ProjectServiceManifest;
     runtimeOwner: string;
+    runtimeContract: string;
   };
   daemon: {
     running: boolean;
@@ -76,6 +89,7 @@ export interface RuntimeCoherenceReport {
     projects: number;
     ok: number;
     needsRestart: number;
+    runtimeRebuildRequired: number;
   };
 }
 
@@ -278,6 +292,29 @@ function listDashboardReports(input: {
   );
 }
 
+function readProjectRuntimeReport(input: {
+  tmux: RuntimeCoherenceTmux;
+  tmuxAvailable: boolean;
+  projectRoot: string;
+}): RuntimeCoherenceProjectReport["runtime"] {
+  if (!input.tmuxAvailable) {
+    return {
+      sessionName: null,
+      contract: null,
+      expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      rebuildRequired: false,
+    };
+  }
+  const sessionName = input.tmux.getProjectSession(input.projectRoot).sessionName;
+  const contract = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
+  return {
+    sessionName,
+    contract,
+    expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    rebuildRequired: Boolean(contract && contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION),
+  };
+}
+
 function preview(value: string | null | undefined, max = 260): string | null {
   const trimmed = value?.replace(/\s+/g, " ").trim();
   if (!trimmed) return null;
@@ -364,8 +401,9 @@ function listStaleHookProcesses(input: {
 }
 
 function projectStatus(
-  project: Pick<RuntimeCoherenceProjectReport, "service" | "dashboards">,
+  project: Pick<RuntimeCoherenceProjectReport, "runtime" | "service" | "dashboards">,
 ): RuntimeCoherenceProjectStatus {
+  if (project.runtime.rebuildRequired) return "needs-restart";
   if (project.service.status !== "ok") return "needs-restart";
   return project.dashboards.some((dashboard) => dashboard.status !== "ok") ? "needs-restart" : "ok";
 }
@@ -417,10 +455,16 @@ export async function buildRuntimeCoherenceReport(
       expectedRuntimeOwner,
       cliLaunch,
     });
+    const runtime = readProjectRuntimeReport({
+      tmux,
+      tmuxAvailable,
+      projectRoot: knownProject.projectRoot,
+    });
     const project = {
       projectRoot: knownProject.projectRoot,
       sources: sortedSources(knownProject.sources),
       expectedDashboardBuildStamp,
+      runtime,
       service,
       dashboards,
       status: "ok" as RuntimeCoherenceProjectStatus,
@@ -430,6 +474,7 @@ export async function buildRuntimeCoherenceReport(
   }
 
   const ok = projects.filter((project) => project.status === "ok").length;
+  const runtimeRebuildRequired = projects.filter((project) => project.runtime.rebuildRequired).length;
   return {
     generatedAt: (options.now ?? (() => new Date()))().toISOString(),
     cliVersion: AIMUX_VERSION,
@@ -437,6 +482,7 @@ export async function buildRuntimeCoherenceReport(
     expected: {
       projectService: expectedService,
       runtimeOwner: expectedRuntimeOwner,
+      runtimeContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
     },
     daemon: {
       running: Boolean(daemonInfo),
@@ -459,6 +505,7 @@ export async function buildRuntimeCoherenceReport(
       projects: projects.length,
       ok,
       needsRestart: projects.length - ok,
+      runtimeRebuildRequired,
     },
   };
 }
@@ -491,18 +538,22 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
     `  cli stable shim: ${report.cliLaunch.stableShimPath}`,
     `  expected project service: ${formatManifest(report.expected.projectService)}`,
     `  expected runtime owner: ${report.expected.runtimeOwner}`,
+    `  expected tmux runtime contract: ${report.expected.runtimeContract}`,
     `  daemon: ${report.daemon.running ? `running pid=${report.daemon.info?.pid}` : "not running"}`,
     ...renderProcess("daemon process", report.daemon.process),
     `  daemon projects: ${report.daemon.projectCount}`,
     `  tmux: ${report.tmux.available ? (report.tmux.version ?? "available") : "unavailable"}`,
     `  tmux sessions: ${report.tmux.sessionCount}`,
-    `  projects: ${report.summary.projects} (${report.summary.ok} ok, ${report.summary.needsRestart} need restart)`,
+    `  projects: ${report.summary.projects} (${report.summary.ok} ok, ${report.summary.needsRestart} need restart, ${report.summary.runtimeRebuildRequired} need runtime rebuild)`,
   ];
 
   for (const project of report.projects) {
     lines.push("");
     lines.push(`Project ${project.status === "ok" ? "ok" : "needs-restart"}: ${project.projectRoot}`);
     lines.push(`  sources: ${project.sources.join(", ") || "(none)"}`);
+    lines.push(
+      `  runtime: contract=${project.runtime.contract ?? "(missing)"} expected=${project.runtime.expectedContract} rebuild=${project.runtime.rebuildRequired ? "yes" : "no"}`,
+    );
     lines.push(
       `  service: ${project.service.status} endpoint=${formatEndpoint(project.service.endpoint)} pid=${project.service.pid ?? "(unknown)"}`,
     );

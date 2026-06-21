@@ -3,7 +3,12 @@ import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./run
 import type { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { ProjectServiceManifest } from "./project-service-manifest.js";
 import type { MetadataApiEndpoint } from "./metadata-store.js";
-import { TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  TMUX_DASHBOARD_OWNER_OPTION,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "./runtime-owner.js";
 
 const expectedManifest: ProjectServiceManifest = {
   apiVersion: 4,
@@ -26,6 +31,7 @@ function createTmux(overrides: Partial<TmuxRuntimeManager> = {}): TmuxRuntimeMan
       if (key === "@aimux-project-root" && sessionName.startsWith("aimux-alpha-111")) return "/repo/alpha";
       if (key === "@aimux-project-root" && sessionName === "aimux-beta-222") return "/repo/beta";
       if (key === TMUX_RUNTIME_OWNER_OPTION) return "owner-new";
+      if (key === TMUX_RUNTIME_CONTRACT_OPTION) return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
       return null;
     }),
     listWindows: vi.fn((sessionName: string) => {
@@ -86,7 +92,7 @@ describe("runtime coherence report", () => {
       getRuntimeOwnerId: () => "owner-new",
     });
 
-    expect(report.summary).toEqual({ projects: 2, ok: 1, needsRestart: 1 });
+    expect(report.summary).toEqual({ projects: 2, ok: 1, needsRestart: 1, runtimeRebuildRequired: 0 });
     expect(report.projects.map((project) => project.projectRoot)).toEqual(["/repo/alpha", "/repo/beta"]);
     expect(report.projects[0]?.sources).toEqual(["daemon-state", "tmux"]);
     expect(report.projects[0]?.service.status).toBe("mismatch");
@@ -180,6 +186,7 @@ describe("runtime coherence report", () => {
         getSessionOption: vi.fn((sessionName: string, key: string) => {
           if (key === "@aimux-project-root" && sessionName === "aimux-beta-222") return "/repo/beta";
           if (key === TMUX_RUNTIME_OWNER_OPTION) return "owner-old";
+          if (key === TMUX_RUNTIME_CONTRACT_OPTION) return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
           return null;
         }),
       } as Partial<TmuxRuntimeManager>),
@@ -210,10 +217,57 @@ describe("runtime coherence report", () => {
       getRuntimeOwnerId: () => "owner-new",
     });
 
-    expect(report.summary).toEqual({ projects: 1, ok: 0, needsRestart: 1 });
+    expect(report.summary).toEqual({ projects: 1, ok: 0, needsRestart: 1, runtimeRebuildRequired: 0 });
     expect(report.projects[0]?.status).toBe("needs-restart");
     expect(report.projects[0]?.dashboards[0]?.status).toBe("mismatch");
     expect(renderRuntimeCoherenceReport(report)).toContain("runtimeOwner=owner-old");
+  });
+
+  it("reports an explicit tmux runtime contract mismatch as requiring runtime rebuild", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => ["aimux-beta-222"]),
+        getSessionOption: vi.fn((sessionName: string, key: string) => {
+          if (key === "@aimux-project-root" && sessionName === "aimux-beta-222") return "/repo/beta";
+          if (key === TMUX_RUNTIME_OWNER_OPTION) return "owner-new";
+          if (key === TMUX_RUNTIME_CONTRACT_OPTION) return "legacy-contract";
+          return null;
+        }),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          beta: {
+            projectId: "beta",
+            projectRoot: "/repo/beta",
+            pid: 1002,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43212,
+        pid: 1002,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson: vi.fn(async () => ({
+        status: 200,
+        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+      })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.summary).toEqual({ projects: 1, ok: 0, needsRestart: 1, runtimeRebuildRequired: 1 });
+    expect(report.projects[0]?.runtime).toMatchObject({
+      contract: "legacy-contract",
+      expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      rebuildRequired: true,
+    });
+    expect(renderRuntimeCoherenceReport(report)).toContain("runtime: contract=legacy-contract expected=1 rebuild=yes");
   });
 
   it("reports stale native paths in processes and hook commands", async () => {
