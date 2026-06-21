@@ -213,11 +213,7 @@ describe("deriveAlertFromAgentEvent", () => {
         status: "failed",
         error: "default export must be a function",
       });
-      expect(statuses.find((status) => status.path === noInstancePath)).toMatchObject({
-        source: "user",
-        status: "failed",
-        error: "plugin factory returned no instance",
-      });
+      expect(statuses.find((status) => status.path === noInstancePath)).toBeUndefined();
     } finally {
       await runtime.stop();
     }

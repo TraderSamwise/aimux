@@ -404,6 +404,30 @@ describe("restartRuntimeFromGuard", () => {
     });
   });
 
+  it("passes the active tmux client tty when rebuilding from the guard", async () => {
+    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderCurrentDashboardView: vi.fn(),
+      tmuxRuntimeManager: {
+        displayMessage: vi.fn(() => "/dev/ttys123"),
+      },
+    };
+
+    restartRuntimeFromGuard(host as never);
+
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "aimux",
+      ["restart-runtime", "--project-root", "/repo/app", "--open", "--client-tty", "/dev/ttys123"],
+      {
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+  });
+
   it("shows a footer failure when the runtime rebuild child emits an error", async () => {
     let onError: (() => void) | undefined;
     mocks.spawn.mockReturnValueOnce({

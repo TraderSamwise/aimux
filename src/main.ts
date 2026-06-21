@@ -697,7 +697,7 @@ async function stopProjectRuntime(
 
 async function restartProjectRuntime(
   projectRoot: string,
-  opts: { open?: boolean } = {},
+  opts: { open?: boolean; clientTty?: string } = {},
 ): Promise<{
   dashboardSessionName: string;
   dashboardTarget: ReturnType<typeof resolveDashboardTarget>["dashboardTarget"];
@@ -708,7 +708,11 @@ async function restartProjectRuntime(
   ensureTmuxAvailable(tmux);
   const resolved = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
   if (opts.open) {
-    tmux.openTarget(resolved.dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+    tmux.openTarget(resolved.dashboardTarget, {
+      insideTmux: tmux.isInsideTmux() || Boolean(opts.clientTty),
+      alreadyResolved: true,
+      clientTty: opts.clientTty,
+    });
   }
   return {
     dashboardSessionName: resolved.dashboardSession.sessionName,
@@ -1068,12 +1072,16 @@ program
   .description("Hard restart the current project runtime and rebuild its managed tmux topology")
   .option("--project-root <path>", "Project root", process.cwd())
   .option("--open", "Open the dashboard after restarting the runtime")
+  .option("--client-tty <tty>", "tmux client tty to switch after reopening")
   .option("--json", "Emit JSON")
-  .action(async (opts: { projectRoot: string; open?: boolean; json?: boolean }) => {
+  .action(async (opts: { projectRoot: string; open?: boolean; clientTty?: string; json?: boolean }) => {
     try {
       const projectRoot = resolveProjectRoot(opts.projectRoot);
       await initPaths(projectRoot);
-      const result = await restartProjectRuntime(projectRoot, { open: opts.open });
+      const result = await restartProjectRuntime(projectRoot, {
+        open: opts.open,
+        clientTty: opts.clientTty?.trim() || undefined,
+      });
       if (opts.open) exitAfterOpen();
       if (opts.json) {
         console.log(

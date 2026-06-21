@@ -204,12 +204,15 @@ export function reloadDashboardFromGuard(host: DashboardControlHost): void {
 
 export function restartRuntimeFromGuard(host: DashboardControlHost): void {
   const projectRoot = host.projectRoot ?? process.cwd();
+  const clientTty = host.tmuxRuntimeManager?.displayMessage?.("#{client_tty}")?.trim();
   host.footerFlash = "Restarting project runtime…";
   host.footerFlashTicks = 5;
   host.renderCurrentDashboardView();
   const command = resolveDashboardReloadCommand();
+  const args = ["restart-runtime", "--project-root", projectRoot, "--open"];
+  if (clientTty) args.push("--client-tty", clientTty);
   try {
-    const child = spawn(command, ["restart-runtime", "--project-root", projectRoot, "--open"], {
+    const child = spawn(command, args, {
       detached: true,
       stdio: "ignore",
     });
