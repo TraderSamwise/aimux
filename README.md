@@ -163,6 +163,13 @@ The terminal dashboard is API-backed for shared workflows. It still owns termina
 
 There is no per-project host election. Dashboard windows are clients, not control-plane owners.
 
+Client/write boundary:
+
+- TUI shared reads use project-service APIs such as `/desktop-state`, `/coordination-worklist`, topology, project, library, graveyard, and worktree routes.
+- TUI shared mutations use project-service APIs for notifications, threads, tasks, handoffs, reviews, agent lifecycle, services, worktrees, and graveyard actions.
+- CLI lifecycle and workflow writes also require the project service; read-only CLI inspection and hook safety fallbacks are the narrow exceptions.
+- The project service still computes local runtime models in-process because it is the API authority for those routes.
+
 The user-facing app at `app/` talks to the same live control plane:
 
 - daemon HTTP is used for project discovery and service discovery
