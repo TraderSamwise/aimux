@@ -365,7 +365,7 @@ function notificationQuery(opts: { unread?: boolean; session?: string }): string
   return rendered ? `?${rendered}` : "";
 }
 
-async function getProjectServiceJsonOrLocal(path: string, fallback: () => any): Promise<any> {
+async function getProjectServiceJsonOrReadFallback(path: string, fallback: () => any): Promise<any> {
   try {
     return await getProjectServiceJson(path);
   } catch {
@@ -389,7 +389,7 @@ async function resolvePermissionRequestOutput(
     // The hook runs in the agent's working dir, which is the worktree (or the
     // project root if no worktree). Carry it so clients can show project/worktree.
     const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
-    const result = await postHookProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrSafetyFallback(
       projectRoot,
       "/agents/interaction/request",
       { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
@@ -402,43 +402,6 @@ async function resolvePermissionRequestOutput(
     /* fall through to the native prompt */
   }
   return {};
-}
-
-async function postLiveProjectServiceJsonOrLocal(
-  projectRoot: string,
-  path: string,
-  body: unknown,
-  fallback: () => any,
-  options: { fallbackOnRequestError?: boolean } = {},
-): Promise<any> {
-  let endpoint;
-  try {
-    endpoint = await resolveProjectServiceEndpoint(projectRoot);
-  } catch {
-    return fallback();
-  }
-  if (!endpoint) {
-    return fallback();
-  }
-  let status: number;
-  let json: any;
-  try {
-    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-    }));
-  } catch (error) {
-    if (!options.fallbackOnRequestError) throw error;
-    return fallback();
-  }
-  if (status === 404 || status === 405 || status === 501) {
-    return fallback();
-  }
-  if (status < 200 || status >= 300 || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${status}`);
-  }
-  return json;
 }
 
 async function postLiveProjectServiceJson(projectRoot: string, path: string, body: unknown): Promise<any> {
@@ -457,20 +420,44 @@ async function postLiveProjectServiceJson(projectRoot: string, path: string, bod
   return json;
 }
 
-async function postHookProjectServiceJsonOrLocal(
+async function postHookProjectServiceJsonOrSafetyFallback(
   projectRoot: string,
   path: string,
   body: unknown,
   fallback: () => any,
 ): Promise<any> {
-  return postLiveProjectServiceJsonOrLocal(projectRoot, path, body, fallback, { fallbackOnRequestError: true });
+  let endpoint;
+  try {
+    endpoint = await resolveProjectServiceEndpoint(projectRoot);
+  } catch {
+    return fallback();
+  }
+  if (!endpoint) {
+    return fallback();
+  }
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    }));
+  } catch {
+    return fallback();
+  }
+  if (status === 404 || status === 405 || status === 501) {
+    return fallback();
+  }
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
 }
 
 async function clearHookNotificationsViaService(projectRoot: string, sessionId: string): Promise<void> {
   try {
-    await postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => {
-      throw new Error("project service unavailable");
-    });
+    await postLiveProjectServiceJson(projectRoot, "/notifications/clear", { sessionId });
   } catch (error) {
     debug(
       `failed to clear notifications via project service for ${sessionId}: ${
@@ -481,7 +468,11 @@ async function clearHookNotificationsViaService(projectRoot: string, sessionId: 
   }
 }
 
-async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
+async function getLiveProjectServiceJsonOrReadFallback(
+  projectRoot: string,
+  path: string,
+  fallback: () => any,
+): Promise<any> {
   let endpoint;
   try {
     endpoint = await resolveProjectServiceEndpoint(projectRoot);
@@ -532,7 +523,7 @@ async function recordBackendSessionIdForHook(
   backendSessionId: string,
 ): Promise<{ ok: boolean; sessionId: string; backendSessionId?: string; error?: string }> {
   try {
-    const result = await postHookProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrSafetyFallback(
       projectRoot,
       "/agents/record-backend-session",
       { sessionId, backendSessionId },
@@ -1064,9 +1055,7 @@ program
     }
   });
 
-const hostCmd = program
-  .command("host")
-  .description("Advanced compatibility wrappers for legacy daemon-managed project services");
+const hostCmd = program.command("host").description("Advanced project-service inspection commands");
 
 program
   .command("ui")
@@ -1111,7 +1100,7 @@ program
 
 program
   .command("serve")
-  .description("Advanced: ensure the legacy daemon-backed project control service is running")
+  .description("Advanced: ensure the daemon-backed project control service is running")
   .action(async () => {
     const projectRoot = resolveProjectRoot(process.cwd());
     if (projectRoot !== process.cwd()) {
@@ -1365,7 +1354,7 @@ hostCmd
   });
 
 hostCmd.action(() => {
-  console.log("`aimux host` is a compatibility alias for daemon-managed project services.");
+  console.log("Use `aimux host status` or `aimux host --help` to inspect project services.");
 });
 
 const daemonCmd = program.command("daemon").description("Advanced: manage the global aimux control-plane daemon");
@@ -1868,7 +1857,7 @@ function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
-async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
+async function tryEnsureDaemonProjectReadyForReadFallback(projectRoot: string): Promise<void> {
   try {
     await ensureDaemonProjectReady(projectRoot);
   } catch (err) {
@@ -1880,8 +1869,8 @@ async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise
 
 worktreeCmd.action(async () => {
   const projectRoot = await prepareProjectContext();
-  await ensureDaemonProjectReadyForFallback(projectRoot);
-  const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
+  await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
+  const result = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/worktrees", () => ({
     ok: true,
     worktrees: listVisibleLocalWorktrees(projectRoot),
   }));
@@ -1896,7 +1885,9 @@ program
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
+    const summaries = await getProjectServiceJsonOrReadFallback(`/threads${query}`, () =>
+      listThreadSummaries(opts.session),
+    );
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1925,7 +1916,9 @@ threadCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
+    const summaries = await getProjectServiceJsonOrReadFallback(`/threads${query}`, () =>
+      listThreadSummaries(opts.session),
+    );
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1953,7 +1946,7 @@ threadCmd
   .argument("<threadId>")
   .option("--json", "Emit JSON")
   .action(async (threadId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrLocal(`/threads/${encodeURIComponent(threadId)}`, () => {
+    const detail = await getProjectServiceJsonOrReadFallback(`/threads/${encodeURIComponent(threadId)}`, () => {
       const thread = readThread(threadId);
       if (!thread) return null;
       return { thread, messages: readMessages(threadId) };
@@ -2333,7 +2326,7 @@ taskCmd
     if (opts.session) params.set("session", opts.session);
     if (opts.status) params.set("status", opts.status);
     const query = params.toString();
-    const result = await getProjectServiceJsonOrLocal(`/tasks${query ? `?${query}` : ""}`, () => ({
+    const result = await getProjectServiceJsonOrReadFallback(`/tasks${query ? `?${query}` : ""}`, () => ({
       ok: true,
       tasks: readAllTasks()
         .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
@@ -2362,7 +2355,7 @@ taskCmd
   .argument("<taskId>")
   .option("--json", "Emit JSON")
   .action(async (taskId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrLocal(`/tasks/${encodeURIComponent(taskId)}`, () => {
+    const detail = await getProjectServiceJsonOrReadFallback(`/tasks/${encodeURIComponent(taskId)}`, () => {
       const task = readTask(taskId);
       if (!task) return null;
       return {
@@ -2545,8 +2538,8 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReadyForFallback(projectRoot);
-    const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
+    await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
+    const result = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/worktrees", () => ({
       ok: true,
       worktrees: listVisibleLocalWorktrees(projectRoot),
     }));
@@ -2851,9 +2844,9 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReadyForFallback(projectRoot);
+    await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
     try {
-      const graveyard = await getLiveProjectServiceJsonOrLocal(projectRoot, "/graveyard", () => ({
+      const graveyard = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/graveyard", () => ({
         ok: true,
         entries: listTopologySessionStates({ statuses: ["graveyard"] }),
         worktrees: listTopologyWorktreeGraveyard(),
@@ -3514,15 +3507,15 @@ program
     }
 
     const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrSafetyFallback(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
@@ -3532,20 +3525,25 @@ program
     const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
     if (transcriptPath) {
       const context: SessionContextMetadata = { transcriptPath };
-      await postHookProjectServiceJsonOrLocal(projectRoot, "/set-context", { session: sessionId, context }, () => {
-        updateSessionMetadata(
-          sessionId,
-          (current) => ({
-            ...current,
-            context: {
-              ...(current.context ?? {}),
-              ...context,
-            },
-          }),
-          projectRoot,
-        );
-        return { ok: true };
-      });
+      await postHookProjectServiceJsonOrSafetyFallback(
+        projectRoot,
+        "/set-context",
+        { session: sessionId, context },
+        () => {
+          updateSessionMetadata(
+            sessionId,
+            (current) => ({
+              ...current,
+              context: {
+                ...(current.context ?? {}),
+                ...context,
+              },
+            }),
+            projectRoot,
+          );
+          return { ok: true };
+        },
+      );
       result.transcriptPath = transcriptPath;
     }
 
@@ -3558,7 +3556,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3606,15 +3604,15 @@ program
 
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrSafetyFallback(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
@@ -3636,7 +3634,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3650,7 +3648,7 @@ program
         const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
         // Best-effort: a telemetry transport failure must never break the hook —
         // it always falls through to `console.log({})` and the native prompt.
-        await postHookProjectServiceJsonOrLocal(
+        await postHookProjectServiceJsonOrSafetyFallback(
           projectRoot,
           "/agents/interaction/notify",
           { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
