@@ -297,12 +297,14 @@ export class TmuxRuntimeManager {
         { cwd: projectRoot },
       );
       this.configureSession(clientSessionName, projectRoot);
+      this.setCurrentRuntimeContract(clientSessionName);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
       return;
     }
 
     this.configureSession(clientSessionName, projectRoot);
+    this.setCurrentRuntimeContract(clientSessionName);
     this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
     this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
   }
@@ -394,6 +396,7 @@ export class TmuxRuntimeManager {
       this.exec(argv, { cwd: projectRoot });
     }
     this.configureSession(session.sessionName, projectRoot);
+    if (!exists) this.setCurrentRuntimeContract(session.sessionName);
     return session;
   }
 
@@ -902,7 +905,6 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
     this.exec(["set-option", "-t", sessionName, "@aimux-project-state-dir", projectStateDir]);
     this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_OWNER_OPTION, getRuntimeOwnerId()]);
-    this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_CONTRACT_OPTION, AIMUX_TMUX_RUNTIME_CONTRACT_VERSION]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
@@ -1032,6 +1034,10 @@ export class TmuxRuntimeManager {
       "status-format[1]",
       `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
     ]);
+  }
+
+  private setCurrentRuntimeContract(sessionName: string): void {
+    this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_CONTRACT_OPTION, AIMUX_TMUX_RUNTIME_CONTRACT_VERSION]);
   }
 
   private applyDefaultRootMouseBindings(): void {
