@@ -55,6 +55,27 @@ export function balancedCols(count: number): number {
 
 const RESET = "\x1b[0m";
 
+// tmux popups are fixed-size: a 100%×100% popup keeps its launch dimensions when the
+// terminal resizes, so process.stdout inside the popup never changes. Exposé instead
+// polls the controlling client's real size and exits with this code on a change; the
+// launcher relaunches the popup so it re-fits the new bounds.
+const RELAUNCH_ON_RESIZE_EXIT = 75;
+
+function queryClientSize(clientTty?: string): string {
+  if (!clientTty) return "";
+  try {
+    const result = spawnSync(
+      "tmux",
+      ["display-message", "-c", clientTty, "-p", "-F", "#{client_width}x#{client_height}"],
+      // Bounded so a hung tmux server fails open (no resize check) instead of freezing
+      // the popup's single-threaded refresh loop.
+      { encoding: "utf8", timeout: 500 },
+    );
+    if (result.status === 0) return (result.stdout ?? "").trim();
+  } catch {}
+  return "";
+}
+
 function shortWorktree(item: FastControlItem, projectRoot: string): string {
   const wt = item.metadata.worktreePath;
   if (!wt || pathResolve(wt) === pathResolve(projectRoot)) return "main";
@@ -422,6 +443,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
   let index = currentIdx >= 0 ? currentIdx : 0;
+  // Baseline the controlling client size at launch; a later change means the terminal
+  // was resized and the popup must be relaunched to re-fit it.
+  const clientBaseline = queryClientSize(options.clientTty);
   let tileCols = 1;
   let visibleCount = items.length;
   let lastRenderSize = "";
@@ -608,6 +632,15 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const scheduleRefresh = () => {
       timer = setTimeout(() => {
         try {
+          // A fixed-size popup can't grow with the terminal, so exit and let the launcher
+          // relaunch us at the new bounds when the controlling client size changes.
+          if (clientBaseline) {
+            const clientNow = queryClientSize(options.clientTty);
+            if (clientNow && clientNow !== clientBaseline) {
+              finish(RELAUNCH_ON_RESIZE_EXIT);
+              return;
+            }
+          }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
           // idle exposé still reflows when the window size changes.
           const captureChanged = refreshCaptures();
