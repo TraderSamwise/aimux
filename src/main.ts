@@ -114,6 +114,7 @@ import {
 } from "./local-ui-server.js";
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
+import { isAimuxBuildDriftError } from "./runtime-drift.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -608,7 +609,14 @@ async function readAllStdin(): Promise<string> {
 }
 
 async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVersionDrift?: boolean }): Promise<void> {
-  await ensureDaemonRunning();
+  try {
+    await ensureDaemonRunning();
+  } catch (error) {
+    if (opts?.repairVersionDrift === false || !isAimuxBuildDriftError(error)) {
+      throw error;
+    }
+    await restartStaleControlPlane(projectRoot);
+  }
   await ensureProjectService(projectRoot);
   try {
     await waitForVerifiedProjectService(projectRoot);
