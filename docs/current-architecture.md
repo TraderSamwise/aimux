@@ -99,6 +99,22 @@ The terminal TUI dashboard is an API-backed client for shared workflows. It stil
 
 The web/mobile app is a pure HTTP+SSE client. It does not bundle the CLI and does not own or repair the daemon.
 
+## Client Boundary And Fallbacks
+
+The TUI is service-backed for shared project state:
+
+- shared dashboard views come from project-service routes such as `/desktop-state`, `/coordination-worklist`, topology, project, library, graveyard, and worktree routes
+- shared mutations use project-service routes for notifications, threads, tasks, handoffs, reviews, agent lifecycle, services, worktrees, and graveyard actions
+- local dashboard state is limited to presentation state and same-machine tmux mechanics
+
+The CLI follows the same write boundary. Lifecycle and workflow write commands require a live project service and do not fall back to direct local writers.
+
+Intentional exceptions are narrow:
+
+- CLI read commands may keep read-only local fallback paths for inspection when the service is absent or an old build lacks a route.
+- Claude/Codex hook paths may use safety fallbacks so native tool prompts and basic metadata do not break when the service is unavailable.
+- The in-process project service still builds local runtime models because it is the API authority for those routes.
+
 ## Shared API Surface
 
 Project-service HTTP exposes the live control plane, including:
