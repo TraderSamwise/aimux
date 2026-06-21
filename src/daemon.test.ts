@@ -73,6 +73,13 @@ function daemonHealth(pid: number, port = 43190) {
   };
 }
 
+function staleDaemonHealth(pid: number, port = 43190) {
+  return {
+    ...daemonHealth(pid, port),
+    serviceInfo: { ...getProjectServiceManifest(), buildStamp: "stale-build" },
+  };
+}
+
 describe("daemon supervision", () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "aimux-daemon-"));
@@ -557,6 +564,62 @@ describe("daemon supervision", () => {
       expect(info.pid).toBe(20_000);
       expect(process.kill).not.toHaveBeenCalledWith(50_001, "SIGTERM");
       expect(spawnMock).toHaveBeenCalled();
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
+  it("terminates an identified stale-build daemon on restart", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_PORT = "44191";
+      livePids.add(50_001);
+      vi.mocked(requestJson)
+        .mockResolvedValueOnce({ status: 200, json: staleDaemonHealth(50_001, 44191) })
+        .mockResolvedValueOnce({ status: 200, json: daemonHealth(20_000, 44191) });
+      spawnMock.mockImplementationOnce(() => {
+        const child = new EventEmitter() as EventEmitter & { pid: number; unref: () => void };
+        child.pid = 20_000;
+        child.unref = () => {};
+        livePids.add(child.pid);
+        childrenByPid.set(child.pid, child);
+        writeFileSync(
+          join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+          JSON.stringify({ pid: child.pid, port: 44191, startedAt: "after", updatedAt: "after" }),
+        );
+        return child;
+      });
+      const { ensureDaemonRunning } = await import("./daemon.js");
+
+      const info = await ensureDaemonRunning({ adoptExisting: false });
+
+      expect(info.pid).toBe(20_000);
+      expect(process.kill).toHaveBeenCalledWith(50_001, "SIGTERM");
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
+  it("does not adopt an identified stale-build daemon by default", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_PORT = "44191";
+      livePids.add(50_001);
+      vi.mocked(requestJson).mockResolvedValueOnce({ status: 200, json: staleDaemonHealth(50_001, 44191) });
+      const { ensureDaemonRunning } = await import("./daemon.js");
+
+      await expect(ensureDaemonRunning()).rejects.toThrow("different local build");
+
+      expect(process.kill).not.toHaveBeenCalledWith(50_001, "SIGTERM");
+      expect(spawnMock).not.toHaveBeenCalled();
     } finally {
       if (previousPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;

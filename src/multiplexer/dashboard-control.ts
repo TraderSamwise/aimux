@@ -10,7 +10,7 @@ import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint, type MetadataApiEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
-import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
+import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
@@ -687,7 +687,7 @@ async function requestProjectService(
     }
     if (!(await verifyProjectServiceEndpoint(endpoint, deadline))) {
       removeMetadataEndpoint(projectRoot);
-      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
@@ -712,7 +712,7 @@ async function requestProjectService(
       lastError = error;
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
         removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
         await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
@@ -802,13 +802,21 @@ async function withProjectServiceTimeout<T>(promise: Promise<T>, timeoutMs: numb
   }
 }
 
-export async function ensureDashboardControlPlane(host: DashboardControlHost, timeoutMs = 10_000): Promise<void> {
+export async function ensureDashboardControlPlane(
+  host: DashboardControlHost,
+  timeoutMs = 10_000,
+  opts: { restartProjectService?: boolean } = {},
+): Promise<void> {
   if (host.dashboardServiceRecovery) {
     await withProjectServiceTimeout(host.dashboardServiceRecovery, timeoutMs);
     return;
   }
   const recovery = (async () => {
     await ensureDaemonRunning();
+    if (opts.restartProjectService) {
+      await stopProjectService(process.cwd());
+      removeMetadataEndpoint(process.cwd());
+    }
     await ensureProjectService(process.cwd());
   })();
   host.dashboardServiceRecovery = recovery;

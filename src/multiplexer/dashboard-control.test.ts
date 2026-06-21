@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   removeMetadataEndpoint: vi.fn(),
   ensureDaemonRunning: vi.fn(),
   ensureProjectService: vi.fn(),
+  stopProjectService: vi.fn(),
   spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../metadata-store.js", () => ({
 vi.mock("../daemon.js", () => ({
   ensureDaemonRunning: mocks.ensureDaemonRunning,
   ensureProjectService: mocks.ensureProjectService,
+  stopProjectService: mocks.stopProjectService,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -40,6 +42,7 @@ describe("postToProjectService", () => {
     });
     mocks.ensureDaemonRunning.mockResolvedValue({ pid: 1, port: 43190 });
     mocks.ensureProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
+    mocks.stopProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
   });
 
   it("recovers from a stale refused project-service endpoint", async () => {
@@ -56,6 +59,7 @@ describe("postToProjectService", () => {
 
     expect(result).toEqual({ ok: true });
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
@@ -87,6 +91,7 @@ describe("postToProjectService", () => {
     });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
@@ -107,6 +112,7 @@ describe("postToProjectService", () => {
     });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });

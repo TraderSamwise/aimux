@@ -170,12 +170,12 @@ interface ProjectServiceProcessIdentity {
   projectRoot?: string;
 }
 
+function isAimuxDaemonHealth(json: any): boolean {
+  return json?.kind === DAEMON_HEALTH_KIND && typeof json?.pid === "number";
+}
+
 function isMatchingDaemonHealth(json: any): boolean {
-  return (
-    json?.kind === DAEMON_HEALTH_KIND &&
-    typeof json?.pid === "number" &&
-    manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
-  );
+  return isAimuxDaemonHealth(json) && manifestsMatch(getProjectServiceManifest(), json?.serviceInfo);
 }
 
 function readProcessCwd(pid: number): string | null {
@@ -368,8 +368,8 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   if (existing) {
     try {
       const health = await requestDaemonJson("/health");
-      if (!isMatchingDaemonHealth(health)) {
-        throw new Error("stored daemon health response does not match this Aimux build");
+      if (!isAimuxDaemonHealth(health)) {
+        throw new Error("stored daemon health response does not identify Aimux");
       }
       if (health.pid !== existing.pid) {
         throw new Error(`stored daemon pid ${existing.pid} does not match live pid ${health?.pid ?? "unknown"}`);
@@ -378,6 +378,8 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
         log.warn("terminating stored daemon instead of adopting", "daemon", { pid: existing.pid });
         await terminateDaemonOnDefaultPort(existing.pid);
         clearFile(getDaemonInfoPath());
+      } else if (!isMatchingDaemonHealth(health)) {
+        throw new Error("stored daemon health response does not match this Aimux build");
       } else {
         return existing;
       }
@@ -392,12 +394,12 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
 
   try {
     const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`);
-    if (status >= 200 && status < 300 && json?.ok !== false && isMatchingDaemonHealth(json)) {
+    if (status >= 200 && status < 300 && json?.ok !== false && isAimuxDaemonHealth(json)) {
       if (options.adoptExisting === false) {
         log.warn("terminating daemon on default port instead of adopting", "daemon", { pid: json.pid });
         await terminateDaemonOnDefaultPort(json.pid);
         clearFile(getDaemonInfoPath());
-      } else {
+      } else if (isMatchingDaemonHealth(json)) {
         const adopted: AimuxDaemonInfo = {
           pid: json.pid,
           port: typeof json?.port === "number" ? json.port : getDaemonPort(),
@@ -407,9 +409,14 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
         saveJson(getDaemonInfoPath(), adopted);
         log.info("adopted existing daemon on default port", "daemon", { ...adopted });
         return adopted;
+      } else {
+        throw new Error("aimux daemon on default port is from a different local build; run aimux restart");
       }
     }
   } catch (error) {
+    if (error instanceof Error && error.message.includes("different local build")) {
+      throw error;
+    }
     log.debug("default daemon health probe failed", "daemon", {
       error: error instanceof Error ? error.message : String(error),
     });
