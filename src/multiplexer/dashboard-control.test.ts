@@ -374,6 +374,48 @@ describe("reloadDashboardFromGuard", () => {
   });
 });
 
+describe("restartRuntimeFromGuard", () => {
+  it("uses PATH aimux for guarded runtime rebuilds", async () => {
+    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    restartRuntimeFromGuard(host as never);
+
+    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart-runtime", "--project-root", "/repo/app", "--open"], {
+      detached: true,
+      stdio: "ignore",
+    });
+  });
+
+  it("shows a footer failure when the runtime rebuild child emits an error", async () => {
+    let onError: (() => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: () => void) => {
+        if (event === "error") onError = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    restartRuntimeFromGuard(host as never);
+    onError?.();
+
+    expect(host.footerFlash).toContain("Runtime rebuild failed");
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("handleDashboardSubscreenNavigationKey", () => {
   function makeHost() {
     return {

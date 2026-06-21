@@ -149,10 +149,15 @@ export function buildDashboardRuntimeGuardOverlayOutput(ctx: any, cols: number, 
   const body = [
     ...copy.lines.map((line: string) => `  ${style(line, "muted")}`),
     "",
-    hints([
-      ["R", "reload"],
-      ["q", "quit"],
-    ]),
+    guard.kind === "runtime-rebuild-required"
+      ? hints([
+          ["B", "rebuild"],
+          ["q", "quit"],
+        ])
+      : hints([
+          ["R", "reload"],
+          ["q", "quit"],
+        ]),
   ];
   return renderOverlayBox({ title: copy.title, body, cols, rows, variant: "red" });
 }

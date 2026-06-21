@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectServiceManifest } from "../project-service-manifest.js";
 import { buildDashboardRuntimeGuardOverlayOutput } from "../tui/screens/overlay-renderers.js";
@@ -15,6 +15,11 @@ import {
 
 const loadMetadataEndpointMock = vi.hoisted(() => vi.fn());
 const requestJsonMock = vi.hoisted(() => vi.fn());
+const tmuxMock = vi.hoisted(() => ({
+  isAvailable: vi.fn(() => false),
+  getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-111" })),
+  getSessionOption: vi.fn(() => null),
+}));
 
 vi.mock("../metadata-store.js", () => ({
   loadMetadataEndpoint: loadMetadataEndpointMock,
@@ -24,7 +29,21 @@ vi.mock("../http-client.js", () => ({
   requestJson: requestJsonMock,
 }));
 
+vi.mock("../tmux/runtime-manager.js", () => ({
+  TmuxRuntimeManager: vi.fn(function () {
+    return tmuxMock;
+  }),
+}));
+
 const liveManifest = getProjectServiceManifest();
+
+beforeEach(() => {
+  loadMetadataEndpointMock.mockReset();
+  requestJsonMock.mockReset();
+  tmuxMock.isAvailable.mockReturnValue(false);
+  tmuxMock.getProjectSession.mockReturnValue({ sessionName: "aimux-repo-111" });
+  tmuxMock.getSessionOption.mockReturnValue(null);
+});
 
 describe("evaluateRuntimeGuard", () => {
   it("flags self-drift above everything, even when the service matches", () => {
@@ -58,6 +77,17 @@ describe("evaluateRuntimeGuard", () => {
     });
   });
 
+  it("reports runtime rebuild required before service health failures", () => {
+    expect(
+      evaluateRuntimeGuard({
+        selfDrift: false,
+        runtimeRebuildRequired: true,
+        endpointPresent: false,
+        serviceManifest: null,
+      }),
+    ).toEqual({ kind: "runtime-rebuild-required" });
+  });
+
   it("flags a service-mismatch when build stamps differ", () => {
     expect(
       evaluateRuntimeGuard({
@@ -73,6 +103,7 @@ describe("runtimeGuardEquals", () => {
   it("matches identical states and distinguishes stale reasons", () => {
     expect(runtimeGuardEquals({ kind: "ok" }, { kind: "ok" })).toBe(true);
     expect(runtimeGuardEquals({ kind: "disconnected" }, { kind: "disconnected" })).toBe(true);
+    expect(runtimeGuardEquals({ kind: "runtime-rebuild-required" }, { kind: "runtime-rebuild-required" })).toBe(true);
     expect(runtimeGuardEquals({ kind: "ok" }, { kind: "disconnected" })).toBe(false);
     expect(runtimeGuardEquals({ kind: "stale", reason: "self-drift" }, { kind: "stale", reason: "self-drift" })).toBe(
       true,
@@ -123,6 +154,8 @@ describe("runtimeGuardKeyDisposition", () => {
   it("reloads on R, passes safe nav keys, swallows everything else", () => {
     expect(runtimeGuardKeyDisposition("R")).toBe("reload");
     expect(runtimeGuardKeyDisposition("r")).toBe("reload");
+    expect(runtimeGuardKeyDisposition("B", { kind: "runtime-rebuild-required" })).toBe("rebuild-runtime");
+    expect(runtimeGuardKeyDisposition("b", { kind: "stale", reason: "self-drift" })).toBe("swallow");
     for (const key of ["up", "down", "j", "k", "tab", "escape", "q", "?"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("passthrough");
     }
@@ -139,7 +172,8 @@ describe("runtimeGuardOverlayCopy", () => {
       (reason) => runtimeGuardOverlayCopy({ kind: "stale", reason }).title,
     );
     titles.push(runtimeGuardOverlayCopy({ kind: "disconnected" }).title);
-    expect(new Set(titles).size).toBe(3);
+    titles.push(runtimeGuardOverlayCopy({ kind: "runtime-rebuild-required" }).title);
+    expect(new Set(titles).size).toBe(4);
     expect(titles.every((t) => t.length > 0)).toBe(true);
     expect(runtimeGuardOverlayCopy({ kind: "ok" }).title).toBe("");
   });
@@ -175,6 +209,24 @@ describe("probeRuntimeGuard", () => {
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
   });
+
+  it("reports runtime rebuild required from tmux marker", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.getSessionOption.mockReturnValue("1");
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
+    expect(tmuxMock.getSessionOption).toHaveBeenCalledWith("aimux-repo-111", "@aimux-runtime-rebuild-required");
+  });
 });
 
 describe("buildDashboardRuntimeGuardOverlayOutput", () => {
@@ -182,6 +234,12 @@ describe("buildDashboardRuntimeGuardOverlayOutput", () => {
     expect(buildDashboardRuntimeGuardOverlayOutput({ runtimeGuardState: { kind: "ok" } }, 120, 40)).toBeNull();
     const out = buildDashboardRuntimeGuardOverlayOutput({ runtimeGuardState: { kind: "disconnected" } }, 120, 40);
     expect(out?.toLowerCase()).toContain("unreachable");
+    const rebuild = buildDashboardRuntimeGuardOverlayOutput(
+      { runtimeGuardState: { kind: "runtime-rebuild-required" } },
+      120,
+      40,
+    );
+    expect(rebuild?.toLowerCase()).toContain("rebuild");
   });
 });
 
@@ -193,6 +251,7 @@ describe("handleRuntimeGuardKey", () => {
       footerFlashTicks: 0,
       renderCurrentDashboardView: vi.fn(),
       reloadDashboardFromGuard: vi.fn(),
+      restartRuntimeFromGuard: vi.fn(),
     };
   }
 
@@ -217,5 +276,11 @@ describe("handleRuntimeGuardKey", () => {
     const host = stubHost({ kind: "stale", reason: "service-mismatch" });
     expect(handleRuntimeGuardKey(host, Buffer.from("R"))).toBe(true);
     expect(host.reloadDashboardFromGuard).toHaveBeenCalledTimes(1);
+  });
+
+  it("triggers runtime rebuild on B for the runtime rebuild guard", () => {
+    const host = stubHost({ kind: "runtime-rebuild-required" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("B"))).toBe(true);
+    expect(host.restartRuntimeFromGuard).toHaveBeenCalledTimes(1);
   });
 });
