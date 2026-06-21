@@ -83,6 +83,7 @@ import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createUploadedAttachment,
   getAttachment,
@@ -265,6 +266,9 @@ interface MetadataServerOptions {
   onChange?: () => void;
   events?: {
     bus?: ProjectEventBus;
+  };
+  diagnostics?: {
+    pluginStatuses?: () => PluginRuntimePluginStatus[];
   };
   desktop?: {
     getState?: () => Record<string, unknown>;
@@ -1739,6 +1743,7 @@ export class MetadataServer {
         serviceInfo: getProjectServiceManifest(),
         resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
         recentSlowRequests: this.recentSlowRequests.slice(-10),
+        plugins: this.options.diagnostics?.pluginStatuses?.() ?? [],
       });
       return;
     }
