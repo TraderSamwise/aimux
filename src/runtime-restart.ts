@@ -15,6 +15,7 @@ import {
   type RuntimeCoherenceReport,
 } from "./runtime-coherence.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { commandArgValueMatches } from "./process-args.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "skipped" | "failed";
 
@@ -180,8 +181,8 @@ function defaultIsAimuxProjectServiceProcess(pid: number, expected: ProjectServi
     if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
       return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
     }
-    if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
-    if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
+    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
+    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
     return true;
   } catch {
     return false;

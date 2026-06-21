@@ -6,6 +6,7 @@ import { getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
+import { commandArgValueMatches } from "./process-args.js";
 
 interface OtherOwner {
   home: string;
@@ -77,8 +78,8 @@ function isAimuxProjectServiceProcess(
     if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
       return resolve(readProcessCwd(pid) ?? "") === resolve(expected.projectRoot);
     }
-    if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
-    if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
+    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
+    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
     return true;
   } catch {
     return false;

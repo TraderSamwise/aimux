@@ -20,6 +20,7 @@ import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
+import { commandArgValueMatches } from "./process-args.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -171,7 +172,7 @@ interface ProjectServiceProcessIdentity {
 }
 
 function isAimuxDaemonHealth(json: any): boolean {
-  return json?.kind === DAEMON_HEALTH_KIND && typeof json?.pid === "number";
+  return json?.kind === DAEMON_HEALTH_KIND && Number.isInteger(json?.pid) && json.pid > 0;
 }
 
 function isMatchingDaemonHealth(json: any): boolean {
@@ -205,8 +206,8 @@ function isAimuxProjectServiceProcess(pid: number, expected: ProjectServiceProce
     if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
       return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
     }
-    if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
-    if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
+    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
+    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
     return true;
   } catch {
     return false;
@@ -443,8 +444,8 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
     const info = loadDaemonInfo();
     if (info) {
       try {
-        await requestDaemonJson("/health");
-        return info;
+        const health = await requestDaemonJson("/health");
+        if (health?.pid === info.pid && isMatchingDaemonHealth(health)) return info;
       } catch {}
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
