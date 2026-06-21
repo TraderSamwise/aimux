@@ -808,13 +808,18 @@ export class TmuxRuntimeManager {
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
     const insideTmux = options.insideTmux === true;
+    const targetHostSession =
+      insideTmux && this.isClientSessionName(target.sessionName)
+        ? this.getSessionOption(target.sessionName, "@aimux-host-session")
+        : null;
+    const openSessionName = targetHostSession || target.sessionName;
     const shouldResolveManagedClient =
-      insideTmux && this.isManagedSessionName(target.sessionName) && !this.isClientSessionName(target.sessionName);
+      insideTmux && this.isManagedSessionName(openSessionName) && !this.isClientSessionName(openSessionName);
     const sessionName = shouldResolveManagedClient
-      ? this.resolveOpenSessionName(target.sessionName, true, options.clientSuffix, options.clientTty)
+      ? this.resolveOpenSessionName(openSessionName, true, options.clientSuffix, options.clientTty)
       : options.alreadyResolved
-        ? target.sessionName
-        : this.resolveOpenSessionName(target.sessionName, insideTmux, options.clientSuffix, options.clientTty);
+        ? openSessionName
+        : this.resolveOpenSessionName(openSessionName, insideTmux, options.clientSuffix, options.clientTty);
     const effectiveTarget =
       sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
         ? this.ensureLinkedWindow(sessionName, target)

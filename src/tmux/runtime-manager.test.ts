@@ -525,6 +525,50 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("resolves cross-project client-session targets through their host session", () => {
+    const baseExec = createExecMock();
+    const hostSessionName = "aimux-mobile-abc";
+    const otherClientSessionName = `${hostSessionName}-client-deadbeef`;
+    const currentClientSessionName = `${hostSessionName}-client-268eff9c`;
+    const exec = ((args, options) => {
+      const joined = args.join(" ");
+      if (joined === `show-options -v -t ${otherClientSessionName} @aimux-host-session`) return hostSessionName;
+      return baseExec(args, options);
+    }) as TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> };
+    exec.calls = baseExec.calls;
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+
+    manager.openTarget(
+      { sessionName: otherClientSessionName, windowId: "@3", windowIndex: 3, windowName: "codex" },
+      { insideTmux: true, clientTty: "/dev/ttys999", clientSuffix: "268eff9c", returnSessionName: "origin-client" },
+    );
+
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args.join(" ") ===
+          `new-session -d -s ${currentClientSessionName} -c /repo/mobile -n dashboard sh -lc tail -f /dev/null`,
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args.join(" ") === `set-option -t ${currentClientSessionName} @aimux-return-session origin-client`,
+      ),
+    ).toBe(true);
+    expect(interactiveCalls.at(-1)?.args).toEqual([
+      "switch-client",
+      "-c",
+      "/dev/ttys999",
+      "-t",
+      `${currentClientSessionName}:3`,
+    ]);
+  });
+
   it("still resolves the client session for already-resolved managed targets inside tmux", () => {
     const exec = createExecMock();
     const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
