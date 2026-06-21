@@ -57,7 +57,7 @@ export function stabilizeRuntimeGuardProbe(
     return { state: next, disconnectedProbeCount: 0 };
   }
   const count = disconnectedProbeCount + 1;
-  if (current.kind !== "ok" || count >= threshold) {
+  if (current.kind === "disconnected" || count >= threshold) {
     return { state: next, disconnectedProbeCount: count };
   }
   return { state: current, disconnectedProbeCount: count };

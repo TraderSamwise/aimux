@@ -200,6 +200,7 @@ export async function restartAimuxControlPlane(
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const killPid = options.killPid ?? defaultKillPid;
+  let stoppedServicePids: number[] = [];
   if (previousDaemon) {
     await waitForPidExit({
       pid: previousDaemon.pid,
@@ -209,20 +210,23 @@ export async function restartAimuxControlPlane(
       sleep,
       killPid,
     });
-    const signaledServicePids = new Set(previousDaemon.stoppedProjectServices.map((service) => service.pid));
-    for (const pid of beforeServicePids) {
-      if (signaledServicePids.has(pid)) continue;
-      killPid(pid, "SIGTERM");
-    }
-    await waitForPidsExit({
-      pids: [...previousDaemon.stoppedProjectServices.map((service) => service.pid), ...beforeServicePids],
-      timeoutMs: options.serviceExitTimeoutMs ?? 5000,
-      killGraceMs: options.killGraceMs ?? 2000,
-      isPidAlive,
-      sleep,
-      killPid,
-    });
+    stoppedServicePids = previousDaemon.stoppedProjectServices.map((service) => service.pid);
   }
+  const signaledServicePids = new Set(stoppedServicePids);
+  for (const pid of beforeServicePids) {
+    if (signaledServicePids.has(pid)) continue;
+    try {
+      killPid(pid, "SIGTERM");
+    } catch {}
+  }
+  await waitForPidsExit({
+    pids: [...new Set([...stoppedServicePids, ...beforeServicePids])],
+    timeoutMs: options.serviceExitTimeoutMs ?? 5000,
+    killGraceMs: options.killGraceMs ?? 2000,
+    isPidAlive,
+    sleep,
+    killPid,
+  });
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)({ adoptExisting: false });
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();

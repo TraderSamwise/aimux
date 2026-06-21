@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestJson } from "./http-client.js";
 import { configureLogging, resetLoggingForTests } from "./debug.js";
+import { getProjectServiceManifest } from "./project-service-manifest.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -74,7 +75,7 @@ describe("daemon supervision", () => {
     vi.mocked(requestJson).mockReset();
     vi.mocked(requestJson).mockResolvedValue({
       status: 200,
-      json: { ok: true },
+      json: { ok: true, serviceInfo: getProjectServiceManifest() },
     });
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & { pid: number; unref: () => void };
@@ -137,6 +138,24 @@ describe("daemon supervision", () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     expect(livePids.has(first.pid)).toBe(false);
     expect(livePids.has(second.pid)).toBe(true);
+  });
+
+  it("replaces a live project service when health omits the manifest", async () => {
+    vi.mocked(requestJson).mockResolvedValue({
+      status: 200,
+      json: { ok: true },
+    });
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = await (daemon as any).ensureProject(projectRoot);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(first.pid);
+
+    const second = await (daemon as any).ensureProject(projectRoot);
+
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 
   it("respawns a dead project service on the next ensure call", async () => {
@@ -369,6 +388,33 @@ describe("daemon supervision", () => {
 
       expect(info.port).toBe(44191);
       expect(vi.mocked(requestJson)).toHaveBeenCalledWith("http://127.0.0.1:44191/health");
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
+  it("does not adopt stored daemon info for a different live pid", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_PORT = "44191";
+      mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
+      writeFileSync(
+        join(tmpRoot, ".aimux", "daemon", "daemon.json"),
+        JSON.stringify({ pid: 111, port: 44191, startedAt: "then", updatedAt: "then" }),
+      );
+      vi.mocked(requestJson)
+        .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 222, port: 44191 } })
+        .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 222, port: 44191 } });
+      const { ensureDaemonRunning } = await import("./daemon.js");
+
+      const info = await ensureDaemonRunning();
+
+      expect(info.pid).toBe(222);
+      expect(spawnMock).not.toHaveBeenCalled();
     } finally {
       if (previousPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;

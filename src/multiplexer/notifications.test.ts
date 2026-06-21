@@ -235,6 +235,92 @@ describe("coordination inbox ordering", () => {
   });
 });
 
+describe("coordination thread workflow keys", () => {
+  function taskWorklistItem() {
+    return {
+      key: "t:thread-1",
+      kind: "thread",
+      type: "task",
+      bucket: "awake",
+      title: "Task",
+      urgency: 1,
+      reachability: "live",
+      actionable: true,
+      stale: false,
+      thread: {
+        thread: {
+          id: "thread-1",
+          kind: "task",
+          title: "Task",
+          participants: ["user"],
+          waitingOn: ["user"],
+          unreadBy: [],
+          status: "open",
+          taskId: "task-1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        displayTitle: "Task",
+        messages: [],
+        pendingDeliveries: 0,
+        latestPendingRecipients: [],
+        task: { id: "task-1" },
+        urgency: 1,
+        stateLabel: "assigned",
+        familyTaskIds: ["task-1"],
+      },
+    };
+  }
+
+  function workflowHost() {
+    return {
+      coordinationIndex: 0,
+      coordinationWorklist: [taskWorklistItem()],
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      exitDashboardClientOrProcess: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+      showHelp: vi.fn(),
+      showDashboardError: vi.fn(),
+      dashboardState: {},
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      centerInWidth: (text: string) => text,
+      truncatePlain: (text: string) => text,
+      wrapKeyValue: (_key: string, value: string) => [value],
+      writeFrame: vi.fn(),
+    };
+  }
+
+  it("keeps accept, review, and reopen workflow mutations on uppercase keys", async () => {
+    const host: any = workflowHost();
+
+    handleCoordinationKey(host, Buffer.from("a"));
+    handleCoordinationKey(host, Buffer.from("e"));
+    handleCoordinationKey(host, Buffer.from("j"));
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+
+    handleCoordinationKey(host, Buffer.from("A"));
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
+      taskId: "task-1",
+      from: "user",
+    }));
+
+    handleCoordinationKey(host, Buffer.from("J"));
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
+      taskId: "task-1",
+      from: "user",
+    }));
+
+    handleCoordinationKey(host, Buffer.from("E"));
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
+      taskId: "task-1",
+      from: "user",
+    }));
+  });
+});
+
 describe("coordination reads prefer the service", () => {
   let repoRoot = "";
 

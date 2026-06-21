@@ -308,13 +308,16 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   const existing = loadDaemonInfo();
   if (existing) {
     try {
-      await requestDaemonJson("/health");
+      const health = await requestDaemonJson("/health");
+      if (health?.pid !== existing.pid) {
+        throw new Error(`stored daemon pid ${existing.pid} does not match live pid ${health?.pid ?? "unknown"}`);
+      }
       if (options.adoptExisting === false) {
         log.warn("terminating stored daemon instead of adopting", "daemon", { pid: existing.pid });
         await terminateDaemonOnDefaultPort(existing.pid);
         clearFile(getDaemonInfoPath());
       } else {
-      return existing;
+        return existing;
       }
     } catch (error) {
       log.warn("stored daemon info failed health check", "daemon", {
@@ -633,12 +636,13 @@ export class AimuxDaemon {
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
         }
-        if (json?.serviceInfo && !manifestsMatch(getProjectServiceManifest(), json.serviceInfo)) {
+        const expectedManifest = getProjectServiceManifest();
+        if (!manifestsMatch(expectedManifest, json?.serviceInfo)) {
           log.warn("project service manifest mismatch", "daemon", {
             projectId,
             projectRoot: resolvedRoot,
             pid: existing.pid,
-            expected: getProjectServiceManifest(),
+            expected: expectedManifest,
             actual: json.serviceInfo,
           });
           return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);

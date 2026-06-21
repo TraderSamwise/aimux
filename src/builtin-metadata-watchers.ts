@@ -68,6 +68,7 @@ class DirectoryPoller implements AimuxPluginInstance {
       this.debounce = null;
       this.onScan();
     }, 100);
+    this.debounce.unref?.();
   }
 }
 

@@ -864,8 +864,14 @@ export class TmuxRuntimeManager {
     const controlScript = this.getControlScriptShellCommand();
     const statuslineCommand = this.getStatuslineCommandSpec();
     const projectStateDir = getProjectStateDirFor(projectRoot);
-    const controlContextArgs =
-      "--current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}'";
+    const controlContextArgs = [
+      "--current-client-session #{q:client_session}",
+      "--client-tty #{q:client_tty}",
+      "--current-window #{q:window_name}",
+      "--current-window-id #{q:window_id}",
+      "--current-path #{q:pane_current_path}",
+      "--pane-id #{q:pane_id}",
+    ].join(" ");
     const controlCommand = (action: string, args = "") =>
       `${controlScript} ${action}${args ? ` ${args}` : ""} ${controlContextArgs} >/dev/null 2>&1`;
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
