@@ -143,13 +143,20 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
   if (events.length === 0) return false;
   const key = commandKey(events[0]);
-  const disposition = runtimeGuardKeyDisposition(key);
+  const disposition = runtimeGuardKeyDisposition(key, host.runtimeGuardState);
   if (disposition === "reload") {
     host.reloadDashboardFromGuard();
     return true;
   }
+  if (disposition === "rebuild-runtime") {
+    host.restartRuntimeFromGuard();
+    return true;
+  }
   if (disposition === "passthrough") return false;
-  host.footerFlash = "Stale dashboard — press R to reload";
+  host.footerFlash =
+    host.runtimeGuardState.kind === "runtime-rebuild-required"
+      ? "Runtime rebuild required — press B to rebuild"
+      : "Stale dashboard — press R to reload";
   host.footerFlashTicks = 3;
   host.renderCurrentDashboardView();
   return true;
@@ -191,6 +198,30 @@ export function reloadDashboardFromGuard(host: DashboardControlHost): void {
     child.unref();
   } catch {
     host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
+    host.footerFlashTicks = 6;
+    host.renderCurrentDashboardView();
+  }
+}
+
+export function restartRuntimeFromGuard(host: DashboardControlHost): void {
+  const projectRoot = host.projectRoot ?? process.cwd();
+  host.footerFlash = "Restarting project runtime…";
+  host.footerFlashTicks = 5;
+  host.renderCurrentDashboardView();
+  const command = resolveDashboardReloadCommand();
+  try {
+    const child = spawn(command, ["restart-runtime", "--project-root", projectRoot, "--open"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", () => {
+      host.footerFlash = `Runtime rebuild failed — run: ${command} restart-runtime --project-root ${projectRoot} --open`;
+      host.footerFlashTicks = 6;
+      host.renderCurrentDashboardView();
+    });
+    child.unref();
+  } catch {
+    host.footerFlash = `Runtime rebuild failed — run: ${command} restart-runtime --project-root ${projectRoot} --open`;
     host.footerFlashTicks = 6;
     host.renderCurrentDashboardView();
   }
@@ -688,7 +719,9 @@ async function requestProjectService(
     const verification = await verifyProjectServiceEndpoint(endpoint, deadline);
     if (verification === "stale") {
       removeMetadataEndpoint(projectRoot);
-      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
@@ -717,7 +750,9 @@ async function requestProjectService(
       lastError = error;
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
         removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), { restartProjectService: true });
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
         await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
