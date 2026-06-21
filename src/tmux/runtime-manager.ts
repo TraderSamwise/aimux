@@ -365,6 +365,9 @@ export class TmuxRuntimeManager {
   ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
     const exists = this.hasSession(session.sessionName);
+    const currentRuntimeContract = exists
+      ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
+      : null;
     if (!exists) {
       const argv =
         dashboardCommand && dashboardCommand.args.length >= 0
@@ -396,7 +399,7 @@ export class TmuxRuntimeManager {
       this.exec(argv, { cwd: projectRoot });
     }
     this.configureSession(session.sessionName, projectRoot);
-    if (!exists) this.setCurrentRuntimeContract(session.sessionName);
+    if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);
     return session;
   }
 
