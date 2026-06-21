@@ -33,6 +33,7 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
+const DAEMON_HEALTH_KIND = "aimux-daemon";
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
@@ -164,13 +165,29 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function isAimuxProjectServiceProcess(pid: number): boolean {
+interface ProjectServiceProcessIdentity {
+  projectId?: string;
+  projectRoot?: string;
+}
+
+function isMatchingDaemonHealth(json: any): boolean {
+  return (
+    json?.kind === DAEMON_HEALTH_KIND &&
+    typeof json?.pid === "number" &&
+    manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
+  );
+}
+
+function isAimuxProjectServiceProcess(pid: number, expected: ProjectServiceProcessIdentity = {}): boolean {
   try {
     const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return args.includes("__project-service-internal");
+    if (!args.includes("__project-service-internal")) return false;
+    if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
+    if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
+    return true;
   } catch {
     return false;
   }
@@ -259,7 +276,7 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<St
   });
   const stoppedProjectServices: ProjectServiceState[] = [];
   for (const entry of projectServiceStates) {
-    if (!isAimuxProjectServiceProcess(entry.pid)) {
+    if (!isAimuxProjectServiceProcess(entry.pid, entry)) {
       log.warn("skipping unverified project service pid during daemon stop", "daemon", {
         projectId: entry.projectId,
         projectRoot: entry.projectRoot,
@@ -331,7 +348,10 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   if (existing) {
     try {
       const health = await requestDaemonJson("/health");
-      if (health?.pid !== existing.pid) {
+      if (!isMatchingDaemonHealth(health)) {
+        throw new Error("stored daemon health response does not match this Aimux build");
+      }
+      if (health.pid !== existing.pid) {
         throw new Error(`stored daemon pid ${existing.pid} does not match live pid ${health?.pid ?? "unknown"}`);
       }
       if (options.adoptExisting === false) {
@@ -352,7 +372,7 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
 
   try {
     const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`);
-    if (status >= 200 && status < 300 && json?.ok !== false && typeof json?.pid === "number") {
+    if (status >= 200 && status < 300 && json?.ok !== false && isMatchingDaemonHealth(json)) {
       if (options.adoptExisting === false) {
         log.warn("terminating daemon on default port instead of adopting", "daemon", { pid: json.pid });
         await terminateDaemonOnDefaultPort(json.pid);
@@ -518,7 +538,7 @@ export class AimuxDaemon {
     for (const entry of Object.values(this.state.projects)) {
       const child = this.children.get(entry.projectId);
       const trackedChild = child?.pid === entry.pid;
-      if (!trackedChild && !isAimuxProjectServiceProcess(entry.pid)) {
+      if (!trackedChild && !isAimuxProjectServiceProcess(entry.pid, entry)) {
         log.warn("skipping unverified project service pid during daemon shutdown", "daemon", {
           projectId: entry.projectId,
           projectRoot: entry.projectRoot,
@@ -573,11 +593,15 @@ export class AimuxDaemon {
     const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
     let child: ChildProcess;
     try {
-      child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
-        cwd: projectRoot,
-        env: loggingChildEnv(),
-        stdio: stdio.stdio,
-      });
+      child = spawn(
+        process.execPath,
+        [process.argv[1]!, "__project-service-internal", "--project-id", projectId, "--project-root", projectRoot],
+        {
+          cwd: projectRoot,
+          env: loggingChildEnv(),
+          stdio: stdio.stdio,
+        },
+      );
     } catch (error) {
       stdio.close();
       throw error;
@@ -757,7 +781,7 @@ export class AimuxDaemon {
   private async terminateProjectService(projectId: string, existing: ProjectServiceState): Promise<boolean> {
     const child = this.children.get(projectId);
     const trackedChild = child?.pid === existing.pid;
-    if (!trackedChild && !isAimuxProjectServiceProcess(existing.pid)) {
+    if (!trackedChild && !isAimuxProjectServiceProcess(existing.pid, existing)) {
       log.warn("skipping unverified project service pid during replacement", "daemon", {
         projectId,
         projectRoot: existing.projectRoot,
@@ -823,7 +847,7 @@ export class AimuxDaemon {
     if (!existing) return null;
     const child = this.children.get(projectId);
     const trackedChild = child?.pid === existing.pid;
-    if (trackedChild || isAimuxProjectServiceProcess(existing.pid)) {
+    if (trackedChild || isAimuxProjectServiceProcess(existing.pid, existing)) {
       try {
         process.kill(existing.pid, "SIGTERM");
       } catch {}
@@ -859,7 +883,16 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === "/health") {
-      return { status: 200, body: { ok: true, pid: process.pid, port: getDaemonPort() } };
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          kind: DAEMON_HEALTH_KIND,
+          pid: process.pid,
+          port: getDaemonPort(),
+          serviceInfo: getProjectServiceManifest(),
+        },
+      };
     }
 
     if (method === "GET" && pathname === "/relay/status") {

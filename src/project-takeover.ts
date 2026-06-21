@@ -18,7 +18,7 @@ interface DaemonInfo {
 }
 
 interface DaemonState {
-  projects?: Record<string, { pid?: number; projectRoot?: string }>;
+  projects?: Record<string, { pid?: number; projectId?: string; projectRoot?: string }>;
 }
 
 function isPidAlive(pid: number): boolean {
@@ -47,13 +47,19 @@ function writeJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
 }
 
-function isAimuxProjectServiceProcess(pid: number): boolean {
+function isAimuxProjectServiceProcess(
+  pid: number,
+  expected: { projectId?: string; projectRoot?: string } = {},
+): boolean {
   try {
     const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return args.includes("__project-service-internal");
+    if (!args.includes("__project-service-internal")) return false;
+    if (expected.projectId && !args.includes(`--project-id ${expected.projectId}`)) return false;
+    if (expected.projectRoot && !args.includes(`--project-root ${expected.projectRoot}`)) return false;
+    return true;
   } catch {
     return false;
   }
@@ -81,7 +87,7 @@ function cleanOtherOwnerProjectState(owner: OtherOwner, projectId: string): void
   const state = readJson<DaemonState>(statePath);
   const entry = state?.projects?.[projectId];
   if (entry?.pid && isPidAlive(entry.pid)) {
-    if (isAimuxProjectServiceProcess(entry.pid)) {
+    if (isAimuxProjectServiceProcess(entry.pid, { projectId, projectRoot: entry.projectRoot })) {
       try {
         process.kill(entry.pid, "SIGTERM");
       } catch {}
