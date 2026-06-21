@@ -378,28 +378,37 @@ show_local_expose() {
   [ -n "$popup_session" ] || popup_session="$current_client_session"
   home_arg=""
   [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
-  # Snapshot the host BEFORE the popup opens; opening it transiently reflows the host pane,
-  # so an in-popup capture would catch a mis-sized frame. Exposé reads then deletes this file.
-  backdrop_arg=""
-  prepaint=""
-  expose_backdrop=$(mktemp 2>/dev/null || true)
-  if [ -n "$expose_backdrop" ]; then
-    capture_target="${current_window_id:-$popup_session}"
-    if tmux capture-pane -p -e -t "$capture_target" -S 0 > "$expose_backdrop" 2>/dev/null; then
-      backdrop_arg="--backdrop-file $(shell_quote "$expose_backdrop")"
-      # Paint the captured screen instantly so the popup shows your work while the exposé
-      # process cold-starts; exposé then atomically repaints it dimmed with the panel.
-      prepaint="printf '\\033[H'; cat $(shell_quote "$expose_backdrop"); "
-    else
-      rm -f "$expose_backdrop"
+  # tmux popups are fixed-size, so exposé exits 75 when it detects the terminal resized;
+  # relaunch it at the new 100%×100% bounds. Each pass recaptures a fresh backdrop.
+  while :; do
+    # Snapshot the host BEFORE the popup opens; opening it transiently reflows the host pane,
+    # so an in-popup capture would catch a mis-sized frame. Exposé reads then deletes this file.
+    backdrop_arg=""
+    prepaint=""
+    expose_backdrop=$(mktemp 2>/dev/null || true)
+    if [ -n "$expose_backdrop" ]; then
+      capture_target="${current_window_id:-$popup_session}"
+      if tmux capture-pane -p -e -t "$capture_target" -S 0 > "$expose_backdrop" 2>/dev/null; then
+        backdrop_arg="--backdrop-file $(shell_quote "$expose_backdrop")"
+        # Paint the captured screen instantly so the popup shows your work while the exposé
+        # process cold-starts; exposé then atomically repaints it dimmed with the panel.
+        prepaint="printf '\\033[H'; cat $(shell_quote "$expose_backdrop"); "
+      else
+        rm -f "$expose_backdrop"
+      fi
     fi
-  fi
-  expose_cmd="${prepaint}exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
-  if [ -n "$popup_client_tty" ]; then
-    tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1 || { rm -f "$expose_backdrop"; return 1; }
-  else
-    tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1 || { rm -f "$expose_backdrop"; return 1; }
-  fi
+    expose_cmd="${prepaint}exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
+    if [ -n "$popup_client_tty" ]; then
+      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      popup_status=$?
+    else
+      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      popup_status=$?
+    fi
+    rm -f "$expose_backdrop"
+    [ "$popup_status" = 75 ] && continue
+    break
+  done
   exit 0
 }
 
