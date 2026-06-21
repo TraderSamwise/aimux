@@ -779,7 +779,7 @@ async function verifyProjectServiceEndpoint(
       },
     );
     if (status < 200 || status >= 300 || json?.ok === false) return "retry";
-    if (typeof json?.pid === "number" && json.pid !== endpoint.pid) return "stale";
+    if (json?.pid !== endpoint.pid) return "stale";
     if (!manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) return "stale";
     return "ok";
   } catch (error) {

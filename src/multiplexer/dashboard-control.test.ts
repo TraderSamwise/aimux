@@ -118,6 +118,24 @@ describe("postToProjectService", () => {
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 
+  it("recovers before requesting when endpoint health omits the pid", async () => {
+    mocks.requestJson
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, serviceInfo: getProjectServiceManifest() } })
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() } })
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 5 } });
+    const { getFromProjectService } = await import("./dashboard-control.js");
+
+    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
+      ok: true,
+      value: 5,
+    });
+
+    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
+  });
+
   it("does not restart the project service after one transient health failure", async () => {
     mocks.requestJson
       .mockRejectedValueOnce(new Error("request timed out after 250ms"))
