@@ -112,13 +112,15 @@ ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
 scripts/install.sh "$ASSET"
 ```
 
+- Reinstalling over an existing local/native install automatically runs the safe `aimux restart` repair. The installer never runs the destructive `restart-runtime`; if a tmux runtime rebuild is required, dashboards show a blocking warning with an explicit rebuild action.
+- Use `AIMUX_SKIP_POST_INSTALL_RESTART=1 scripts/install.sh "$ASSET"` only for installer tests or unusual environments where post-install repair must be suppressed.
 - Before asking someone to verify runtime behavior manually, always run:
 
 ```bash
 yarn build
 ```
 
-- If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; restart or reload the relevant runtime after the build.
+- If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; install a local release so the post-install repair can move the running control plane.
 - Use `aimux restart` as the normal post-build coherence repair. It restarts the daemon, re-ensures known project services, and reloads existing dashboards without killing agent tmux windows.
 - Use `aimux doctor versions` to inspect daemon/project-service/dashboard build coherence.
 - Use `aimux restart-runtime --open` only when the current project's managed tmux runtime itself must be torn down and rebuilt.

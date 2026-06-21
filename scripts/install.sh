@@ -6,6 +6,7 @@ VERSION="${AIMUX_VERSION:-latest}"
 INSTALL_ROOT="${AIMUX_INSTALL_ROOT:-$HOME/.aimux/native}"
 BIN_DIR="${AIMUX_BIN_DIR:-$HOME/.local/bin}"
 LOCAL_ARCHIVE="${AIMUX_ARCHIVE:-${1:-}}"
+HAD_EXISTING_INSTALL=0
 
 fail() {
   printf 'aimux install failed: %s\n' "$*" >&2
@@ -58,6 +59,17 @@ download_optional() {
 
 need node
 need tar
+
+if [ -e "$BIN_DIR/aimux" ] || [ -L "$BIN_DIR/aimux" ]; then
+  HAD_EXISTING_INSTALL=1
+elif [ -d "$INSTALL_ROOT" ]; then
+  for existing_install in "$INSTALL_ROOT"/*; do
+    if [ -e "$existing_install" ]; then
+      HAD_EXISTING_INSTALL=1
+      break
+    fi
+  done
+fi
 
 node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(major >= 24 ? 0 : 1)' \
   || fail "Node.js >= 24 is required"
@@ -148,6 +160,19 @@ ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"
 
 printf 'Installed aimux %s to %s\n' "$INSTALLED_VERSION" "$DEST"
 printf 'Linked %s/aimux\n' "$BIN_DIR"
+
+if [ "$HAD_EXISTING_INSTALL" = "1" ]; then
+  if [ "${AIMUX_SKIP_POST_INSTALL_RESTART:-}" = "1" ]; then
+    printf 'Skipped post-install aimux restart because AIMUX_SKIP_POST_INSTALL_RESTART=1\n'
+  else
+    printf 'Repairing running aimux control plane...\n'
+    if "$BIN_DIR/aimux" restart; then
+      printf 'Aimux control plane repaired.\n'
+    else
+      printf 'Installed aimux, but post-install restart failed. Run: %s/aimux restart\n' "$BIN_DIR" >&2
+    fi
+  fi
+fi
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
