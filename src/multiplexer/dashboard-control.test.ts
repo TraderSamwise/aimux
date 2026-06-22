@@ -415,6 +415,22 @@ describe("startRuntimeGuardRepair", () => {
     vi.clearAllMocks();
   });
 
+  it("does not repair transient disconnected service states", async () => {
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    startRuntimeGuardRepair(host as never, { kind: "disconnected" });
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
+  });
+
   it("uses PATH aimux restart for guarded repair", async () => {
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     const originalArgv = process.argv[1];
@@ -535,6 +551,68 @@ describe("startRuntimeGuardRepair", () => {
       if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
       else process.env.AIMUX_CLI_BIN = originalCliBin;
     }
+  });
+});
+
+describe("refreshRuntimeGuard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+  });
+
+  function runtimeGuardHost() {
+    return {
+      mode: "dashboard",
+      projectRoot: "/repo/app",
+      runtimeGuardState: { kind: "ok" },
+      runtimeGuardDisconnectProbeCount: 0,
+      runtimeGuardProbing: false,
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+  }
+
+  it("does not restart Aimux for repeated disconnected health probes", async () => {
+    mocks.requestJson.mockRejectedValue(new Error("request timed out after 250ms"));
+    const host = runtimeGuardHost();
+    host.runtimeGuardDisconnectProbeCount = 1;
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "disconnected" });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
+  });
+
+  it("still restarts Aimux when the service manifest is stale", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: {
+        ok: true,
+        pid: 2,
+        serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
+      },
+    });
+    const host = runtimeGuardHost();
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
+    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart", "--project", "/repo/app"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 });
 

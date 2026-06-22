@@ -41,6 +41,7 @@ import {
   runtimeGuardEquals,
   runtimeGuardKeyDisposition,
   stabilizeRuntimeGuardProbe,
+  type RuntimeGuardState,
 } from "./runtime-guard.js";
 
 type DashboardControlHost = any;
@@ -134,8 +135,8 @@ export function setDashboardScreen(host: DashboardControlHost, screen: Dashboard
   host.tmuxRuntimeManager.refreshStatus();
 }
 
-// Intercept keys while the dashboard is stale/disconnected: reload on R, let safe nav keys
-// through, swallow everything that could mutate. Returns true when the key was consumed.
+// Intercept keys while the dashboard is guarded: let safe nav keys through,
+// swallow everything that could mutate. Returns true when the key was consumed.
 export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer): boolean {
   if (!host.runtimeGuardState || host.runtimeGuardState.kind === "ok") return false;
   if (host.dashboardBusyState || host.dashboardErrorState) return false;
@@ -146,13 +147,20 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   const key = commandKey(events[0]);
   const disposition = runtimeGuardKeyDisposition(key);
   if (disposition === "passthrough") return false;
-  host.footerFlash = "Aimux is repairing the local control plane";
+  host.footerFlash =
+    host.runtimeGuardState.kind === "disconnected"
+      ? "Aimux is reconnecting to the project service"
+      : "Aimux is repairing the local control plane";
   host.footerFlashTicks = 3;
   host.renderCurrentDashboardView();
   return true;
 }
 
-function runtimeGuardRepairKey(state: NonNullable<DashboardControlHost["runtimeGuardState"]>): string {
+function shouldAutoRepairRuntimeGuard(state: RuntimeGuardState): boolean {
+  return state.kind === "stale" || state.kind === "runtime-rebuild-required";
+}
+
+function runtimeGuardRepairKey(state: RuntimeGuardState): string {
   return state.kind === "stale" ? `${state.kind}:${state.reason}` : state.kind;
 }
 
@@ -170,11 +178,8 @@ function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string
   host.renderCurrentDashboardView?.();
 }
 
-export function startRuntimeGuardRepair(
-  host: DashboardControlHost,
-  state: NonNullable<DashboardControlHost["runtimeGuardState"]>,
-): void {
-  if (state.kind === "ok" || host.runtimeGuardRepairing) return;
+export function startRuntimeGuardRepair(host: DashboardControlHost, state: RuntimeGuardState): void {
+  if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing) return;
   const repairKey = runtimeGuardRepairKey(state);
   if (host.runtimeGuardRepairFailedKey === repairKey) return;
   const projectRoot = host.projectRoot ?? process.cwd();
@@ -247,7 +252,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       }
       host.renderCurrentDashboardView();
     }
-    if (next.state.kind !== "ok") startRuntimeGuardRepair(host, next.state);
+    if (shouldAutoRepairRuntimeGuard(next.state)) startRuntimeGuardRepair(host, next.state);
   } finally {
     host.runtimeGuardProbing = false;
   }

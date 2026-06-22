@@ -268,6 +268,13 @@ describe("handleRuntimeGuardKey", () => {
     expect(host.footerFlash).toContain("repairing");
   });
 
+  it("swallows a mutating key without claiming repair while disconnected", () => {
+    const host = stubHost({ kind: "disconnected" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("n"))).toBe(true);
+    expect(host.footerFlash).toContain("reconnecting");
+    expect(host.footerFlash).not.toContain("repairing");
+  });
+
   it("lets a safe nav key through when guarded", () => {
     const host = stubHost({ kind: "disconnected" });
     expect(handleRuntimeGuardKey(host, Buffer.from("k"))).toBe(false);
