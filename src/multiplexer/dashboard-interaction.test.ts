@@ -409,6 +409,31 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
 
+  it("resumes exited agents in the non-dashboard fallback path", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "exited",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const offline = { ...entry, restoreState: "ready" };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "missing"),
+      offlineSessions: [offline],
+      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      sessions: [],
+      noteLastUsedItem: vi.fn(),
+      focusSession: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("opened");
+
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(offline);
+    expect(host.focusSession).not.toHaveBeenCalled();
+  });
+
   it("can open a teammate without changing dashboard selection", async () => {
     const entry = {
       id: "reviewer-1",
