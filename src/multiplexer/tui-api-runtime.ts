@@ -100,9 +100,15 @@ export class TuiApiRuntime {
     const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
     try {
       const value = validate(await this.requestTransport(path, requestOpts));
+      if (this.disposed) {
+        return { ok: false, error: new Error("TUI API runtime disposed") };
+      }
       this.setConnectionState("connected");
       return { ok: true, value };
     } catch (error) {
+      if (this.disposed) {
+        return { ok: false, error: new Error("TUI API runtime disposed") };
+      }
       this.setConnectionState("degraded");
       this.options.onRequestFailure?.(error);
       return { ok: false, error };
@@ -124,9 +130,15 @@ export class TuiApiRuntime {
     const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
     try {
       const value = validate(await this.mutateTransport(path, body, requestOpts));
+      if (this.disposed) {
+        return { ok: false, error: new Error("TUI API runtime disposed") };
+      }
       this.setConnectionState("connected");
       return { ok: true, value };
     } catch (error) {
+      if (this.disposed) {
+        return { ok: false, error: new Error("TUI API runtime disposed") };
+      }
       this.setConnectionState("degraded");
       this.options.onRequestFailure?.(error);
       return { ok: false, error };
