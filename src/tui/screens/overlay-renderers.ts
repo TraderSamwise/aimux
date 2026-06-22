@@ -151,12 +151,12 @@ export function buildDashboardRuntimeGuardOverlayOutput(ctx: any, cols: number, 
     "",
     guard.kind === "runtime-rebuild-required"
       ? hints([
-          ["B", "rebuild"],
-          ["q", "quit"],
+          ["b", "rebuild runtime"],
+          ["q", "close dashboard"],
         ])
       : hints([
-          ["R", "reload"],
-          ["q", "quit"],
+          ["r", "reload"],
+          ["q", "close dashboard"],
         ]),
   ];
   return renderOverlayBox({ title: copy.title, body, cols, rows, variant: "red" });

@@ -240,6 +240,10 @@ describe("buildDashboardRuntimeGuardOverlayOutput", () => {
       40,
     );
     expect(rebuild?.toLowerCase()).toContain("rebuild");
+    expect(rebuild).toContain("b");
+    expect(rebuild).toContain("rebuild runtime");
+    expect(rebuild).toContain("q");
+    expect(rebuild).toContain("close dashboard");
   });
 });
 
@@ -263,7 +267,7 @@ describe("handleRuntimeGuardKey", () => {
   it("swallows a mutating key and flashes when guarded", () => {
     const host = stubHost({ kind: "stale", reason: "self-drift" });
     expect(handleRuntimeGuardKey(host, Buffer.from("n"))).toBe(true);
-    expect(host.footerFlash).toContain("press R to reload");
+    expect(host.footerFlash).toContain("press r to reload");
     expect(host.reloadDashboardFromGuard).not.toHaveBeenCalled();
   });
 
