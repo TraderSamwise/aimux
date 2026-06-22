@@ -252,6 +252,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const projectRoot = host.projectRoot ?? process.cwd();
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
+    host.runtimeGuardRepairBusy = true;
     host.dashboardBusyState = {
       title: "Repairing Aimux",
       lines: ["Another dashboard is repairing the local control plane."],
