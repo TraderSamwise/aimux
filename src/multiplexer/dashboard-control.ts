@@ -12,7 +12,7 @@ import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
-import { getGlobalAimuxDir, getProjectStateDir } from "../paths.js";
+import { getGlobalAimuxDir, getProjectStateDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
@@ -37,6 +37,12 @@ import { keycap, style } from "../tui/render/theme.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
 import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  renderDashboardIfCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
 import {
   probeRuntimeGuard,
   runtimeGuardEquals,
@@ -257,6 +263,7 @@ function describeRuntimeGuardState(state: RuntimeGuardState): string {
 
 export function startRuntimeGuardRepair(host: DashboardControlHost, state: RuntimeGuardState): void {
   if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing) return;
+  const lifecycle = captureDashboardLifecycle(host);
   const repairKey = runtimeGuardRepairKey(state);
   if (host.runtimeGuardRepairFailedKey === repairKey) return;
   const projectRoot = host.projectRoot ?? process.cwd();
@@ -269,7 +276,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       spinnerFrame: 0,
       startedAt: Date.now(),
     };
-    host.renderCurrentDashboardView?.();
+    renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
     return;
   }
   const command = resolveDashboardReloadCommand();
@@ -282,7 +289,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     spinnerFrame: 0,
     startedAt: Date.now(),
   };
-  host.renderCurrentDashboardView?.();
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
 
   let settled = false;
   const fail = (message: string) => {
@@ -291,6 +298,11 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
+    if (host.runtimeGuardRepairBusy) {
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+    }
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
   };
   const succeed = async () => {
@@ -316,6 +328,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.runtimeGuardRepairBusy = false;
     }
     host.runtimeGuardState = { kind: "ok" };
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.renderCurrentDashboardView?.();
   };
 
@@ -341,10 +354,12 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<void> {
   if (host.mode !== "dashboard") return;
   if (host.runtimeGuardProbing) return;
+  const lifecycle = captureDashboardLifecycle(host);
   host.runtimeGuardProbing = true;
   try {
     const current = host.runtimeGuardState ?? { kind: "ok" };
     const probed = await probeRuntimeGuard(host.projectRoot ?? process.cwd());
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     const next = stabilizeRuntimeGuardProbe(current, probed, host.runtimeGuardDisconnectProbeCount ?? 0);
     host.runtimeGuardDisconnectProbeCount = next.disconnectedProbeCount;
     if (!runtimeGuardEquals(current, next.state)) {
@@ -730,6 +745,7 @@ function validOrchestrationRouteOption(value: unknown): value is DashboardOrches
 async function showOrchestrationRoutePickerFromService(
   host: DashboardControlHost,
   mode: "message" | "handoff" | "task",
+  lifecycle: DashboardLifecycleToken,
   selectedSessionId?: string,
   worktreePath?: string,
 ): Promise<void> {
@@ -742,8 +758,10 @@ async function showOrchestrationRoutePickerFromService(
     if (!res?.ok || !Array.isArray(res.options) || !res.options.every(validOrchestrationRouteOption)) {
       throw new Error("invalid orchestration route options payload");
     }
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     applyOrchestrationRouteOptions(host, mode, res.options);
   } catch (error) {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError("Failed to load orchestration targets", [
       error instanceof Error ? error.message : String(error),
     ]);
@@ -757,9 +775,10 @@ export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "
     ]);
     return;
   }
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   const selected = getSelectedDashboardSessionForActions(host);
   const focusedWorktreePath = host.dashboardState.focusedWorktreePath;
-  void showOrchestrationRoutePickerFromService(host, mode, selected?.id, focusedWorktreePath);
+  void showOrchestrationRoutePickerFromService(host, mode, lifecycle, selected?.id, focusedWorktreePath);
 }
 
 export function showOrchestrationInput(
@@ -922,6 +941,37 @@ async function requestProjectService(
   throw lastError instanceof Error ? lastError : new Error("no live project service endpoint");
 }
 
+export async function resolveCurrentProjectServiceEndpointForDashboard(
+  host: DashboardControlHost,
+  timeoutMs = 1000,
+): Promise<{ host: string; port: number; pid?: number } | null> {
+  const projectRoot = process.cwd();
+  const deadline = Date.now() + timeoutMs;
+  let endpoint = loadMetadataEndpoint(projectRoot);
+  if (!endpoint) {
+    await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+    endpoint = loadMetadataEndpoint(projectRoot);
+  }
+  if (!endpoint) return null;
+  const current = await endpointIsCurrentForRequest(
+    host,
+    endpoint,
+    Math.min(250, remainingProjectServiceDeadline(deadline)),
+  );
+  if (current) return endpoint;
+  clearProjectServiceEndpointHealth(host);
+  removeMetadataEndpoint(projectRoot);
+  if (Date.now() >= deadline) return null;
+  await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+    restartProjectService: true,
+  });
+  endpoint = loadMetadataEndpoint(projectRoot);
+  if (!endpoint) return null;
+  return (await endpointIsCurrentForRequest(host, endpoint, Math.min(250, remainingProjectServiceDeadline(deadline))))
+    ? endpoint
+    : null;
+}
+
 async function endpointIsCurrentForRequest(
   host: DashboardControlHost,
   endpoint: { host: string; port: number; pid?: number },
@@ -951,14 +1001,16 @@ async function endpointMatchesCurrentProjectService(
   timeoutMs: number,
 ): Promise<boolean> {
   try {
-    const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
-      `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`,
-      { timeoutMs: Math.max(1, timeoutMs) },
-    );
+    const { status, json } = await requestJson<{
+      pid?: number;
+      projectStateDir?: string;
+      serviceInfo?: ProjectServiceManifest;
+    }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
     return (
       status >= 200 &&
       status < 300 &&
       json?.pid === endpoint.pid &&
+      json?.projectStateDir === getProjectStateDirFor(process.cwd()) &&
       manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
     );
   } catch {

@@ -244,6 +244,58 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     await expect(isSettled?.()).resolves.toBe(true);
     expect(host.listDesktopWorktrees).not.toHaveBeenCalled();
   });
+
+  it("does not render create settlement callbacks after dashboard exit", async () => {
+    let onSettled: (() => void) | undefined;
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, settled, opts) => {
+          onSettled = settled;
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => []),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+    host.mode = "session";
+    host.dashboardInputEpoch = 1;
+
+    await expect(isSettled?.()).resolves.toBe(true);
+    onSettled?.();
+    await Promise.resolve();
+
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("does not treat later dashboard input as create settlement", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => []),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+    host.dashboardInputEpoch = 1;
+
+    await expect(isSettled?.()).resolves.toBe(false);
+  });
 });
 
 describe("dashboardStateMethods.reconcileDashboardRenderState", () => {

@@ -60,6 +60,7 @@ describe("dashboard-ops", () => {
     const services = [[], () => [{ id: createdServiceId, status: "running", pid: 1234, foregroundCommand: "zsh" }]];
     let serviceIndex = 0;
     const host = {
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
         if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
@@ -104,6 +105,7 @@ describe("dashboard-ops", () => {
     let serviceIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
@@ -162,6 +164,7 @@ describe("dashboard-ops", () => {
   it("stops a service through the project service when a fresh snapshot has no model changes", async () => {
     const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
@@ -196,6 +199,7 @@ describe("dashboard-ops", () => {
     const services = [[{ id: "svc-1", status: "offline" }], []];
     let serviceIndex = 0;
     const host = {
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
@@ -230,6 +234,7 @@ describe("dashboard-ops", () => {
     const sessions = [[{ ...session, status: "running" }]];
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -261,12 +266,50 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears pending stop state without rendering stale completion after newer input", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const request = deferred();
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "claude"),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "running" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    const action = stopSessionToOfflineWithFeedback(host, session);
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    request.resolve();
+    await action;
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Stopping claude");
+    expect(host.renderDashboard).toHaveBeenCalledTimes(1);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -310,6 +353,7 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -346,6 +390,7 @@ describe("dashboard-ops", () => {
     const postOrder: string[] = [];
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -401,6 +446,7 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -440,6 +486,7 @@ describe("dashboard-ops", () => {
     const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -469,6 +516,7 @@ describe("dashboard-ops", () => {
     const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -513,6 +561,7 @@ describe("dashboard-ops", () => {
     ];
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -545,6 +594,7 @@ describe("dashboard-ops", () => {
     let renderAccess = 0;
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -630,6 +680,7 @@ describe("dashboard-ops", () => {
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshError: new Error("offline"),
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -661,6 +712,7 @@ describe("dashboard-ops", () => {
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -712,6 +764,7 @@ describe("dashboard-ops", () => {
     ];
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
@@ -744,6 +797,7 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -783,6 +837,7 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       offlineSessions: [] as any[],
       sessions: [session],
       dashboardPendingActions: makePendingActionsFake(),
