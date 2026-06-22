@@ -6,6 +6,7 @@ export interface TuiApiRequestOptions {
 
 export interface TuiApiRuntimeOptions {
   request: (path: string, opts?: TuiApiRequestOptions) => Promise<unknown>;
+  mutate?: (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>;
   onConnectionStateChange?: (state: TuiApiConnectionState) => void;
 }
 
@@ -30,6 +31,12 @@ export interface TuiApiRefreshResult<T> {
   generation: number;
 }
 
+export interface TuiApiMutationResult<T> {
+  ok: boolean;
+  value?: T;
+  error?: unknown;
+}
+
 interface ResourceState<T = unknown> extends TuiApiResourceSnapshot<T> {
   pendingPromise?: Promise<TuiApiRefreshResult<T>>;
 }
@@ -38,8 +45,15 @@ export class TuiApiRuntime {
   private readonly resources = new Map<string, ResourceState>();
   private state: TuiApiConnectionState = "connected";
   private disposed = false;
+  private mutateTransport?: (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>;
 
-  constructor(private readonly options: TuiApiRuntimeOptions) {}
+  constructor(private readonly options: TuiApiRuntimeOptions) {
+    this.mutateTransport = options.mutate;
+  }
+
+  setMutationTransport(mutate: (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>): void {
+    this.mutateTransport = mutate;
+  }
 
   getConnectionState(): TuiApiConnectionState {
     return this.state;
@@ -66,6 +80,29 @@ export class TuiApiRuntime {
     const { timeoutMs } = opts;
     const requestOpts = timeoutMs === undefined ? undefined : { timeoutMs };
     return this.refresh(resource, async () => validate(await this.options.request(path, requestOpts)), opts);
+  }
+
+  async mutateJson<T>(
+    path: string,
+    body: unknown,
+    validate: (value: unknown) => T,
+    opts: TuiApiRequestOptions = {},
+  ): Promise<TuiApiMutationResult<T>> {
+    if (this.disposed) {
+      return { ok: false, error: new Error("TUI API runtime disposed") };
+    }
+    if (!this.mutateTransport) {
+      return { ok: false, error: new Error("TUI API mutation transport unavailable") };
+    }
+    const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
+    try {
+      const value = validate(await this.mutateTransport(path, body, requestOpts));
+      this.setConnectionState("connected");
+      return { ok: true, value };
+    } catch (error) {
+      this.setConnectionState("degraded");
+      return { ok: false, error };
+    }
   }
 
   async refresh<T>(
@@ -144,14 +181,35 @@ export class TuiApiRuntime {
   }
 }
 
-export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {
-  if (host.tuiApiRuntime instanceof TuiApiRuntime) return host.tuiApiRuntime;
+export function getOrCreateTuiApiRuntime(
+  host: any,
+  transports: Pick<TuiApiRuntimeOptions, "mutate"> = {},
+): TuiApiRuntime {
+  if (host.tuiApiRuntime instanceof TuiApiRuntime) {
+    if (transports.mutate) host.tuiApiRuntime.setMutationTransport(transports.mutate);
+    return host.tuiApiRuntime;
+  }
   host.tuiApiRuntime = new TuiApiRuntime({
     request: (path, opts) =>
       opts === undefined ? host.getFromProjectService(path) : host.getFromProjectService(path, opts),
+    mutate: transports.mutate,
     onConnectionStateChange: (state) => {
       host.tuiApiConnectionState = state;
     },
   });
   return host.tuiApiRuntime;
+}
+
+export async function postJsonWithTuiApiRuntime(
+  host: any,
+  path: string,
+  body: unknown,
+  opts: TuiApiRequestOptions | undefined,
+  mutate: (host: any, path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>,
+): Promise<any> {
+  const result = await getOrCreateTuiApiRuntime(host, {
+    mutate: (requestPath, requestBody, requestOpts) => mutate(host, requestPath, requestBody, requestOpts),
+  }).mutateJson(path, body, (value) => value, opts);
+  if (!result.ok) throw result.error instanceof Error ? result.error : new Error(String(result.error));
+  return result.value;
 }

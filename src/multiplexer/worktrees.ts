@@ -9,11 +9,21 @@ import {
 } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { style } from "../tui/render/theme.js";
-import { postToProjectService } from "./dashboard-control.js";
+import { postToProjectService as postToProjectServiceTransport } from "./dashboard-control.js";
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
+import { postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type WorktreeHost = any;
+
+function postWorktreeMutation(
+  host: WorktreeHost,
+  path: string,
+  body: unknown,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  return postJsonWithTuiApiRuntime(host, path, body, opts, postToProjectServiceTransport);
+}
 
 interface DashboardWorktreeMutationOptions {
   pendingPath: string | undefined;
@@ -252,7 +262,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
       host.renderDashboard();
       void (async () => {
         try {
-          await postToProjectService(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
+          await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
           const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath);
           if (!result.ok) {
             throw result.error;
@@ -345,7 +355,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     pendingPath: path,
     pendingAction: "graveyarding",
     request: async () => {
-      await postToProjectService(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
+      await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
     },
     settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group),
     onSuccess: () => {
