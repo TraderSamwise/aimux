@@ -38,6 +38,7 @@ export interface RuntimeCoherenceProcessReport {
   pathHints: string[];
   staleNativePath: boolean;
   error: string | null;
+  projectRoot?: string | null;
 }
 
 export interface RuntimeCoherenceProjectReport {
@@ -49,6 +50,11 @@ export interface RuntimeCoherenceProjectReport {
     contract: string | null;
     expectedContract: string;
     rebuildRequired: boolean;
+    clientSessions?: Array<{
+      sessionName: string;
+      contract: string | null;
+      rebuildRequired: boolean;
+    }>;
   };
   service: {
     status: RuntimeCoherenceStatus;
@@ -306,12 +312,34 @@ function readProjectRuntimeReport(input: {
     };
   }
   const sessionName = input.tmux.getProjectSession(input.projectRoot).sessionName;
+  const sessionNames = input.tmux.listSessionNames();
+  if (!sessionNames.includes(sessionName)) {
+    return {
+      sessionName,
+      contract: null,
+      expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      rebuildRequired: false,
+      clientSessions: [],
+    };
+  }
   const contract = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
+  const clientSessions = sessionNames
+    .filter((name) => name.startsWith(`${sessionName}-client-`))
+    .map((name) => {
+      const clientContract = input.tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION);
+      return {
+        sessionName: name,
+        contract: clientContract,
+        rebuildRequired: clientContract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      };
+    });
   return {
     sessionName,
     contract,
     expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
-    rebuildRequired: Boolean(contract && contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION),
+    rebuildRequired:
+      contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION || clientSessions.some((client) => client.rebuildRequired),
+    clientSessions,
   };
 }
 
@@ -419,11 +447,19 @@ function listStaleHookProcesses(input: {
   listProcessArgs: () => Array<{ pid: number; args: string }>;
   cliLaunch: AimuxCliLaunchCommand;
 }): RuntimeCoherenceProcessReport[] {
-  return input
-    .listProcessArgs()
-    .filter((entry) => entry.args.includes("claude-hook") || entry.args.includes("codex-hook"))
-    .map((entry) => buildProcessReport({ pid: entry.pid, args: entry.args, cliLaunch: input.cliLaunch }))
-    .filter((entry): entry is RuntimeCoherenceProcessReport => Boolean(entry?.staleNativePath));
+  const reports: RuntimeCoherenceProcessReport[] = [];
+  for (const entry of input.listProcessArgs()) {
+    if (!entry.args.includes("claude-hook") && !entry.args.includes("codex-hook")) continue;
+    const report = buildProcessReport({ pid: entry.pid, args: entry.args, cliLaunch: input.cliLaunch });
+    if (!report?.staleNativePath) continue;
+    reports.push({ ...report, projectRoot: extractHookProjectRoot(entry.args) });
+  }
+  return reports;
+}
+
+function extractHookProjectRoot(args: string): string | null {
+  const match = args.match(/--project(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim() || null;
 }
 
 function projectStatus(
@@ -580,6 +616,12 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
     lines.push(
       `  runtime: contract=${project.runtime.contract ?? "(missing)"} expected=${project.runtime.expectedContract} rebuild=${project.runtime.rebuildRequired ? "yes" : "no"}`,
     );
+    for (const client of project.runtime.clientSessions ?? []) {
+      if (!client.rebuildRequired) continue;
+      lines.push(
+        `    client: ${client.sessionName} contract=${client.contract ?? "(missing)"} expected=${project.runtime.expectedContract} rebuild=yes`,
+      );
+    }
     lines.push(
       `  service: ${project.service.status} endpoint=${formatEndpoint(project.service.endpoint)} pid=${project.service.pid ?? "(unknown)"}`,
     );

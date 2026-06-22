@@ -1178,6 +1178,7 @@ export class MetadataServer {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
+      this.desktopStateCache = null;
       notifyAlert(event);
     });
   }
@@ -1749,6 +1750,15 @@ export class MetadataServer {
     }
 
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.health) {
+      send(res, 200, {
+        ok: true,
+        projectStateDir: getProjectStateDir(),
+        pid: process.pid,
+        serviceInfo: getProjectServiceManifest(),
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.diagnostics) {
       send(res, 200, {
         ok: true,
         projectStateDir: getProjectStateDir(),

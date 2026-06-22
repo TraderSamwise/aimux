@@ -1,6 +1,10 @@
 import { requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
-import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "../runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
+} from "../runtime-owner.js";
 import { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import {
   getProjectServiceManifest,
@@ -13,9 +17,8 @@ import {
 const HEALTH_TIMEOUT_MS = 2500;
 
 /**
- * Whether the running dashboard is safe to act through. `stale` means this process is out of
- * date (its own binary changed on disk, or it disagrees with the live service) and should
- * reload before mutating anything; `disconnected` means the authority is unreachable.
+ * Whether the running dashboard is safe to act through. Drift states trigger repair;
+ * `disconnected` blocks mutating keys while the service reconnects.
  */
 export type RuntimeGuardState =
   | { kind: "ok" }
@@ -69,18 +72,12 @@ export function stabilizeRuntimeGuardProbe(
 }
 
 // Keys that are non-mutating on EVERY screen (selection/scroll/quit/help). Screen-switch
-// letters (d/c/p/l/t/g) are excluded because they mutate on their target subscreen (e.g. "c"
-// is clear-all on Coordination), so under the guard you reload rather than browse.
+// letters (d/c/p/l/t/g) are excluded because they mutate on their target subscreen.
 const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape", "q", "?"]);
 
-/** What a keystroke should do while the dashboard is guarded (stale/disconnected). */
-export function runtimeGuardKeyDisposition(
-  key: string,
-  state?: RuntimeGuardState,
-): "reload" | "rebuild-runtime" | "passthrough" | "swallow" {
+/** What a keystroke should do while the dashboard is guarded. Repair is automatic. */
+export function runtimeGuardKeyDisposition(key: string): "passthrough" | "swallow" {
   const command = key.length === 1 ? key.toLowerCase() : key;
-  if (state?.kind === "runtime-rebuild-required" && command === "b") return "rebuild-runtime";
-  if (command === "r") return "reload";
   if (GUARD_PASSTHROUGH_KEYS.has(command)) return "passthrough";
   return "swallow";
 }
@@ -89,35 +86,26 @@ export function runtimeGuardKeyDisposition(
 export function runtimeGuardOverlayCopy(state: RuntimeGuardState): { title: string; lines: string[] } {
   if (state.kind === "stale" && state.reason === "self-drift") {
     return {
-      title: "aimux updated — reload required",
-      lines: [
-        "This dashboard is running an old binary (the install changed on disk).",
-        "Reload to pick up the new version before making any changes.",
-      ],
+      title: "Aimux is updating",
+      lines: ["Aimux is applying the current build.", "Actions resume automatically when repair completes."],
     };
   }
   if (state.kind === "stale") {
     return {
-      title: "Dashboard out of sync",
-      lines: [
-        "This dashboard disagrees with the project service version.",
-        "Reload to resync before making any changes.",
-      ],
+      title: "Aimux is syncing",
+      lines: ["Aimux is syncing the dashboard with the project service.", "Actions resume automatically."],
     };
   }
   if (state.kind === "disconnected") {
     return {
-      title: "Project service unreachable",
-      lines: ["The dashboard can't reach the project service.", "Actions are paused until it reconnects."],
+      title: "Aimux is reconnecting",
+      lines: ["Aimux is reconnecting the project service.", "Actions resume automatically."],
     };
   }
   if (state.kind === "runtime-rebuild-required") {
     return {
-      title: "Tmux runtime rebuild required",
-      lines: [
-        "This update changed the managed tmux runtime contract.",
-        "Rebuild the project runtime to continue safely.",
-      ],
+      title: "Aimux is repairing tmux",
+      lines: ["Aimux is repairing the managed tmux runtime.", "Actions resume automatically."],
     };
   }
   return { title: "", lines: [] };
@@ -128,7 +116,17 @@ function readRuntimeRebuildRequired(projectRoot: string): boolean {
     const tmux = new TmuxRuntimeManager();
     if (!tmux.isAvailable()) return false;
     const sessionName = tmux.getProjectSession(projectRoot).sessionName;
-    return tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1";
+    const sessionNames = tmux.listSessionNames();
+    if (!sessionNames.includes(sessionName)) return false;
+    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1") return true;
+    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
+      return true;
+    }
+    return sessionNames
+      .filter((name) => name.startsWith(`${sessionName}-client-`))
+      .some(
+        (name) => tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      );
   } catch {
     return false;
   }
