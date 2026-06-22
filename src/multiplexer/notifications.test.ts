@@ -148,6 +148,10 @@ describe("notification target open", () => {
     expect(notificationTargetLabel(host, "teammate-1")).toBe("reviewer · demo");
     expect(notificationTargetState(host, "teammate-1")).toBe("offline");
 
+    host.dashboardTeammatesCache[0].status = "exited";
+    expect(notificationTargetState(host, "teammate-1")).toBe("offline");
+    host.dashboardTeammatesCache[0].status = "offline";
+
     handleCoordinationKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(host.activateDashboardEntry).toHaveBeenCalled());
 

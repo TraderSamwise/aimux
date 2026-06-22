@@ -88,6 +88,16 @@ describe("coordination model", () => {
     expect(model.items[1]!.actionable).toBe(true);
   });
 
+  it("treats exited targets as offline/restorable", () => {
+    const model = build({
+      sessions: [session("c", "needs_input", 0, "exited")],
+      notifications: [notif({ id: "2", sessionId: "c", kind: "needs_input" })],
+    });
+
+    expect(model.items[0]!.reachability).toBe("offline");
+    expect(model.items[0]!.actionable).toBe(true);
+  });
+
   it("classifies a vanished target as missing and unreachable, not actionable", () => {
     const model = build({
       sessions: [],
@@ -232,10 +242,7 @@ describe("coordination worklist", () => {
 
   it("clamps secondary urgency so a busy lower bucket can't overtake a higher one", () => {
     const wl = worklist({
-      sessions: [
-        session("awake", "needs_input", 0),
-        session("busy-asleep", "needs_input", 100_000, "offline"),
-      ],
+      sessions: [session("awake", "needs_input", 0), session("busy-asleep", "needs_input", 100_000, "offline")],
       notifications: [
         notif({ id: "1", sessionId: "awake", kind: "needs_input" }),
         notif({ id: "2", sessionId: "busy-asleep", kind: "needs_input" }),
