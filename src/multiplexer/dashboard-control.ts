@@ -1,7 +1,7 @@
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
@@ -170,15 +170,37 @@ function runtimeGuardRepairLockPath(): string {
   return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
 }
 
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readRuntimeGuardRepairLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeRuntimeGuardRepairLockOwner(lockPath: string, pid: number, projectRoot: string): void {
+  writeFileSync(
+    join(lockPath, "owner.json"),
+    `${JSON.stringify({ pid, projectRoot, acquiredAt: new Date().toISOString() })}\n`,
+  );
+}
+
 function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   const lockPath = runtimeGuardRepairLockPath();
   const acquire = (): string | null => {
     try {
       mkdirSync(lockPath);
-      writeFileSync(
-        join(lockPath, "owner.json"),
-        `${JSON.stringify({ pid: process.pid, projectRoot, acquiredAt: new Date().toISOString() })}\n`,
-      );
+      writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
       return lockPath;
     } catch (error) {
       if ((error as { code?: string }).code !== "EEXIST") throw error;
@@ -190,8 +212,9 @@ function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   const acquired = acquire();
   if (acquired) return acquired;
   try {
+    const ownerPid = readRuntimeGuardRepairLockPid(lockPath);
     const ageMs = Date.now() - statSync(lockPath).mtimeMs;
-    if (ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
+    if ((ownerPid && !isPidAlive(ownerPid)) || ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
       rmSync(lockPath, { recursive: true, force: true });
       return acquire();
     }
@@ -275,6 +298,9 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   try {
     const child = spawn(command, ["restart", "--project", projectRoot], { detached: true, stdio: "ignore" });
+    if (typeof child.pid === "number" && child.pid > 0) {
+      writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
+    }
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
       if (code === 0) {
