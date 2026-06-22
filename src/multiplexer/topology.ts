@@ -3,6 +3,7 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
 
 type TopologyHost = any;
 interface ApiViewRefreshOptions {
@@ -110,8 +111,10 @@ export function showTopology(host: TopologyHost): void {
   host.setDashboardScreen("topology");
   host.writeStatuslineFile();
   renderTopology(host);
-  void refreshTopology(host).then((refreshed) => {
-    if (refreshed && host.isDashboardScreen?.("topology")) renderTopology(host);
+  startDashboardLifecycleTask(host, { inputEpoch: true, screen: "topology" }, () => refreshTopology(host), {
+    onSuccess: (refreshed) => {
+      if (refreshed) renderTopology(host);
+    },
   });
 }
 
@@ -154,9 +157,14 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    void refreshTopology(host, { force: true }).then(() => {
-      if (host.isDashboardScreen?.("topology")) renderTopology(host);
-    });
+    startDashboardLifecycleTask(
+      host,
+      { inputEpoch: true, screen: "topology" },
+      () => refreshTopology(host, { force: true }),
+      {
+        onSuccess: () => renderTopology(host),
+      },
+    );
     return;
   }
   const rows = host.topology?.rows ?? [];

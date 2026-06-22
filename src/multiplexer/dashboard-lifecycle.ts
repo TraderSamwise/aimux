@@ -59,8 +59,15 @@ export function startDashboardLifecycleTask<T>(
   handlers: DashboardLifecycleTaskHandlers<T> = {},
 ): void {
   const token = captureDashboardLifecycle(host, opts);
-  void Promise.resolve()
-    .then(() => work(token))
+  let promise: Promise<T>;
+  try {
+    promise = work(token);
+  } catch (error) {
+    if (isDashboardLifecycleCurrent(host, token)) handlers.onError?.(error, token);
+    if (isDashboardLifecycleCurrent(host, token)) handlers.onFinally?.(token);
+    return;
+  }
+  void promise
     .then((value) => {
       if (isDashboardLifecycleCurrent(host, token)) handlers.onSuccess?.(value, token);
     })
