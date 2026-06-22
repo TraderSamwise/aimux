@@ -381,15 +381,16 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     finishWorktreeRemoval(host, 1);
     return;
   }
-  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const settleLifecycle = captureDashboardLifecycle(host);
+  const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   void runDashboardWorktreeMutation(host, {
     pendingPath: path,
     pendingAction: "graveyarding",
-    lifecycle,
+    lifecycle: uiLifecycle,
     request: async () => {
       await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
     },
-    settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group, 10_000, lifecycle),
+    settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group, 10_000, settleLifecycle),
     onSuccess: () => {
       debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
       finishWorktreeRemoval(host, 0);
@@ -405,7 +406,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
       finishWorktreeRemoval(host, 1);
     },
   }).finally(() => {
-    if (!isDashboardLifecycleCurrent(host, lifecycle) && host.worktreeRemovalJob?.path === path) {
+    if (!isDashboardLifecycleCurrent(host, uiLifecycle) && host.worktreeRemovalJob?.path === path) {
       host.worktreeRemovalJob = null;
     }
   });

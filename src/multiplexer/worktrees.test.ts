@@ -595,6 +595,46 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("continues worktree removal settlement after later dashboard input", async () => {
+    postToProjectService.mockClear();
+    let resolveRemove!: () => void;
+    postToProjectService.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemove = resolve;
+        }),
+    );
+    const pending = createPendingActionsStore();
+    const path = "/repo/.aimux/worktrees/demo";
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeRemovalJob: null,
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, sessions: [], services: [] }],
+      dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardWorktreeGroupsCache = [];
+        return true;
+      }),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    beginWorktreeRemoval(host, path, "demo", 0);
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    resolveRemove();
+
+    await vi.waitFor(() => expect(pending.state.get(`worktree:${path}`)).toBeNull());
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
+    expect(host.footerFlash).toBe("");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("treats Enter as confirmation for worktree removal", () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();

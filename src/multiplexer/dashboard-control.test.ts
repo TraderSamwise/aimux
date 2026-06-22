@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectServiceManifest } from "../project-service-manifest.js";
+import { getProjectStateDirFor } from "../paths.js";
 
 const mocks = vi.hoisted(() => ({
   requestJson: vi.fn(),
@@ -17,7 +18,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 function healthyServiceResponse(pid = 2) {
-  return { status: 200, json: { ok: true, pid, serviceInfo: getProjectServiceManifest() } };
+  return {
+    status: 200,
+    json: {
+      ok: true,
+      projectStateDir: getProjectStateDirFor(process.cwd()),
+      pid,
+      serviceInfo: getProjectServiceManifest(),
+    },
+  };
 }
 
 vi.mock("../http-client.js", () => ({
@@ -216,6 +225,32 @@ describe("postToProjectService", () => {
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
     expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
     expect(mocks.requestJson.mock.calls[2][0]).toContain("/desktop-state");
+  });
+
+  it("rejects project-service endpoints for a different project state dir", async () => {
+    mocks.requestJson
+      .mockResolvedValueOnce({
+        status: 200,
+        json: {
+          ok: true,
+          projectStateDir: "/tmp/other-aimux-project",
+          pid: 2,
+          serviceInfo: getProjectServiceManifest(),
+        },
+      })
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 7 } });
+    const { getFromProjectService } = await import("./dashboard-control.js");
+
+    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
+      ok: true,
+      value: 7,
+    });
+
+    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 
   it("recovers after route connection-refused", async () => {

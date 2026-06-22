@@ -176,7 +176,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       const label = item.kind === "worktree" ? item.entry.path : item.entry.id;
       const message = error instanceof Error ? error.message : String(error);
       debug(`failed to resurrect ${label}: ${message}`, "session");
-      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.showDashboardError?.(`Failed to resurrect "${label}"`, [message]);
       if (host.mode === "dashboard") {
         void refreshGraveyardEntriesFromService(host, { force: true });
@@ -202,6 +202,7 @@ function clampGraveyardSelection(host: ArchivesHost): void {
 async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void> {
   const entry = host.graveyardWorktreeDeleteConfirm;
   if (!entry) return;
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "graveyard" });
   try {
     if (host.mode === "dashboard") {
       await postGraveyardMutation(
@@ -223,6 +224,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
       applyGraveyardPayload(host, emptyGraveyardPayload());
     }
     clampGraveyardSelection(host);
+    if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
     if (getSelectableGraveyardRows(host).length === 0) {
       host.setDashboardScreen("dashboard");
       host.renderDashboard();
@@ -232,6 +234,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   } catch (error) {
     host.graveyardWorktreeDeleteConfirm = null;
     const message = error instanceof Error ? error.message : String(error);
+    if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(`Failed to delete "${entry.name}"`, [message]);
   }
 }
