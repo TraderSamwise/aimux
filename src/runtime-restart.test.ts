@@ -836,6 +836,45 @@ describe("restartAimuxControlPlane", () => {
     expect(renderRuntimeRestartResult(result)).toContain("Post-restart verification failed");
   });
 
+  it("fails verification when a requested project is missing after restart", async () => {
+    const after = okCoherenceReport();
+    after.projects = after.projects.filter((project) => project.projectRoot !== "/repo/alpha");
+    after.summary = {
+      projects: after.projects.length,
+      ok: after.projects.length,
+      needsRestart: 0,
+      runtimeRebuildRequired: 0,
+    };
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(coherenceReport()).mockResolvedValueOnce(after);
+
+    const result = await restartAimuxControlPlane({
+      projectRoot: "/repo/alpha",
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: "alpha",
+        projectRoot,
+        pid: 1003,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(result.verification.status).toBe("failed");
+    expect(result.verification.error).toContain("/repo/alpha");
+    expect(result.summary.failures).toBe(1);
+  });
+
   it("does not treat stale agent hook commands as a tmux runtime rebuild", async () => {
     const setSessionOption = vi.fn();
     const buildRuntimeCoherenceReport = vi.fn().mockResolvedValue(staleHookCoherenceReport());

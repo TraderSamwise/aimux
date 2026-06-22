@@ -321,7 +321,7 @@ function readProjectRuntimeReport(input: {
       return {
         sessionName: name,
         contract: clientContract,
-        rebuildRequired: Boolean(clientContract && clientContract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION),
+        rebuildRequired: clientContract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
       };
     });
   return {
@@ -329,8 +329,7 @@ function readProjectRuntimeReport(input: {
     contract,
     expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
     rebuildRequired:
-      Boolean(contract && contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) ||
-      clientSessions.some((client) => client.rebuildRequired),
+      contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION || clientSessions.some((client) => client.rebuildRequired),
     clientSessions,
   };
 }
