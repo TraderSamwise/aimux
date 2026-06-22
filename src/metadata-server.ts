@@ -1178,6 +1178,7 @@ export class MetadataServer {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
+      this.desktopStateCache = null;
       notifyAlert(event);
     });
   }

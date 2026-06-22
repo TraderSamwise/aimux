@@ -116,12 +116,13 @@ function readRuntimeRebuildRequired(projectRoot: string): boolean {
     const tmux = new TmuxRuntimeManager();
     if (!tmux.isAvailable()) return false;
     const sessionName = tmux.getProjectSession(projectRoot).sessionName;
+    const sessionNames = tmux.listSessionNames();
+    if (!sessionNames.includes(sessionName)) return false;
     if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1") return true;
     if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
       return true;
     }
-    return tmux
-      .listSessionNames()
+    return sessionNames
       .filter((name) => name.startsWith(`${sessionName}-client-`))
       .some(
         (name) => tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,

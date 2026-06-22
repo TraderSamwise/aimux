@@ -381,6 +381,47 @@ describe("runtime coherence report", () => {
     );
   });
 
+  it("does not require runtime rebuild for daemon-only projects without a tmux host session", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => []),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          beta: {
+            projectId: "beta",
+            projectRoot: "/repo/beta",
+            pid: 1002,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43212,
+        pid: 1002,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson: vi.fn(async () => ({
+        status: 200,
+        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+      })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.summary).toEqual({ projects: 1, ok: 1, needsRestart: 0, runtimeRebuildRequired: 0 });
+    expect(report.projects[0]?.runtime).toMatchObject({
+      sessionName: "aimux-beta-222",
+      contract: null,
+      rebuildRequired: false,
+      clientSessions: [],
+    });
+  });
+
   it("reports stale native paths in processes and hook commands", async () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
