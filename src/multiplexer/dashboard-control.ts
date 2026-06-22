@@ -298,6 +298,10 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
+    if (host.runtimeGuardRepairBusy) {
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+    }
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
   };
@@ -318,13 +322,13 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     settled = true;
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
-    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.runtimeGuardRepairFailedKey = undefined;
     if (host.runtimeGuardRepairBusy) {
       host.dashboardBusyState = null;
       host.runtimeGuardRepairBusy = false;
     }
     host.runtimeGuardState = { kind: "ok" };
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.renderCurrentDashboardView?.();
   };
 
