@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+import { getProjectServiceManifest } from "../project-service-manifest.js";
+
 const mocks = vi.hoisted(() => ({
   requestJson: vi.fn(),
   loadMetadataEndpoint: vi.fn(),
@@ -9,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   stopProjectService: vi.fn(),
   spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
 }));
+
+function healthyServiceResponse(pid = 2) {
+  return { status: 200, json: { ok: true, pid, serviceInfo: getProjectServiceManifest() } };
+}
 
 vi.mock("../http-client.js", () => ({
   requestJson: mocks.requestJson,
@@ -47,7 +53,11 @@ describe("postToProjectService", () => {
 
   it("recovers from a stale refused project-service endpoint", async () => {
     const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:43444"), { code: "ECONNREFUSED" });
-    mocks.requestJson.mockRejectedValueOnce(refused).mockResolvedValueOnce({ status: 200, json: { ok: true } });
+    mocks.requestJson
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockRejectedValueOnce(refused)
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({ status: 200, json: { ok: true } });
     const { postToProjectService } = await import("./dashboard-control.js");
 
     const result = await postToProjectService({ dashboardServiceRecovery: null }, "/agents/resume", {
@@ -58,11 +68,13 @@ describe("postToProjectService", () => {
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(4);
   });
 
   it("does not retry non-retryable HTTP failures", async () => {
-    mocks.requestJson.mockResolvedValueOnce({ status: 409, json: { ok: false, error: "already exists" } });
+    mocks.requestJson
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({ status: 409, json: { ok: false, error: "already exists" } });
     const { postToProjectService } = await import("./dashboard-control.js");
 
     await expect(
@@ -70,7 +82,7 @@ describe("postToProjectService", () => {
     ).rejects.toThrow("already exists");
 
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
-    expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
   it("does not preflight healthy routes before requesting", async () => {
@@ -108,7 +120,7 @@ describe("postToProjectService", () => {
 
   it("surfaces POST timeouts without replaying a mutating request", async () => {
     const timeout = Object.assign(new Error("request timed out after 250ms"), { code: "ETIMEDOUT" });
-    mocks.requestJson.mockRejectedValueOnce(timeout);
+    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse()).mockRejectedValueOnce(timeout);
     const { postToProjectService } = await import("./dashboard-control.js");
 
     await expect(
@@ -118,7 +130,33 @@ describe("postToProjectService", () => {
     expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
-    expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("restarts stale project-service endpoints before mutating requests", async () => {
+    mocks.requestJson
+      .mockResolvedValueOnce({
+        status: 200,
+        json: {
+          ok: true,
+          pid: 2,
+          serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
+        },
+      })
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, resumed: true } });
+    const { postToProjectService } = await import("./dashboard-control.js");
+
+    await expect(
+      postToProjectService({ dashboardServiceRecovery: null }, "/agents/resume", { sessionId: "claude-1" }),
+    ).resolves.toEqual({ ok: true, resumed: true });
+
+    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
+    expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
+    expect(mocks.requestJson.mock.calls[2][0]).toContain("/agents/resume");
   });
 
   it("recovers after route connection-refused", async () => {
