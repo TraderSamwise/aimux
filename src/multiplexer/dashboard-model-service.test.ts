@@ -113,6 +113,8 @@ describe("refreshDashboardModelFromService", () => {
 
     expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
     expect(host.dashboardSessionsCache.map((session: any) => session.id)).toEqual(["fresh"]);
+    expect(host.dashboardModelServiceRefreshError).toBeUndefined();
+    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
   });
 
   it("rejects desktop-state payloads without service-composed worktree groups", async () => {
