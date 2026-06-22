@@ -708,6 +708,11 @@ describe("restartAimuxControlPlane", () => {
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "/repo/alpha");
     expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
     expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "0");
+    expect(setSessionOption).toHaveBeenCalledWith(
+      "aimux-alpha-111-client-deadbeef",
+      "@aimux-runtime-rebuild-required",
+      "0",
+    );
     expect(result.verification.status).toBe("ok");
     expect(result.summary).toMatchObject({ runtimeRepairs: 1, runtimeRebuildRequired: 1, failures: 0 });
     expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);

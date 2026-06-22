@@ -256,6 +256,7 @@ function repairRuntimeContract(input: {
 
   const hostSession = input.tmux.getProjectSession(input.projectRoot).sessionName;
   try {
+    const repairedSessions = [hostSession];
     if (input.required) {
       if (!input.tmux.configureManagedSession) {
         throw new Error("tmux runtime reconfiguration is unavailable");
@@ -265,12 +266,15 @@ function repairRuntimeContract(input: {
         for (const sessionName of input.tmux.listSessionNames()) {
           if (sessionName.startsWith(`${hostSession}-client-`)) {
             input.tmux.configureManagedSession(sessionName, input.projectRoot);
+            repairedSessions.push(sessionName);
           }
         }
       }
     }
     try {
-      input.tmux.setSessionOption(hostSession, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+      for (const sessionName of repairedSessions) {
+        input.tmux.setSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+      }
     } catch (error) {
       if (input.required) throw error;
     }
