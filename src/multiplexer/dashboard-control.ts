@@ -155,8 +155,8 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   if (disposition === "passthrough") return false;
   host.footerFlash =
     host.runtimeGuardState.kind === "runtime-rebuild-required"
-      ? "Runtime rebuild required — press B to rebuild"
-      : "Stale dashboard — press R to reload";
+      ? "Runtime rebuild required — press b to rebuild runtime"
+      : "Stale dashboard — press r to reload";
   host.footerFlashTicks = 3;
   host.renderCurrentDashboardView();
   return true;
