@@ -2,15 +2,24 @@ import { debug } from "../debug.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
-import { postToProjectService } from "./dashboard-control.js";
+import { postToProjectService as postToProjectServiceTransport } from "./dashboard-control.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type ArchivesHost = any;
 interface ApiViewRefreshOptions {
   force?: boolean;
 }
 const GRAVEYARD_RESOURCE = "graveyard";
+
+function postGraveyardMutation(
+  host: ArchivesHost,
+  path: string,
+  body: unknown,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  return postJsonWithTuiApiRuntime(host, path, body, opts, postToProjectServiceTransport);
+}
 
 export function showGraveyard(host: ArchivesHost): void {
   host.clearDashboardSubscreens();
@@ -121,7 +130,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
   const promise =
     item.kind === "worktree"
       ? host.mode === "dashboard"
-        ? postToProjectService(
+        ? postGraveyardMutation(
             host,
             PROJECT_API_ROUTES.graveyardActions.resurrectWorktree,
             { path: item.entry.path },
@@ -129,7 +138,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
           )
         : host.resurrectGraveyardWorktree(item.entry.path)
       : host.mode === "dashboard"
-        ? postToProjectService(
+        ? postGraveyardMutation(
             host,
             PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
             { sessionId: item.entry.id },
@@ -189,7 +198,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   if (!entry) return;
   try {
     if (host.mode === "dashboard") {
-      await postToProjectService(
+      await postGraveyardMutation(
         host,
         PROJECT_API_ROUTES.graveyardActions.deleteWorktree,
         { path: entry.path },

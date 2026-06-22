@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TuiApiRuntime } from "./tui-api-runtime.js";
+import { postJsonWithTuiApiRuntime, TuiApiRuntime } from "./tui-api-runtime.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -48,6 +48,64 @@ describe("TuiApiRuntime", () => {
       pending: false,
     });
     expect(states).toContain("degraded");
+  });
+
+  it("does not coalesce mutations", async () => {
+    const mutate = vi.fn(async (_path: string, body: unknown) => ({ ok: true, body }));
+    const runtime = new TuiApiRuntime({ request: vi.fn(), mutate });
+
+    const first = runtime.mutateJson("/notifications/read", { id: "one" }, (value) => value);
+    const second = runtime.mutateJson("/notifications/read", { id: "two" }, (value) => value);
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { ok: true, value: { ok: true, body: { id: "one" } } },
+      { ok: true, value: { ok: true, body: { id: "two" } } },
+    ]);
+    expect(mutate).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports degraded state when a mutation fails", async () => {
+    const states: string[] = [];
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(),
+      mutate: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+      onConnectionStateChange: (state) => states.push(state),
+    });
+
+    await expect(runtime.mutateJson("/notifications/read", {}, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error: expect.any(Error),
+    });
+
+    expect(states).toContain("degraded");
+  });
+
+  it("routes wrapper mutations through the shared runtime transport", async () => {
+    const host: any = {};
+    const mutate = vi.fn(async () => ({ ok: true, warning: "kept" }));
+
+    await expect(
+      postJsonWithTuiApiRuntime(host, "/agents/resume", { sessionId: "claude-1" }, { timeoutMs: 60_000 }, mutate),
+    ).resolves.toEqual({ ok: true, warning: "kept" });
+
+    expect(mutate).toHaveBeenCalledWith(host, "/agents/resume", { sessionId: "claude-1" }, { timeoutMs: 60_000 });
+    expect(host.tuiApiRuntime.getConnectionState()).toBe("connected");
+  });
+
+  it("keeps wrapper mutation failures thrown for existing callers", async () => {
+    const host: any = {};
+    const mutate = vi.fn(async () => {
+      throw new Error("offline");
+    });
+
+    await expect(
+      postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "claude-1" }, undefined, mutate),
+    ).rejects.toThrow("offline");
+
+    expect(mutate).toHaveBeenCalledWith(host, "/agents/stop", { sessionId: "claude-1" }, undefined);
+    expect(host.tuiApiConnectionState).toBe("degraded");
   });
 
   it("does not let an older superseded response overwrite a newer snapshot", async () => {
