@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renderGraveyardScreen = vi.hoisted(() => vi.fn());
 const postToProjectService = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
@@ -26,6 +26,12 @@ function graveyardPayload() {
 }
 
 describe("refreshGraveyardEntriesFromService", () => {
+  beforeEach(() => {
+    renderGraveyardScreen.mockClear();
+    postToProjectService.mockReset();
+    postToProjectService.mockResolvedValue({ ok: true });
+  });
+
   it("loads entries and the view model from the project service", async () => {
     const payload = graveyardPayload();
     const host: any = {
@@ -60,6 +66,12 @@ describe("refreshGraveyardEntriesFromService", () => {
 });
 
 describe("resurrectGraveyardEntry", () => {
+  beforeEach(() => {
+    renderGraveyardScreen.mockClear();
+    postToProjectService.mockReset();
+    postToProjectService.mockResolvedValue({ ok: true });
+  });
+
   it("posts the mutation and refreshes graveyard state from the service", async () => {
     const initial = graveyardPayload();
     const refreshed = { ok: true, entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
@@ -69,6 +81,7 @@ describe("resurrectGraveyardEntry", () => {
       graveyardIndex: 0,
       graveyardViewModel: initial.viewModel,
       getFromProjectService: vi.fn(async () => refreshed),
+      refreshDashboardModelFromService: vi.fn(async () => true),
       listGraveyardEntries: vi.fn(),
       listWorktreeGraveyardEntries: vi.fn(),
       setDashboardScreen: vi.fn(),
@@ -86,10 +99,32 @@ describe("resurrectGraveyardEntry", () => {
       ),
     );
     await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/graveyard", { timeoutMs: 3000 }));
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true));
 
     expect(host.listGraveyardEntries).not.toHaveBeenCalled();
     expect(host.listWorktreeGraveyardEntries).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(host.setDashboardScreen).toHaveBeenCalledWith("dashboard"));
     expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("shows resurrection failures and refreshes service state", async () => {
+    postToProjectService.mockRejectedValueOnce(new Error("late timeout"));
+    const initial = graveyardPayload();
+    const host: any = {
+      mode: "dashboard",
+      graveyardIndex: 0,
+      graveyardViewModel: initial.viewModel,
+      getFromProjectService: vi.fn(async () => initial),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      showDashboardError: vi.fn(),
+    };
+
+    resurrectGraveyardEntry(host, 0);
+
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to resurrect "codex-old"', ["late timeout"]),
+    );
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/graveyard", { timeoutMs: 3000 }));
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
   });
 });

@@ -1040,6 +1040,34 @@ describe("metadata pending actions", () => {
     expect(host.debug).toHaveBeenCalledWith(expect.stringContaining("settle failed"), "dashboard");
   });
 
+  it("refreshes the service model after pending actions settle", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => true),
+      renderDashboard: vi.fn(),
+    };
+    const settled = deferred<boolean>();
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "codex-1",
+        "starting",
+        () => ({ sessionId: "codex-1" }),
+        undefined,
+        () => settled.promise,
+      ),
+    ).resolves.toEqual({ sessionId: "codex-1" });
+
+    settled.resolve(true);
+
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true));
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
   it("does not let an older session settle clear a newer pending action", async () => {
     const pending = new DashboardPendingActions(() => {});
     const host: any = {

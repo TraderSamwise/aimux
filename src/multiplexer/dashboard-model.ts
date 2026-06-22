@@ -250,6 +250,18 @@ async function settleMetadataPending<T>(
   }
 }
 
+function scheduleDashboardModelReconcile(host: DashboardModelHost): void {
+  const refresh =
+    typeof host.refreshDashboardModelFromService === "function"
+      ? host.refreshDashboardModelFromService.bind(host)
+      : refreshDashboardModelFromService.bind(null, host);
+  void refresh(true)
+    .then((applied: boolean) => {
+      if (applied && host.isDashboardScreen?.("dashboard")) host.renderDashboard?.();
+    })
+    .catch(() => {});
+}
+
 function clearMetadataSessionPendingAfterSettle<T>(
   host: DashboardModelHost,
   sessionId: string,
@@ -263,9 +275,11 @@ function clearMetadataSessionPendingAfterSettle<T>(
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
         host.reapplyDashboardPendingActions?.();
+        scheduleDashboardModelReconcile(host);
       }
     } else if (host.dashboardPendingActions?.getSessionAction?.(sessionId) === kind) {
       setPendingDashboardSessionAction(host, sessionId, null);
+      scheduleDashboardModelReconcile(host);
     }
   })();
 }
@@ -283,9 +297,11 @@ function clearMetadataServicePendingAfterSettle<T>(
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
         host.reapplyDashboardPendingActions?.();
+        scheduleDashboardModelReconcile(host);
       }
     } else if (host.dashboardPendingActions?.getServiceAction?.(serviceId) === kind) {
       setPendingDashboardServiceAction(host, serviceId, null);
+      scheduleDashboardModelReconcile(host);
     }
   })();
 }
@@ -313,9 +329,11 @@ export async function withMetadataSessionPending<T>(
       if (typeof token === "number") {
         if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
           host.reapplyDashboardPendingActions?.();
+          scheduleDashboardModelReconcile(host);
         }
       } else {
         setPendingDashboardSessionAction(host, sessionId, null);
+        scheduleDashboardModelReconcile(host);
       }
     }
     throw error;
@@ -339,6 +357,7 @@ export async function withMetadataServicePending<T>(
   } catch (error) {
     if (host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
       host.reapplyDashboardPendingActions?.();
+      scheduleDashboardModelReconcile(host);
     }
     throw error;
   }

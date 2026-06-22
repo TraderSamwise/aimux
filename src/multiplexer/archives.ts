@@ -136,6 +136,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       host.graveyardWorktreeDeleteConfirm = null;
       if (host.mode === "dashboard") {
         await refreshGraveyardEntriesFromService(host);
+        await refreshDashboardAfterGraveyardMutation(host);
       } else {
         applyGraveyardPayload(host, emptyGraveyardPayload());
       }
@@ -153,12 +154,14 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       renderGraveyard(host);
     })
     .catch((error: unknown) => {
-      debug(
-        `failed to resurrect ${item.kind === "worktree" ? item.entry.path : item.entry.id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "session",
-      );
+      const label = item.kind === "worktree" ? item.entry.path : item.entry.id;
+      const message = error instanceof Error ? error.message : String(error);
+      debug(`failed to resurrect ${label}: ${message}`, "session");
+      host.showDashboardError?.(`Failed to resurrect "${label}"`, [message]);
+      if (host.mode === "dashboard") {
+        void refreshGraveyardEntriesFromService(host);
+        void refreshDashboardAfterGraveyardMutation(host);
+      }
     });
 }
 
@@ -193,6 +196,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     host.graveyardWorktreeDeleteConfirm = null;
     if (host.mode === "dashboard") {
       await refreshGraveyardEntriesFromService(host);
+      await refreshDashboardAfterGraveyardMutation(host);
     } else {
       applyGraveyardPayload(host, emptyGraveyardPayload());
     }
@@ -211,6 +215,13 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
 
 function emptyGraveyardPayload(): { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel } {
   return { entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
+}
+
+async function refreshDashboardAfterGraveyardMutation(host: ArchivesHost): Promise<void> {
+  if (host.mode !== "dashboard") return;
+  if (typeof host.refreshDashboardModelFromService === "function") {
+    await host.refreshDashboardModelFromService(true).catch(() => false);
+  }
 }
 
 function isGraveyardViewModel(value: any): value is GraveyardViewModel {
