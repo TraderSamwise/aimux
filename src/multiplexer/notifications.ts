@@ -177,9 +177,14 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   if (!note) return;
   const unread = note.unreadCount > 0;
   const settle = async () => {
-    if (unread) {
+    if (!unread) return;
+    try {
       await markCoordinationItemRead(host, item);
       await host.refreshCoordinationFromService?.();
+    } catch {
+      host.footerFlash = "Notification update failed";
+      host.footerFlashTicks = 3;
+      await host.refreshCoordinationFromService?.().catch(() => {});
     }
   };
   if (!item.sessionId) {

@@ -243,6 +243,39 @@ describe("coordination inbox ordering", () => {
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { sessionId: "live-1" });
     expect(unreadInboxEntries("live-1")).toHaveLength(0);
   });
+
+  it("refreshes coordination after notification mutation failures", async () => {
+    addExchangeNotification("live-1", "live agent needs input");
+    const host: any = {
+      coordinationIndex: 0,
+      coordinationFilter: "all",
+      dashboardTeammatesCache: [],
+      getDashboardServices: () => [],
+      getDashboardSessions: () => [{ id: "live-1", status: "running", command: "claude" }],
+      handleDashboardSubscreenNavigationKey: () => false,
+      renderDashboard: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      exitDashboardClientOrProcess: vi.fn(),
+      showHelp: vi.fn(),
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      centerInWidth: (text: string) => text,
+      truncatePlain: (text: string) => text,
+      wrapKeyValue: (_key: string, value: string) => [value],
+      notificationTargetLabel: () => null,
+      postToProjectService: vi.fn(async () => {
+        throw new Error("timeout");
+      }),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      dashboardState: {},
+      writeFrame: vi.fn(),
+    };
+    applyServiceLikeCoordinationPayload(host);
+
+    handleCoordinationKey(host, Buffer.from("r"));
+
+    await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce());
+    expect(host.footerFlash).toBe("Notification update failed");
+  });
 });
 
 describe("coordination thread workflow keys", () => {

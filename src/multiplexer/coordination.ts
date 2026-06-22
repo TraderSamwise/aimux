@@ -81,7 +81,7 @@ function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unkno
     .catch(() => {
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
-      renderCoordination(host);
+      void reloadCoordination(host).finally(() => renderCoordination(host));
     });
 }
 
