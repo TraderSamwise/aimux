@@ -159,9 +159,10 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
 
-  it("stops a service through the project service in dashboard mode without requiring rendered cache convergence", async () => {
+  it("stops a service through the project service when a fresh snapshot has no model changes", async () => {
     const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
+      dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
@@ -171,7 +172,10 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
       getDashboardServices: vi.fn(() => services[0]),
       showDashboardError: vi.fn(),
     };
@@ -221,11 +225,12 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("stops an agent through the project service in dashboard mode without requiring rendered cache convergence", async () => {
+  it("stops an agent through the project service when a fresh snapshot has no model changes", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     const sessions = [[{ ...session, status: "running" }]];
     const host = {
       mode: "dashboard",
+      dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -236,7 +241,10 @@ describe("dashboard-ops", () => {
       renderDashboard: vi.fn(),
       getSessionLabel: vi.fn(() => "claude"),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
       getDashboardSessions: vi.fn(() => sessions[0]),
       showDashboardError: vi.fn(),
     };
@@ -259,6 +267,7 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -530,6 +539,49 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("does not require renderDashboard during the wait-for-start settle branch", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
+    let refreshCount = 0;
+    let renderAccess = 0;
+    const host: any = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() =>
+        refreshCount < 2 ? [] : [{ ...session, status: "running", tmuxWindowId: "@21" }],
+      ),
+      showDashboardError: vi.fn(),
+    };
+    const renderDashboard = vi.fn();
+    Object.defineProperty(host, "renderDashboard", {
+      configurable: true,
+      get() {
+        renderAccess += 1;
+        return renderAccess === 3 ? undefined : renderDashboard;
+      },
+    });
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.waitForSessionStart).toHaveBeenCalledWith("sess-1", expect.any(Number));
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored codex");
+    expect(renderDashboard).toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("preserves teammate metadata in dashboard resume pending seeds", async () => {
     const session = {
       id: "teammate-1",
@@ -572,6 +624,36 @@ describe("dashboard-ops", () => {
       { sessionId: "teammate-1" },
       { timeoutMs: 60_000 },
     );
+  });
+
+  it("clears pending and reports restore failure when the service snapshot is unreachable", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
+    const host = {
+      mode: "dashboard",
+      dashboardModelServiceRefreshError: new Error("offline"),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "offline", pendingAction: "starting" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.waitForSessionStart).not.toHaveBeenCalled();
+    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to restore "codex"', [
+      "starting did not settle before timing out",
+    ]);
   });
 
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {

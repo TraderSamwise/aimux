@@ -92,6 +92,8 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.dashboardWorktreeGroupsCache).toEqual([
       expect.objectContaining({ name: "Main Checkout", branch: "main", sessions: [session] }),
     ]);
+    expect(host.dashboardModelServiceRefreshedAt).toBeGreaterThan(0);
+    expect(host.dashboardModelServiceRefreshError).toBeUndefined();
     expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
   });
 
@@ -111,6 +113,8 @@ describe("refreshDashboardModelFromService", () => {
 
     expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
     expect(host.dashboardSessionsCache.map((session: any) => session.id)).toEqual(["fresh"]);
+    expect(host.dashboardModelServiceRefreshError).toBeUndefined();
+    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
   });
 
   it("rejects desktop-state payloads without service-composed worktree groups", async () => {
@@ -129,6 +133,7 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 3000 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
+    expect(host.dashboardModelServiceRefreshError).toBeInstanceOf(Error);
     expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
   });
 
