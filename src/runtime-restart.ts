@@ -424,6 +424,8 @@ async function verifyPostRestartCoherence(input: {
     try {
       const after = await input.buildRuntimeCoherenceReport(input.coherence);
       latestAfter = after;
+      const afterProjectRoots = new Set(after.projects.map((project) => project.projectRoot));
+      const missingProjects = [...input.projectRoots].filter((projectRoot) => !afterProjectRoots.has(projectRoot));
       const failedProjects = after.projects
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
@@ -431,8 +433,9 @@ async function verifyPostRestartCoherence(input: {
           return true;
         })
         .map((project) => project.projectRoot);
+      const unhealthyProjects = [...missingProjects, ...failedProjects];
       latestError =
-        failedProjects.length === 0 ? null : `post-restart version check failed for ${failedProjects.join(", ")}`;
+        unhealthyProjects.length === 0 ? null : `post-restart version check failed for ${unhealthyProjects.join(", ")}`;
       if (!latestError) {
         return {
           status: "ok",
