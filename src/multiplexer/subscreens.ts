@@ -44,7 +44,9 @@ export function getPreferredThreadIndexForParticipant(
 
 export async function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): Promise<void> {
   const refreshed =
-    typeof host.refreshCoordinationFromService === "function" ? await host.refreshCoordinationFromService() : true;
+    typeof host.refreshCoordinationFromService === "function"
+      ? await host.refreshCoordinationFromService({ force: true })
+      : true;
   if (!refreshed && !host.coordinationLoaded) {
     host.footerFlash = "Coordination refresh failed";
     host.footerFlashTicks = 3;
@@ -125,7 +127,9 @@ export function describeHandoffState(_host: SubscreenHost, thread: Orchestration
 
 async function refreshCoordinationThreads(host: SubscreenHost): Promise<void> {
   const refreshed =
-    typeof host.refreshCoordinationFromService === "function" ? await host.refreshCoordinationFromService() : true;
+    typeof host.refreshCoordinationFromService === "function"
+      ? await host.refreshCoordinationFromService({ force: true })
+      : true;
   if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
   host.threadIndex = Math.min(host.threadIndex, Math.max(0, (host.threadEntries?.length ?? 0) - 1));
   if (!refreshed) {

@@ -4,8 +4,13 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type ArchivesHost = any;
+interface ApiViewRefreshOptions {
+  force?: boolean;
+}
+const GRAVEYARD_RESOURCE = "graveyard";
 
 export function showGraveyard(host: ArchivesHost): void {
   host.clearDashboardSubscreens();
@@ -135,7 +140,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
     .then(async () => {
       host.graveyardWorktreeDeleteConfirm = null;
       if (host.mode === "dashboard") {
-        await refreshGraveyardEntriesFromService(host);
+        await refreshGraveyardEntriesFromService(host, { force: true });
         await refreshDashboardAfterGraveyardMutation(host);
       } else {
         applyGraveyardPayload(host, emptyGraveyardPayload());
@@ -159,7 +164,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       debug(`failed to resurrect ${label}: ${message}`, "session");
       host.showDashboardError?.(`Failed to resurrect "${label}"`, [message]);
       if (host.mode === "dashboard") {
-        void refreshGraveyardEntriesFromService(host);
+        void refreshGraveyardEntriesFromService(host, { force: true });
         void refreshDashboardAfterGraveyardMutation(host);
       }
     });
@@ -195,7 +200,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     }
     host.graveyardWorktreeDeleteConfirm = null;
     if (host.mode === "dashboard") {
-      await refreshGraveyardEntriesFromService(host);
+      await refreshGraveyardEntriesFromService(host, { force: true });
       await refreshDashboardAfterGraveyardMutation(host);
     } else {
       applyGraveyardPayload(host, emptyGraveyardPayload());
@@ -238,6 +243,11 @@ function isGraveyardPayload(value: any): value is { entries: any[]; worktrees: a
   );
 }
 
+function validateGraveyardPayload(value: unknown): { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel } {
+  if (!isGraveyardPayload(value)) throw new Error("invalid graveyard payload");
+  return value;
+}
+
 function applyGraveyardPayload(
   host: ArchivesHost,
   payload: { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel },
@@ -248,15 +258,26 @@ function applyGraveyardPayload(
   clampGraveyardSelection(host);
 }
 
-export async function refreshGraveyardEntriesFromService(host: ArchivesHost): Promise<boolean> {
+export async function refreshGraveyardEntriesFromService(
+  host: ArchivesHost,
+  options: ApiViewRefreshOptions = {},
+): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
     if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
     return false;
   }
   try {
-    const res = await host.getFromProjectService(PROJECT_API_ROUTES.graveyard, { timeoutMs: 3000 });
-    if (!isGraveyardPayload(res)) throw new Error("invalid graveyard payload");
-    applyGraveyardPayload(host, res);
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      GRAVEYARD_RESOURCE,
+      PROJECT_API_ROUTES.graveyard,
+      validateGraveyardPayload,
+      { timeoutMs: 3000, supersede: options.force },
+    );
+    if (!result.ok || !result.value) {
+      if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+      return false;
+    }
+    applyGraveyardPayload(host, result.value);
     if (host.isDashboardScreen?.("graveyard")) {
       renderGraveyard(host);
     }

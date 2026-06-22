@@ -47,7 +47,7 @@ export function renderCoordination(host: CoordinationHost): void {
 // Reload the worklist after a mutation from the service, preserving last API state on failure.
 function reloadCoordination(host: CoordinationHost): Promise<void> {
   if (typeof host.refreshCoordinationFromService === "function") {
-    return host.refreshCoordinationFromService().then(() => undefined);
+    return host.refreshCoordinationFromService({ force: true }).then(() => undefined);
   }
   return Promise.resolve();
 }

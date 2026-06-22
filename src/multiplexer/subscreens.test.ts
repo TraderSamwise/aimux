@@ -7,6 +7,7 @@ import { appendMessage, createThread } from "../threads.js";
 import { renderCoordinationDetails } from "../tui/screens/subscreen-renderers.js";
 import { buildThreadEntries } from "../workflow.js";
 import { handleCoordinationKey } from "./coordination.js";
+import { openRelevantThreadForSession, runThreadHandoffAction } from "./subscreens.js";
 
 describe("thread subscreen navigation", () => {
   let repoRoot = "";
@@ -88,5 +89,53 @@ describe("thread subscreen navigation", () => {
 
     expect(() => renderCoordinationDetails(host, 80, 20)).not.toThrow();
     expect(renderCoordinationDetails(host, 80, 20).join("\n")).toContain("Please check this thread.");
+  });
+
+  it("forces coordination refresh after thread workflow mutations", async () => {
+    const host: any = {
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      renderCoordination: vi.fn(),
+    };
+
+    await runThreadHandoffAction(host, "accept", "thread-1");
+    await vi.waitFor(() => {
+      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+      expect(host.renderCoordination).toHaveBeenCalledOnce();
+    });
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/handoff/accept", {
+      threadId: "thread-1",
+      from: "user",
+    });
+  });
+
+  it("forces coordination refresh before selecting a relevant thread", async () => {
+    const thread = createThread({
+      id: "thread-force",
+      title: "Needs input",
+      kind: "question",
+      createdBy: "claude-1",
+      participants: ["claude-1", "user"],
+      waitingOn: ["claude-1"],
+    });
+    const host: any = {
+      mode: "dashboard",
+      coordinationLoaded: true,
+      threadEntries: [{ thread, displayTitle: "Needs input" }],
+      coordinationWorklist: [{ kind: "thread", thread: { thread } }],
+      refreshCoordinationFromService: vi.fn(async () => true),
+      setDashboardScreen: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      openDashboardOverlay: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
+      renderCoordination: vi.fn(),
+    };
+
+    await openRelevantThreadForSession(host, "claude-1");
+
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+    expect(host.setDashboardScreen).toHaveBeenCalledWith("coordination");
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("thread-reply");
   });
 });
