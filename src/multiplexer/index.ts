@@ -236,9 +236,7 @@ export class Multiplexer {
   private dashboardPendingExpandedViewportCount = 0;
   private dashboardModelVersion = 0;
   private agentTracker = new AgentTracker();
-  private contextWatcher = new ContextWatcher((target) =>
-    this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
-  );
+  private contextWatcher: ContextWatcher;
   /** Maps session ID → toolConfigKey for topology persistence */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
@@ -286,7 +284,7 @@ export class Multiplexer {
   private runtimeGuardProbing = false;
   private runtimeGuardDisconnectProbeCount = 0;
 
-  constructor() {
+  constructor(options: { contextWatcherEnabled?: boolean } = {}) {
     this.projectRoot = (() => {
       try {
         return findMainRepo(process.cwd());
@@ -295,6 +293,10 @@ export class Multiplexer {
       }
     })();
     this.terminalHost = new TerminalHost();
+    this.contextWatcher = new ContextWatcher(
+      (target) => this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
+      { enabled: options.contextWatcherEnabled ?? true },
+    );
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
     this.runtimeSync = new MultiplexerRuntimeSync({

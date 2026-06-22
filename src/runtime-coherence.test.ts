@@ -306,7 +306,7 @@ describe("runtime coherence report", () => {
       listProcessArgs: vi.fn(() => [
         {
           pid: 77,
-          args: "/Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop",
+          args: "/Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop --project /repo/alpha",
         },
       ]),
       getAimuxCliLaunchCommand: vi.fn(() => ({
@@ -325,6 +325,7 @@ describe("runtime coherence report", () => {
     expect(report.projects[0]?.service.process?.staleNativePath).toBe(true);
     expect(report.projects[0]?.dashboards[0]?.process?.staleNativePath).toBe(true);
     expect(report.staleHookProcesses).toHaveLength(1);
+    expect(report.staleHookProcesses[0]?.projectRoot).toBe("/repo/alpha");
     expect(renderRuntimeCoherenceReport(report)).toContain("Stale hook processes: 1");
   });
 });

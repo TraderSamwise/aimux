@@ -49,7 +49,7 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(true);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 2000 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 5000 });
     expect(host.dashboardSessionsCache).toEqual([session]);
     expect(host.dashboardWorktreeGroupsCache).toEqual([
       expect.objectContaining({ name: "Main Checkout", branch: "main", sessions: [session] }),
@@ -70,7 +70,7 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, false)).resolves.toBe(false);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 750 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 3000 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
     expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
@@ -89,7 +89,7 @@ describe("refreshDashboardModelFromService", () => {
 
     await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(false);
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 2000 });
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 5000 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
     expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);

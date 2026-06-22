@@ -161,6 +161,27 @@ function runtimeRebuildCoherenceReport(): RuntimeCoherenceReport {
   return report;
 }
 
+function staleHookCoherenceReport(): RuntimeCoherenceReport {
+  const report = okCoherenceReport();
+  report.staleHookProcesses = [
+    {
+      pid: 77,
+      argsPreview: "claude --settings command=/old/dist/main.js claude-hook stop --project /repo/alpha",
+      pathHints: ["/old/dist/main.js"],
+      staleNativePath: true,
+      error: null,
+      projectRoot: "/repo/alpha",
+    },
+  ];
+  report.summary = {
+    projects: report.projects.length,
+    ok: report.projects.length,
+    needsRestart: 0,
+    runtimeRebuildRequired: 0,
+  };
+  return report;
+}
+
 function stoppedDaemon(
   stoppedProjectServices: NonNullable<RuntimeCoherenceReport["projects"][number]["service"]["daemonState"]>[] = [],
 ) {
@@ -469,7 +490,7 @@ describe("restartAimuxControlPlane", () => {
     expect(calls).toEqual(["kill-dashboard:@1", "stop-daemon"]);
   });
 
-  it("relinks recreated host dashboards into existing client sessions", async () => {
+  it("relinks recreated host dashboards into existing client sessions and restores active agents", async () => {
     const dashboardTarget = {
       sessionName: "aimux-alpha-111",
       windowId: "@10",
@@ -517,9 +538,10 @@ describe("restartAimuxControlPlane", () => {
 
     expect(tmux.linkWindowToSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", dashboardTarget, 0);
     expect(tmux.selectWindow).toHaveBeenCalledWith({
-      ...dashboardTarget,
       sessionName: "aimux-alpha-111-client-deadbeef",
-      windowIndex: 0,
+      windowId: "@3",
+      windowIndex: 1,
+      windowName: "codex",
     });
   });
 
@@ -605,6 +627,43 @@ describe("restartAimuxControlPlane", () => {
     expect(result.summary).toMatchObject({ runtimeRebuildRequired: 1, failures: 0 });
     expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
     expect(renderRuntimeRestartResult(result)).toContain("Runtime rebuild required:");
+  });
+
+  it("marks projects with stale agent hook commands as needing runtime rebuild", async () => {
+    const setSessionOption = vi.fn();
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValue(staleHookCoherenceReport());
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: false,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({
+        isAvailable: () => true,
+        getProjectSession: vi.fn((projectRoot: string) => ({
+          sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+        })),
+        setSessionOption,
+      }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "1");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
+    expect(result.summary.runtimeRebuildRequired).toBe(1);
+    expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
   });
 
   it("waits for post-restart services to become coherent before failing verification", async () => {
