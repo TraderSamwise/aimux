@@ -226,6 +226,23 @@ describe("dashboard live target activation", () => {
     expect(host.postToProjectService.mock.calls[0][2].timeoutMs).toBeLessThanOrEqual(1200);
   });
 
+  it("uses a restore-sized service timeout for offline agent activation", async () => {
+    const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+      },
+      showDashboardError: vi.fn(),
+    };
+
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1", status: "offline" })).resolves.toBe("opened");
+
+    expect(host.postToProjectService.mock.calls[0][2].timeoutMs).toBeGreaterThan(30_000);
+  });
+
   it("opens services through the project-service control API in dashboard mode", async () => {
     const { waitAndOpenLiveTmuxWindowForService } = await import("./dashboard-control.js");
     const host: any = {

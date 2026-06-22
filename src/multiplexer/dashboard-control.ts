@@ -426,10 +426,11 @@ export function openLiveTmuxWindowForEntry(
 
 export async function waitAndOpenLiveTmuxWindowForEntry(
   host: DashboardControlHost,
-  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
-  timeoutMs = 3000,
+  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string; status?: string },
+  timeoutMs?: number,
 ): Promise<"opened" | "missing" | "error"> {
-  const deadline = Date.now() + timeoutMs;
+  const effectiveTimeoutMs = timeoutMs ?? (entry.status === "offline" || entry.status === "exited" ? 60_000 : 3000);
+  const deadline = Date.now() + effectiveTimeoutMs;
   while (Date.now() < deadline) {
     const remainingMs = Math.max(100, deadline - Date.now());
     const result =

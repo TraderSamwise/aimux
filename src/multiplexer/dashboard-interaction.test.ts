@@ -437,16 +437,21 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
 
-  it("refreshes from the service after opening an offline row that is already live", async () => {
+  it("resumes, refreshes, then opens an offline dashboard agent", async () => {
     const entry = {
       id: "codex-1",
       status: "offline",
+      command: "codex",
       worktreePath: "/repo/.aimux/worktrees/demo",
     };
     const host: any = {
+      mode: "dashboard",
       dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
       refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),
+      offlineSessions: [{ ...entry }],
       renderDashboard: vi.fn(),
       preferDashboardEntrySelection: vi.fn(),
       persistDashboardUiState: vi.fn(),
@@ -455,8 +460,89 @@ describe("dashboardInteractionMethods", () => {
 
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(
+      { ...entry, status: "running", tmuxWindowId: "@agent" },
+      60000,
+    );
     expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes from the service after an offline row open reports an error", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "error"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      getDashboardSessions: vi.fn(() => [entry]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("resumes, refreshes, then opens an offline dashboard service", async () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineServiceWithFeedback: vi.fn(async () => undefined),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("opened");
+
+    expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1", 60000);
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes and reports unavailable service when a running service open misses", async () => {
+    const service = {
+      id: "service-1",
+      status: "running",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "missing"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("missing");
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.footerFlash).toBe("Service shell is not available yet");
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
