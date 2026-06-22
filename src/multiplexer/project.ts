@@ -2,8 +2,10 @@ import { buildProjectObservability, type ProjectObservability } from "../project
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderProjectScreen } from "../tui/screens/subscreen-renderers.js";
 import { commandKey, parseKeys } from "../key-parser.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type ProjectHost = any;
+const PROJECT_OBSERVABILITY_RESOURCE = "project-observability";
 
 function emptyProjectObservability(): ProjectObservability {
   return buildProjectObservability({ sessions: [], services: [], worktrees: [], tasks: [], notifications: [] });
@@ -72,11 +74,28 @@ function isProjectObservability(value: any): value is ProjectObservability {
   );
 }
 
+function validateProjectPayload(value: unknown): ProjectObservability {
+  const res = value as any;
+  if (!res?.ok || !isProjectObservability(res.project)) throw new Error("invalid project payload");
+  return res.project;
+}
+
 export async function refreshProjectObservability(host: ProjectHost): Promise<boolean> {
+  if (typeof host.getFromProjectService !== "function") {
+    ensureProjectObservability(host);
+    return false;
+  }
   try {
-    const res = await host.getFromProjectService(PROJECT_API_ROUTES.projectObservability);
-    if (!res?.ok || !isProjectObservability(res.project)) throw new Error("invalid project payload");
-    applyProjectObservability(host, res.project);
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      PROJECT_OBSERVABILITY_RESOURCE,
+      PROJECT_API_ROUTES.projectObservability,
+      validateProjectPayload,
+    );
+    if (!result.ok || !result.value) {
+      ensureProjectObservability(host);
+      return false;
+    }
+    applyProjectObservability(host, result.value);
     return true;
   } catch {
     ensureProjectObservability(host);

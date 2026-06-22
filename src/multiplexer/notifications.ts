@@ -6,8 +6,10 @@ import {
   type WorklistItem,
 } from "../coordination-model.js";
 import { type WorkflowEntry } from "../workflow.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
+const COORDINATION_WORKLIST_RESOURCE = "coordination-worklist";
 
 /** Per-row reconciliation flags, index-aligned with host.notificationEntries. */
 export interface NotificationRowMeta {
@@ -21,6 +23,19 @@ interface CoordinationPayload {
   model: CoordinationModel;
   worklist: CoordinationWorklist;
   threads: WorkflowEntry[];
+}
+
+function validateCoordinationPayload(value: unknown): CoordinationPayload {
+  const res = value as any;
+  if (
+    !res?.ok ||
+    !Array.isArray(res.model?.items) ||
+    !Array.isArray(res.worklist?.items) ||
+    (res.threads != null && !Array.isArray(res.threads))
+  ) {
+    throw new Error("invalid coordination payload");
+  }
+  return { model: res.model, worklist: res.worklist, threads: res.threads ?? [] };
 }
 
 // Apply a reconciled service payload to the host: legacy notificationEntries/meta (open path
@@ -62,19 +77,15 @@ export function applyCoordinationFilter(host: NotificationHost): void {
 // Prefer the service's reconciled worklist (the single authority, shared with the app). On
 // failure preserve the last service payload so version skew cannot silently fork the view.
 export async function refreshCoordinationFromService(host: NotificationHost): Promise<boolean> {
+  if (typeof host.getFromProjectService !== "function") return false;
   try {
-    const res = await host.getFromProjectService(PROJECT_API_ROUTES.coordinationWorklist);
-    // Validate before mutating so version-skewed payloads cannot half-apply.
-    if (
-      !res?.ok ||
-      !Array.isArray(res.model?.items) ||
-      !Array.isArray(res.worklist?.items) ||
-      (res.threads != null && !Array.isArray(res.threads))
-    ) {
-      throw new Error("invalid coordination payload");
-    }
-    const threads = res.threads ?? [];
-    applyCoordinationModel(host, { model: res.model, worklist: res.worklist, threads });
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      COORDINATION_WORKLIST_RESOURCE,
+      PROJECT_API_ROUTES.coordinationWorklist,
+      validateCoordinationPayload,
+    );
+    if (!result.ok || !result.value) return false;
+    applyCoordinationModel(host, result.value);
     return true;
   } catch {
     return false;

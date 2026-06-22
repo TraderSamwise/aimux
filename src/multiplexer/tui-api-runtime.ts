@@ -64,7 +64,8 @@ export class TuiApiRuntime {
     opts: TuiApiRefreshOptions = {},
   ): Promise<TuiApiRefreshResult<T>> {
     const { timeoutMs } = opts;
-    return this.refresh(resource, async () => validate(await this.options.request(path, { timeoutMs })), opts);
+    const requestOpts = timeoutMs === undefined ? undefined : { timeoutMs };
+    return this.refresh(resource, async () => validate(await this.options.request(path, requestOpts)), opts);
   }
 
   async refresh<T>(
@@ -146,7 +147,8 @@ export class TuiApiRuntime {
 export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {
   if (host.tuiApiRuntime instanceof TuiApiRuntime) return host.tuiApiRuntime;
   host.tuiApiRuntime = new TuiApiRuntime({
-    request: (path, opts) => host.getFromProjectService(path, opts),
+    request: (path, opts) =>
+      opts === undefined ? host.getFromProjectService(path) : host.getFromProjectService(path, opts),
     onConnectionStateChange: (state) => {
       host.tuiApiConnectionState = state;
     },
