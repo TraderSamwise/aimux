@@ -187,6 +187,23 @@ describe("TuiApiRuntime", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it("bootstraps direct resource refreshes through the dashboard GET wrapper", async () => {
+    const lowLevelRequest = vi.fn().mockResolvedValueOnce({ ok: true, value: "first" });
+    const host: any = {
+      getFromProjectService(path: string, opts?: { timeoutMs?: number }) {
+        return getJsonWithTuiApiRuntime(host, path, opts, lowLevelRequest);
+      },
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+
+    await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+      ok: true,
+      value: { ok: true, value: "first" },
+    });
+
+    expect(lowLevelRequest).toHaveBeenCalledWith(host, "/desktop-state", undefined);
+  });
+
   it("cancels scheduled recovery when the dashboard leaves dashboard mode", async () => {
     vi.useFakeTimers();
     try {
