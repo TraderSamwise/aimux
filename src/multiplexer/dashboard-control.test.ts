@@ -492,6 +492,7 @@ describe("showOrchestrationRoutePicker", () => {
     const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardState: {
         focusedWorktreePath: "/repo/.aimux/worktrees/demo",
         worktreeEntries: [],
@@ -539,6 +540,7 @@ describe("showOrchestrationRoutePicker", () => {
     const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardState: { worktreeEntries: [], worktreeSessions: [], worktreeNavOrder: [] },
       activeIndex: 0,
       getDashboardSessions: vi.fn(() => []),

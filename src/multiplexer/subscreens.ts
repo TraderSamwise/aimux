@@ -48,7 +48,11 @@ export function getPreferredThreadIndexForParticipant(
 }
 
 export async function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): Promise<void> {
-  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const sourceScreen = host.dashboardState?.screen;
+  const lifecycle = captureDashboardLifecycle(host, {
+    inputEpoch: true,
+    ...(sourceScreen ? { screen: sourceScreen } : {}),
+  });
   const refreshed =
     typeof host.refreshCoordinationFromService === "function"
       ? await host.refreshCoordinationFromService({ force: true })

@@ -152,6 +152,27 @@ describe("dashboard project event refresh", () => {
     }
   });
 
+  it("repairs the control plane when endpoint resolution fails", async () => {
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockRejectedValueOnce(new Error("metadata stale"));
+    const host: any = {
+      mode: "dashboard",
+      ensureDashboardControlPlane: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    startDashboardProjectEventStream(host);
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+
+    stopDashboardProjectEventStream(host);
+  });
+
   it("applies SSE alert flashes that used to come from the in-process bus", () => {
     const host: any = {
       mode: "dashboard",

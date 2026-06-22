@@ -74,6 +74,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
@@ -216,6 +217,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
@@ -268,6 +270,7 @@ describe("worktrees dashboard mutation protocol", () => {
     let refreshCount = 0;
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -323,6 +326,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardModelServiceRefreshError: new Error("offline"),
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
@@ -361,6 +365,7 @@ describe("worktrees dashboard mutation protocol", () => {
     };
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -395,6 +400,7 @@ describe("worktrees dashboard mutation protocol", () => {
     let refreshCount = 0;
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -441,6 +447,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -469,6 +476,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -568,6 +576,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const path = "/repo/.aimux/worktrees/demo";
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       worktreeRemovalJob: null,
       pendingWorktreeRemovals: new Map([[path, Promise.resolve({ path, status: "removed" })]]),
       dashboardPendingActions: pending,

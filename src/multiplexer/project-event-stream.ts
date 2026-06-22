@@ -47,7 +47,19 @@ export function stopDashboardProjectEventStream(host: ProjectEventStreamHost): v
 
 async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal: AbortSignal): Promise<void> {
   while (!signal.aborted && host.mode === "dashboard") {
-    const endpoint = await resolveCurrentProjectServiceEndpointForDashboard(host, 1000);
+    let endpoint: Awaited<ReturnType<typeof resolveCurrentProjectServiceEndpointForDashboard>>;
+    try {
+      endpoint = await resolveCurrentProjectServiceEndpointForDashboard(host, 1000);
+    } catch (error) {
+      if (signal.aborted || host.mode !== "dashboard") return;
+      debug(
+        `dashboard project event endpoint resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+        "dashboard",
+      );
+      await recoverDashboardProjectEventStream(host, signal);
+      await sleep(RETRY_MS, signal);
+      continue;
+    }
     if (signal.aborted || host.mode !== "dashboard") return;
     if (!endpoint) {
       await recoverDashboardProjectEventStream(host, signal);

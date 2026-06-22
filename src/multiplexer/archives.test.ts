@@ -88,6 +88,8 @@ describe("refreshGraveyardEntriesFromService", () => {
     });
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
       activeIndex: 0,
       graveyardIndex: 0,
       graveyardViewModel: stale.viewModel,
@@ -137,6 +139,8 @@ describe("resurrectGraveyardEntry", () => {
     const refreshed = { ok: true, entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
       activeIndex: 0,
       graveyardIndex: 0,
       graveyardViewModel: initial.viewModel,
@@ -172,6 +176,8 @@ describe("resurrectGraveyardEntry", () => {
     const initial = graveyardPayload();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
       graveyardIndex: 0,
       graveyardViewModel: initial.viewModel,
       getFromProjectService: vi.fn(async () => initial),
@@ -211,6 +217,8 @@ describe("resurrectGraveyardEntry", () => {
     const initial = graveyardPayload();
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
       activeIndex: 0,
       graveyardIndex: 0,
       graveyardViewModel: initial.viewModel,
@@ -237,8 +245,10 @@ describe("resurrectGraveyardEntry", () => {
     const entry = { name: "demo", path: "/repo/.aimux/worktrees/demo" };
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       graveyardWorktreeDeleteConfirm: entry,
       dashboardState: { toggleDetailsSidebar: vi.fn() },
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
       handleDashboardSubscreenNavigationKey: vi.fn(() => false),
       exitDashboardClientOrProcess: vi.fn(),
       setDashboardScreen: vi.fn(),
@@ -253,6 +263,35 @@ describe("resurrectGraveyardEntry", () => {
       expect(host.showDashboardError).toHaveBeenCalledWith('Failed to delete "demo"', ["delete failed"]),
     );
     expect(host.graveyardWorktreeDeleteConfirm).toBeNull();
+  });
+
+  it("refreshes service state when worktree delete cannot reload the authoritative snapshot", async () => {
+    const entry = { name: "demo", path: "/repo/.aimux/worktrees/demo" };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      graveyardWorktreeDeleteConfirm: entry,
+      dashboardState: { toggleDetailsSidebar: vi.fn() },
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [], worktrees: [] })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+      exitDashboardClientOrProcess: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+      showHelp: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    handleGraveyardKey(host, Buffer.from("y"));
+
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to delete "demo"', [
+        "graveyard snapshot unavailable after delete",
+      ]),
+    );
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledTimes(2));
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
   });
 
   it("suppresses stale worktree delete errors after leaving graveyard", async () => {
