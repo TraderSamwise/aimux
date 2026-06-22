@@ -137,6 +137,30 @@ describe("TuiApiRuntime", () => {
     }
   });
 
+  it("cancels scheduled recovery when the dashboard leaves dashboard mode", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(),
+        getFromProjectService: vi.fn(async () => {
+          throw new Error("offline");
+        }),
+      };
+      const runtime = getOrCreateTuiApiRuntime(host);
+
+      await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+        ok: false,
+      });
+      host.mode = "session";
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not let an older superseded response overwrite a newer snapshot", async () => {
     const first = deferred<unknown>();
     const second = deferred<unknown>();

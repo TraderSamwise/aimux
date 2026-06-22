@@ -211,6 +211,7 @@ export function scheduleTuiApiRecovery(host: any): void {
   if (host.tuiApiRecoveryTimer) return;
   host.tuiApiRecoveryTimer = setTimeout(() => {
     host.tuiApiRecoveryTimer = null;
+    if (host.mode && host.mode !== "dashboard") return;
     const result = host.refreshRuntimeGuard?.();
     if (result && typeof result.catch === "function") void result.catch(() => undefined);
   }, 25);

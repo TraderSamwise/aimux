@@ -1612,4 +1612,104 @@ describe("runDashboard", () => {
     expect(host.handleActiveDashboardOverlayKey).toHaveBeenCalledWith(Buffer.from("n"));
     expect(host.handleRuntimeGuardKey).not.toHaveBeenCalled();
   });
+
+  it("clears the startup busy state when repair completes without a fresh model change", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.ensureDashboardControlPlane).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.dashboardBusyState).toBeNull());
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.renderCurrentDashboardView).toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("clears the startup busy state and reports a repair failure when the service remains unavailable", async () => {
+    const serviceError = new Error("service still unavailable");
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshError = serviceError;
+        return false;
+      }),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.ensureDashboardControlPlane).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["service still unavailable"]),
+    );
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalled();
+  });
 });

@@ -202,7 +202,9 @@ async function waitForDashboardSessionResumeSettle(
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
     ) {
       if (!(await refreshDashboardModelForSettlement(host))) return false;
-      host.renderDashboard();
+      if (typeof host.renderDashboard === "function") {
+        host.renderDashboard();
+      }
       const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
       if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
     }
