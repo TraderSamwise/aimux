@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const metadataMocks = vi.hoisted(() => ({
   removeMetadataEndpoint: vi.fn(),
-  resolveProjectServiceEndpoint: vi.fn(),
+}));
+
+const controlMocks = vi.hoisted(() => ({
+  resolveCurrentProjectServiceEndpointForDashboard: vi.fn(),
 }));
 
 vi.mock("../metadata-store.js", () => metadataMocks);
+vi.mock("./dashboard-control.js", () => controlMocks);
 
 import {
   applyDashboardAlert,
@@ -19,6 +23,7 @@ describe("dashboard project event refresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -58,6 +63,44 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
+  it("drops pending refreshes when the dashboard exits before the timer fires", async () => {
+    const host: any = {
+      mode: "dashboard",
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state"]);
+    host.mode = "session";
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("does not render if the dashboard exits while an event refresh is in flight", async () => {
+    let resolveRefresh!: (value: boolean) => void;
+    const host: any = {
+      mode: "dashboard",
+      refreshDashboardModelFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state"]);
+    await vi.advanceTimersByTimeAsync(25);
+    host.mode = "session";
+    resolveRefresh(true);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
   it("resyncs API-backed dashboard state when the SSE stream reconnects", async () => {
     const host: any = {
       mode: "dashboard",
@@ -79,7 +122,7 @@ describe("dashboard project event refresh", () => {
       throw new Error("socket closed");
     });
     globalThis.fetch = fetchMock as never;
-    metadataMocks.resolveProjectServiceEndpoint.mockReturnValue({
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockResolvedValue({
       host: "127.0.0.1",
       port: 43444,
       pid: 1234,
@@ -111,6 +154,7 @@ describe("dashboard project event refresh", () => {
 
   it("applies SSE alert flashes that used to come from the in-process bus", () => {
     const host: any = {
+      mode: "dashboard",
       renderCurrentDashboardView: vi.fn(),
     };
 
@@ -126,5 +170,24 @@ describe("dashboard project event refresh", () => {
     expect(host.footerFlash).toBe("✗ Task failed");
     expect(host.footerFlashTicks).toBe(4);
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("ignores alerts after the dashboard has exited", () => {
+    const host: any = {
+      mode: "session",
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    applyDashboardAlert(host, {
+      type: "alert",
+      kind: "task_failed",
+      projectId: "project",
+      title: "Task failed",
+      message: "Failure",
+      ts: new Date().toISOString(),
+    });
+
+    expect(host.footerFlash).toBeUndefined();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 });

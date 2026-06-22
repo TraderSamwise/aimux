@@ -304,6 +304,22 @@ describe("postToProjectService", () => {
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledTimes(2);
   });
+
+  it("validates endpoints for raw dashboard streams before returning them", async () => {
+    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse());
+    const { resolveCurrentProjectServiceEndpointForDashboard } = await import("./dashboard-control.js");
+    const endpoint = { host: "127.0.0.1", port: 43444, pid: 2 };
+    mocks.loadMetadataEndpoint.mockReturnValue(endpoint);
+
+    await expect(resolveCurrentProjectServiceEndpointForDashboard({ dashboardServiceRecovery: null })).resolves.toBe(
+      endpoint,
+    );
+
+    expect(mocks.requestJson).toHaveBeenCalledWith(
+      "http://127.0.0.1:43444/health",
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
+    );
+  });
 });
 
 describe("dashboard live target activation", () => {
@@ -503,6 +519,37 @@ describe("showOrchestrationRoutePicker", () => {
     expect(host.openDashboardOverlay).not.toHaveBeenCalled();
     expect(host.renderOrchestrationRoutePicker).not.toHaveBeenCalled();
   });
+
+  it("does not open a stale route picker after newer dashboard input", async () => {
+    let resolveRoutes!: (value: unknown) => void;
+    const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardState: { worktreeEntries: [], worktreeSessions: [], worktreeNavOrder: [] },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => []),
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRoutes = resolve;
+          }),
+      ),
+      openDashboardOverlay: vi.fn(),
+      renderOrchestrationRoutePicker: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    showOrchestrationRoutePicker(host, "message");
+    host.dashboardInputEpoch = 1;
+    resolveRoutes({ ok: true, options: [{ label: "Agent", sessionId: "codex-1" }] });
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledOnce());
+    await Promise.resolve();
+
+    expect(host.openDashboardOverlay).not.toHaveBeenCalled();
+    expect(host.renderOrchestrationRoutePicker).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
 });
 
 describe("startRuntimeGuardRepair", () => {
@@ -642,6 +689,34 @@ describe("startRuntimeGuardRepair", () => {
 
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["spawn failed"]);
+  });
+
+  it("does not show stale guarded repair failures after leaving dashboard mode", async () => {
+    let onError: ((error: Error) => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: (error: Error) => void) => {
+        if (event === "error") onError = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const host = {
+      mode: "dashboard",
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
+    host.mode = "session";
+    onError?.(new Error("spawn failed"));
+
+    expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("does not repeatedly spawn repair for the same guarded state after failure", async () => {

@@ -24,6 +24,7 @@ import { isDevelopmentRuntime } from "../connection-targets.js";
 import { AIMUX_VERSION } from "../version.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
@@ -36,6 +37,7 @@ export const dashboardViewMethods = {
 
   settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
+    const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
     const pendingTarget =
       target ??
       (itemId.startsWith("worktree:")
@@ -50,12 +52,13 @@ export const dashboardViewMethods = {
         void this.refreshDashboardModelFromService?.(true)
           .catch(() => undefined)
           .then(() => {
-            this.renderDashboard();
+            if (isDashboardLifecycleCurrent(this, lifecycle)) this.renderDashboard();
           });
       },
       {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
+          if (!isDashboardLifecycleCurrent(this, lifecycle)) return true;
           if (typeof this.refreshDashboardModelFromService === "function") {
             await this.refreshDashboardModelFromService(true);
           }

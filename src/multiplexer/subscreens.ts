@@ -7,6 +7,11 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { style } from "../tui/render/theme.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
 
 type SubscreenHost = any;
 
@@ -43,10 +48,12 @@ export function getPreferredThreadIndexForParticipant(
 }
 
 export async function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   const refreshed =
     typeof host.refreshCoordinationFromService === "function"
       ? await host.refreshCoordinationFromService({ force: true })
       : true;
+  if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
   if (!refreshed && !host.coordinationLoaded) {
     host.footerFlash = "Coordination refresh failed";
     host.footerFlashTicks = 3;
@@ -125,18 +132,27 @@ export function describeHandoffState(_host: SubscreenHost, thread: Orchestration
   return `awaiting acceptance from ${thread.participants.filter((id) => id !== thread.createdBy).join(", ") || "recipient"}`;
 }
 
-async function refreshCoordinationThreads(host: SubscreenHost): Promise<void> {
+async function refreshCoordinationThreads(
+  host: SubscreenHost,
+  lifecycle: DashboardLifecycleToken,
+  successFlash?: string,
+): Promise<boolean> {
   const refreshed =
     typeof host.refreshCoordinationFromService === "function"
       ? await host.refreshCoordinationFromService({ force: true })
       : true;
   if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
   host.threadIndex = Math.min(host.threadIndex, Math.max(0, (host.threadEntries?.length ?? 0) - 1));
+  if (!isDashboardLifecycleCurrent(host, lifecycle)) return refreshed;
   if (!refreshed) {
     host.footerFlash = "Coordination refresh failed";
     host.footerFlashTicks = 3;
+  } else if (successFlash) {
+    host.footerFlash = successFlash;
+    host.footerFlashTicks = 3;
   }
   host.renderCoordination();
+  return refreshed;
 }
 
 export async function runThreadHandoffAction(
@@ -144,20 +160,22 @@ export async function runThreadHandoffAction(
   mode: "accept" | "complete",
   threadId: string,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+  let successFlash = "";
   try {
     if (mode === "accept") {
       await host.postToProjectService(PROJECT_API_ROUTES.handoff.accept, { threadId, from: "user" });
-      host.footerFlash = "⇢ Handoff accepted";
+      successFlash = "⇢ Handoff accepted";
     } else {
       await host.postToProjectService(PROJECT_API_ROUTES.handoff.complete, { threadId, from: "user" });
-      host.footerFlash = "⇢ Handoff completed";
+      successFlash = "⇢ Handoff completed";
     }
-    host.footerFlashTicks = 3;
   } catch (error) {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
     return;
   }
-  void refreshCoordinationThreads(host).catch(() => {});
+  await refreshCoordinationThreads(host, lifecycle, successFlash).catch(() => false);
 }
 
 export async function runThreadStatusAction(
@@ -165,15 +183,15 @@ export async function runThreadStatusAction(
   threadId: string,
   status: ThreadStatus,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
   try {
     await host.postToProjectService(PROJECT_API_ROUTES.threads.status, { threadId, status });
-    host.footerFlash = `Thread marked ${status}`;
-    host.footerFlashTicks = 3;
   } catch (error) {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError("Failed to update thread status", [error instanceof Error ? error.message : String(error)]);
     return;
   }
-  void refreshCoordinationThreads(host).catch(() => {});
+  await refreshCoordinationThreads(host, lifecycle, `Thread marked ${status}`).catch(() => false);
 }
 
 export async function runTaskLifecycleAction(
@@ -181,26 +199,28 @@ export async function runTaskLifecycleAction(
   mode: "accept" | "block" | "complete" | "reopen",
   taskId: string,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+  let successFlash = "";
   try {
     if (mode === "accept") {
       await host.postToProjectService(PROJECT_API_ROUTES.tasks.accept, { taskId, from: "user" });
-      host.footerFlash = "⧫ Task accepted";
+      successFlash = "⧫ Task accepted";
     } else if (mode === "block") {
       await host.postToProjectService(PROJECT_API_ROUTES.tasks.block, { taskId, from: "user" });
-      host.footerFlash = "⧫ Task blocked";
+      successFlash = "⧫ Task blocked";
     } else if (mode === "reopen") {
       await host.postToProjectService(PROJECT_API_ROUTES.tasks.reopen, { taskId, from: "user" });
-      host.footerFlash = "↺ Task reopened";
+      successFlash = "↺ Task reopened";
     } else {
       await host.postToProjectService(PROJECT_API_ROUTES.tasks.complete, { taskId, from: "user" });
-      host.footerFlash = "✓ Task completed";
+      successFlash = "✓ Task completed";
     }
-    host.footerFlashTicks = 3;
   } catch (error) {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
     return;
   }
-  void refreshCoordinationThreads(host).catch(() => {});
+  await refreshCoordinationThreads(host, lifecycle, successFlash).catch(() => false);
 }
 
 export async function runReviewLifecycleAction(
@@ -208,22 +228,24 @@ export async function runReviewLifecycleAction(
   mode: "approve" | "request_changes",
   taskId: string,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+  let successFlash = "";
   try {
     if (mode === "approve") {
       await host.postToProjectService(PROJECT_API_ROUTES.reviews.approve, { taskId, from: "user" });
-      host.footerFlash = "✓ Review approved";
+      successFlash = "✓ Review approved";
     } else {
       await host.postToProjectService(PROJECT_API_ROUTES.reviews.requestChanges, { taskId, from: "user" });
-      host.footerFlash = "↺ Changes requested";
+      successFlash = "↺ Changes requested";
     }
-    host.footerFlashTicks = 3;
   } catch (error) {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(`Failed to ${mode === "approve" ? "approve review" : "request changes"}`, [
       error instanceof Error ? error.message : String(error),
     ]);
     return;
   }
-  void refreshCoordinationThreads(host).catch(() => {});
+  await refreshCoordinationThreads(host, lifecycle, successFlash).catch(() => false);
 }
 
 export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
@@ -248,6 +270,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
       host.renderCoordination();
       return;
     }
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
     // Reply through the service (sole writer) rather than mutating the thread store in-process.
     void host
       .postToProjectService(PROJECT_API_ROUTES.threads.send, {
@@ -256,10 +279,11 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
         kind: "reply",
         body,
       })
-      .then(() => refreshCoordinationThreads(host))
-      .catch((error: unknown) =>
-        host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]),
-      );
+      .then(() => refreshCoordinationThreads(host, lifecycle))
+      .catch((error: unknown) => {
+        if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+        host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
+      });
     return;
   }
 
