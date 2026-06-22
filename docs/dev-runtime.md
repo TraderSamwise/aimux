@@ -23,7 +23,9 @@ aimux doctor versions
 ```
 
 `aimux restart` restarts the daemon, re-ensures known project services, and
-reloads existing dashboards without killing agent tmux windows.
+reloads existing dashboards without killing agent tmux windows. It also repairs
+managed tmux contract drift in place and records automatic repair diagnostics in
+`~/.aimux/projects/<project-id>/logs/repairs.jsonl`.
 
 ## Local GUI
 

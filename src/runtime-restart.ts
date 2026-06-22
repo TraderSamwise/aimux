@@ -269,14 +269,13 @@ function repairRuntimeContract(input: {
         }
       }
     }
-    input.tmux.setSessionOption(hostSession, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+    try {
+      input.tmux.setSessionOption(hostSession, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+    } catch (error) {
+      if (input.required) throw error;
+    }
     return input.required ? { status: "repaired", error: null } : { status: "skipped", error: null };
   } catch (error) {
-    if (!input.required) {
-      try {
-        input.tmux.setSessionOption(hostSession, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
-      } catch {}
-    }
     return { status: "failed", error: errorMessage(error) };
   }
 }

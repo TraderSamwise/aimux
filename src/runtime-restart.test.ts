@@ -794,6 +794,41 @@ describe("restartAimuxControlPlane", () => {
     expect(result.projects[0]?.runtimeRebuildRequired).toBe(false);
   });
 
+  it("does not fail restart when best-effort runtime marker cleanup targets a stale tmux session", async () => {
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      verifyAfterRestart: false,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({
+        isAvailable: () => true,
+        getProjectSession: vi.fn((projectRoot: string) => ({
+          sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+        })),
+        setSessionOption: vi.fn(() => {
+          throw new Error("no such session");
+        }),
+      }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      repairNotifier: null,
+    });
+
+    expect(result.summary.failures).toBe(0);
+    expect(result.projects[0]?.runtime.status).toBe("skipped");
+  });
+
   it("waits for post-restart services to become coherent before failing verification", async () => {
     const transient = okCoherenceReport();
     transient.projects[0] = {
