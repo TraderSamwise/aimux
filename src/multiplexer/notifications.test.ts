@@ -227,6 +227,8 @@ describe("coordination inbox ordering", () => {
     addExchangeNotification("ghost-1", "vanished agent needs input");
     addExchangeNotification("live-1", "live agent needs input");
     const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
       coordinationIndex: 0,
       coordinationFilter: "all",
       dashboardTeammatesCache: [],
@@ -245,7 +247,7 @@ describe("coordination inbox ordering", () => {
       wrapKeyValue: (_key: string, value: string) => [value],
       notificationTargetLabel: () => null,
       postToProjectService: notificationServiceDouble(),
-      dashboardState: {},
+      dashboardState: { screen: "coordination" },
       writeFrame: vi.fn(),
     };
     applyServiceLikeCoordinationPayload(host);
@@ -272,6 +274,8 @@ describe("coordination inbox ordering", () => {
   it("refreshes coordination after notification mutation failures", async () => {
     addExchangeNotification("live-1", "live agent needs input");
     const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
       coordinationIndex: 0,
       coordinationFilter: "all",
       dashboardTeammatesCache: [],
@@ -291,7 +295,7 @@ describe("coordination inbox ordering", () => {
         throw new Error("timeout");
       }),
       refreshCoordinationFromService: vi.fn(async () => true),
-      dashboardState: {},
+      dashboardState: { screen: "coordination" },
       writeFrame: vi.fn(),
     };
     applyServiceLikeCoordinationPayload(host);
