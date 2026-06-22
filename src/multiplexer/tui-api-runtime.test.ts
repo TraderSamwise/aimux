@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime, TuiApiRuntime } from "./tui-api-runtime.js";
+import {
+  getJsonWithTuiApiRuntime,
+  getOrCreateTuiApiRuntime,
+  postJsonWithTuiApiRuntime,
+  TuiApiRuntime,
+} from "./tui-api-runtime.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -82,6 +87,31 @@ describe("TuiApiRuntime", () => {
     expect(states).toContain("degraded");
   });
 
+  it("routes wrapper reads through the shared runtime transport", async () => {
+    const host: any = {};
+    const request = vi.fn(async () => ({ ok: true, value: 1 }));
+
+    await expect(getJsonWithTuiApiRuntime(host, "/desktop-state", { timeoutMs: 5000 }, request)).resolves.toEqual({
+      ok: true,
+      value: 1,
+    });
+
+    expect(request).toHaveBeenCalledWith(host, "/desktop-state", { timeoutMs: 5000 });
+    expect(host.tuiApiRuntime.getConnectionState()).toBe("connected");
+  });
+
+  it("keeps wrapper read failures thrown for existing callers", async () => {
+    const host: any = {};
+    const request = vi.fn(async () => {
+      throw new Error("offline");
+    });
+
+    await expect(getJsonWithTuiApiRuntime(host, "/desktop-state", undefined, request)).rejects.toThrow("offline");
+
+    expect(request).toHaveBeenCalledWith(host, "/desktop-state", undefined);
+    expect(host.tuiApiConnectionState).toBe("degraded");
+  });
+
   it("routes wrapper mutations through the shared runtime transport", async () => {
     const host: any = {};
     const mutate = vi.fn(async () => ({ ok: true, warning: "kept" }));
@@ -135,6 +165,26 @@ describe("TuiApiRuntime", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("lets an existing runtime update its request transport before direct reads", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(async () => ({ ok: true, value: "fallback" })),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    const request = vi.fn(async () => ({ ok: true, value: "transport" }));
+
+    await expect(getJsonWithTuiApiRuntime(host, "/desktop-state", undefined, request)).resolves.toEqual({
+      ok: true,
+      value: "transport",
+    });
+    await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+      ok: true,
+      value: { ok: true, value: "transport" },
+    });
+
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it("cancels scheduled recovery when the dashboard leaves dashboard mode", async () => {

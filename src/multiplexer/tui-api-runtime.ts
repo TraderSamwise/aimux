@@ -46,10 +46,16 @@ export class TuiApiRuntime {
   private readonly resources = new Map<string, ResourceState>();
   private state: TuiApiConnectionState = "connected";
   private disposed = false;
+  private requestTransport: (path: string, opts?: TuiApiRequestOptions) => Promise<unknown>;
   private mutateTransport?: (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>;
 
   constructor(private readonly options: TuiApiRuntimeOptions) {
+    this.requestTransport = options.request;
     this.mutateTransport = options.mutate;
+  }
+
+  setRequestTransport(request: (path: string, opts?: TuiApiRequestOptions) => Promise<unknown>): void {
+    this.requestTransport = request;
   }
 
   setMutationTransport(mutate: (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>): void {
@@ -80,7 +86,27 @@ export class TuiApiRuntime {
   ): Promise<TuiApiRefreshResult<T>> {
     const { timeoutMs } = opts;
     const requestOpts = timeoutMs === undefined ? undefined : { timeoutMs };
-    return this.refresh(resource, async () => validate(await this.options.request(path, requestOpts)), opts);
+    return this.refresh(resource, async () => validate(await this.requestTransport(path, requestOpts)), opts);
+  }
+
+  async requestJson<T>(
+    path: string,
+    validate: (value: unknown) => T,
+    opts: TuiApiRequestOptions = {},
+  ): Promise<TuiApiMutationResult<T>> {
+    if (this.disposed) {
+      return { ok: false, error: new Error("TUI API runtime disposed") };
+    }
+    const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
+    try {
+      const value = validate(await this.requestTransport(path, requestOpts));
+      this.setConnectionState("connected");
+      return { ok: true, value };
+    } catch (error) {
+      this.setConnectionState("degraded");
+      this.options.onRequestFailure?.(error);
+      return { ok: false, error };
+    }
   }
 
   async mutateJson<T>(
@@ -186,15 +212,18 @@ export class TuiApiRuntime {
 
 export function getOrCreateTuiApiRuntime(
   host: any,
-  transports: Pick<TuiApiRuntimeOptions, "mutate"> = {},
+  transports: Partial<Pick<TuiApiRuntimeOptions, "request" | "mutate">> = {},
 ): TuiApiRuntime {
   if (host.tuiApiRuntime instanceof TuiApiRuntime) {
+    if (transports.request) host.tuiApiRuntime.setRequestTransport(transports.request);
     if (transports.mutate) host.tuiApiRuntime.setMutationTransport(transports.mutate);
     return host.tuiApiRuntime;
   }
   host.tuiApiRuntime = new TuiApiRuntime({
-    request: (path, opts) =>
-      opts === undefined ? host.getFromProjectService(path) : host.getFromProjectService(path, opts),
+    request:
+      transports.request ??
+      ((path, opts) =>
+        opts === undefined ? host.getFromProjectService(path) : host.getFromProjectService(path, opts)),
     mutate: transports.mutate,
     onConnectionStateChange: (state) => {
       host.tuiApiConnectionState = state;
@@ -227,6 +256,19 @@ export async function postJsonWithTuiApiRuntime(
   const result = await getOrCreateTuiApiRuntime(host, {
     mutate: (requestPath, requestBody, requestOpts) => mutate(host, requestPath, requestBody, requestOpts),
   }).mutateJson(path, body, (value) => value, opts);
+  if (!result.ok) throw result.error instanceof Error ? result.error : new Error(String(result.error));
+  return result.value;
+}
+
+export async function getJsonWithTuiApiRuntime(
+  host: any,
+  path: string,
+  opts: TuiApiRequestOptions | undefined,
+  request: (host: any, path: string, opts?: TuiApiRequestOptions) => Promise<unknown>,
+): Promise<any> {
+  const result = await getOrCreateTuiApiRuntime(host, {
+    request: (requestPath, requestOpts) => request(host, requestPath, requestOpts),
+  }).requestJson(path, (value) => value, opts);
   if (!result.ok) throw result.error instanceof Error ? result.error : new Error(String(result.error));
   return result.value;
 }
