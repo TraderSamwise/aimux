@@ -253,6 +253,37 @@ describe("runtime lifecycle state persistence", () => {
     expect(session.destroy).toHaveBeenCalledOnce();
   });
 
+  it("clears pending TUI API recovery during teardown", () => {
+    vi.useFakeTimers();
+    try {
+      const refreshRuntimeGuard = vi.fn();
+      const teardownHost = {
+        clearDashboardBusy: vi.fn(),
+        stopHeartbeat: vi.fn(),
+        stopProjectServiceRefresh: vi.fn(),
+        tuiApiRecoveryTimer: setTimeout(refreshRuntimeGuard, 25),
+        tuiApiRuntime: { dispose: vi.fn() },
+        stopGraveyardCleanup: vi.fn(),
+        stopInboxCleanup: vi.fn(),
+        saveState: vi.fn(),
+        stopStatusRefresh: vi.fn(),
+        contextWatcher: { stop: vi.fn() },
+        removeInstructionFiles: vi.fn(),
+        hotkeys: { destroy: vi.fn() },
+        terminalHost: { restoreTerminalState: vi.fn() },
+      };
+
+      runtimeLifecycleMethods.teardown.call(teardownHost as never);
+      vi.advanceTimersByTime(25);
+
+      expect(teardownHost.tuiApiRecoveryTimer).toBeNull();
+      expect(refreshRuntimeGuard).not.toHaveBeenCalled();
+      expect(teardownHost.tuiApiRuntime).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves topology sessions even when service state does not exist yet", () => {
     if (existsSync(getStatePath())) unlinkSync(getStatePath());
     saveRuntimeTopologySessions({

@@ -1028,7 +1028,8 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
         supersede: force,
       },
     );
-    if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force);
+    if (!result.ok && result.error === undefined) return false;
+    if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force, result.error);
     const json = result.value;
     (host as any).dashboardModelServiceRefreshedAt = Date.now();
     (host as any).dashboardModelServiceRefreshError = undefined;
