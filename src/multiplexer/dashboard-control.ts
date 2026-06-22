@@ -12,6 +12,7 @@ import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
+import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
@@ -719,6 +720,23 @@ async function requestProjectService(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
+    if (opts.method === "POST") {
+      const current = await endpointMatchesCurrentProjectService(
+        endpoint,
+        Math.min(250, remainingProjectServiceDeadline(deadline)),
+      );
+      if (!current && Date.now() < deadline) {
+        removeMetadataEndpoint(projectRoot);
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
+        await sleepProjectServiceRetry(attempt, deadline);
+        continue;
+      }
+      if (!current) {
+        throw new Error("project service endpoint is stale");
+      }
+    }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
         method: opts.method,
@@ -756,6 +774,26 @@ async function requestProjectService(
     }
   }
   throw lastError instanceof Error ? lastError : new Error("no live project service endpoint");
+}
+
+async function endpointMatchesCurrentProjectService(
+  endpoint: { host: string; port: number; pid?: number },
+  timeoutMs: number,
+): Promise<boolean> {
+  try {
+    const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
+      `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`,
+      { timeoutMs: Math.max(1, timeoutMs) },
+    );
+    return (
+      status >= 200 &&
+      status < 300 &&
+      json?.pid === endpoint.pid &&
+      manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function postToProjectService(
