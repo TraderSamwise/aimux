@@ -188,6 +188,25 @@ describe("resurrectGraveyardEntry", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
   });
 
+  it("does not suppress non-dashboard resurrection failures", async () => {
+    const initial = graveyardPayload();
+    const host: any = {
+      mode: "session",
+      graveyardIndex: 0,
+      graveyardViewModel: initial.viewModel,
+      resurrectGraveyardSession: vi.fn(async () => {
+        throw new Error("local restore failed");
+      }),
+      showDashboardError: vi.fn(),
+    };
+
+    resurrectGraveyardEntry(host, 0);
+
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to resurrect "codex-old"', ["local restore failed"]),
+    );
+  });
+
   it("treats successful resurrection with failed authoritative refresh as stale", async () => {
     const initial = graveyardPayload();
     const host: any = {
@@ -234,5 +253,37 @@ describe("resurrectGraveyardEntry", () => {
       expect(host.showDashboardError).toHaveBeenCalledWith('Failed to delete "demo"', ["delete failed"]),
     );
     expect(host.graveyardWorktreeDeleteConfirm).toBeNull();
+  });
+
+  it("suppresses stale worktree delete errors after leaving graveyard", async () => {
+    let rejectDelete!: (reason: unknown) => void;
+    postToProjectService.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectDelete = reject;
+        }),
+    );
+    const entry = { name: "demo", path: "/repo/.aimux/worktrees/demo" };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      graveyardWorktreeDeleteConfirm: entry,
+      dashboardState: { toggleDetailsSidebar: vi.fn() },
+      isDashboardScreen: vi.fn((screen: string) => host.mode === "dashboard" && screen === "graveyard"),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+      exitDashboardClientOrProcess: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+      showHelp: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    handleGraveyardKey(host, Buffer.from("y"));
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    rejectDelete(new Error("delete failed"));
+
+    await vi.waitFor(() => expect(host.graveyardWorktreeDeleteConfirm).toBeNull());
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });

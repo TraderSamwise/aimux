@@ -274,6 +274,28 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
 
     expect(host.renderDashboard).not.toHaveBeenCalled();
   });
+
+  it("does not treat later dashboard input as create settlement", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => []),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+    host.dashboardInputEpoch = 1;
+
+    await expect(isSettled?.()).resolves.toBe(false);
+  });
 });
 
 describe("dashboardStateMethods.reconcileDashboardRenderState", () => {

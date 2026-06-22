@@ -12,7 +12,7 @@ import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
-import { getGlobalAimuxDir, getProjectStateDir } from "../paths.js";
+import { getGlobalAimuxDir, getProjectStateDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
@@ -1001,14 +1001,16 @@ async function endpointMatchesCurrentProjectService(
   timeoutMs: number,
 ): Promise<boolean> {
   try {
-    const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
-      `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`,
-      { timeoutMs: Math.max(1, timeoutMs) },
-    );
+    const { status, json } = await requestJson<{
+      pid?: number;
+      projectStateDir?: string;
+      serviceInfo?: ProjectServiceManifest;
+    }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
     return (
       status >= 200 &&
       status < 300 &&
       json?.pid === endpoint.pid &&
+      json?.projectStateDir === getProjectStateDirFor(process.cwd()) &&
       manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
     );
   } catch {

@@ -37,7 +37,8 @@ export const dashboardViewMethods = {
 
   settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
-    const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+    const settleLifecycle = captureDashboardLifecycle(this);
+    const uiLifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
     const pendingTarget =
       target ??
       (itemId.startsWith("worktree:")
@@ -52,13 +53,13 @@ export const dashboardViewMethods = {
         void this.refreshDashboardModelFromService?.(true)
           .catch(() => undefined)
           .then(() => {
-            if (isDashboardLifecycleCurrent(this, lifecycle)) this.renderDashboard();
+            if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
           });
       },
       {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
-          if (!isDashboardLifecycleCurrent(this, lifecycle)) return true;
+          if (!isDashboardLifecycleCurrent(this, settleLifecycle)) return true;
           if (typeof this.refreshDashboardModelFromService === "function") {
             await this.refreshDashboardModelFromService(true);
           }
