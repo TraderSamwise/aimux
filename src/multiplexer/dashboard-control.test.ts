@@ -493,6 +493,7 @@ describe("startRuntimeGuardRepair", () => {
       projectRoot: "/repo/other",
       runtimeGuardRepairing: false,
       runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
       dashboardBusyState: null,
       renderCurrentDashboardView: vi.fn(),
     };
@@ -505,6 +506,7 @@ describe("startRuntimeGuardRepair", () => {
       title: "Repairing Aimux",
       lines: ["Another dashboard is repairing the local control plane."],
     });
+    expect(secondHost.runtimeGuardRepairBusy).toBe(true);
   });
 
   it("reclaims a repair lock owned by an exited repair child", async () => {
@@ -712,6 +714,29 @@ describe("refreshRuntimeGuard", () => {
 
     expect(host.runtimeGuardState).toEqual({ kind: "ok" });
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
+  });
+
+  it("clears a competing-repair overlay after the guard recovers", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() },
+    });
+    const host = runtimeGuardHost();
+    host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = {
+      title: "Repairing Aimux",
+      lines: ["Another dashboard is repairing the local control plane."],
+      spinnerFrame: 0,
+      startedAt: Date.now(),
+    };
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "ok" });
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.runtimeGuardRepairBusy).toBe(false);
   });
 });
 
