@@ -998,6 +998,13 @@ function isDesktopStateDashboardModel(value: any): value is {
   );
 }
 
+function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean): false {
+  if (force && typeof host.refreshRuntimeGuard === "function") {
+    void host.refreshRuntimeGuard();
+  }
+  return false;
+}
+
 export async function refreshDashboardModelFromService(host: DashboardModelHost, force = false): Promise<boolean> {
   if (host.mode !== "dashboard") return false;
   if (!force && host.dashboardModelRefreshedAt > 0 && Date.now() - host.dashboardModelRefreshedAt < 750) {
@@ -1011,7 +1018,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
       if (typeof host.getFromProjectService === "function") {
         try {
           const json = await host.getFromProjectService("/desktop-state", { timeoutMs: force ? 2000 : 750 });
-          if (!isDesktopStateDashboardModel(json)) return false;
+          if (!isDesktopStateDashboardModel(json)) return failDashboardServiceRefresh(host, force);
           const applied = applyDashboardModel(
             host,
             json.sessions,
@@ -1031,11 +1038,11 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
       } else if (force) {
         await ensureDashboardControlPlane(host);
       }
-      if (!force || Date.now() >= deadline) return false;
+      if (!force || Date.now() >= deadline) return failDashboardServiceRefresh(host, force);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   } catch {
-    return false;
+    return failDashboardServiceRefresh(host, force);
   } finally {
     host.dashboardServiceSnapshotRefreshing = false;
   }

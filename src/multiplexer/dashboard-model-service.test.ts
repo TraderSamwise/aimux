@@ -75,4 +75,23 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
     expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
   });
+
+  it("probes the runtime guard when a forced refresh receives an invalid payload", async () => {
+    const host = hostDouble();
+    host.getFromProjectService.mockResolvedValueOnce({
+      ok: true,
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktrees: [],
+      mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+    });
+
+    await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(false);
+
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 2000 });
+    expect(host.dashboardSessionsCache).toBeUndefined();
+    expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
+    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+  });
 });
