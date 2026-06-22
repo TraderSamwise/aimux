@@ -177,6 +177,9 @@ export class TuiApiRuntime {
         return { ok: true, value, stale: false, generation };
       })
       .catch((error: unknown) => {
+        if (this.disposed || state.generation !== generation) {
+          return { ok: false, value: state.value, stale: true, generation };
+        }
         if (!this.disposed && state.generation === generation) {
           state.error = error;
           state.pending = false;
