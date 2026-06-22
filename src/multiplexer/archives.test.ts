@@ -12,7 +12,7 @@ vi.mock("./dashboard-control.js", () => ({
   postToProjectService,
 }));
 
-import { refreshGraveyardEntriesFromService, resurrectGraveyardEntry } from "./archives.js";
+import { handleGraveyardKey, refreshGraveyardEntriesFromService, resurrectGraveyardEntry } from "./archives.js";
 
 function graveyardPayload() {
   const entry = { id: "codex-old", tool: "codex", command: "codex", status: "graveyard" };
@@ -186,5 +186,53 @@ describe("resurrectGraveyardEntry", () => {
     );
     await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/graveyard", { timeoutMs: 3000 }));
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+  });
+
+  it("treats successful resurrection with failed authoritative refresh as stale", async () => {
+    const initial = graveyardPayload();
+    const host: any = {
+      mode: "dashboard",
+      activeIndex: 0,
+      graveyardIndex: 0,
+      graveyardViewModel: initial.viewModel,
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [], worktrees: [] })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      showDashboardError: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+    };
+
+    resurrectGraveyardEntry(host, 0);
+
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to resurrect "codex-old"', [
+        "graveyard snapshot unavailable after resurrection",
+      ]),
+    );
+    expect(host.setDashboardScreen).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("clears worktree delete confirmation after delete failures", async () => {
+    postToProjectService.mockRejectedValueOnce(new Error("delete failed"));
+    const entry = { name: "demo", path: "/repo/.aimux/worktrees/demo" };
+    const host: any = {
+      mode: "dashboard",
+      graveyardWorktreeDeleteConfirm: entry,
+      dashboardState: { toggleDetailsSidebar: vi.fn() },
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+      exitDashboardClientOrProcess: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+      showHelp: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    handleGraveyardKey(host, Buffer.from("y"));
+
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to delete "demo"', ["delete failed"]),
+    );
+    expect(host.graveyardWorktreeDeleteConfirm).toBeNull();
   });
 });

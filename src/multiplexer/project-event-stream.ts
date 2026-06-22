@@ -1,7 +1,7 @@
 import { TextDecoder } from "node:util";
 
 import { debug } from "../debug.js";
-import { removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { removeMetadataEndpoint } from "../metadata-store.js";
 import {
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
@@ -11,6 +11,8 @@ import {
 } from "../project-api-contract.js";
 import type { AlertEvent } from "../project-events.js";
 import { refreshGraveyardEntriesFromService } from "./archives.js";
+import { resolveCurrentProjectServiceEndpointForDashboard } from "./dashboard-control.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { refreshLibrary } from "./library.js";
 import { refreshProjectObservability } from "./project.js";
 import { refreshTopology } from "./topology.js";
@@ -45,7 +47,8 @@ export function stopDashboardProjectEventStream(host: ProjectEventStreamHost): v
 
 async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal: AbortSignal): Promise<void> {
   while (!signal.aborted && host.mode === "dashboard") {
-    const endpoint = resolveProjectServiceEndpoint(process.cwd());
+    const endpoint = await resolveCurrentProjectServiceEndpointForDashboard(host, 1000);
+    if (signal.aborted || host.mode !== "dashboard") return;
     if (!endpoint) {
       await recoverDashboardProjectEventStream(host, signal);
       await sleep(RETRY_MS, signal);
@@ -173,6 +176,10 @@ export function scheduleProjectViewRefresh(host: ProjectEventStreamHost, views: 
   if (host.dashboardProjectEventRefreshTimer) return;
   host.dashboardProjectEventRefreshTimer = setTimeout(() => {
     host.dashboardProjectEventRefreshTimer = null;
+    if (host.mode !== "dashboard") {
+      host.dashboardProjectEventPendingViews = null;
+      return;
+    }
     const current = host.dashboardProjectEventPendingViews as Set<ProjectApiView> | null;
     host.dashboardProjectEventPendingViews = null;
     if (current) void refreshDashboardApiViews(host, current).catch(() => undefined);
@@ -180,7 +187,8 @@ export function scheduleProjectViewRefresh(host: ProjectEventStreamHost, views: 
 }
 
 async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set<ProjectApiView>): Promise<void> {
-  if (host.mode !== "dashboard") return;
+  const lifecycle = captureDashboardLifecycle(host);
+  if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
   const work: Array<Promise<unknown>> = [];
   if (
     touches(views, [
@@ -219,6 +227,7 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
     work.push(refreshGraveyardEntriesFromService(host, { force: true }));
   }
   await Promise.all(work.filter(Boolean));
+  if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
   host.renderCurrentDashboardView?.();
 }
 
@@ -227,6 +236,7 @@ function touches(views: Set<ProjectApiView>, candidates: ProjectApiView[]): bool
 }
 
 export function applyDashboardAlert(host: ProjectEventStreamHost, event: AlertEvent): void {
+  if (host.mode !== "dashboard") return;
   if (event.kind === "notification") host.footerFlash = `◌ ${event.title}`;
   else if (event.kind === "needs_input") host.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
   else if (event.kind === "next_step") host.footerFlash = `◉ ${event.sessionId ?? "agent"} ready for next step`;

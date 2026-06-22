@@ -92,6 +92,41 @@ describe("startStatusRefresh", () => {
 
     expect(host.publishAlert).not.toHaveBeenCalled();
   });
+
+  it("does not render an in-flight background dashboard refresh after leaving dashboard mode", async () => {
+    vi.useFakeTimers();
+    let resolveRefresh!: (value: boolean) => void;
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "dashboard",
+      dashboardNextBackgroundRefreshAt: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      refreshDashboardModelFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    host.mode = "session";
+    resolveRefresh(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.refreshCoordinationFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
 });
 
 describe("resumeOfflineSession", () => {

@@ -261,6 +261,43 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears pending stop state without rendering stale completion after newer input", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const request = deferred();
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "claude"),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "running" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    const action = stopSessionToOfflineWithFeedback(host, session);
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    request.resolve();
+    await action;
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Stopping claude");
+    expect(host.renderDashboard).toHaveBeenCalledTimes(1);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];

@@ -110,6 +110,47 @@ describe("thread subscreen navigation", () => {
     });
   });
 
+  it("shows refresh failure instead of success when workflow mutation snapshot reload fails", async () => {
+    const host: any = {
+      mode: "dashboard",
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      refreshCoordinationFromService: vi.fn(async () => false),
+      renderCoordination: vi.fn(),
+    };
+
+    await runThreadHandoffAction(host, "accept", "thread-1");
+
+    expect(host.footerFlash).toBe("Coordination refresh failed");
+    expect(host.renderCoordination).toHaveBeenCalledOnce();
+  });
+
+  it("does not render stale workflow mutation completions after leaving coordination", async () => {
+    let resolvePost!: (value: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      isDashboardScreen: vi.fn((screen: string) => host.mode === "dashboard" && screen === "coordination"),
+      postToProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolvePost = resolve;
+          }),
+      ),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      renderCoordination: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    const action = runThreadHandoffAction(host, "accept", "thread-1");
+    host.mode = "session";
+    resolvePost({ ok: true });
+    await action;
+
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+    expect(host.renderCoordination).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("forces coordination refresh before selecting a relevant thread", async () => {
     const thread = createThread({
       id: "thread-force",

@@ -18,6 +18,11 @@ import {
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import type { LaunchOverride } from "../shell-args.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  renderDashboardIfCurrent,
+} from "./dashboard-lifecycle.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -276,14 +281,13 @@ async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
     sessionSeed: opts.sessionSeed,
   });
   opts.onBeforeRequest?.();
-  host.renderDashboard();
-  try {
-    await opts.request();
-    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+  const clearPending = () => {
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
         host.reapplyDashboardPendingActions?.();
@@ -291,6 +295,12 @@ async function runDashboardSessionMutation(
     } else {
       host.setPendingDashboardSessionAction(opts.sessionId, null);
     }
+  };
+  try {
+    await opts.request();
+    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
+    clearPending();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -298,14 +308,9 @@ async function runDashboardSessionMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    if (typeof token === "number") {
-      if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
-        host.reapplyDashboardPendingActions?.();
-      }
-    } else {
-      host.setPendingDashboardSessionAction(opts.sessionId, null);
-    }
+    clearPending();
     await opts.onError?.();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
 }
@@ -314,14 +319,13 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
     serviceSeed: opts.serviceSeed,
   });
   opts.onBeforeRequest?.();
-  host.renderDashboard();
-  try {
-    await opts.request();
-    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+  const clearPending = () => {
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
         host.reapplyDashboardPendingActions?.();
@@ -329,6 +333,12 @@ async function runDashboardServiceMutation(
     } else {
       host.setPendingDashboardServiceAction(opts.serviceId, null);
     }
+  };
+  try {
+    await opts.request();
+    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
+    clearPending();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -336,14 +346,9 @@ async function runDashboardServiceMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    if (typeof token === "number") {
-      if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
-        host.reapplyDashboardPendingActions?.();
-      }
-    } else {
-      host.setPendingDashboardServiceAction(opts.serviceId, null);
-    }
+    clearPending();
     await opts.onError?.();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
 }

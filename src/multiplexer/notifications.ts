@@ -6,6 +6,7 @@ import {
   type WorklistItem,
 } from "../coordination-model.js";
 import { type WorkflowEntry } from "../workflow.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
@@ -101,9 +102,12 @@ export async function refreshCoordinationFromService(
 
 export function hydrateDashboardNotificationScreenState(host: NotificationHost): void {
   if (!host.isDashboardScreen?.("coordination")) return;
+  const lifecycle = captureDashboardLifecycle(host, { screen: "coordination" });
   void host
     .refreshCoordinationFromService?.()
-    .then(() => host.renderCurrentDashboardView?.())
+    .then(() => {
+      if (isDashboardLifecycleCurrent(host, lifecycle)) host.renderCurrentDashboardView?.();
+    })
     .catch(() => {});
   host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
 }

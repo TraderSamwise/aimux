@@ -16,6 +16,7 @@ import {
   runThreadHandoffAction,
   runThreadStatusAction,
 } from "./subscreens.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 
 type CoordinationHost = any;
 
@@ -32,9 +33,12 @@ export function showCoordination(host: CoordinationHost): void {
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   renderCoordination(host);
+  const lifecycle = captureDashboardLifecycle(host, { screen: "coordination" });
   void host
     .refreshCoordinationFromService?.()
-    .then(() => renderCoordination(host))
+    .then(() => {
+      if (isDashboardLifecycleCurrent(host, lifecycle)) renderCoordination(host);
+    })
     .catch(() => {});
 }
 
@@ -75,13 +79,19 @@ async function clearNotificationItem(host: CoordinationHost, item: WorklistItem)
 
 // Run a notification mutation through the service, then refresh + re-render. Failures flash.
 function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unknown>): void {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
   void mutate
     .then(() => reloadCoordination(host))
-    .then(() => renderCoordination(host))
+    .then(() => {
+      if (isDashboardLifecycleCurrent(host, lifecycle)) renderCoordination(host);
+    })
     .catch(() => {
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
-      void reloadCoordination(host).finally(() => renderCoordination(host));
+      void reloadCoordination(host).finally(() => {
+        if (isDashboardLifecycleCurrent(host, lifecycle)) renderCoordination(host);
+      });
     });
 }
 

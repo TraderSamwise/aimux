@@ -116,6 +116,53 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears pending create state without stale UI after leaving the dashboard", async () => {
+    postToProjectService.mockClear();
+    let resolveCreate!: () => void;
+    postToProjectService.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        applyRawWorktrees(host, pending, [
+          {
+            name: "demo",
+            branch: "demo",
+            path: "/repo/.aimux/worktrees/demo",
+            sessions: [],
+            services: [],
+          },
+        ]);
+        return true;
+      }),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledOnce());
+    host.mode = "session";
+    host.dashboardInputEpoch = 1;
+    resolveCreate();
+
+    await vi.waitFor(() => expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull());
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("keeps service-projected failed worktree creates visible", async () => {
     postToProjectService.mockRejectedValueOnce(new Error("branch already exists"));
     const pending = createPendingActionsStore();
