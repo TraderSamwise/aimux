@@ -507,6 +507,40 @@ describe("startRuntimeGuardRepair", () => {
     });
   });
 
+  it("reclaims a repair lock owned by an exited repair child", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
+      if (pid === 987654) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      return true;
+    }) as typeof process.kill);
+    mocks.spawn
+      .mockReturnValueOnce({ pid: 987654, on: vi.fn(), unref: vi.fn() })
+      .mockReturnValueOnce({ pid: 987655, on: vi.fn(), unref: vi.fn() });
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const firstHost = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+    const secondHost = {
+      projectRoot: "/repo/other",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startRuntimeGuardRepair(firstHost as never, { kind: "stale", reason: "service-mismatch" });
+      startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
+    } finally {
+      killSpy.mockRestore();
+    }
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+  });
+
   it("shows a dashboard error when guarded repair fails to spawn", async () => {
     let onError: ((error: Error) => void) | undefined;
     mocks.spawn.mockReturnValueOnce({

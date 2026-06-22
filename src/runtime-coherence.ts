@@ -50,6 +50,11 @@ export interface RuntimeCoherenceProjectReport {
     contract: string | null;
     expectedContract: string;
     rebuildRequired: boolean;
+    clientSessions?: Array<{
+      sessionName: string;
+      contract: string | null;
+      rebuildRequired: boolean;
+    }>;
   };
   service: {
     status: RuntimeCoherenceStatus;
@@ -308,11 +313,25 @@ function readProjectRuntimeReport(input: {
   }
   const sessionName = input.tmux.getProjectSession(input.projectRoot).sessionName;
   const contract = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
+  const clientSessions = input.tmux
+    .listSessionNames()
+    .filter((name) => name.startsWith(`${sessionName}-client-`))
+    .map((name) => {
+      const clientContract = input.tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION);
+      return {
+        sessionName: name,
+        contract: clientContract,
+        rebuildRequired: Boolean(clientContract && clientContract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION),
+      };
+    });
   return {
     sessionName,
     contract,
     expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
-    rebuildRequired: Boolean(contract && contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION),
+    rebuildRequired:
+      Boolean(contract && contract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) ||
+      clientSessions.some((client) => client.rebuildRequired),
+    clientSessions,
   };
 }
 
@@ -589,6 +608,12 @@ export function renderRuntimeCoherenceReport(report: RuntimeCoherenceReport): st
     lines.push(
       `  runtime: contract=${project.runtime.contract ?? "(missing)"} expected=${project.runtime.expectedContract} rebuild=${project.runtime.rebuildRequired ? "yes" : "no"}`,
     );
+    for (const client of project.runtime.clientSessions ?? []) {
+      if (!client.rebuildRequired) continue;
+      lines.push(
+        `    client: ${client.sessionName} contract=${client.contract ?? "(missing)"} expected=${project.runtime.expectedContract} rebuild=yes`,
+      );
+    }
     lines.push(
       `  service: ${project.service.status} endpoint=${formatEndpoint(project.service.endpoint)} pid=${project.service.pid ?? "(unknown)"}`,
     );
