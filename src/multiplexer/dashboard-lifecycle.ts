@@ -1,6 +1,7 @@
 export interface DashboardLifecycleToken {
   readonly mode: "dashboard" | "other";
   readonly inputEpoch?: number;
+  readonly requiresInputEpoch?: boolean;
   readonly screen?: string;
 }
 
@@ -12,7 +13,8 @@ export function captureDashboardLifecycle(
 ): DashboardLifecycleToken {
   return {
     mode: host.mode === undefined || host.mode === "dashboard" ? "dashboard" : "other",
-    inputEpoch: opts.inputEpoch ? (host.dashboardInputEpoch ?? 0) : undefined,
+    inputEpoch: opts.inputEpoch && typeof host.dashboardInputEpoch === "number" ? host.dashboardInputEpoch : undefined,
+    requiresInputEpoch: opts.inputEpoch ? true : undefined,
     screen: opts.screen,
   };
 }
@@ -23,13 +25,16 @@ export function isDashboardLifecycleCurrent(
 ): boolean {
   if (host.mode !== undefined && host.mode !== "dashboard") return false;
   if (token?.mode && token.mode !== "dashboard") return false;
-  if (token?.inputEpoch !== undefined && (host.dashboardInputEpoch ?? 0) !== token.inputEpoch) return false;
+  if (token?.requiresInputEpoch || token?.inputEpoch !== undefined) {
+    if (typeof host.dashboardInputEpoch !== "number") return false;
+    if (host.dashboardInputEpoch !== token.inputEpoch) return false;
+  }
   if (!token?.screen) return true;
   if (typeof host.isDashboardScreen === "function") return host.isDashboardScreen(token.screen);
   if (host.dashboardState?.isScreen || host.dashboardState?.screen) {
     return host.dashboardState?.isScreen?.(token.screen) === true || host.dashboardState?.screen === token.screen;
   }
-  return true;
+  return false;
 }
 
 export function renderDashboardIfCurrent(

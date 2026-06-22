@@ -93,6 +93,9 @@ describe("thread subscreen navigation", () => {
 
   it("forces coordination refresh after thread workflow mutations", async () => {
     const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
       postToProjectService: vi.fn(async () => ({ ok: true })),
       refreshCoordinationFromService: vi.fn(async () => true),
       renderCoordination: vi.fn(),
@@ -113,6 +116,7 @@ describe("thread subscreen navigation", () => {
   it("shows refresh failure instead of success when workflow mutation snapshot reload fails", async () => {
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
       postToProjectService: vi.fn(async () => ({ ok: true })),
       refreshCoordinationFromService: vi.fn(async () => false),
@@ -129,6 +133,7 @@ describe("thread subscreen navigation", () => {
     let resolvePost!: (value: unknown) => void;
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       isDashboardScreen: vi.fn((screen: string) => host.mode === "dashboard" && screen === "coordination"),
       postToProjectService: vi.fn(
         () =>
@@ -162,6 +167,8 @@ describe("thread subscreen navigation", () => {
     });
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardState: { screen: "dashboard" },
       coordinationLoaded: true,
       threadEntries: [{ thread, displayTitle: "Needs input" }],
       coordinationWorklist: [{ kind: "thread", thread: { thread } }],
@@ -178,5 +185,43 @@ describe("thread subscreen navigation", () => {
     expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
     expect(host.setDashboardScreen).toHaveBeenCalledWith("coordination");
     expect(host.openDashboardOverlay).toHaveBeenCalledWith("thread-reply");
+  });
+
+  it("does not open a relevant thread after the dashboard screen changes during refresh", async () => {
+    let resolveRefresh!: (value: boolean) => void;
+    const thread = createThread({
+      id: "thread-stale",
+      title: "Needs input",
+      kind: "question",
+      createdBy: "claude-1",
+      participants: ["claude-1", "user"],
+      waitingOn: ["claude-1"],
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardState: { screen: "dashboard" },
+      coordinationLoaded: true,
+      threadEntries: [{ thread, displayTitle: "Needs input" }],
+      coordinationWorklist: [{ kind: "thread", thread: { thread } }],
+      refreshCoordinationFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      setDashboardScreen: vi.fn(),
+      openDashboardOverlay: vi.fn(),
+      renderCoordination: vi.fn(),
+    };
+
+    const open = openRelevantThreadForSession(host, "claude-1");
+    host.dashboardState.screen = "project";
+    resolveRefresh(true);
+    await open;
+
+    expect(host.setDashboardScreen).not.toHaveBeenCalled();
+    expect(host.openDashboardOverlay).not.toHaveBeenCalled();
+    expect(host.renderCoordination).not.toHaveBeenCalled();
   });
 });

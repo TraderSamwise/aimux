@@ -158,7 +158,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       } else {
         applyGraveyardPayload(host, emptyGraveyardPayload());
       }
-      if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+      if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
       if (getSelectableGraveyardRows(host).length === 0) {
         host.setDashboardScreen("dashboard");
         if (host.mode === "dashboard") {
@@ -176,7 +176,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       const label = item.kind === "worktree" ? item.entry.path : item.entry.id;
       const message = error instanceof Error ? error.message : String(error);
       debug(`failed to resurrect ${label}: ${message}`, "session");
-      if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+      if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.showDashboardError?.(`Failed to resurrect "${label}"`, [message]);
       if (host.mode === "dashboard") {
         void refreshGraveyardEntriesFromService(host, { force: true });
@@ -224,7 +224,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
       applyGraveyardPayload(host, emptyGraveyardPayload());
     }
     clampGraveyardSelection(host);
-    if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
     if (getSelectableGraveyardRows(host).length === 0) {
       host.setDashboardScreen("dashboard");
       host.renderDashboard();
@@ -234,8 +234,12 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   } catch (error) {
     host.graveyardWorktreeDeleteConfirm = null;
     const message = error instanceof Error ? error.message : String(error);
-    if (host.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(`Failed to delete "${entry.name}"`, [message]);
+    if (host.mode === "dashboard") {
+      void refreshGraveyardEntriesFromService(host, { force: true });
+      void refreshDashboardAfterGraveyardMutation(host);
+    }
   }
 }
 
