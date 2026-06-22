@@ -134,7 +134,10 @@ async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOp
 
 async function refreshDashboardModelForSettlement(host: DashboardOpsHost): Promise<boolean> {
   if (typeof host.refreshDashboardModelFromService !== "function") return false;
-  return (await host.refreshDashboardModelFromService(true)) !== false;
+  const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
+  const result = await host.refreshDashboardModelFromService(true);
+  if (host.dashboardModelServiceRefreshError) return false;
+  return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
 }
 
 async function waitForStableDashboardSessionAbsence(

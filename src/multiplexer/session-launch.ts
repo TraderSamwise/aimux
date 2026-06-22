@@ -248,8 +248,14 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
+        const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
         const refreshed = await host.refreshDashboardModelFromService(true);
-        if (refreshed && host.mode === "dashboard") {
+        const fresh =
+          !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+        if ((refreshed || fresh) && host.mode === "dashboard") {
+          host.dashboardBusyState = null;
+          host.renderCurrentDashboardView();
+        } else if (host.mode === "dashboard" && host.dashboardModelServiceRefreshError) {
           host.dashboardBusyState = null;
           host.renderCurrentDashboardView();
         }

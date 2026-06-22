@@ -693,7 +693,11 @@ describe("startRuntimeGuardRepair", () => {
       dashboardBusyState: null,
       runtimeGuardState: { kind: "stale", reason: "service-mismatch" },
       renderCurrentDashboardView: vi.fn(),
-      refreshDashboardModelFromService: vi.fn().mockResolvedValue(true),
+      dashboardModelServiceRefreshedAt: 0,
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
     };
 
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
