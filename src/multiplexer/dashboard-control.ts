@@ -6,9 +6,9 @@ import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from 
 import type { DashboardScreen } from "../dashboard/state.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markSessionViewed } from "../session-viewed.js";
-import { requestJson } from "../http-client.js";
+import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
-import { loadMetadataEndpoint, removeMetadataEndpoint, type MetadataApiEndpoint } from "../metadata-store.js";
+import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
@@ -16,7 +16,6 @@ import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
-import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -700,9 +699,8 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
   if (output) process.stdout.write(output);
 }
 
-// Shared retry/recovery loop for project-service requests: resolve the endpoint (reviving the
-// control plane if missing), make the request, and retry on retryable status / connection errors
-// until the deadline. Used by both the POST and GET helpers so they share recovery semantics.
+// Shared retry/recovery loop for project-service requests. Route calls are the liveness
+// probe; only dead endpoints trigger control-plane recovery, and timeouts stay visible.
 async function requestProjectService(
   host: DashboardControlHost,
   path: string,
@@ -719,19 +717,6 @@ async function requestProjectService(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
-    const verification = await verifyProjectServiceEndpoint(endpoint, deadline);
-    if (verification === "stale") {
-      removeMetadataEndpoint(projectRoot);
-      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
-        restartProjectService: true,
-      });
-      await sleepProjectServiceRetry(attempt, deadline);
-      continue;
-    }
-    if (verification === "retry") {
-      await sleepProjectServiceRetry(attempt, deadline);
-      continue;
-    }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
         method: opts.method,
@@ -744,13 +729,19 @@ async function requestProjectService(
       }
       lastError = new Error(json?.error || `request failed: ${status}`);
       if (isProjectServiceRetryableStatus(status) && Date.now() < deadline) {
-        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
         await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
       throw lastError;
     } catch (error) {
       lastError = error;
+      if (isHttpTimeoutError(error) && opts.method === "GET" && Date.now() < deadline) {
+        await sleepProjectServiceRetry(attempt, deadline);
+        continue;
+      }
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
         removeMetadataEndpoint(projectRoot);
         await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
@@ -803,29 +794,6 @@ function remainingProjectServiceDeadline(deadline: number): number {
   return Math.max(1, deadline - Date.now());
 }
 
-type ProjectServiceEndpointVerification = "ok" | "retry" | "stale";
-
-async function verifyProjectServiceEndpoint(
-  endpoint: MetadataApiEndpoint,
-  deadline: number,
-): Promise<ProjectServiceEndpointVerification> {
-  try {
-    const { status, json } = await requestJson<{ ok?: boolean; pid?: number; serviceInfo?: ProjectServiceManifest }>(
-      `http://${endpoint.host}:${endpoint.port}/health`,
-      {
-        timeoutMs: Math.max(1, Math.min(250, deadline - Date.now())),
-      },
-    );
-    if (status < 200 || status >= 300 || json?.ok === false) return "retry";
-    if (json?.pid !== endpoint.pid) return "stale";
-    if (!manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) return "stale";
-    return "ok";
-  } catch (error) {
-    if (isProjectServiceConnectionError(error)) return "stale";
-    return "retry";
-  }
-}
-
 async function sleepProjectServiceRetry(attempt: number, deadline: number): Promise<void> {
   const delayMs = Math.min(250, 50 + attempt * 25, Math.max(0, deadline - Date.now()));
   if (delayMs <= 0) return;
@@ -856,6 +824,15 @@ export async function ensureDashboardControlPlane(
 ): Promise<void> {
   if (host.dashboardServiceRecovery) {
     await withProjectServiceTimeout(host.dashboardServiceRecovery, timeoutMs);
+    if (!opts.restartProjectService) {
+      return;
+    }
+    if (host.dashboardServiceRecovery) {
+      await withProjectServiceTimeout(host.dashboardServiceRecovery, timeoutMs);
+    }
+    if (!host.dashboardServiceRecovery) {
+      return ensureDashboardControlPlane(host, timeoutMs, opts);
+    }
     return;
   }
   const recovery = (async () => {
