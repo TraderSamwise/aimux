@@ -208,6 +208,36 @@ describe("MetadataServer threads API", () => {
     expect(getState).toHaveBeenCalledTimes(2);
   });
 
+  it("invalidates desktop-state cache when alerts publish project updates", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    server.getEventBus().publishAlert({
+      kind: "needs_input",
+      title: "Needs input",
+      message: "Agent needs input",
+      sessionId: "agent-1",
+      cooldownMs: 0,
+    });
+    const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+
+    expect(second.seq).toBe(2);
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
+
   function seedAgentTopology(
     sessions: Array<{
       id: string;

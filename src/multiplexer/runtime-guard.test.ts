@@ -42,6 +42,10 @@ const liveManifest = getProjectServiceManifest();
 beforeEach(() => {
   loadMetadataEndpointMock.mockReset();
   requestJsonMock.mockReset();
+  tmuxMock.isAvailable.mockReset();
+  tmuxMock.getProjectSession.mockReset();
+  tmuxMock.listSessionNames.mockReset();
+  tmuxMock.getSessionOption.mockReset();
   tmuxMock.isAvailable.mockReturnValue(false);
   tmuxMock.getProjectSession.mockReturnValue({ sessionName: "aimux-repo-111" });
   tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111"]);
@@ -276,6 +280,24 @@ describe("probeRuntimeGuard", () => {
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
     expect(tmuxMock.getSessionOption).toHaveBeenCalledWith("aimux-repo-111-client-deadbeef", "@aimux-runtime-contract");
+  });
+
+  it("does not require runtime rebuild when the tmux host session is absent", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.listSessionNames.mockReturnValue([]);
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+    expect(tmuxMock.getSessionOption).not.toHaveBeenCalled();
   });
 });
 

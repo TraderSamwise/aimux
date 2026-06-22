@@ -312,9 +312,18 @@ function readProjectRuntimeReport(input: {
     };
   }
   const sessionName = input.tmux.getProjectSession(input.projectRoot).sessionName;
+  const sessionNames = input.tmux.listSessionNames();
+  if (!sessionNames.includes(sessionName)) {
+    return {
+      sessionName,
+      contract: null,
+      expectedContract: AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      rebuildRequired: false,
+      clientSessions: [],
+    };
+  }
   const contract = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
-  const clientSessions = input.tmux
-    .listSessionNames()
+  const clientSessions = sessionNames
     .filter((name) => name.startsWith(`${sessionName}-client-`))
     .map((name) => {
       const clientContract = input.tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION);
