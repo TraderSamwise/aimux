@@ -706,6 +706,8 @@ describe("restartAimuxControlPlane", () => {
 
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111", "/repo/alpha");
     expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "/repo/alpha");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-contract", "1");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "@aimux-runtime-contract", "1");
     expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
     expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "0");
     expect(setSessionOption).toHaveBeenCalledWith(

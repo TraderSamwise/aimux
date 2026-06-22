@@ -1,6 +1,7 @@
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
@@ -11,7 +12,7 @@ import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
-import { getProjectStateDir } from "../paths.js";
+import { getGlobalAimuxDir, getProjectStateDir } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
@@ -46,6 +47,7 @@ import {
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
+const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
 
 function writeStatuslineTextFile(name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
@@ -164,6 +166,48 @@ function runtimeGuardRepairKey(state: RuntimeGuardState): string {
   return state.kind === "stale" ? `${state.kind}:${state.reason}` : state.kind;
 }
 
+function runtimeGuardRepairLockPath(): string {
+  return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
+}
+
+function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
+  const lockPath = runtimeGuardRepairLockPath();
+  const acquire = (): string | null => {
+    try {
+      mkdirSync(lockPath);
+      writeFileSync(
+        join(lockPath, "owner.json"),
+        `${JSON.stringify({ pid: process.pid, projectRoot, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return lockPath;
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EEXIST") throw error;
+      return null;
+    }
+  };
+
+  mkdirSync(join(getGlobalAimuxDir(), "locks"), { recursive: true });
+  const acquired = acquire();
+  if (acquired) return acquired;
+  try {
+    const ageMs = Date.now() - statSync(lockPath).mtimeMs;
+    if (ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
+      rmSync(lockPath, { recursive: true, force: true });
+      return acquire();
+    }
+  } catch {
+    if (!existsSync(lockPath)) return acquire();
+  }
+  return null;
+}
+
+function releaseRuntimeGuardRepairLock(lockPath: string | null): void {
+  if (!lockPath) return;
+  try {
+    rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
+}
+
 function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string, message: string): void {
   if (host.runtimeGuardRepairBusy) {
     host.dashboardBusyState = null;
@@ -183,6 +227,17 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const repairKey = runtimeGuardRepairKey(state);
   if (host.runtimeGuardRepairFailedKey === repairKey) return;
   const projectRoot = host.projectRoot ?? process.cwd();
+  const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
+  if (!lockPath) {
+    host.dashboardBusyState = {
+      title: "Repairing Aimux",
+      lines: ["Another dashboard is repairing the local control plane."],
+      spinnerFrame: 0,
+      startedAt: Date.now(),
+    };
+    host.renderCurrentDashboardView?.();
+    return;
+  }
   const command = resolveDashboardReloadCommand();
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
@@ -199,6 +254,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const fail = (message: string) => {
     if (settled) return;
     settled = true;
+    releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
     showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
@@ -206,6 +262,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const succeed = () => {
     if (settled) return;
     settled = true;
+    releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
     if (host.runtimeGuardRepairBusy) {
@@ -245,7 +302,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       host.runtimeGuardState = next.state;
       if (next.state.kind === "ok") {
         host.runtimeGuardRepairFailedKey = undefined;
-        if (host.runtimeGuardRepairBusy) {
+        if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
           host.dashboardBusyState = null;
           host.runtimeGuardRepairBusy = false;
         }

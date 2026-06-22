@@ -14,7 +14,11 @@ import {
   type BuildRuntimeCoherenceReportOptions,
   type RuntimeCoherenceReport,
 } from "./runtime-coherence.js";
-import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "./runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
+} from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
@@ -273,6 +277,9 @@ function repairRuntimeContract(input: {
     }
     try {
       for (const sessionName of repairedSessions) {
+        if (input.required) {
+          input.tmux.setSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION, AIMUX_TMUX_RUNTIME_CONTRACT_VERSION);
+        }
         input.tmux.setSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
       }
     } catch (error) {
