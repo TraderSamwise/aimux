@@ -7,7 +7,6 @@ function hostDouble(): any {
   return {
     mode: "dashboard",
     dashboardModelRefreshedAt: 0,
-    dashboardServiceSnapshotRefreshing: false,
     getFromProjectService: vi.fn(),
     refreshRuntimeGuard: vi.fn(),
     dashboardPendingActions: new DashboardPendingActions(() => {}),
