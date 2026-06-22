@@ -11,6 +11,7 @@ import {
   applyCoordinationModel,
   notificationTargetLabel,
   notificationTargetState,
+  openCoordinationNotification,
   refreshCoordinationFromService,
 } from "./notifications.js";
 import { buildCoordinationView } from "../coordination-model.js";
@@ -127,6 +128,26 @@ describe("notification target open", () => {
 
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
     expect(host.footerFlash).toBe("Failed to open notification target");
+  });
+
+  it("does not throw when notification settle fails before refresh wiring exists", async () => {
+    delete host.refreshCoordinationFromService;
+    host.postToProjectService = vi.fn(async () => {
+      throw new Error("service unavailable");
+    });
+    const item = {
+      key: "n:sessionless",
+      kind: "notification",
+      notification: {
+        unreadCount: 1,
+        notifications: [{ id: "note-1" }],
+      },
+    } as any;
+
+    await expect(openCoordinationNotification(host, item)).resolves.toBeUndefined();
+
+    expect(host.footerFlash).toBe("Notification update failed");
+    expect(host.renderCoordination).toHaveBeenCalled();
   });
 
   it("opens teammate notification targets from the hidden teammate cache", async () => {

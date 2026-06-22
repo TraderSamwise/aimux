@@ -184,7 +184,9 @@ export async function openCoordinationNotification(host: NotificationHost, item:
     } catch {
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
-      await host.refreshCoordinationFromService?.().catch(() => {});
+      if (typeof host.refreshCoordinationFromService === "function") {
+        await host.refreshCoordinationFromService().catch(() => {});
+      }
     }
   };
   if (!item.sessionId) {
