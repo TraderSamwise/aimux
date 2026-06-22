@@ -4,8 +4,10 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type ArchivesHost = any;
+const GRAVEYARD_RESOURCE = "graveyard";
 
 export function showGraveyard(host: ArchivesHost): void {
   host.clearDashboardSubscreens();
@@ -238,6 +240,11 @@ function isGraveyardPayload(value: any): value is { entries: any[]; worktrees: a
   );
 }
 
+function validateGraveyardPayload(value: unknown): { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel } {
+  if (!isGraveyardPayload(value)) throw new Error("invalid graveyard payload");
+  return value;
+}
+
 function applyGraveyardPayload(
   host: ArchivesHost,
   payload: { entries: any[]; worktrees: any[]; viewModel: GraveyardViewModel },
@@ -254,9 +261,17 @@ export async function refreshGraveyardEntriesFromService(host: ArchivesHost): Pr
     return false;
   }
   try {
-    const res = await host.getFromProjectService(PROJECT_API_ROUTES.graveyard, { timeoutMs: 3000 });
-    if (!isGraveyardPayload(res)) throw new Error("invalid graveyard payload");
-    applyGraveyardPayload(host, res);
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      GRAVEYARD_RESOURCE,
+      PROJECT_API_ROUTES.graveyard,
+      validateGraveyardPayload,
+      { timeoutMs: 3000 },
+    );
+    if (!result.ok || !result.value) {
+      if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+      return false;
+    }
+    applyGraveyardPayload(host, result.value);
     if (host.isDashboardScreen?.("graveyard")) {
       renderGraveyard(host);
     }

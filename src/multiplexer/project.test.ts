@@ -43,6 +43,32 @@ describe("refreshProjectObservability", () => {
     expect(host.projectIndex).toBe(0);
   });
 
+  it("coalesces concurrent project refreshes through the TUI API runtime", async () => {
+    const project = projectModel([
+      { id: "notif:1", kind: "notification", title: "Needs input", meta: "needs_input", createdAt: "now" },
+    ]);
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      projectIndex: -1,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const first = refreshProjectObservability(host);
+    const second = refreshProjectObservability(host);
+    resolveRefresh({ ok: true, project });
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(host.projectObservability).toBe(project);
+  });
+
   it("initializes an empty model instead of building from local stores on failure", async () => {
     const host: any = {
       getDashboardSessions: vi.fn(() => [{ status: "running" }]),

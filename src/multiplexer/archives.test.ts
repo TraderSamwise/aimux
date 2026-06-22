@@ -50,6 +50,31 @@ describe("refreshGraveyardEntriesFromService", () => {
     expect(renderGraveyardScreen).toHaveBeenCalledWith(host);
   });
 
+  it("coalesces concurrent graveyard refreshes through the TUI API runtime", async () => {
+    const payload = graveyardPayload();
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      graveyardIndex: -1,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn(() => false),
+    };
+
+    const first = refreshGraveyardEntriesFromService(host);
+    const second = refreshGraveyardEntriesFromService(host);
+    resolveRefresh(payload);
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(host.graveyardViewModel).toBe(payload.viewModel);
+  });
+
   it("initializes an empty model instead of rebuilding from local stores on invalid payloads", async () => {
     const host: any = {
       listGraveyardEntries: vi.fn(),

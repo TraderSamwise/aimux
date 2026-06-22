@@ -449,6 +449,49 @@ describe("coordination reads prefer the service", () => {
     expect(host.notificationEntries.map((entry: any) => entry.id)).toContain("r1");
   });
 
+  it("coalesces concurrent coordination refreshes through the TUI API runtime", async () => {
+    const payload = buildCoordinationView({
+      sessions: [
+        { id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } },
+      ],
+      notifications: [
+        {
+          id: "r1",
+          title: "Remote",
+          body: "remote agent needs input",
+          sessionId: "remote-1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      threads: [],
+    });
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      coordinationFilter: "all",
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const first = refreshCoordinationFromService(host);
+    const second = refreshCoordinationFromService(host);
+    resolveRefresh({ ok: true, model: payload.model, worklist: payload.worklist, threads: [] });
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(host.coordinationLoaded).toBe(true);
+    expect(host.notificationEntries.map((entry: any) => entry.id)).toEqual(["r1"]);
+  });
+
   it("preserves the last API state when the service request fails", async () => {
     addExchangeNotification("local-1", "local agent needs input");
     const host: any = {

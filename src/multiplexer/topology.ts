@@ -2,8 +2,10 @@ import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type TopologyHost = any;
+const TOPOLOGY_RESOURCE = "topology";
 
 function emptyTopology(): ProjectTopology {
   return buildProjectTopology({ projectName: "project", worktrees: [] });
@@ -69,11 +71,28 @@ function isProjectTopology(value: any): value is ProjectTopology {
   );
 }
 
+function validateTopologyPayload(value: unknown): ProjectTopology {
+  const res = value as any;
+  if (!res?.ok || !isProjectTopology(res.topology)) throw new Error("invalid topology payload");
+  return res.topology;
+}
+
 export async function refreshTopology(host: TopologyHost): Promise<boolean> {
+  if (typeof host.getFromProjectService !== "function") {
+    ensureTopology(host);
+    return false;
+  }
   try {
-    const res = await host.getFromProjectService(PROJECT_API_ROUTES.topology);
-    if (!res?.ok || !isProjectTopology(res.topology)) throw new Error("invalid topology payload");
-    applyTopology(host, res.topology);
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      TOPOLOGY_RESOURCE,
+      PROJECT_API_ROUTES.topology,
+      validateTopologyPayload,
+    );
+    if (!result.ok || !result.value) {
+      ensureTopology(host);
+      return false;
+    }
+    applyTopology(host, result.value);
     return true;
   } catch {
     ensureTopology(host);
