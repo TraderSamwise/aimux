@@ -18,11 +18,15 @@ import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { commandArgValueMatches } from "./process-args.js";
 
-export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "skipped" | "failed";
+export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
 
 export interface RuntimeRestartProjectResult {
   projectRoot: string;
   runtimeRebuildRequired: boolean;
+  runtime: {
+    status: RuntimeRestartStepStatus;
+    error: string | null;
+  };
   service: {
     status: RuntimeRestartStepStatus;
     state: ProjectServiceState | null;
@@ -53,6 +57,7 @@ export interface RuntimeRestartResult {
   summary: {
     projects: number;
     servicesEnsured: number;
+    runtimeRepairs: number;
     dashboardsReloaded: number;
     runtimeRebuildRequired: number;
     failures: number;
@@ -71,6 +76,7 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       | "linkWindowToSession"
       | "selectWindow"
       | "setSessionOption"
+      | "configureManagedSession"
     >
   >;
 
@@ -115,6 +121,10 @@ function emptyProjectResult(projectRoot: string): RuntimeRestartProjectResult {
   return {
     projectRoot,
     runtimeRebuildRequired: false,
+    runtime: {
+      status: "skipped",
+      error: null,
+    },
     service: {
       status: "skipped",
       state: null,
@@ -142,11 +152,10 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   );
 }
 
-function selectRuntimeRebuildProjectRoots(before: RuntimeCoherenceReport): Set<string> {
-  return new Set([
-    ...before.projects.filter((project) => project.runtime.rebuildRequired).map((project) => project.projectRoot),
-    ...before.staleHookProcesses.map((process) => process.projectRoot).filter((root): root is string => Boolean(root)),
-  ]);
+function selectRuntimeRepairProjectRoots(before: RuntimeCoherenceReport): Set<string> {
+  return new Set(
+    before.projects.filter((project) => project.runtime.rebuildRequired).map((project) => project.projectRoot),
+  );
 }
 
 function stopPreRestartDashboards(
@@ -232,21 +241,41 @@ function restoreActiveWindows(tmux: RuntimeRestartTmux, targets: TmuxTarget[]): 
   }
 }
 
-function markRuntimeRebuildRequired(input: {
-  projectRoots: string[];
-  runtimeRebuildProjectRoots: Set<string>;
+function repairRuntimeContract(input: {
+  projectRoot: string;
   tmux: RuntimeRestartTmux;
-}): void {
-  if (!input.tmux.isAvailable() || !input.tmux.getProjectSession || !input.tmux.setSessionOption) return;
-  for (const projectRoot of input.projectRoots) {
-    const value = input.runtimeRebuildProjectRoots.has(projectRoot) ? "1" : "0";
-    try {
-      input.tmux.setSessionOption(
-        input.tmux.getProjectSession(projectRoot).sessionName,
-        TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
-        value,
-      );
-    } catch {}
+  required: boolean;
+}): RuntimeRestartProjectResult["runtime"] {
+  if (!input.tmux.isAvailable() || !input.tmux.getProjectSession || !input.tmux.setSessionOption) {
+    return input.required
+      ? { status: "failed", error: "tmux runtime repair is unavailable" }
+      : { status: "skipped", error: null };
+  }
+
+  const hostSession = input.tmux.getProjectSession(input.projectRoot).sessionName;
+  try {
+    if (input.required) {
+      if (!input.tmux.configureManagedSession) {
+        throw new Error("tmux runtime reconfiguration is unavailable");
+      }
+      input.tmux.configureManagedSession(hostSession, input.projectRoot);
+      if (input.tmux.listSessionNames) {
+        for (const sessionName of input.tmux.listSessionNames()) {
+          if (sessionName.startsWith(`${hostSession}-client-`)) {
+            input.tmux.configureManagedSession(sessionName, input.projectRoot);
+          }
+        }
+      }
+    }
+    input.tmux.setSessionOption(hostSession, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+    return input.required ? { status: "repaired", error: null } : { status: "skipped", error: null };
+  } catch (error) {
+    if (!input.required) {
+      try {
+        input.tmux.setSessionOption(hostSession, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+      } catch {}
+    }
+    return { status: "failed", error: errorMessage(error) };
   }
 }
 
@@ -387,11 +416,7 @@ async function verifyPostRestartCoherence(input: {
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
           if (project.status === "ok") return false;
-          const runtimeOnly =
-            project.runtime.rebuildRequired &&
-            project.service.status === "ok" &&
-            project.dashboards.every((dashboard) => dashboard.status === "ok");
-          return !runtimeOnly;
+          return true;
         })
         .map((project) => project.projectRoot);
       latestError =
@@ -427,7 +452,7 @@ export async function restartAimuxControlPlane(
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
   const verificationProjectRoots = options.projectRoot ? new Set([options.projectRoot]) : new Set(projectRoots);
-  const runtimeRebuildProjectRoots = selectRuntimeRebuildProjectRoots(before);
+  const runtimeRepairProjectRoots = selectRuntimeRepairProjectRoots(before);
   const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
     const pid = project.service.pid;
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return [];
@@ -485,12 +510,16 @@ export async function restartAimuxControlPlane(
     ((projectRoot, tmux, resolveOptions) =>
       resolveDashboardTarget(projectRoot, tmux as TmuxRuntimeManager, resolveOptions));
   const tmuxAvailable = tmux.isAvailable();
-  markRuntimeRebuildRequired({ projectRoots, runtimeRebuildProjectRoots, tmux });
   const projects: RuntimeRestartProjectResult[] = [];
 
   for (const projectRoot of projectRoots) {
     const result = emptyProjectResult(projectRoot);
-    result.runtimeRebuildRequired = runtimeRebuildProjectRoots.has(projectRoot);
+    result.runtimeRebuildRequired = runtimeRepairProjectRoots.has(projectRoot);
+    result.runtime = repairRuntimeContract({
+      projectRoot,
+      tmux,
+      required: runtimeRepairProjectRoots.has(projectRoot),
+    });
     try {
       result.service.state = await ensureService(projectRoot);
       result.service.status = "ensured";
@@ -523,7 +552,10 @@ export async function restartAimuxControlPlane(
   }
 
   const projectFailures = projects.filter(
-    (project) => project.service.status === "failed" || project.dashboard.status === "failed",
+    (project) =>
+      project.runtime.status === "failed" ||
+      project.service.status === "failed" ||
+      project.dashboard.status === "failed",
   ).length;
   const shouldVerifyAfterRestart = options.verifyAfterRestart ?? !options.buildRuntimeCoherenceReport;
   let verification: RuntimeRestartResult["verification"] = {
@@ -555,6 +587,7 @@ export async function restartAimuxControlPlane(
     summary: {
       projects: projects.length,
       servicesEnsured: projects.filter((project) => project.service.status === "ensured").length,
+      runtimeRepairs: projects.filter((project) => project.runtime.status === "repaired").length,
       dashboardsReloaded: projects.filter((project) => project.dashboard.status === "reloaded").length,
       runtimeRebuildRequired: projects.filter((project) => project.runtimeRebuildRequired).length,
       failures,
@@ -568,26 +601,23 @@ export function renderRuntimeRestartResult(result: RuntimeRestartResult): string
     `  daemon: ${result.daemon.previous ? `restarted pid=${result.daemon.previous.pid}` : "started"} -> pid=${result.daemon.current.pid}`,
     `  projects: ${result.summary.projects}`,
     `  services ensured: ${result.summary.servicesEnsured}`,
+    `  runtime repaired: ${result.summary.runtimeRepairs}`,
     `  dashboards reloaded: ${result.summary.dashboardsReloaded}`,
-    `  runtime rebuild required: ${result.summary.runtimeRebuildRequired}`,
     `  failures: ${result.summary.failures}`,
   ];
 
   if (result.summary.runtimeRebuildRequired > 0) {
     lines.push("");
-    lines.push("Runtime rebuild required:");
+    lines.push("Runtime repaired:");
     for (const project of result.projects.filter((entry) => entry.runtimeRebuildRequired)) {
       lines.push(`  ${project.projectRoot}`);
     }
-    lines.push("Control plane repair completed without killing agents.");
-    lines.push("The dashboard will show a rebuild warning; manual command:");
-    lines.push("  aimux restart-runtime --project-root <project> --open");
   }
 
   for (const project of result.projects) {
     lines.push("");
     lines.push(`Project: ${project.projectRoot}`);
-    if (project.runtimeRebuildRequired) lines.push("  runtime: rebuild required");
+    lines.push(`  runtime: ${project.runtime.status}${project.runtime.error ? ` (${project.runtime.error})` : ""}`);
     lines.push(`  service: ${project.service.status}${project.service.error ? ` (${project.service.error})` : ""}`);
     lines.push(
       `  dashboard: ${project.dashboard.status}${project.dashboard.target ? ` ${project.dashboard.sessionName}:${project.dashboard.target.windowId}` : ""}${project.dashboard.error ? ` (${project.dashboard.error})` : ""}`,

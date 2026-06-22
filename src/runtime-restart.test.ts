@@ -333,6 +333,7 @@ describe("restartAimuxControlPlane", () => {
     expect(result.summary).toEqual({
       projects: 2,
       servicesEnsured: 2,
+      runtimeRepairs: 0,
       dashboardsReloaded: 1,
       runtimeRebuildRequired: 0,
       failures: 0,
@@ -585,14 +586,64 @@ describe("restartAimuxControlPlane", () => {
     expect(renderRuntimeRestartResult(result)).toContain("Post-restart verification failed");
   });
 
-  it("marks runtime rebuild requirements without failing control-plane verification", async () => {
+  it("repairs runtime contract drift and clears the rebuild marker", async () => {
     const setSessionOption = vi.fn();
+    const configureManagedSession = vi.fn();
     const tmux = {
       isAvailable: () => true,
       getProjectSession: vi.fn((projectRoot: string) => ({
         sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
       })),
+      listSessionNames: vi.fn(() => ["aimux-alpha-111", "aimux-alpha-111-client-deadbeef", "aimux-beta-222"]),
+      configureManagedSession,
       setSessionOption,
+    };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(runtimeRebuildCoherenceReport())
+      .mockResolvedValueOnce(okCoherenceReport());
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => tmux,
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111", "/repo/alpha");
+    expect(configureManagedSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", "/repo/alpha");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "0");
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary).toMatchObject({ runtimeRepairs: 1, runtimeRebuildRequired: 1, failures: 0 });
+    expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
+    expect(result.projects[0]?.runtime.status).toBe("repaired");
+    expect(renderRuntimeRestartResult(result)).toContain("Runtime repaired:");
+  });
+
+  it("fails verification when runtime contract drift remains after repair", async () => {
+    const tmux = {
+      isAvailable: () => true,
+      getProjectSession: vi.fn((projectRoot: string) => ({
+        sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+      })),
+      configureManagedSession: vi.fn(),
+      setSessionOption: vi.fn(),
     };
     const buildRuntimeCoherenceReport = vi
       .fn()
@@ -621,15 +672,12 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "1");
-    expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
-    expect(result.verification.status).toBe("ok");
-    expect(result.summary).toMatchObject({ runtimeRebuildRequired: 1, failures: 0 });
-    expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
-    expect(renderRuntimeRestartResult(result)).toContain("Runtime rebuild required:");
+    expect(result.verification.status).toBe("failed");
+    expect(result.summary.failures).toBe(1);
+    expect(renderRuntimeRestartResult(result)).toContain("Post-restart verification failed");
   });
 
-  it("marks projects with stale agent hook commands as needing runtime rebuild", async () => {
+  it("does not treat stale agent hook commands as a tmux runtime rebuild", async () => {
     const setSessionOption = vi.fn();
     const buildRuntimeCoherenceReport = vi.fn().mockResolvedValue(staleHookCoherenceReport());
 
@@ -660,10 +708,11 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "1");
+    expect(setSessionOption).toHaveBeenCalledWith("aimux-alpha-111", "@aimux-runtime-rebuild-required", "0");
     expect(setSessionOption).toHaveBeenCalledWith("aimux-beta-222", "@aimux-runtime-rebuild-required", "0");
-    expect(result.summary.runtimeRebuildRequired).toBe(1);
-    expect(result.projects[0]?.runtimeRebuildRequired).toBe(true);
+    expect(result.summary.runtimeRebuildRequired).toBe(0);
+    expect(result.summary.runtimeRepairs).toBe(0);
+    expect(result.projects[0]?.runtimeRebuildRequired).toBe(false);
   });
 
   it("waits for post-restart services to become coherent before failing verification", async () => {
