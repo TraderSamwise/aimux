@@ -37,6 +37,30 @@ describe("refreshLibrary", () => {
     expect(host.libraryIndex).toBe(0);
   });
 
+  it("coalesces concurrent library refreshes through the TUI API runtime", async () => {
+    const entries = [libraryEntry()];
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      libraryIndex: -1,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const first = refreshLibrary(host);
+    const second = refreshLibrary(host);
+    resolveRefresh({ ok: true, entries });
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(host.libraryEntries).toBe(entries);
+  });
+
   it("initializes an empty list instead of building from local stores on invalid payloads", async () => {
     const host: any = {
       getSessionLabel: vi.fn(),

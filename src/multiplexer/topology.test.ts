@@ -37,6 +37,32 @@ describe("refreshTopology", () => {
     expect(host.topologyIndex).toBe(0);
   });
 
+  it("coalesces concurrent topology refreshes through the TUI API runtime", async () => {
+    const topology = topologyModel([
+      { kind: "agent", depth: 1, label: "claude", health: "active", sessionId: "live-1" },
+    ]);
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      topologyIndex: -1,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const first = refreshTopology(host);
+    const second = refreshTopology(host);
+    resolveRefresh({ ok: true, topology });
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(host.topology).toBe(topology);
+  });
+
   it("initializes an empty topology instead of building from local dashboard groups on failure", async () => {
     const host: any = {
       dashboardWorktreeGroupsCache: [{ name: "main", branch: "main", sessions: [{ id: "local" }], services: [] }],

@@ -3,8 +3,13 @@ import { commandKey, parseKeys } from "../key-parser.js";
 import type { LibraryEntry } from "../library.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type LibraryHost = any;
+interface ApiViewRefreshOptions {
+  force?: boolean;
+}
+const LIBRARY_RESOURCE = "library";
 
 function isLibraryEntry(value: any): value is LibraryEntry {
   return (
@@ -34,17 +39,31 @@ function ensureLibraryEntries(host: LibraryHost): void {
   if (!host.libraryLoaded) applyLibraryEntries(host, []);
 }
 
-export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
+function validateLibraryPayload(value: unknown): LibraryEntry[] {
+  const res = value as any;
+  if (!res?.ok || !Array.isArray(res.entries) || !res.entries.every(isLibraryEntry)) {
+    throw new Error("invalid library payload");
+  }
+  return res.entries;
+}
+
+export async function refreshLibrary(host: LibraryHost, options: ApiViewRefreshOptions = {}): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
     ensureLibraryEntries(host);
     return false;
   }
   try {
-    const res = await host.getFromProjectService(PROJECT_API_ROUTES.library);
-    if (!res?.ok || !Array.isArray(res.entries) || !res.entries.every(isLibraryEntry)) {
-      throw new Error("invalid library payload");
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      LIBRARY_RESOURCE,
+      PROJECT_API_ROUTES.library,
+      validateLibraryPayload,
+      { supersede: options.force },
+    );
+    if (!result.ok || !result.value) {
+      ensureLibraryEntries(host);
+      return false;
     }
-    applyLibraryEntries(host, res.entries);
+    applyLibraryEntries(host, result.value);
     return true;
   } catch {
     ensureLibraryEntries(host);
@@ -91,7 +110,7 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
     };
   }
 
-  void refreshLibrary(host).then(() => {
+  void refreshLibrary(host, { force: true }).then(() => {
     if (host.isDashboardScreen?.("library")) renderLibrary(host);
   });
   if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
@@ -127,7 +146,7 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    void refreshLibrary(host).then(() => {
+    void refreshLibrary(host, { force: true }).then(() => {
       if (host.isDashboardScreen?.("library")) renderLibrary(host);
     });
     return;
