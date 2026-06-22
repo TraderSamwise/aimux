@@ -75,6 +75,41 @@ describe("refreshGraveyardEntriesFromService", () => {
     expect(host.graveyardViewModel).toBe(payload.viewModel);
   });
 
+  it("forces post-mutation refreshes past older pending graveyard reads", async () => {
+    const stale = graveyardPayload();
+    const fresh = { ok: true, entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
+    let resolveStale!: (value: unknown) => void;
+    let resolveFresh!: (value: unknown) => void;
+    const staleRequest = new Promise((resolve) => {
+      resolveStale = resolve;
+    });
+    const freshRequest = new Promise((resolve) => {
+      resolveFresh = resolve;
+    });
+    const host: any = {
+      mode: "dashboard",
+      activeIndex: 0,
+      graveyardIndex: 0,
+      graveyardViewModel: stale.viewModel,
+      getFromProjectService: vi.fn().mockReturnValueOnce(staleRequest).mockReturnValueOnce(freshRequest),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+    };
+
+    const passiveRefresh = refreshGraveyardEntriesFromService(host);
+    resurrectGraveyardEntry(host, 0);
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledTimes(2));
+
+    resolveFresh(fresh);
+    await vi.waitFor(() => expect(host.graveyardViewModel).toBe(fresh.viewModel));
+    resolveStale(stale);
+    await expect(passiveRefresh).resolves.toBe(false);
+
+    expect(host.graveyardViewModel).toBe(fresh.viewModel);
+    expect(host.setDashboardScreen).toHaveBeenCalledWith("dashboard");
+  });
+
   it("initializes an empty model instead of rebuilding from local stores on invalid payloads", async () => {
     const host: any = {
       listGraveyardEntries: vi.fn(),

@@ -222,8 +222,8 @@ export const dashboardActionMethods = {
   async getFromProjectService(this: any, path: string, opts?: { timeoutMs?: number }): Promise<any> {
     return getFromProjectServiceImpl(this, path, opts);
   },
-  async refreshCoordinationFromService(this: any): Promise<boolean> {
-    return refreshCoordinationFromServiceImpl(this);
+  async refreshCoordinationFromService(this: any, options?: { force?: boolean }): Promise<boolean> {
+    return refreshCoordinationFromServiceImpl(this, options);
   },
   async ensureDashboardControlPlane(this: any): Promise<void> {
     await ensureDashboardControlPlaneImpl(this);

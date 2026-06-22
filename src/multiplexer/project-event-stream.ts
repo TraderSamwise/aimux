@@ -188,22 +188,22 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
     host.isDashboardScreen?.("coordination") &&
     touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
   ) {
-    work.push(host.refreshCoordinationFromService?.());
+    work.push(host.refreshCoordinationFromService?.({ force: true }));
   }
   if (
     host.isDashboardScreen?.("project") &&
     touches(views, ["project-observability", "tasks", "notifications", "worktrees", "agents", "services"])
   ) {
-    work.push(refreshProjectObservability(host));
+    work.push(refreshProjectObservability(host, { force: true }));
   }
   if (host.isDashboardScreen?.("topology") && touches(views, ["topology", "agents", "services", "worktrees"])) {
-    work.push(refreshTopology(host));
+    work.push(refreshTopology(host, { force: true }));
   }
   if (host.isDashboardScreen?.("library") && touches(views, ["library", "plans"])) {
-    work.push(refreshLibrary(host));
+    work.push(refreshLibrary(host, { force: true }));
   }
   if (host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
-    work.push(refreshGraveyardEntriesFromService(host));
+    work.push(refreshGraveyardEntriesFromService(host, { force: true }));
   }
   await Promise.all(work.filter(Boolean));
   host.renderCurrentDashboardView?.();

@@ -5,6 +5,9 @@ import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type TopologyHost = any;
+interface ApiViewRefreshOptions {
+  force?: boolean;
+}
 const TOPOLOGY_RESOURCE = "topology";
 
 function emptyTopology(): ProjectTopology {
@@ -77,7 +80,7 @@ function validateTopologyPayload(value: unknown): ProjectTopology {
   return res.topology;
 }
 
-export async function refreshTopology(host: TopologyHost): Promise<boolean> {
+export async function refreshTopology(host: TopologyHost, options: ApiViewRefreshOptions = {}): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
     ensureTopology(host);
     return false;
@@ -87,6 +90,7 @@ export async function refreshTopology(host: TopologyHost): Promise<boolean> {
       TOPOLOGY_RESOURCE,
       PROJECT_API_ROUTES.topology,
       validateTopologyPayload,
+      { supersede: options.force },
     );
     if (!result.ok || !result.value) {
       ensureTopology(host);
@@ -150,7 +154,7 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    void refreshTopology(host).then(() => {
+    void refreshTopology(host, { force: true }).then(() => {
       if (host.isDashboardScreen?.("topology")) renderTopology(host);
     });
     return;
