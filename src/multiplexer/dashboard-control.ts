@@ -300,8 +300,9 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
       return;
     }
-    const refreshed = await host.refreshDashboardModelFromService?.(true);
-    if (refreshed === false) {
+    const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
+    await host.refreshDashboardModelFromService?.(true);
+    if (host.dashboardModelServiceRefreshError || (host.dashboardModelServiceRefreshedAt ?? 0) <= beforeRefresh) {
       fail("aimux repair completed but dashboard data is still unavailable");
       return;
     }

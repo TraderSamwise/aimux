@@ -44,6 +44,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function refreshDashboardModelForWorktreeSettlement(host: WorktreeHost): Promise<boolean> {
+  if (typeof host.refreshDashboardModelFromService !== "function") return false;
+  const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
+  const result = await host.refreshDashboardModelFromService(true);
+  if (host.dashboardModelServiceRefreshError) return false;
+  return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+}
+
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
     ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => entry.path === path)
@@ -60,7 +68,7 @@ async function waitForRenderedDashboardWorktreeState(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if ((await host.refreshDashboardModelFromService(true)) === false) return false;
+    if (!(await refreshDashboardModelForWorktreeSettlement(host))) return false;
     const group = findRenderedWorktreeForSettlement(host, path);
     if (predicate(group)) return true;
     await sleep(100);
@@ -179,19 +187,12 @@ async function waitForRenderedDashboardWorktreeCreate(
   timeoutMs = 180_000,
 ): Promise<{ ok: true } | { ok: false; error: Error }> {
   const deadline = Date.now() + timeoutMs;
-  let unavailableSnapshots = 0;
   while (Date.now() < deadline) {
     if (typeof host.refreshDashboardModelFromService === "function") {
-      if ((await host.refreshDashboardModelFromService(true)) === false) {
-        unavailableSnapshots += 1;
-        if (unavailableSnapshots >= 2) {
-          return { ok: false, error: new Error("project service snapshot unavailable") };
-        }
-        await sleep(100);
-        continue;
+      if (!(await refreshDashboardModelForWorktreeSettlement(host))) {
+        return { ok: false, error: new Error("project service snapshot unavailable") };
       }
     }
-    unavailableSnapshots = 0;
     const failure = findDashboardWorktreeCreateFailure(host, path);
     if (failure) {
       const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
@@ -211,16 +212,9 @@ async function waitForRenderedDashboardWorktreeCreate(
 async function refreshDashboardWorktreeCreateFailure(host: WorktreeHost, path: string): Promise<void> {
   if (typeof host.refreshDashboardModelFromService !== "function") return;
   const deadline = Date.now() + 1000;
-  let unavailableSnapshots = 0;
   for (;;) {
     if (findDashboardWorktreeCreateFailure(host, path)) return;
-    if ((await host.refreshDashboardModelFromService(true)) === false) {
-      unavailableSnapshots += 1;
-      if (unavailableSnapshots >= 2) return;
-      await sleep(100);
-      continue;
-    }
-    unavailableSnapshots = 0;
+    if (!(await refreshDashboardModelForWorktreeSettlement(host))) return;
     if (findDashboardWorktreeCreateFailure(host, path) || Date.now() >= deadline) return;
     await sleep(100);
   }

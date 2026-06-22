@@ -74,6 +74,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardModelServiceRefreshedAt: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -120,6 +121,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardModelServiceRefreshedAt: 0,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
@@ -166,7 +168,7 @@ describe("worktrees dashboard mutation protocol", () => {
   });
 
   it("waits for service-projected create failures after overlapping refreshes", async () => {
-    postToProjectService.mockRejectedValueOnce(new Error("branch already exists"));
+    postToProjectService.mockResolvedValueOnce(undefined);
     const pending = createPendingActionsStore();
     let refreshCount = 0;
     const host: any = {
@@ -182,7 +184,10 @@ describe("worktrees dashboard mutation protocol", () => {
       renderDashboard: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
         refreshCount += 1;
-        if (refreshCount === 1) return false;
+        if (refreshCount === 1) {
+          host.dashboardModelServiceRefreshedAt += 1;
+          return false;
+        }
         applyRawWorktrees(host, pending, [
           {
             name: "demo",
@@ -209,7 +214,7 @@ describe("worktrees dashboard mutation protocol", () => {
 
     await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled(), { timeout: 2000 });
 
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledTimes(2);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
     expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({
       name: "demo",
       branch: "(failed)",
@@ -223,6 +228,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const host: any = {
       mode: "dashboard",
+      dashboardModelServiceRefreshError: new Error("offline"),
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),

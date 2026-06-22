@@ -159,9 +159,10 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
 
-  it("clears pending and reports stop-service failure when the service snapshot is unreachable", async () => {
+  it("stops a service through the project service when a fresh snapshot has no model changes", async () => {
     const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
+      dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
@@ -171,7 +172,10 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
       getDashboardServices: vi.fn(() => services[0]),
       showDashboardError: vi.fn(),
     };
@@ -184,10 +188,8 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
-    expect(host.footerFlash).toBe("Stopping shell");
-    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to stop service", [
-      "stopping did not settle before timing out",
-    ]);
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
@@ -223,11 +225,12 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("clears pending and reports stop-agent failure when the service snapshot is unreachable", async () => {
+  it("stops an agent through the project service when a fresh snapshot has no model changes", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     const sessions = [[{ ...session, status: "running" }]];
     const host = {
       mode: "dashboard",
+      dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -238,7 +241,10 @@ describe("dashboard-ops", () => {
       renderDashboard: vi.fn(),
       getSessionLabel: vi.fn(() => "claude"),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        return false;
+      }),
       getDashboardSessions: vi.fn(() => sessions[0]),
       showDashboardError: vi.fn(),
     };
@@ -251,10 +257,8 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
-    expect(host.footerFlash).toBe("Stopping claude");
-    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to stop "claude"', [
-      "stopping did not settle before timing out",
-    ]);
+    expect(host.footerFlash).toBe("Stopped claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
@@ -263,6 +267,7 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
+      dashboardModelServiceRefreshedAt: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -582,6 +587,7 @@ describe("dashboard-ops", () => {
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
       mode: "dashboard",
+      dashboardModelServiceRefreshError: new Error("offline"),
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
