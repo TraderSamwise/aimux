@@ -13,8 +13,8 @@ import {
 const HEALTH_TIMEOUT_MS = 2500;
 
 /**
- * Whether the running dashboard is safe to act through. Non-ok states trigger repair before
- * mutating anything; `disconnected` means the authority is unreachable.
+ * Whether the running dashboard is safe to act through. Drift states trigger repair;
+ * `disconnected` blocks mutating keys while the service reconnects.
  */
 export type RuntimeGuardState =
   | { kind: "ok" }
