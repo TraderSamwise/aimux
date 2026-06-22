@@ -276,7 +276,6 @@ export class Multiplexer {
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;
-  private dashboardServiceSnapshotRefreshing = false;
   private dashboardServiceRecovery: Promise<void> | null = null;
   private dashboardNextBackgroundRefreshAt = 0;
   private runtimeSync!: MultiplexerRuntimeSync;

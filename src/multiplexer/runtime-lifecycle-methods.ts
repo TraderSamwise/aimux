@@ -333,6 +333,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.stopHeartbeat();
     this.stopProjectServiceRefresh();
     stopDashboardProjectEventStream(this);
+    (this as any).tuiApiRuntime?.dispose?.();
+    (this as any).tuiApiRuntime = null;
     (this as any).stopGraveyardCleanup?.();
     (this as any).stopInboxCleanup?.();
     this.saveState();

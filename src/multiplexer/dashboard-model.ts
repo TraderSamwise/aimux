@@ -15,7 +15,6 @@ import { isNotificationStale } from "../coordination-model.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
-import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
@@ -30,6 +29,7 @@ import { listTopologySessionStates } from "../runtime-core/topology-sessions.js"
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
 import { log } from "../debug.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type DashboardModelHost = any;
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
@@ -1012,44 +1012,34 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
   if (!force && host.dashboardModelRefreshedAt > 0 && Date.now() - host.dashboardModelRefreshedAt < 750) {
     return false;
   }
-  if (host.dashboardServiceSnapshotRefreshing) return false;
-  host.dashboardServiceSnapshotRefreshing = true;
-  const deadline = force ? Date.now() + 8000 : Date.now();
   try {
-    for (;;) {
-      if (typeof host.getFromProjectService === "function") {
-        try {
-          const json = await host.getFromProjectService("/desktop-state", {
-            timeoutMs: force ? DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS : DESKTOP_STATE_REFRESH_TIMEOUT_MS,
-          });
-          if (!isDesktopStateDashboardModel(json)) return failDashboardServiceRefresh(host, force);
-          const applied = applyDashboardModel(
-            host,
-            json.sessions,
-            json.teammates,
-            json.services,
-            json.worktreeGroups,
-            json.mainCheckoutInfo,
-            json.operationFailures ?? [],
-          );
-          if (applied && typeof host.refreshRuntimeGuard === "function") {
-            void host.refreshRuntimeGuard();
-          }
-          return applied;
-        } catch {
-          if (!force) return failDashboardServiceRefresh(host, false);
-          await ensureDashboardControlPlane(host);
-        }
-      } else if (force) {
-        await ensureDashboardControlPlane(host);
-      }
-      if (!force || Date.now() >= deadline) return failDashboardServiceRefresh(host, force);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+    if (typeof host.getFromProjectService !== "function") return failDashboardServiceRefresh(host, force);
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      "desktop-state",
+      "/desktop-state",
+      (json) => {
+        if (!isDesktopStateDashboardModel(json)) throw new Error("invalid desktop-state payload");
+        return json;
+      },
+      { timeoutMs: force ? DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS : DESKTOP_STATE_REFRESH_TIMEOUT_MS },
+    );
+    if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force);
+    const json = result.value;
+    const applied = applyDashboardModel(
+      host,
+      json.sessions,
+      json.teammates,
+      json.services,
+      json.worktreeGroups,
+      json.mainCheckoutInfo,
+      json.operationFailures ?? [],
+    );
+    if (applied && typeof host.refreshRuntimeGuard === "function") {
+      void host.refreshRuntimeGuard();
     }
+    return applied;
   } catch {
     return failDashboardServiceRefresh(host, force);
-  } finally {
-    host.dashboardServiceSnapshotRefreshing = false;
   }
 }
 
@@ -1370,20 +1360,4 @@ export async function stopProjectServices(host: DashboardModelHost): Promise<voi
   host.transcriptReconciler = null;
   await host.pluginRuntime?.stop?.();
   host.pluginRuntime = null;
-}
-
-async function ensureDashboardControlPlane(host: DashboardModelHost): Promise<void> {
-  if (host.dashboardServiceRecovery) {
-    await host.dashboardServiceRecovery;
-    return;
-  }
-  host.dashboardServiceRecovery = (async () => {
-    await ensureDaemonRunning();
-    await ensureProjectService(process.cwd());
-  })();
-  try {
-    await host.dashboardServiceRecovery;
-  } finally {
-    host.dashboardServiceRecovery = null;
-  }
 }
