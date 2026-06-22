@@ -67,6 +67,7 @@ import {
   runSelectedTool as runSelectedToolImpl,
   showToolPicker as showToolPickerImpl,
 } from "./tool-picker.js";
+import { postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 export const dashboardActionMethods = {
   attentionScore(this: any, entry: any): number {
@@ -217,7 +218,7 @@ export const dashboardActionMethods = {
     renderOrchestrationRoutePickerImpl(this);
   },
   async postToProjectService(this: any, path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<any> {
-    return postToProjectServiceImpl(this, path, body, opts);
+    return postJsonWithTuiApiRuntime(this, path, body, opts, postToProjectServiceImpl);
   },
   async getFromProjectService(this: any, path: string, opts?: { timeoutMs?: number }): Promise<any> {
     return getFromProjectServiceImpl(this, path, opts);
