@@ -1,6 +1,10 @@
 import { requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
-import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "../runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
+} from "../runtime-owner.js";
 import { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import {
   getProjectServiceManifest,
@@ -112,7 +116,16 @@ function readRuntimeRebuildRequired(projectRoot: string): boolean {
     const tmux = new TmuxRuntimeManager();
     if (!tmux.isAvailable()) return false;
     const sessionName = tmux.getProjectSession(projectRoot).sessionName;
-    return tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1";
+    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1") return true;
+    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
+      return true;
+    }
+    return tmux
+      .listSessionNames()
+      .filter((name) => name.startsWith(`${sessionName}-client-`))
+      .some(
+        (name) => tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      );
   } catch {
     return false;
   }
