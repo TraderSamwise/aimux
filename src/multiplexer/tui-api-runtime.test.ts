@@ -262,6 +262,24 @@ describe("TuiApiRuntime", () => {
     expect(runtime.getSnapshot("desktop-state")).toMatchObject({ pending: false });
   });
 
+  it("ignores pending refresh failures after disposal", async () => {
+    const pending = deferred<unknown>();
+    const failures: unknown[] = [];
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(() => pending.promise),
+      onRequestFailure: (error) => failures.push(error),
+    });
+
+    const refresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    runtime.dispose();
+    pending.reject(new Error("transport failed after teardown"));
+
+    await expect(refresh).resolves.toEqual({ ok: false, value: undefined, stale: true, generation: 1 });
+    expect(failures).toEqual([]);
+    expect(runtime.getConnectionState()).toBe("disposed");
+    expect(runtime.getSnapshot("desktop-state")).toMatchObject({ error: undefined, pending: false });
+  });
+
   it("does not report direct read success after disposal", async () => {
     const pending = deferred<unknown>();
     const states: string[] = [];
