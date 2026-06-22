@@ -509,6 +509,7 @@ describe("dashboardInteractionMethods", () => {
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
       refreshDashboardModelFromService: vi.fn(async () => true),
       resumeOfflineSessionWithFeedback: vi.fn(async () => {
+        host.mode = "session";
         host.dashboardInputEpoch = 1;
       }),
       getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),

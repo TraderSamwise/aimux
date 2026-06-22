@@ -87,7 +87,7 @@ function beginDashboardActivation(host: any, targetKind: "session" | "service", 
 }
 
 function isCurrentDashboardActivation(host: any, token: any | undefined): boolean {
-  if (!token || host.mode !== "dashboard") return true;
+  if (!token) return true;
   return host.dashboardActivationToken === token && (host.dashboardInputEpoch ?? 0) === token.inputEpoch;
 }
 

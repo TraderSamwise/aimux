@@ -384,6 +384,7 @@ describe("dashboard live target activation", () => {
         dashboardInputEpoch: 0,
         dashboardActivationToken: token,
         postToProjectService: vi.fn(async () => {
+          host.mode = "session";
           host.dashboardInputEpoch = 1;
           throw new Error("agent is offline");
         }),

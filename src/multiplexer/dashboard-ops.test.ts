@@ -539,6 +539,49 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("does not require renderDashboard during the wait-for-start settle branch", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
+    let refreshCount = 0;
+    let renderAccess = 0;
+    const host: any = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() =>
+        refreshCount < 2 ? [] : [{ ...session, status: "running", tmuxWindowId: "@21" }],
+      ),
+      showDashboardError: vi.fn(),
+    };
+    const renderDashboard = vi.fn();
+    Object.defineProperty(host, "renderDashboard", {
+      configurable: true,
+      get() {
+        renderAccess += 1;
+        return renderAccess === 3 ? undefined : renderDashboard;
+      },
+    });
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.waitForSessionStart).toHaveBeenCalledWith("sess-1", expect.any(Number));
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored codex");
+    expect(renderDashboard).toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("preserves teammate metadata in dashboard resume pending seeds", async () => {
     const session = {
       id: "teammate-1",

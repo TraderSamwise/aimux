@@ -252,17 +252,24 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
         const refreshed = await host.refreshDashboardModelFromService(true);
         const fresh =
           !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
-        if ((refreshed || fresh) && host.mode === "dashboard") {
-          host.dashboardBusyState = null;
+        host.dashboardBusyState = null;
+        if (host.mode !== "dashboard") return;
+        if (refreshed || fresh || !host.dashboardModelServiceRefreshError) {
           host.renderCurrentDashboardView();
-        } else if (host.mode === "dashboard" && host.dashboardModelServiceRefreshError) {
-          host.dashboardBusyState = null;
-          host.renderCurrentDashboardView();
+          return;
         }
+        host.showDashboardError?.("Aimux repair failed", [
+          host.dashboardModelServiceRefreshError instanceof Error
+            ? host.dashboardModelServiceRefreshError.message
+            : String(host.dashboardModelServiceRefreshError),
+        ]);
+        host.renderCurrentDashboardView();
       })
       .catch((error: unknown) => {
         host.dashboardBusyState = null;
-        host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
+        if (host.mode === "dashboard") {
+          host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
+        }
       });
   }
   host.terminalHost.enterAlternateScreen(true);

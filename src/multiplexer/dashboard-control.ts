@@ -621,7 +621,7 @@ export async function waitAndOpenLiveTmuxWindowForService(
 }
 
 function dashboardActivationStillCurrent(host: DashboardControlHost, token: any | undefined): boolean {
-  if (!token || host.mode !== "dashboard") return true;
+  if (!token) return true;
   return host.dashboardActivationToken === token && (host.dashboardInputEpoch ?? 0) === token.inputEpoch;
 }
 
