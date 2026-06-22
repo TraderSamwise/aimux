@@ -495,6 +495,37 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("does not open or render an offline dashboard agent after newer input invalidates activation", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      command: "codex",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => {
+        host.dashboardInputEpoch = 1;
+      }),
+      getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("missing");
+
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
   it("refreshes from the service after an offline row open reports an error", async () => {
     const entry = {
       id: "codex-1",

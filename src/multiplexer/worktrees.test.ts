@@ -335,6 +335,34 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears project-service worktree create pending when the service snapshot is unreachable", async () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled());
+
+    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
+    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to create "demo"', [
+      "Path: /repo/.aimux/worktrees/demo",
+      "Error: project service snapshot unavailable",
+    ]);
+  });
+
   it("surfaces async project-service worktree create failures instead of dropping the pending row", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();

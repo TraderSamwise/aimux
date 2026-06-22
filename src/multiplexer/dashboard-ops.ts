@@ -129,11 +129,12 @@ function assertDashboardMutationSettled(settled: boolean, action: string): void 
 }
 
 async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOpsHost): Promise<boolean> {
-  if (typeof host.refreshDashboardModelFromService === "function") {
-    await host.refreshDashboardModelFromService(true);
-    return true;
-  }
-  return false;
+  return refreshDashboardModelForSettlement(host);
+}
+
+async function refreshDashboardModelForSettlement(host: DashboardOpsHost): Promise<boolean> {
+  if (typeof host.refreshDashboardModelFromService !== "function") return false;
+  return (await host.refreshDashboardModelFromService(true)) !== false;
 }
 
 async function waitForStableDashboardSessionAbsence(
@@ -145,7 +146,7 @@ async function waitForStableDashboardSessionAbsence(
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host))) return false;
     const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
     if (session) {
       missingSince = null;
@@ -183,7 +184,7 @@ async function waitForDashboardSessionResumeSettle(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host))) return false;
     const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
     if (isLiveDashboardSessionEntry(entry)) {
       if (entry?.status === "offline" || entry?.pendingAction === "starting") {
@@ -197,15 +198,13 @@ async function waitForDashboardSessionResumeSettle(
       typeof host.waitForSessionStart === "function" &&
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
     ) {
-      await host.refreshDashboardModelFromService(true);
+      if (!(await refreshDashboardModelForSettlement(host))) return false;
       host.renderDashboard();
       const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
       if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
     }
     if (hasLiveManagedAgentWindow(host, sessionId)) {
-      if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true);
-      }
+      if (!(await refreshDashboardModelForSettlement(host))) return false;
       if (typeof host.renderDashboard === "function") {
         host.renderDashboard();
       }
@@ -228,7 +227,7 @@ async function waitForRenderedDashboardServiceState(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host))) return false;
     const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
     if (predicate(service)) {
       if (
@@ -255,7 +254,7 @@ async function waitForStableDashboardServiceAbsence(
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host))) return false;
     const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
     if (service) {
       missingSince = null;
@@ -501,7 +500,11 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService(PROJECT_API_ROUTES.agents.stop, { sessionId: session.id }, { timeoutMs: 10_000 });
+        await host.postToProjectService(
+          PROJECT_API_ROUTES.agents.stop,
+          { sessionId: session.id },
+          { timeoutMs: 10_000 },
+        );
       },
       settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
       successFlash: { message: `Stopped ${label}` },
@@ -723,7 +726,11 @@ export async function resumeOfflineServiceWithFeedback(
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService(PROJECT_API_ROUTES.services.resume, { serviceId: service.id }, { timeoutMs: 10_000 });
+        await host.postToProjectService(
+          PROJECT_API_ROUTES.services.resume,
+          { serviceId: service.id },
+          { timeoutMs: 10_000 },
+        );
       },
       settle: () =>
         waitForRenderedDashboardServiceState(host, service.id, (entry) => isLiveDashboardServiceEntry(entry)),
@@ -813,7 +820,11 @@ export async function stopDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService(PROJECT_API_ROUTES.services.stop, { serviceId: service.id }, { timeoutMs: 10_000 });
+      await host.postToProjectService(
+        PROJECT_API_ROUTES.services.stop,
+        { serviceId: service.id },
+        { timeoutMs: 10_000 },
+      );
     },
     settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
@@ -830,7 +841,11 @@ export async function removeDashboardServiceWithFeedback(
     serviceId: service.id,
     pendingAction: "removing",
     request: async () => {
-      await host.postToProjectService(PROJECT_API_ROUTES.services.remove, { serviceId: service.id }, { timeoutMs: 10_000 });
+      await host.postToProjectService(
+        PROJECT_API_ROUTES.services.remove,
+        { serviceId: service.id },
+        { timeoutMs: 10_000 },
+      );
     },
     settle: () => waitForStableDashboardServiceAbsence(host, service.id),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },

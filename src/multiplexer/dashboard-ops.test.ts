@@ -159,7 +159,7 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
 
-  it("stops a service through the project service in dashboard mode without requiring rendered cache convergence", async () => {
+  it("clears pending and reports stop-service failure when the service snapshot is unreachable", async () => {
     const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
       dashboardPendingActions: makePendingActionsFake(),
@@ -184,8 +184,10 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
-    expect(host.footerFlash).toBe("◆ Stopped service shell");
-    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Stopping shell");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to stop service", [
+      "stopping did not settle before timing out",
+    ]);
   });
 
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
@@ -221,7 +223,7 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("stops an agent through the project service in dashboard mode without requiring rendered cache convergence", async () => {
+  it("clears pending and reports stop-agent failure when the service snapshot is unreachable", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     const sessions = [[{ ...session, status: "running" }]];
     const host = {
@@ -249,8 +251,10 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
-    expect(host.footerFlash).toBe("Stopped claude");
-    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Stopping claude");
+    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to stop "claude"', [
+      "stopping did not settle before timing out",
+    ]);
   });
 
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
@@ -572,6 +576,35 @@ describe("dashboard-ops", () => {
       { sessionId: "teammate-1" },
       { timeoutMs: 60_000 },
     );
+  });
+
+  it("clears pending and reports restore failure when the service snapshot is unreachable", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "offline", pendingAction: "starting" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.waitForSessionStart).not.toHaveBeenCalled();
+    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to restore "codex"', [
+      "starting did not settle before timing out",
+    ]);
   });
 
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {

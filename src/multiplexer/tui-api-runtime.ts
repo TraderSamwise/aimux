@@ -8,6 +8,7 @@ export interface TuiApiRuntimeOptions {
   request: (path: string, opts?: TuiApiRequestOptions) => Promise<unknown>;
   mutate?: (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>;
   onConnectionStateChange?: (state: TuiApiConnectionState) => void;
+  onRequestFailure?: (error: unknown) => void;
 }
 
 export interface TuiApiRefreshOptions extends TuiApiRequestOptions {
@@ -101,6 +102,7 @@ export class TuiApiRuntime {
       return { ok: true, value };
     } catch (error) {
       this.setConnectionState("degraded");
+      this.options.onRequestFailure?.(error);
       return { ok: false, error };
     }
   }
@@ -143,6 +145,7 @@ export class TuiApiRuntime {
           state.stale = state.value !== undefined;
           state.pendingPromise = undefined;
           this.setConnectionState(state.value === undefined ? "reconnecting" : "degraded");
+          this.options.onRequestFailure?.(error);
         }
         return { ok: false, value: state.value, error, stale: state.value !== undefined, generation };
       });
@@ -196,8 +199,21 @@ export function getOrCreateTuiApiRuntime(
     onConnectionStateChange: (state) => {
       host.tuiApiConnectionState = state;
     },
+    onRequestFailure: () => {
+      scheduleTuiApiRecovery(host);
+    },
   });
   return host.tuiApiRuntime;
+}
+
+export function scheduleTuiApiRecovery(host: any): void {
+  if (host.mode && host.mode !== "dashboard") return;
+  if (host.tuiApiRecoveryTimer) return;
+  host.tuiApiRecoveryTimer = setTimeout(() => {
+    host.tuiApiRecoveryTimer = null;
+    const result = host.refreshRuntimeGuard?.();
+    if (result && typeof result.catch === "function") void result.catch(() => undefined);
+  }, 25);
 }
 
 export async function postJsonWithTuiApiRuntime(

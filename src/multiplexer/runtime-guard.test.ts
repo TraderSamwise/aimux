@@ -163,11 +163,11 @@ describe("runtimeGuardKeyDisposition", () => {
     expect(runtimeGuardKeyDisposition("r")).toBe("swallow");
     expect(runtimeGuardKeyDisposition("B")).toBe("swallow");
     expect(runtimeGuardKeyDisposition("b")).toBe("swallow");
-    for (const key of ["up", "down", "j", "k", "tab", "escape", "q", "?"]) {
+    for (const key of ["up", "down", "j", "k", "tab", "escape", "?"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("passthrough");
     }
     // Screen-switch letters mutate on their subscreens (e.g. "c" = clear-all) → swallowed.
-    for (const key of ["c", "d", "p", "l", "t", "g", "n", "x", "f", "enter", "1"]) {
+    for (const key of ["c", "d", "p", "l", "t", "g", "n", "x", "f", "enter", "1", "q"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("swallow");
     }
   });
@@ -352,6 +352,12 @@ describe("handleRuntimeGuardKey", () => {
     expect(handleRuntimeGuardKey(host, Buffer.from("k"))).toBe(false);
   });
 
+  it("swallows quit while guarded", () => {
+    const host = stubHost({ kind: "runtime-rebuild-required" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("q"))).toBe(true);
+    expect(host.footerFlash).toContain("repairing");
+  });
+
   it("swallows R when guarded because repair is automatic", () => {
     const host = stubHost({ kind: "stale", reason: "service-mismatch" });
     expect(handleRuntimeGuardKey(host, Buffer.from("R"))).toBe(true);
@@ -368,5 +374,11 @@ describe("handleRuntimeGuardKey", () => {
     const host = stubHost({ kind: "stale", reason: "service-mismatch" });
     host.dashboardErrorState = { title: "Failed", lines: ["boom"] };
     expect(handleRuntimeGuardKey(host, Buffer.from("n"))).toBe(false);
+  });
+
+  it("lets active input overlays own keys before the guard", () => {
+    const host = stubHost({ kind: "stale", reason: "service-mismatch" });
+    host.dashboardOverlayState = { kind: "orchestration-input" };
+    expect(handleRuntimeGuardKey(host, Buffer.from("hello"))).toBe(false);
   });
 });

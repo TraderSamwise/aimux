@@ -1569,7 +1569,7 @@ describe("runDashboard", () => {
     expect(host.writeDashboardClientStatuslineFile).toHaveBeenCalledOnce();
   });
 
-  it("lets the runtime guard block mutating active-overlay keys", async () => {
+  it("lets active overlays own keys before the runtime guard", async () => {
     const host: any = {
       startHeartbeat: vi.fn(),
       startedInDashboard: false,
@@ -1609,7 +1609,7 @@ describe("runDashboard", () => {
     host.resolveRun(0);
     await expect(runPromise).resolves.toBe(0);
 
-    expect(host.handleRuntimeGuardKey).toHaveBeenCalledWith(Buffer.from("n"));
-    expect(host.handleActiveDashboardOverlayKey).not.toHaveBeenCalled();
+    expect(host.handleActiveDashboardOverlayKey).toHaveBeenCalledWith(Buffer.from("n"));
+    expect(host.handleRuntimeGuardKey).not.toHaveBeenCalled();
   });
 });
