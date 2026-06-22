@@ -244,4 +244,39 @@ describe("TuiApiRuntime", () => {
     expect(runtime.getConnectionState()).toBe("disposed");
     expect(runtime.getSnapshot("desktop-state")).toMatchObject({ pending: false });
   });
+
+  it("does not report direct read success after disposal", async () => {
+    const pending = deferred<unknown>();
+    const states: string[] = [];
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(() => pending.promise),
+      onConnectionStateChange: (state) => states.push(state),
+    });
+
+    const read = runtime.requestJson("/desktop-state", (value) => value);
+    runtime.dispose();
+    pending.resolve({ ok: true });
+
+    await expect(read).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+    expect(runtime.getConnectionState()).toBe("disposed");
+    expect(states).toEqual(["disposed"]);
+  });
+
+  it("does not report mutation success after disposal", async () => {
+    const pending = deferred<unknown>();
+    const states: string[] = [];
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(),
+      mutate: vi.fn(() => pending.promise),
+      onConnectionStateChange: (state) => states.push(state),
+    });
+
+    const mutate = runtime.mutateJson("/agents/stop", { sessionId: "codex-1" }, (value) => value);
+    runtime.dispose();
+    pending.resolve({ ok: true });
+
+    await expect(mutate).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+    expect(runtime.getConnectionState()).toBe("disposed");
+    expect(states).toEqual(["disposed"]);
+  });
 });
