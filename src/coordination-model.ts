@@ -106,7 +106,7 @@ function resolveReachability(
   const session = sessions.find((s) => s.id === sessionId) ?? teammates.find((t) => t.id === sessionId);
   if (session) {
     return {
-      reachability: session.status === "offline" ? "offline" : "live",
+      reachability: session.status === "offline" || session.status === "exited" ? "offline" : "live",
       liveLabel: session.semantic?.user?.label,
       attentionScore: session.semantic?.presentation?.attentionScore ?? 0,
     };
@@ -151,8 +151,7 @@ function buildItem(
   const pendingDeliveries = thread?.pendingDeliveries ?? 0;
   const hasUnreadNeedsInput = group.some((n) => n.unread && n.kind === NEEDS_INPUT_KIND);
   const stale = reachable.reachability === "live" && isNotificationStale(reachable.liveLabel, hasUnreadNeedsInput);
-  const actionable =
-    reachable.reachability !== "missing" && (unread.length > 0 || pendingDeliveries > 0) && !stale;
+  const actionable = reachable.reachability !== "missing" && (unread.length > 0 || pendingDeliveries > 0) && !stale;
   const item: CoordinationItem = {
     key,
     sessionId,
@@ -200,13 +199,17 @@ export function buildCoordinationModel(input: BuildCoordinationModelInput): Coor
 
   const items: CoordinationItem[] = [];
   for (const [sessionId, group] of bySession) {
-    items.push(buildItem(sessionId, sessionId, group, resolveReachability(sessionId, sessions, teammates, services), threads));
+    items.push(
+      buildItem(sessionId, sessionId, group, resolveReachability(sessionId, sessions, teammates, services), threads),
+    );
   }
   for (const [key, group] of standalone) {
     items.push(buildItem(key, undefined, group, { reachability: "none", attentionScore: 0 }, threads));
   }
 
-  items.sort((a, b) => b.urgency - a.urgency || (b.latestUnread?.createdAt ?? "").localeCompare(a.latestUnread?.createdAt ?? ""));
+  items.sort(
+    (a, b) => b.urgency - a.urgency || (b.latestUnread?.createdAt ?? "").localeCompare(a.latestUnread?.createdAt ?? ""),
+  );
 
   return {
     items,
@@ -351,9 +354,10 @@ export function buildCoordinationWorklist(
  * built from it. Shared by the service endpoint and the TUI's local fallback so both produce an
  * identical view (the model is built once and threaded into the worklist to avoid a double build).
  */
-export function buildCoordinationView(
-  input: BuildCoordinationModelInput & { currentParticipant?: string },
-): { model: CoordinationModel; worklist: CoordinationWorklist } {
+export function buildCoordinationView(input: BuildCoordinationModelInput & { currentParticipant?: string }): {
+  model: CoordinationModel;
+  worklist: CoordinationWorklist;
+} {
   const model = buildCoordinationModel(input);
   const worklist = buildCoordinationWorklist({ ...input, model });
   return { model, worklist };

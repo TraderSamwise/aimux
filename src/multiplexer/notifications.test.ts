@@ -11,6 +11,7 @@ import {
   applyCoordinationModel,
   notificationTargetLabel,
   notificationTargetState,
+  openCoordinationNotification,
   refreshCoordinationFromService,
 } from "./notifications.js";
 import { buildCoordinationView } from "../coordination-model.js";
@@ -119,6 +120,36 @@ describe("notification target open", () => {
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
   });
 
+  it("keeps a notification unread if service activation resolves without opening", async () => {
+    host.activateDashboardService = vi.fn(async () => "missing");
+
+    handleCoordinationKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
+
+    expect(unreadInboxEntries("service-1")).toHaveLength(1);
+    expect(host.footerFlash).toBe("Failed to open notification target");
+  });
+
+  it("does not throw when notification settle fails before refresh wiring exists", async () => {
+    delete host.refreshCoordinationFromService;
+    host.postToProjectService = vi.fn(async () => {
+      throw new Error("service unavailable");
+    });
+    const item = {
+      key: "n:sessionless",
+      kind: "notification",
+      notification: {
+        unreadCount: 1,
+        notifications: [{ id: "note-1" }],
+      },
+    } as any;
+
+    await expect(openCoordinationNotification(host, item)).resolves.toBeUndefined();
+
+    expect(host.footerFlash).toBe("Notification update failed");
+    expect(host.renderCoordination).toHaveBeenCalled();
+  });
+
   it("opens teammate notification targets from the hidden teammate cache", async () => {
     addExchangeNotification("teammate-1", "Open teammate");
     host.dashboardTeammatesCache = [
@@ -137,6 +168,10 @@ describe("notification target open", () => {
 
     expect(notificationTargetLabel(host, "teammate-1")).toBe("reviewer · demo");
     expect(notificationTargetState(host, "teammate-1")).toBe("offline");
+
+    host.dashboardTeammatesCache[0].status = "exited";
+    expect(notificationTargetState(host, "teammate-1")).toBe("offline");
+    host.dashboardTeammatesCache[0].status = "offline";
 
     handleCoordinationKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(host.activateDashboardEntry).toHaveBeenCalled());
@@ -233,6 +268,39 @@ describe("coordination inbox ordering", () => {
     expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { sessionId: "live-1" });
     expect(unreadInboxEntries("live-1")).toHaveLength(0);
   });
+
+  it("refreshes coordination after notification mutation failures", async () => {
+    addExchangeNotification("live-1", "live agent needs input");
+    const host: any = {
+      coordinationIndex: 0,
+      coordinationFilter: "all",
+      dashboardTeammatesCache: [],
+      getDashboardServices: () => [],
+      getDashboardSessions: () => [{ id: "live-1", status: "running", command: "claude" }],
+      handleDashboardSubscreenNavigationKey: () => false,
+      renderDashboard: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      exitDashboardClientOrProcess: vi.fn(),
+      showHelp: vi.fn(),
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      centerInWidth: (text: string) => text,
+      truncatePlain: (text: string) => text,
+      wrapKeyValue: (_key: string, value: string) => [value],
+      notificationTargetLabel: () => null,
+      postToProjectService: vi.fn(async () => {
+        throw new Error("timeout");
+      }),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      dashboardState: {},
+      writeFrame: vi.fn(),
+    };
+    applyServiceLikeCoordinationPayload(host);
+
+    handleCoordinationKey(host, Buffer.from("r"));
+
+    await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce());
+    expect(host.footerFlash).toBe("Notification update failed");
+  });
 });
 
 describe("coordination thread workflow keys", () => {
@@ -302,22 +370,28 @@ describe("coordination thread workflow keys", () => {
     expect(host.postToProjectService).not.toHaveBeenCalled();
 
     handleCoordinationKey(host, Buffer.from("A"));
-    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
-      taskId: "task-1",
-      from: "user",
-    }));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
+        taskId: "task-1",
+        from: "user",
+      }),
+    );
 
     handleCoordinationKey(host, Buffer.from("J"));
-    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
-      taskId: "task-1",
-      from: "user",
-    }));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
+        taskId: "task-1",
+        from: "user",
+      }),
+    );
 
     handleCoordinationKey(host, Buffer.from("E"));
-    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
-      taskId: "task-1",
-      from: "user",
-    }));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
+        taskId: "task-1",
+        from: "user",
+      }),
+    );
   });
 });
 
@@ -338,15 +412,32 @@ describe("coordination reads prefer the service", () => {
     // Service authority: a payload the local stores do NOT contain, proving the host took it
     // from the wire (the service-built reconciliation) rather than rebuilding locally.
     const payload = buildCoordinationView({
-      sessions: [{ id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } }],
+      sessions: [
+        { id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } },
+      ],
       notifications: [
-        { id: "r1", title: "Remote", body: "remote agent needs input", sessionId: "remote-1", kind: "needs_input", unread: true, cleared: false, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+        {
+          id: "r1",
+          title: "Remote",
+          body: "remote agent needs input",
+          sessionId: "remote-1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
       ],
       threads: [],
     });
     const host: any = {
       coordinationFilter: "all",
-      getFromProjectService: vi.fn(async () => ({ ok: true, model: payload.model, worklist: payload.worklist, threads: [] })),
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        model: payload.model,
+        worklist: payload.worklist,
+        threads: [],
+      })),
     };
 
     const ok = await refreshCoordinationFromService(host);

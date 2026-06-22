@@ -99,6 +99,8 @@ function creatingWorktreeMessage(group: any | undefined, worktreePath: string | 
   return `Worktree ${name} is still creating`;
 }
 
+export type DashboardActivationResult = "opened" | "missing" | "error" | "blocked";
+
 function refreshSelectedWorktreeEntry(host: any): { kind: "session" | "service"; id: string } | undefined {
   const before = host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
   host.updateWorktreeSessions?.();
@@ -681,45 +683,61 @@ export const dashboardInteractionMethods = {
     await this.activateDashboardEntry(entry);
   },
 
-  async activateDashboardService(this: any, service: DashboardService): Promise<void> {
-    if (!service) return;
+  async activateDashboardService(this: any, service: DashboardService): Promise<DashboardActivationResult> {
+    if (!service) return "missing";
     const worktreeGroup = findDashboardWorktreeGroup(this, service.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
       this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, service.worktreePath);
       this.footerFlashTicks = 3;
       this.renderDashboard();
-      return;
+      return "blocked";
     }
     if (hasBlockingPendingDashboardAction(service)) {
       flashPendingDashboardItem(this, service, "service");
-      return;
+      return "blocked";
     }
 
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
     this.persistDashboardUiState();
     if (service.status !== "running") {
       await this.resumeOfflineServiceWithFeedback(service);
-      return;
+      await this.refreshDashboardModelFromService?.(true);
+      const result = await this.waitAndOpenLiveTmuxWindowForService(service.id, 60_000);
+      if (result !== "opened") {
+        this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
+        this.footerFlashTicks = 3;
+      }
+      this.renderDashboard();
+      return result;
     }
-    await this.waitAndOpenLiveTmuxWindowForService(service.id);
+    const openResult = await this.waitAndOpenLiveTmuxWindowForService(service.id);
+    if (openResult !== "opened") {
+      await this.refreshDashboardModelFromService?.(true);
+      if (openResult === "missing") {
+        this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
+        this.footerFlashTicks = 3;
+      }
+      this.renderDashboard();
+    }
+    return openResult;
   },
 
   async activateDashboardEntry(
     this: any,
     entry: DashboardSession,
     options: { preserveDashboardSelection?: boolean } = {},
-  ): Promise<void> {
-    if (!entry) return;
+  ): Promise<DashboardActivationResult> {
+    if (!entry) return "missing";
     const worktreeGroup = findDashboardWorktreeGroup(this, entry.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
       this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, entry.worktreePath);
       this.footerFlashTicks = 3;
       this.renderDashboard();
-      return;
+      return "blocked";
     }
     if (hasBlockingPendingDashboardAction(entry)) {
       flashPendingDashboardItem(this, entry, "agent");
-      return;
+      return "blocked";
     }
 
     if (!options.preserveDashboardSelection) {
@@ -727,13 +745,29 @@ export const dashboardInteractionMethods = {
       this.persistDashboardUiState();
     }
 
+    if (this.mode === "dashboard" && (entry.status === "offline" || entry.status === "exited")) {
+      await this.resumeOfflineSessionWithFeedback(
+        this.offlineSessions?.find((session: any) => session.id === entry.id) ?? entry,
+      );
+      await this.refreshDashboardModelFromService?.(true);
+      const refreshed =
+        this.getDashboardSessions?.().find((session: DashboardSession) => session.id === entry.id) ?? entry;
+      const result = await this.waitAndOpenLiveTmuxWindowForEntry(refreshed, 60_000);
+      if (result !== "opened") {
+        this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
+        this.footerFlashTicks = 3;
+      }
+      this.renderDashboard();
+      return result;
+    }
+
     const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
     if (openResult !== "missing") {
-      if (entry.status === "offline") {
+      if (entry.status === "offline" || entry.status === "exited") {
         await this.refreshDashboardModelFromService?.(true);
         this.renderDashboard();
       }
-      return;
+      return openResult;
     }
 
     if (this.mode === "dashboard") {
@@ -741,20 +775,22 @@ export const dashboardInteractionMethods = {
       this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
       this.footerFlashTicks = 3;
       this.renderDashboard();
-      return;
+      return "missing";
     }
 
-    if (entry.status === "offline") {
+    if (entry.status === "offline" || entry.status === "exited") {
       const offline = this.offlineSessions.find((session: any) => session.id === entry.id);
       await this.resumeOfflineSessionWithFeedback(offline ?? entry);
-      return;
+      return "opened";
     }
 
     const ptyIdx = this.sessions.findIndex((session: any) => session.id === entry.id);
     if (ptyIdx >= 0) {
       this.noteLastUsedItem(entry.id);
       this.focusSession(ptyIdx);
+      return "opened";
     }
+    return "missing";
   },
 
   getTeammatePickerEntries(this: any): DashboardSession[] {

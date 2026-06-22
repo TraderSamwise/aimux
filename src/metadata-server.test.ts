@@ -920,7 +920,7 @@ describe("MetadataServer threads API", () => {
     }
   });
 
-  it("does not resume offline notification targets for resolve-only opens", async () => {
+  it("does not resume offline notification targets from open routes", async () => {
     server?.stop();
     const resumeService = vi.fn();
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
@@ -959,7 +959,7 @@ describe("MetadataServer threads API", () => {
     }
   });
 
-  it("does not trust stale exited agent window ids for resolve-only opens", async () => {
+  it("does not trust stale exited agent window ids from open routes", async () => {
     server?.stop();
     const resumeAgent = vi.fn();
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
@@ -998,15 +998,13 @@ describe("MetadataServer threads API", () => {
     }
   });
 
-  it("rejects dead resumed service notification targets", async () => {
+  it("rejects offline service notification targets without resuming", async () => {
     server?.stop();
-    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "shell" } as any;
     const onChange = vi.fn();
     const resumeService = vi.fn();
     const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
     const hasSession = TmuxRuntimeManager.prototype.hasSession;
     const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
-    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     server = new MetadataServer({
       desktop: {
@@ -1023,20 +1021,9 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
       tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
-    TmuxRuntimeManager.prototype.isWindowAlive = () => false;
-    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
-      [
-        {
-          target,
-          metadata: {
-            kind: "service",
-            sessionId: "svc-1",
-            command: "shell",
-            args: [],
-            toolConfigKey: "shell",
-          },
-        },
-      ] as any;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("offline service open should not resolve tmux windows");
+    });
     try {
       await server.start();
       const endpoint = server.getAddress();
@@ -1055,28 +1042,26 @@ describe("MetadataServer threads API", () => {
       });
       const body = (await res.json()) as { ok: boolean; error?: string };
 
-      expect(res.status).toBe(404);
-      expect(body).toEqual({ ok: false, error: "service window not found after resume" });
-      expect(resumeService).toHaveBeenCalledWith({ serviceId: "svc-1" });
+      expect(res.status).toBe(409);
+      expect(body).toEqual({ ok: false, error: "service is offline", itemId: "svc-1" });
+      expect(resumeService).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
       expect(onChange).not.toHaveBeenCalled();
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
       TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
-      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
     }
   });
 
-  it("rejects dead resumed agent notification targets", async () => {
+  it("rejects offline agent notification targets without resuming", async () => {
     server?.stop();
-    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
     const onChange = vi.fn();
     const resumeAgent = vi.fn();
     const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
     const hasSession = TmuxRuntimeManager.prototype.hasSession;
     const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
-    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     server = new MetadataServer({
       desktop: {
@@ -1093,20 +1078,9 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
       tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
-    TmuxRuntimeManager.prototype.isWindowAlive = () => false;
-    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
-      [
-        {
-          target,
-          metadata: {
-            kind: "agent",
-            sessionId: "agent-1",
-            command: "codex",
-            args: [],
-            toolConfigKey: "codex",
-          },
-        },
-      ] as any;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("offline agent open should not resolve tmux windows");
+    });
     try {
       await server.start();
       const endpoint = server.getAddress();
@@ -1125,15 +1099,15 @@ describe("MetadataServer threads API", () => {
       });
       const body = (await res.json()) as { ok: boolean; error?: string };
 
-      expect(res.status).toBe(404);
-      expect(body).toEqual({ ok: false, error: "agent window not found after resume" });
-      expect(resumeAgent).toHaveBeenCalledWith({ sessionId: "agent-1" });
+      expect(res.status).toBe(409);
+      expect(body).toEqual({ ok: false, error: "agent is offline", itemId: "agent-1" });
+      expect(resumeAgent).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
       expect(onChange).not.toHaveBeenCalled();
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
       TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
-      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
     }
   });
@@ -1317,6 +1291,75 @@ describe("MetadataServer threads API", () => {
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
+      TmuxRuntimeManager.prototype.openTarget = openTarget;
+    }
+  });
+
+  it("uses live client tty over a stale currentClientSession for focus requests", async () => {
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const switched: Array<{ tty: string; target: unknown }> = [];
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
+    const openTarget = TmuxRuntimeManager.prototype.openTarget;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-live";
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-live" } as any) : null;
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = vi.fn(() => undefined as any);
+    TmuxRuntimeManager.prototype.switchClientToTarget = (tty, nextTarget) => {
+      switched.push({ tty, target: nextTarget });
+    };
+    TmuxRuntimeManager.prototype.openTarget = vi.fn();
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/focus-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          windowId: "@7",
+          currentClientSession: "aimux-test-client-stale",
+          clientTty: "/dev/ttys001",
+          focus: true,
+        }),
+      });
+      const body = (await res.json()) as { ok: boolean; focused?: boolean; focusMode?: string };
+
+      expect(res.ok).toBe(true);
+      expect(body).toMatchObject({ ok: true, focused: true, focusMode: "client-tty" });
+      expect(switched).toEqual([{ tty: "/dev/ttys001", target }]);
+      expect(TmuxRuntimeManager.prototype.openTarget).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
