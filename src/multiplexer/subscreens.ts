@@ -44,7 +44,9 @@ export function getPreferredThreadIndexForParticipant(
 
 export async function openRelevantThreadForSession(host: SubscreenHost, sessionId: string): Promise<void> {
   const refreshed =
-    typeof host.refreshCoordinationFromService === "function" ? await host.refreshCoordinationFromService() : true;
+    typeof host.refreshCoordinationFromService === "function"
+      ? await host.refreshCoordinationFromService({ force: true })
+      : true;
   if (!refreshed && !host.coordinationLoaded) {
     host.footerFlash = "Coordination refresh failed";
     host.footerFlashTicks = 3;
