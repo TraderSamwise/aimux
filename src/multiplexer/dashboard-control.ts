@@ -499,7 +499,9 @@ async function openProjectServiceNotificationTarget(
     return "opened";
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("not found") || message.includes("no longer available")) return "missing";
+    if (message.includes("not found") || message.includes("no longer available") || message.includes("is offline")) {
+      return "missing";
+    }
     host.showDashboardError(`Failed to open ${kind}`, [
       message,
       "The tmux window may still be starting. Try again in a moment.",

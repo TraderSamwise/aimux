@@ -149,7 +149,7 @@ export function notificationTargetState(
   if (!sessionId) return "none";
   const session = findNotificationSessionTarget(host, sessionId);
   if (session) {
-    return session.status === "offline" ? "offline" : "live";
+    return session.status === "offline" || session.status === "exited" ? "offline" : "live";
   }
   const service = findNotificationServiceTarget(host, sessionId);
   if (service) {
