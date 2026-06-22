@@ -48,6 +48,7 @@ import {
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
+const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 500;
 
 function writeStatuslineTextFile(name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
@@ -142,6 +143,8 @@ export function setDashboardScreen(host: DashboardControlHost, screen: Dashboard
 export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer): boolean {
   if (!host.runtimeGuardState || host.runtimeGuardState.kind === "ok") return false;
   if (host.dashboardBusyState || host.dashboardErrorState) return false;
+  const overlayKind = host.dashboardOverlayState?.kind;
+  if (overlayKind && overlayKind !== "none") return false;
   const events = parseKeys(data);
   // Unrecognized/empty sequences can't mutate (no handler acts on them); let them fall through
   // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
@@ -245,6 +248,13 @@ function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string
   host.renderCurrentDashboardView?.();
 }
 
+function describeRuntimeGuardState(state: RuntimeGuardState): string {
+  if (state.kind === "ok") return "healthy";
+  if (state.kind === "stale") return `out of sync (${state.reason})`;
+  if (state.kind === "runtime-rebuild-required") return "runtime rebuild required";
+  return "project service unreachable";
+}
+
 export function startRuntimeGuardRepair(host: DashboardControlHost, state: RuntimeGuardState): void {
   if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing) return;
   const repairKey = runtimeGuardRepairKey(state);
@@ -283,7 +293,18 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     host.runtimeGuardRepairFailedKey = repairKey;
     showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
   };
-  const succeed = () => {
+  const succeed = async () => {
+    if (settled) return;
+    const probed = await probeRuntimeGuard(projectRoot);
+    if (probed.kind !== "ok") {
+      fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
+      return;
+    }
+    const refreshed = await host.refreshDashboardModelFromService?.(true);
+    if (refreshed === false) {
+      fail("aimux repair completed but dashboard data is still unavailable");
+      return;
+    }
     if (settled) return;
     settled = true;
     releaseRuntimeGuardRepairLock(lockPath);
@@ -305,7 +326,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
       if (code === 0) {
-        succeed();
+        void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
         return;
       }
       fail(signal ? `aimux repair exited on ${signal}` : `aimux repair exited with code ${code ?? "unknown"}`);
@@ -542,9 +563,11 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
   entry: { id: string; backendSessionId?: string; tmuxWindowId?: string; status?: string },
   timeoutMs?: number,
 ): Promise<"opened" | "missing" | "error"> {
+  const activationToken = host.dashboardActivationToken;
   const effectiveTimeoutMs = timeoutMs ?? (entry.status === "offline" || entry.status === "exited" ? 60_000 : 3000);
   const deadline = Date.now() + effectiveTimeoutMs;
   while (Date.now() < deadline) {
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
     const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
@@ -581,8 +604,10 @@ export async function waitAndOpenLiveTmuxWindowForService(
   serviceId: string,
   timeoutMs = 3000,
 ): Promise<"opened" | "missing" | "error"> {
+  const activationToken = host.dashboardActivationToken;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
     const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
@@ -592,6 +617,11 @@ export async function waitAndOpenLiveTmuxWindowForService(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return "missing";
+}
+
+function dashboardActivationStillCurrent(host: DashboardControlHost, token: any | undefined): boolean {
+  if (!token || host.mode !== "dashboard") return true;
+  return host.dashboardActivationToken === token && (host.dashboardInputEpoch ?? 0) === token.inputEpoch;
 }
 
 async function openProjectServiceNotificationTarget(
@@ -833,22 +863,22 @@ async function requestProjectService(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
-    if (opts.method === "POST") {
-      const current = await endpointMatchesCurrentProjectService(
-        endpoint,
-        Math.min(250, remainingProjectServiceDeadline(deadline)),
-      );
-      if (!current && Date.now() < deadline) {
-        removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
-          restartProjectService: true,
-        });
-        await sleepProjectServiceRetry(attempt, deadline);
-        continue;
-      }
-      if (!current) {
-        throw new Error("project service endpoint is stale");
-      }
+    const current = await endpointIsCurrentForRequest(
+      host,
+      endpoint,
+      Math.min(250, remainingProjectServiceDeadline(deadline)),
+    );
+    if (!current && Date.now() < deadline) {
+      clearProjectServiceEndpointHealth(host);
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    if (!current) {
+      throw new Error("project service endpoint is stale");
     }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
@@ -862,6 +892,7 @@ async function requestProjectService(
       }
       lastError = new Error(json?.error || `request failed: ${status}`);
       if (isProjectServiceRetryableStatus(status) && Date.now() < deadline) {
+        clearProjectServiceEndpointHealth(host);
         await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
           restartProjectService: true,
         });
@@ -876,6 +907,7 @@ async function requestProjectService(
         continue;
       }
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
+        clearProjectServiceEndpointHealth(host);
         removeMetadataEndpoint(projectRoot);
         await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
           restartProjectService: true,
@@ -887,6 +919,30 @@ async function requestProjectService(
     }
   }
   throw lastError instanceof Error ? lastError : new Error("no live project service endpoint");
+}
+
+async function endpointIsCurrentForRequest(
+  host: DashboardControlHost,
+  endpoint: { host: string; port: number; pid?: number },
+  timeoutMs: number,
+): Promise<boolean> {
+  const key = projectServiceEndpointHealthKey(endpoint);
+  const cached = host.dashboardProjectServiceEndpointHealth as { key?: string; checkedAt?: number } | undefined;
+  if (cached?.key === key && typeof cached.checkedAt === "number") {
+    if (Date.now() - cached.checkedAt <= PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS) return true;
+  }
+  const current = await endpointMatchesCurrentProjectService(endpoint, timeoutMs);
+  if (current) host.dashboardProjectServiceEndpointHealth = { key, checkedAt: Date.now() };
+  else clearProjectServiceEndpointHealth(host);
+  return current;
+}
+
+function projectServiceEndpointHealthKey(endpoint: { host: string; port: number; pid?: number }): string {
+  return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}`;
+}
+
+function clearProjectServiceEndpointHealth(host: DashboardControlHost): void {
+  host.dashboardProjectServiceEndpointHealth = undefined;
 }
 
 async function endpointMatchesCurrentProjectService(

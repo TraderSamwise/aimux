@@ -47,7 +47,7 @@ async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal
   while (!signal.aborted && host.mode === "dashboard") {
     const endpoint = resolveProjectServiceEndpoint(process.cwd());
     if (!endpoint) {
-      await host.ensureDashboardControlPlane?.().catch(() => undefined);
+      await recoverDashboardProjectEventStream(host, signal);
       await sleep(RETRY_MS, signal);
       continue;
     }
@@ -72,8 +72,21 @@ async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal
         "dashboard",
       );
       removeMetadataEndpoint(process.cwd());
+      await recoverDashboardProjectEventStream(host, signal);
       await sleep(RETRY_MS, signal);
     }
+  }
+}
+
+async function recoverDashboardProjectEventStream(host: ProjectEventStreamHost, signal: AbortSignal): Promise<void> {
+  try {
+    await host.ensureDashboardControlPlane?.();
+    if (!signal.aborted && host.mode === "dashboard") scheduleProjectViewRefresh(host, PROJECT_API_VIEWS);
+  } catch (error) {
+    debug(
+      `dashboard project event recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      "dashboard",
+    );
   }
 }
 

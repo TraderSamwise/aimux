@@ -71,9 +71,9 @@ export function stabilizeRuntimeGuardProbe(
   return { state: current, disconnectedProbeCount: count };
 }
 
-// Keys that are non-mutating on EVERY screen (selection/scroll/quit/help). Screen-switch
-// letters (d/c/p/l/t/g) are excluded because they mutate on their target subscreen.
-const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape", "q", "?"]);
+// Keys that are non-mutating on every screen. Screen-switch letters and quit are
+// excluded because they can change state or detach the dashboard mid-repair.
+const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape", "?"]);
 
 /** What a keystroke should do while the dashboard is guarded. Repair is automatic. */
 export function runtimeGuardKeyDisposition(key: string): "passthrough" | "swallow" {

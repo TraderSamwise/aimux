@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { postJsonWithTuiApiRuntime, TuiApiRuntime } from "./tui-api-runtime.js";
+import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime, TuiApiRuntime } from "./tui-api-runtime.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -106,6 +106,35 @@ describe("TuiApiRuntime", () => {
 
     expect(mutate).toHaveBeenCalledWith(host, "/agents/stop", { sessionId: "claude-1" }, undefined);
     expect(host.tuiApiConnectionState).toBe("degraded");
+  });
+
+  it("coalesces API failures into one runtime guard recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(),
+        getFromProjectService: vi.fn(async () => {
+          throw new Error("offline");
+        }),
+      };
+      const runtime = getOrCreateTuiApiRuntime(host);
+
+      await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+        ok: false,
+      });
+      await expect(
+        postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "claude-1" }, undefined, async () => {
+          throw new Error("still offline");
+        }),
+      ).rejects.toThrow("still offline");
+
+      expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not let an older superseded response overwrite a newer snapshot", async () => {
