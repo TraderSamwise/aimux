@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectServiceManifest } from "../project-service-manifest.js";
+import { AIMUX_TMUX_RUNTIME_CONTRACT_VERSION } from "../runtime-owner.js";
 import { buildDashboardRuntimeGuardOverlayOutput } from "../tui/screens/overlay-renderers.js";
 import { handleRuntimeGuardKey } from "./dashboard-control.js";
 import {
@@ -18,6 +19,7 @@ const requestJsonMock = vi.hoisted(() => vi.fn());
 const tmuxMock = vi.hoisted(() => ({
   isAvailable: vi.fn(() => false),
   getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-111" })),
+  listSessionNames: vi.fn(() => ["aimux-repo-111"]),
   getSessionOption: vi.fn(() => null),
 }));
 
@@ -42,6 +44,7 @@ beforeEach(() => {
   requestJsonMock.mockReset();
   tmuxMock.isAvailable.mockReturnValue(false);
   tmuxMock.getProjectSession.mockReturnValue({ sessionName: "aimux-repo-111" });
+  tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111"]);
   tmuxMock.getSessionOption.mockReturnValue(null);
 });
 
@@ -212,7 +215,9 @@ describe("probeRuntimeGuard", () => {
 
   it("reports runtime rebuild required from tmux marker", async () => {
     tmuxMock.isAvailable.mockReturnValue(true);
-    tmuxMock.getSessionOption.mockReturnValue("1");
+    tmuxMock.getSessionOption.mockImplementation((_sessionName: string, key: string) =>
+      key === "@aimux-runtime-rebuild-required" ? "1" : AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
     loadMetadataEndpointMock.mockReturnValue({
       host: "127.0.0.1",
       port: 45123,
@@ -226,6 +231,51 @@ describe("probeRuntimeGuard", () => {
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
     expect(tmuxMock.getSessionOption).toHaveBeenCalledWith("aimux-repo-111", "@aimux-runtime-rebuild-required");
+  });
+
+  it("reports runtime rebuild required from a stale host contract without a rebuild marker", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.getSessionOption.mockImplementation((_sessionName: string, key: string) => {
+      if (key === "@aimux-runtime-rebuild-required") return "0";
+      if (key === "@aimux-runtime-contract") return "legacy-contract";
+      return null;
+    });
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
+  });
+
+  it("reports runtime rebuild required from a missing client contract without a rebuild marker", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111", "aimux-repo-111-client-deadbeef"]);
+    tmuxMock.getSessionOption.mockImplementation((sessionName: string, key: string) => {
+      if (key === "@aimux-runtime-rebuild-required") return "0";
+      if (key === "@aimux-runtime-contract" && sessionName === "aimux-repo-111-client-deadbeef") return null;
+      if (key === "@aimux-runtime-contract") return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
+      return null;
+    });
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
+    expect(tmuxMock.getSessionOption).toHaveBeenCalledWith("aimux-repo-111-client-deadbeef", "@aimux-runtime-contract");
   });
 });
 
