@@ -878,7 +878,7 @@ program
         }
       }
 
-      const mux = new Multiplexer();
+      const mux = new Multiplexer({ contextWatcherEnabled: !opts.tmuxDashboardInternal });
       let cleanedUp = false;
       const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
       const cleanupAll = async () => {

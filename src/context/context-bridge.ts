@@ -95,6 +95,7 @@ export class ContextWatcher {
   constructor(
     private readonly capturePane: (target: TmuxTarget) => string = (target) =>
       new TmuxRuntimeManager().captureTarget(target, { startLine: -120 }),
+    private readonly options: { enabled?: boolean } = {},
   ) {}
 
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -116,10 +117,15 @@ export class ContextWatcher {
   updateSessions(
     sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[]; tmuxTarget?: TmuxTarget }>,
   ): void {
+    if (this.options.enabled === false) {
+      this.sessions = [];
+      return;
+    }
     this.sessions = sessions;
   }
 
   start(intervalMs = 1_000): void {
+    if (this.options.enabled === false) return;
     if (this.interval) return;
     // Initialize read offsets to current file sizes (don't process existing content)
     for (const session of this.sessions) {
@@ -129,6 +135,7 @@ export class ContextWatcher {
   }
 
   stop(): void {
+    if (this.options.enabled === false) return;
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
@@ -141,6 +148,7 @@ export class ContextWatcher {
   }
 
   async syncNow(sessionId?: string): Promise<void> {
+    if (this.options.enabled === false) return;
     const sessions = sessionId ? this.sessions.filter((session) => session.id === sessionId) : this.sessions;
     for (const session of sessions) {
       if (!this.readOffsets.has(session.id)) {

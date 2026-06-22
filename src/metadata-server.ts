@@ -1754,6 +1754,15 @@ export class MetadataServer {
         projectStateDir: getProjectStateDir(),
         pid: process.pid,
         serviceInfo: getProjectServiceManifest(),
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.diagnostics) {
+      send(res, 200, {
+        ok: true,
+        projectStateDir: getProjectStateDir(),
+        pid: process.pid,
+        serviceInfo: getProjectServiceManifest(),
         resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
         recentSlowRequests: this.recentSlowRequests.slice(-10),
         plugins: this.options.diagnostics?.pluginStatuses?.() ?? [],

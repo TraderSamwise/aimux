@@ -39,6 +39,8 @@ interface DashboardStateSnapshotOptions {
 
 const METADATA_PENDING_SETTLE_TIMEOUT_MS = 10_000;
 const METADATA_PENDING_SETTLE_INTERVAL_MS = 100;
+const DESKTOP_STATE_REFRESH_TIMEOUT_MS = 3_000;
+const DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS = 5_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1017,7 +1019,9 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
     for (;;) {
       if (typeof host.getFromProjectService === "function") {
         try {
-          const json = await host.getFromProjectService("/desktop-state", { timeoutMs: force ? 2000 : 750 });
+          const json = await host.getFromProjectService("/desktop-state", {
+            timeoutMs: force ? DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS : DESKTOP_STATE_REFRESH_TIMEOUT_MS,
+          });
           if (!isDesktopStateDashboardModel(json)) return failDashboardServiceRefresh(host, force);
           const applied = applyDashboardModel(
             host,
@@ -1033,6 +1037,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
           }
           return applied;
         } catch {
+          if (!force) return failDashboardServiceRefresh(host, false);
           await ensureDashboardControlPlane(host);
         }
       } else if (force) {

@@ -143,9 +143,10 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
 }
 
 function selectRuntimeRebuildProjectRoots(before: RuntimeCoherenceReport): Set<string> {
-  return new Set(
-    before.projects.filter((project) => project.runtime.rebuildRequired).map((project) => project.projectRoot),
-  );
+  return new Set([
+    ...before.projects.filter((project) => project.runtime.rebuildRequired).map((project) => project.projectRoot),
+    ...before.staleHookProcesses.map((process) => process.projectRoot).filter((root): root is string => Boolean(root)),
+  ]);
 }
 
 function stopPreRestartDashboards(
@@ -191,19 +192,43 @@ function relinkDashboardToClientSessions(
     if (!sessionName.startsWith(`${hostSession}-client-`)) continue;
     const windows = tmux.listWindows(sessionName);
     const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
-    const missingDashboard = !windows.some((window) => window.name.startsWith("dashboard"));
     if (alreadyLinked) continue;
-    let linked: TmuxTarget;
     try {
-      linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
+      tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
     } catch {
-      linked = tmux.linkWindowToSession(sessionName, dashboardTarget);
+      tmux.linkWindowToSession(sessionName, dashboardTarget);
     }
-    if (missingDashboard && tmux.selectWindow) {
-      try {
-        tmux.selectWindow(linked);
-      } catch {}
-    }
+  }
+}
+
+function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRestartTmux): TmuxTarget[] {
+  if (!tmux.isAvailable() || !tmux.getProjectSession || !tmux.listSessionNames || !tmux.listWindows) return [];
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  return tmux
+    .listSessionNames()
+    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .map((sessionName) => {
+      const active = tmux.listWindows!(sessionName).find(
+        (window) => window.active && !window.name.startsWith("dashboard"),
+      );
+      return active
+        ? {
+            sessionName,
+            windowId: active.id,
+            windowIndex: active.index,
+            windowName: active.name,
+          }
+        : null;
+    })
+    .filter((target): target is TmuxTarget => Boolean(target));
+}
+
+function restoreActiveWindows(tmux: RuntimeRestartTmux, targets: TmuxTarget[]): void {
+  if (!tmux.isAvailable() || !tmux.hasWindow || !tmux.selectWindow) return;
+  for (const target of targets) {
+    try {
+      if (tmux.hasWindow(target)) tmux.selectWindow(target);
+    } catch {}
   }
 }
 
@@ -481,8 +506,10 @@ export async function restartAimuxControlPlane(
       result.dashboard.error = "tmux is not installed or not available in PATH";
     } else {
       try {
+        const activeWindows = captureActiveNonDashboardWindows(projectRoot, tmux);
         const resolved = resolveDashboard(projectRoot, tmux, { forceReload: true, openInHostSession: true });
         relinkDashboardToClientSessions(projectRoot, tmux, resolved.dashboardTarget);
+        restoreActiveWindows(tmux, activeWindows);
         result.dashboard.status = "reloaded";
         result.dashboard.sessionName = resolved.dashboardSession.sessionName;
         result.dashboard.target = resolved.dashboardTarget;

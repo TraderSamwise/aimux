@@ -38,6 +38,7 @@ export interface RuntimeCoherenceProcessReport {
   pathHints: string[];
   staleNativePath: boolean;
   error: string | null;
+  projectRoot?: string | null;
 }
 
 export interface RuntimeCoherenceProjectReport {
@@ -419,11 +420,19 @@ function listStaleHookProcesses(input: {
   listProcessArgs: () => Array<{ pid: number; args: string }>;
   cliLaunch: AimuxCliLaunchCommand;
 }): RuntimeCoherenceProcessReport[] {
-  return input
-    .listProcessArgs()
-    .filter((entry) => entry.args.includes("claude-hook") || entry.args.includes("codex-hook"))
-    .map((entry) => buildProcessReport({ pid: entry.pid, args: entry.args, cliLaunch: input.cliLaunch }))
-    .filter((entry): entry is RuntimeCoherenceProcessReport => Boolean(entry?.staleNativePath));
+  const reports: RuntimeCoherenceProcessReport[] = [];
+  for (const entry of input.listProcessArgs()) {
+    if (!entry.args.includes("claude-hook") && !entry.args.includes("codex-hook")) continue;
+    const report = buildProcessReport({ pid: entry.pid, args: entry.args, cliLaunch: input.cliLaunch });
+    if (!report?.staleNativePath) continue;
+    reports.push({ ...report, projectRoot: extractHookProjectRoot(entry.args) });
+  }
+  return reports;
+}
+
+function extractHookProjectRoot(args: string): string | null {
+  const match = args.match(/--project(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim() || null;
 }
 
 function projectStatus(

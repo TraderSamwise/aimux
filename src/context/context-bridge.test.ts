@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ContextWatcher } from "./context-bridge.js";
@@ -47,6 +47,22 @@ describe("ContextWatcher tmux continuity", () => {
     expect(live).toContain("# claude-live (claude) — Live Snapshot");
     expect(live).toContain("Streaming output");
     expect(readHistory("claude-live")).toEqual([]);
+  });
+
+  it("does not write live.md when disabled", async () => {
+    const watcher = new ContextWatcher(() => ["Streaming output"].join("\n"), { enabled: false });
+    watcher.updateSessions([
+      {
+        id: "claude-disabled",
+        command: "claude",
+        tmuxTarget: target(),
+      },
+    ]);
+
+    await watcher.syncNow();
+
+    const livePath = join(getContextDir(), "claude-disabled", "live.md");
+    expect(existsSync(livePath)).toBe(false);
   });
 
   it("bounds live.md to recent pane content instead of growing unbounded", () => {
@@ -127,14 +143,7 @@ describe("ContextWatcher tmux continuity", () => {
 
   it("does not capture Codex progress rows as a response turn", () => {
     const watcher = new ContextWatcher(() =>
-      [
-        "› reply exactly CODEX_OK",
-        "",
-        "• Starting MCP servers",
-        "• Sautéed for 5s",
-        "",
-        "›",
-      ].join("\n"),
+      ["› reply exactly CODEX_OK", "", "• Starting MCP servers", "• Sautéed for 5s", "", "›"].join("\n"),
     );
     const session = {
       id: "codex-progress",
