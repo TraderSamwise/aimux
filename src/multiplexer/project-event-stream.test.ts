@@ -29,7 +29,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
-    expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce();
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 

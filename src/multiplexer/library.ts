@@ -6,6 +6,9 @@ import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type LibraryHost = any;
+interface ApiViewRefreshOptions {
+  force?: boolean;
+}
 const LIBRARY_RESOURCE = "library";
 
 function isLibraryEntry(value: any): value is LibraryEntry {
@@ -44,7 +47,7 @@ function validateLibraryPayload(value: unknown): LibraryEntry[] {
   return res.entries;
 }
 
-export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
+export async function refreshLibrary(host: LibraryHost, options: ApiViewRefreshOptions = {}): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
     ensureLibraryEntries(host);
     return false;
@@ -54,6 +57,7 @@ export async function refreshLibrary(host: LibraryHost): Promise<boolean> {
       LIBRARY_RESOURCE,
       PROJECT_API_ROUTES.library,
       validateLibraryPayload,
+      { supersede: options.force },
     );
     if (!result.ok || !result.value) {
       ensureLibraryEntries(host);
@@ -106,7 +110,7 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
     };
   }
 
-  void refreshLibrary(host).then(() => {
+  void refreshLibrary(host, { force: true }).then(() => {
     if (host.isDashboardScreen?.("library")) renderLibrary(host);
   });
   if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
@@ -142,7 +146,7 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    void refreshLibrary(host).then(() => {
+    void refreshLibrary(host, { force: true }).then(() => {
       if (host.isDashboardScreen?.("library")) renderLibrary(host);
     });
     return;

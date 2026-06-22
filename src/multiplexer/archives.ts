@@ -7,6 +7,9 @@ import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyar
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type ArchivesHost = any;
+interface ApiViewRefreshOptions {
+  force?: boolean;
+}
 const GRAVEYARD_RESOURCE = "graveyard";
 
 export function showGraveyard(host: ArchivesHost): void {
@@ -137,7 +140,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
     .then(async () => {
       host.graveyardWorktreeDeleteConfirm = null;
       if (host.mode === "dashboard") {
-        await refreshGraveyardEntriesFromService(host);
+        await refreshGraveyardEntriesFromService(host, { force: true });
         await refreshDashboardAfterGraveyardMutation(host);
       } else {
         applyGraveyardPayload(host, emptyGraveyardPayload());
@@ -161,7 +164,7 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       debug(`failed to resurrect ${label}: ${message}`, "session");
       host.showDashboardError?.(`Failed to resurrect "${label}"`, [message]);
       if (host.mode === "dashboard") {
-        void refreshGraveyardEntriesFromService(host);
+        void refreshGraveyardEntriesFromService(host, { force: true });
         void refreshDashboardAfterGraveyardMutation(host);
       }
     });
@@ -197,7 +200,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     }
     host.graveyardWorktreeDeleteConfirm = null;
     if (host.mode === "dashboard") {
-      await refreshGraveyardEntriesFromService(host);
+      await refreshGraveyardEntriesFromService(host, { force: true });
       await refreshDashboardAfterGraveyardMutation(host);
     } else {
       applyGraveyardPayload(host, emptyGraveyardPayload());
@@ -255,7 +258,10 @@ function applyGraveyardPayload(
   clampGraveyardSelection(host);
 }
 
-export async function refreshGraveyardEntriesFromService(host: ArchivesHost): Promise<boolean> {
+export async function refreshGraveyardEntriesFromService(
+  host: ArchivesHost,
+  options: ApiViewRefreshOptions = {},
+): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
     if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
     return false;
@@ -265,7 +271,7 @@ export async function refreshGraveyardEntriesFromService(host: ArchivesHost): Pr
       GRAVEYARD_RESOURCE,
       PROJECT_API_ROUTES.graveyard,
       validateGraveyardPayload,
-      { timeoutMs: 3000 },
+      { timeoutMs: 3000, supersede: options.force },
     );
     if (!result.ok || !result.value) {
       if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
