@@ -83,7 +83,10 @@ export async function refreshCoordinationFromService(host: NotificationHost): Pr
 
 export function hydrateDashboardNotificationScreenState(host: NotificationHost): void {
   if (!host.isDashboardScreen?.("coordination")) return;
-  void host.refreshCoordinationFromService?.().then(() => host.renderCurrentDashboardView?.()).catch(() => {});
+  void host
+    .refreshCoordinationFromService?.()
+    .then(() => host.renderCurrentDashboardView?.())
+    .catch(() => {});
   host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
 }
 
@@ -120,6 +123,10 @@ export function findNotificationSessionTarget(host: NotificationHost, sessionId:
 
 function findNotificationServiceTarget(host: NotificationHost, sessionId: string): any | undefined {
   return host.getDashboardServices?.().find((entry: any) => entry.id === sessionId);
+}
+
+function activationSucceeded(result: unknown): boolean {
+  return result === undefined || result === "opened";
 }
 
 export function notificationTargetLabel(host: NotificationHost, sessionId?: string): string | null {
@@ -201,7 +208,11 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   if (session) {
     if (offline) host.setDashboardScreen("dashboard");
     try {
-      await host.activateDashboardEntry(session, { preserveDashboardSelection: Boolean(session.team) });
+      const result = await host.activateDashboardEntry(session, { preserveDashboardSelection: Boolean(session.team) });
+      if (!activationSucceeded(result)) {
+        failOpen();
+        return;
+      }
     } catch {
       failOpen();
       return;
@@ -218,7 +229,11 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   }
   if (offline) host.setDashboardScreen("dashboard");
   try {
-    await host.activateDashboardService(service);
+    const result = await host.activateDashboardService(service);
+    if (!activationSucceeded(result)) {
+      failOpen();
+      return;
+    }
   } catch {
     failOpen();
     return;

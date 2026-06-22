@@ -119,6 +119,16 @@ describe("notification target open", () => {
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
   });
 
+  it("keeps a notification unread if service activation resolves without opening", async () => {
+    host.activateDashboardService = vi.fn(async () => "missing");
+
+    handleCoordinationKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
+
+    expect(unreadInboxEntries("service-1")).toHaveLength(1);
+    expect(host.footerFlash).toBe("Failed to open notification target");
+  });
+
   it("opens teammate notification targets from the hidden teammate cache", async () => {
     addExchangeNotification("teammate-1", "Open teammate");
     host.dashboardTeammatesCache = [
@@ -302,22 +312,28 @@ describe("coordination thread workflow keys", () => {
     expect(host.postToProjectService).not.toHaveBeenCalled();
 
     handleCoordinationKey(host, Buffer.from("A"));
-    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
-      taskId: "task-1",
-      from: "user",
-    }));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
+        taskId: "task-1",
+        from: "user",
+      }),
+    );
 
     handleCoordinationKey(host, Buffer.from("J"));
-    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
-      taskId: "task-1",
-      from: "user",
-    }));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
+        taskId: "task-1",
+        from: "user",
+      }),
+    );
 
     handleCoordinationKey(host, Buffer.from("E"));
-    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
-      taskId: "task-1",
-      from: "user",
-    }));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
+        taskId: "task-1",
+        from: "user",
+      }),
+    );
   });
 });
 
@@ -338,15 +354,32 @@ describe("coordination reads prefer the service", () => {
     // Service authority: a payload the local stores do NOT contain, proving the host took it
     // from the wire (the service-built reconciliation) rather than rebuilding locally.
     const payload = buildCoordinationView({
-      sessions: [{ id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } }],
+      sessions: [
+        { id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } },
+      ],
       notifications: [
-        { id: "r1", title: "Remote", body: "remote agent needs input", sessionId: "remote-1", kind: "needs_input", unread: true, cleared: false, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+        {
+          id: "r1",
+          title: "Remote",
+          body: "remote agent needs input",
+          sessionId: "remote-1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
       ],
       threads: [],
     });
     const host: any = {
       coordinationFilter: "all",
-      getFromProjectService: vi.fn(async () => ({ ok: true, model: payload.model, worklist: payload.worklist, threads: [] })),
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        model: payload.model,
+        worklist: payload.worklist,
+        threads: [],
+      })),
     };
 
     const ok = await refreshCoordinationFromService(host);
