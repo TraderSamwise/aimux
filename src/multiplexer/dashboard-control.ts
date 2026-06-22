@@ -138,28 +138,93 @@ export function setDashboardScreen(host: DashboardControlHost, screen: Dashboard
 // through, swallow everything that could mutate. Returns true when the key was consumed.
 export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer): boolean {
   if (!host.runtimeGuardState || host.runtimeGuardState.kind === "ok") return false;
+  if (host.dashboardBusyState || host.dashboardErrorState) return false;
   const events = parseKeys(data);
   // Unrecognized/empty sequences can't mutate (no handler acts on them); let them fall through
   // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
   if (events.length === 0) return false;
   const key = commandKey(events[0]);
-  const disposition = runtimeGuardKeyDisposition(key, host.runtimeGuardState);
-  if (disposition === "reload") {
-    host.reloadDashboardFromGuard();
-    return true;
-  }
-  if (disposition === "rebuild-runtime") {
-    host.restartRuntimeFromGuard();
-    return true;
-  }
+  const disposition = runtimeGuardKeyDisposition(key);
   if (disposition === "passthrough") return false;
-  host.footerFlash =
-    host.runtimeGuardState.kind === "runtime-rebuild-required"
-      ? "Runtime rebuild required — press b to rebuild runtime"
-      : "Stale dashboard — press r to reload";
+  host.footerFlash = "Aimux is repairing the local control plane";
   host.footerFlashTicks = 3;
   host.renderCurrentDashboardView();
   return true;
+}
+
+function runtimeGuardRepairKey(state: NonNullable<DashboardControlHost["runtimeGuardState"]>): string {
+  return state.kind === "stale" ? `${state.kind}:${state.reason}` : state.kind;
+}
+
+function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string, message: string): void {
+  if (host.runtimeGuardRepairBusy) {
+    host.dashboardBusyState = null;
+    host.runtimeGuardRepairBusy = false;
+  }
+  if (typeof host.showDashboardError === "function") {
+    host.showDashboardError(title, [message]);
+    return;
+  }
+  host.footerFlash = `${title}: ${message}`;
+  host.footerFlashTicks = 6;
+  host.renderCurrentDashboardView?.();
+}
+
+export function startRuntimeGuardRepair(
+  host: DashboardControlHost,
+  state: NonNullable<DashboardControlHost["runtimeGuardState"]>,
+): void {
+  if (state.kind === "ok" || host.runtimeGuardRepairing) return;
+  const repairKey = runtimeGuardRepairKey(state);
+  if (host.runtimeGuardRepairFailedKey === repairKey) return;
+  const projectRoot = host.projectRoot ?? process.cwd();
+  const command = resolveDashboardReloadCommand();
+  host.runtimeGuardRepairing = true;
+  host.runtimeGuardRepairStateKey = repairKey;
+  host.runtimeGuardRepairBusy = true;
+  host.dashboardBusyState = {
+    title: "Repairing Aimux",
+    lines: ["Aimux is repairing the local control plane."],
+    spinnerFrame: 0,
+    startedAt: Date.now(),
+  };
+  host.renderCurrentDashboardView?.();
+
+  let settled = false;
+  const fail = (message: string) => {
+    if (settled) return;
+    settled = true;
+    host.runtimeGuardRepairing = false;
+    host.runtimeGuardRepairFailedKey = repairKey;
+    showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
+  };
+  const succeed = () => {
+    if (settled) return;
+    settled = true;
+    host.runtimeGuardRepairing = false;
+    host.runtimeGuardRepairFailedKey = undefined;
+    if (host.runtimeGuardRepairBusy) {
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+    }
+    host.runtimeGuardState = { kind: "ok" };
+    host.renderCurrentDashboardView?.();
+  };
+
+  try {
+    const child = spawn(command, ["restart", "--project", projectRoot], { detached: true, stdio: "ignore" });
+    child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        succeed();
+        return;
+      }
+      fail(signal ? `aimux repair exited on ${signal}` : `aimux repair exited with code ${code ?? "unknown"}`);
+    });
+    child.unref();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 }
 
 export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<void> {
@@ -173,59 +238,18 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
     host.runtimeGuardDisconnectProbeCount = next.disconnectedProbeCount;
     if (!runtimeGuardEquals(current, next.state)) {
       host.runtimeGuardState = next.state;
+      if (next.state.kind === "ok") {
+        host.runtimeGuardRepairFailedKey = undefined;
+        if (host.runtimeGuardRepairBusy) {
+          host.dashboardBusyState = null;
+          host.runtimeGuardRepairBusy = false;
+        }
+      }
       host.renderCurrentDashboardView();
     }
+    if (next.state.kind !== "ok") startRuntimeGuardRepair(host, next.state);
   } finally {
     host.runtimeGuardProbing = false;
-  }
-}
-
-// Recreate the dashboard window with the freshly-installed binary: a detached `dashboard-reload`
-// rebuilds this tmux window, which replaces (kills) the current stale process.
-export function reloadDashboardFromGuard(host: DashboardControlHost): void {
-  host.footerFlash = "Reloading dashboard…";
-  host.footerFlashTicks = 5;
-  host.renderCurrentDashboardView();
-  const command = resolveDashboardReloadCommand();
-  try {
-    const child = spawn(command, ["dashboard-reload", "--open"], { detached: true, stdio: "ignore" });
-    child.on("error", () => {
-      host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
-      host.footerFlashTicks = 6;
-      host.renderCurrentDashboardView();
-    });
-    child.unref();
-  } catch {
-    host.footerFlash = `Reload failed — run: ${command} dashboard-reload --open`;
-    host.footerFlashTicks = 6;
-    host.renderCurrentDashboardView();
-  }
-}
-
-export function restartRuntimeFromGuard(host: DashboardControlHost): void {
-  const projectRoot = host.projectRoot ?? process.cwd();
-  const clientTty = host.tmuxRuntimeManager?.displayMessage?.("#{client_tty}")?.trim();
-  host.footerFlash = "Restarting project runtime…";
-  host.footerFlashTicks = 5;
-  host.renderCurrentDashboardView();
-  const command = resolveDashboardReloadCommand();
-  const args = ["restart-runtime", "--project-root", projectRoot, "--open"];
-  if (clientTty) args.push("--client-tty", clientTty);
-  try {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.on("error", () => {
-      host.footerFlash = `Runtime rebuild failed — run: ${command} restart-runtime --project-root ${projectRoot} --open`;
-      host.footerFlashTicks = 6;
-      host.renderCurrentDashboardView();
-    });
-    child.unref();
-  } catch {
-    host.footerFlash = `Runtime rebuild failed — run: ${command} restart-runtime --project-root ${projectRoot} --open`;
-    host.footerFlashTicks = 6;
-    host.renderCurrentDashboardView();
   }
 }
 

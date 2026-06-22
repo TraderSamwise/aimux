@@ -6,8 +6,6 @@ import {
   handleActiveDashboardOverlayKey as handleActiveDashboardOverlayKeyImpl,
   handleRuntimeGuardKey as handleRuntimeGuardKeyImpl,
   refreshRuntimeGuard as refreshRuntimeGuardImpl,
-  reloadDashboardFromGuard as reloadDashboardFromGuardImpl,
-  restartRuntimeFromGuard as restartRuntimeFromGuardImpl,
   handleDashboardSubscreenNavigationKey as handleDashboardSubscreenNavigationKeyImpl,
   handleOrchestrationInputKey as handleOrchestrationInputKeyImpl,
   handleOrchestrationRoutePickerKey as handleOrchestrationRoutePickerKeyImpl,
@@ -161,12 +159,6 @@ export const dashboardActionMethods = {
   },
   refreshRuntimeGuard(this: any): Promise<void> {
     return refreshRuntimeGuardImpl(this);
-  },
-  reloadDashboardFromGuard(this: any): void {
-    reloadDashboardFromGuardImpl(this);
-  },
-  restartRuntimeFromGuard(this: any): void {
-    restartRuntimeFromGuardImpl(this);
   },
   renderActiveDashboardOverlay(this: any): boolean {
     return renderActiveDashboardOverlayImpl(this);
