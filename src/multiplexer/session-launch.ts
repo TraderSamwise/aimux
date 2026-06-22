@@ -179,10 +179,11 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleDashboardFocusIn();
       return;
     }
-    if (host.handleRuntimeGuardKey(data)) {
+    host.dashboardInputEpoch = (host.dashboardInputEpoch ?? 0) + 1;
+    if (host.handleActiveDashboardOverlayKey(data)) {
       return;
     }
-    if (host.handleActiveDashboardOverlayKey(data)) {
+    if (host.handleRuntimeGuardKey(data)) {
       return;
     }
     if (host.isDashboardScreen("coordination")) {
@@ -238,15 +239,38 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.writeDashboardClientStatuslineFile?.();
   const primed = await host.refreshDashboardModelFromService(true);
   if (!primed) {
+    host.dashboardBusyState = {
+      title: "Connecting Aimux",
+      lines: ["Loading project state from the local service."],
+      spinnerFrame: 0,
+      startedAt: Date.now(),
+    };
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
+        const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
         const refreshed = await host.refreshDashboardModelFromService(true);
-        if (refreshed && host.mode === "dashboard") {
+        const fresh =
+          !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+        host.dashboardBusyState = null;
+        if (host.mode !== "dashboard") return;
+        if (refreshed || fresh || !host.dashboardModelServiceRefreshError) {
           host.renderCurrentDashboardView();
+          return;
         }
+        host.showDashboardError?.("Aimux repair failed", [
+          host.dashboardModelServiceRefreshError instanceof Error
+            ? host.dashboardModelServiceRefreshError.message
+            : String(host.dashboardModelServiceRefreshError),
+        ]);
+        host.renderCurrentDashboardView();
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        host.dashboardBusyState = null;
+        if (host.mode === "dashboard") {
+          host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
+        }
+      });
   }
   host.terminalHost.enterAlternateScreen(true);
   startDashboardProjectEventStream(host);

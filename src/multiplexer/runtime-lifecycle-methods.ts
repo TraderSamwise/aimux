@@ -333,6 +333,10 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.stopHeartbeat();
     this.stopProjectServiceRefresh();
     stopDashboardProjectEventStream(this);
+    if ((this as any).tuiApiRecoveryTimer) {
+      clearTimeout((this as any).tuiApiRecoveryTimer);
+      (this as any).tuiApiRecoveryTimer = null;
+    }
     (this as any).tuiApiRuntime?.dispose?.();
     (this as any).tuiApiRuntime = null;
     (this as any).stopGraveyardCleanup?.();

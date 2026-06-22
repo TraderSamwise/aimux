@@ -44,6 +44,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function refreshDashboardModelForWorktreeSettlement(host: WorktreeHost): Promise<boolean> {
+  if (typeof host.refreshDashboardModelFromService !== "function") return false;
+  const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
+  const result = await host.refreshDashboardModelFromService(true);
+  if (host.dashboardModelServiceRefreshError) return false;
+  return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+}
+
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
     ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => entry.path === path)
@@ -60,7 +68,7 @@ async function waitForRenderedDashboardWorktreeState(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForWorktreeSettlement(host))) return false;
     const group = findRenderedWorktreeForSettlement(host, path);
     if (predicate(group)) return true;
     await sleep(100);
@@ -181,7 +189,9 @@ async function waitForRenderedDashboardWorktreeCreate(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (typeof host.refreshDashboardModelFromService === "function") {
-      await host.refreshDashboardModelFromService(true);
+      if (!(await refreshDashboardModelForWorktreeSettlement(host))) {
+        return { ok: false, error: new Error("project service snapshot unavailable") };
+      }
     }
     const failure = findDashboardWorktreeCreateFailure(host, path);
     if (failure) {
@@ -204,7 +214,7 @@ async function refreshDashboardWorktreeCreateFailure(host: WorktreeHost, path: s
   const deadline = Date.now() + 1000;
   for (;;) {
     if (findDashboardWorktreeCreateFailure(host, path)) return;
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForWorktreeSettlement(host))) return;
     if (findDashboardWorktreeCreateFailure(host, path) || Date.now() >= deadline) return;
     await sleep(100);
   }

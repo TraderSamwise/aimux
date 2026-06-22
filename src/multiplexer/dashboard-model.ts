@@ -1000,7 +1000,9 @@ function isDesktopStateDashboardModel(value: any): value is {
   );
 }
 
-function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean): false {
+function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, error?: unknown): false {
+  (host as any).dashboardModelServiceRefreshError =
+    error instanceof Error ? error : new Error(error ? String(error) : "dashboard service refresh failed");
   if (force && typeof host.refreshRuntimeGuard === "function") {
     void host.refreshRuntimeGuard();
   }
@@ -1026,8 +1028,11 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
         supersede: force,
       },
     );
-    if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force);
+    if (!result.ok && result.error === undefined) return false;
+    if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force, result.error);
     const json = result.value;
+    (host as any).dashboardModelServiceRefreshedAt = Date.now();
+    (host as any).dashboardModelServiceRefreshError = undefined;
     const applied = applyDashboardModel(
       host,
       json.sessions,
@@ -1041,8 +1046,8 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
       void host.refreshRuntimeGuard();
     }
     return applied;
-  } catch {
-    return failDashboardServiceRefresh(host, force);
+  } catch (error) {
+    return failDashboardServiceRefresh(host, force, error);
   }
 }
 

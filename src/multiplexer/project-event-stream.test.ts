@@ -1,15 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const metadataMocks = vi.hoisted(() => ({
+  removeMetadataEndpoint: vi.fn(),
+  resolveProjectServiceEndpoint: vi.fn(),
+}));
+
+vi.mock("../metadata-store.js", () => metadataMocks);
+
 import {
   applyDashboardAlert,
   handleProjectEvent,
   scheduleProjectViewRefresh,
+  startDashboardProjectEventStream,
   stopDashboardProjectEventStream,
 } from "./project-event-stream.js";
 
 describe("dashboard project event refresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -62,6 +71,42 @@ describe("dashboard project event refresh", () => {
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("repairs the control plane and resyncs views when the SSE stream fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => {
+      throw new Error("socket closed");
+    });
+    globalThis.fetch = fetchMock as never;
+    metadataMocks.resolveProjectServiceEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 1234,
+      updatedAt: new Date().toISOString(),
+    });
+    const host: any = {
+      mode: "dashboard",
+      ensureDashboardControlPlane: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startDashboardProjectEventStream(host);
+      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+      expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+      expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    } finally {
+      stopDashboardProjectEventStream(host);
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("applies SSE alert flashes that used to come from the in-process bus", () => {
