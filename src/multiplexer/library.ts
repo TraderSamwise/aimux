@@ -4,6 +4,7 @@ import type { LibraryEntry } from "../library.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
 
 type LibraryHost = any;
 interface ApiViewRefreshOptions {
@@ -77,8 +78,10 @@ export function showLibrary(host: LibraryHost): void {
   host.setDashboardScreen("library");
   host.writeStatuslineFile();
   renderLibrary(host);
-  void refreshLibrary(host).then((refreshed) => {
-    if (refreshed && host.isDashboardScreen?.("library")) renderLibrary(host);
+  startDashboardLifecycleTask(host, { inputEpoch: true, screen: "library" }, () => refreshLibrary(host), {
+    onSuccess: (refreshed) => {
+      if (refreshed) renderLibrary(host);
+    },
   });
 }
 
@@ -110,9 +113,14 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
     };
   }
 
-  void refreshLibrary(host, { force: true }).then(() => {
-    if (host.isDashboardScreen?.("library")) renderLibrary(host);
-  });
+  startDashboardLifecycleTask(
+    host,
+    { inputEpoch: true, screen: "library" },
+    () => refreshLibrary(host, { force: true }),
+    {
+      onSuccess: () => renderLibrary(host),
+    },
+  );
   if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
   if (host.dashboardErrorState) {
     host.renderDashboardErrorOverlay();
@@ -146,9 +154,14 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    void refreshLibrary(host, { force: true }).then(() => {
-      if (host.isDashboardScreen?.("library")) renderLibrary(host);
-    });
+    startDashboardLifecycleTask(
+      host,
+      { inputEpoch: true, screen: "library" },
+      () => refreshLibrary(host, { force: true }),
+      {
+        onSuccess: () => renderLibrary(host),
+      },
+    );
     return;
   }
   const entries = host.libraryEntries ?? [];
