@@ -7,6 +7,21 @@ export interface HttpJsonResponse<T = any> {
   json: T;
 }
 
+export class HttpTimeoutError extends Error {
+  readonly code = "ETIMEDOUT";
+
+  constructor(readonly timeoutMs: number) {
+    super(`request timed out after ${timeoutMs}ms`);
+    this.name = "HttpTimeoutError";
+  }
+}
+
+export function isHttpTimeoutError(error: unknown): boolean {
+  if (error instanceof HttpTimeoutError) return true;
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  return code === "ETIMEDOUT";
+}
+
 export async function requestJson<T = any>(
   urlString: string,
   options: {
@@ -92,7 +107,7 @@ export async function requestJson<T = any>(
         url: logUrl,
         timeoutMs: options.timeoutMs ?? 0,
       });
-      req.destroy(new Error(`request timed out after ${options.timeoutMs ?? 0}ms`));
+      req.destroy(new HttpTimeoutError(options.timeoutMs ?? 0));
     });
     if (bodyString !== undefined) {
       req.write(bodyString);
