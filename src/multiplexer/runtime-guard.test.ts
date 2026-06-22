@@ -151,11 +151,11 @@ describe("stabilizeRuntimeGuardProbe", () => {
 });
 
 describe("runtimeGuardKeyDisposition", () => {
-  it("reloads on R, passes safe nav keys, swallows everything else", () => {
-    expect(runtimeGuardKeyDisposition("R")).toBe("reload");
-    expect(runtimeGuardKeyDisposition("r")).toBe("reload");
-    expect(runtimeGuardKeyDisposition("B", { kind: "runtime-rebuild-required" })).toBe("rebuild-runtime");
-    expect(runtimeGuardKeyDisposition("b", { kind: "stale", reason: "self-drift" })).toBe("swallow");
+  it("passes safe nav keys and swallows repair/action keys", () => {
+    expect(runtimeGuardKeyDisposition("R")).toBe("swallow");
+    expect(runtimeGuardKeyDisposition("r")).toBe("swallow");
+    expect(runtimeGuardKeyDisposition("B")).toBe("swallow");
+    expect(runtimeGuardKeyDisposition("b")).toBe("swallow");
     for (const key of ["up", "down", "j", "k", "tab", "escape", "q", "?"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("passthrough");
     }
@@ -233,17 +233,15 @@ describe("buildDashboardRuntimeGuardOverlayOutput", () => {
   it("renders nothing when ok and an overlay carrying the title otherwise", () => {
     expect(buildDashboardRuntimeGuardOverlayOutput({ runtimeGuardState: { kind: "ok" } }, 120, 40)).toBeNull();
     const out = buildDashboardRuntimeGuardOverlayOutput({ runtimeGuardState: { kind: "disconnected" } }, 120, 40);
-    expect(out?.toLowerCase()).toContain("unreachable");
+    expect(out?.toLowerCase()).toContain("reconnecting");
     const rebuild = buildDashboardRuntimeGuardOverlayOutput(
       { runtimeGuardState: { kind: "runtime-rebuild-required" } },
       120,
       40,
     );
-    expect(rebuild?.toLowerCase()).toContain("rebuild");
-    expect(rebuild).toContain("b");
-    expect(rebuild).toContain("rebuild runtime");
-    expect(rebuild).toContain("q");
-    expect(rebuild).toContain("close dashboard");
+    expect(rebuild?.toLowerCase()).toContain("repairing");
+    expect(rebuild).not.toContain("rebuild runtime");
+    expect(rebuild).not.toContain("detach");
   });
 });
 
@@ -251,11 +249,11 @@ describe("handleRuntimeGuardKey", () => {
   function stubHost(state: RuntimeGuardState) {
     return {
       runtimeGuardState: state,
+      dashboardBusyState: null,
+      dashboardErrorState: null,
       footerFlash: "",
       footerFlashTicks: 0,
       renderCurrentDashboardView: vi.fn(),
-      reloadDashboardFromGuard: vi.fn(),
-      restartRuntimeFromGuard: vi.fn(),
     };
   }
 
@@ -267,8 +265,7 @@ describe("handleRuntimeGuardKey", () => {
   it("swallows a mutating key and flashes when guarded", () => {
     const host = stubHost({ kind: "stale", reason: "self-drift" });
     expect(handleRuntimeGuardKey(host, Buffer.from("n"))).toBe(true);
-    expect(host.footerFlash).toContain("press r to reload");
-    expect(host.reloadDashboardFromGuard).not.toHaveBeenCalled();
+    expect(host.footerFlash).toContain("repairing");
   });
 
   it("lets a safe nav key through when guarded", () => {
@@ -276,15 +273,21 @@ describe("handleRuntimeGuardKey", () => {
     expect(handleRuntimeGuardKey(host, Buffer.from("k"))).toBe(false);
   });
 
-  it("triggers reload on R when guarded", () => {
+  it("swallows R when guarded because repair is automatic", () => {
     const host = stubHost({ kind: "stale", reason: "service-mismatch" });
     expect(handleRuntimeGuardKey(host, Buffer.from("R"))).toBe(true);
-    expect(host.reloadDashboardFromGuard).toHaveBeenCalledTimes(1);
+    expect(host.footerFlash).toContain("repairing");
   });
 
-  it("triggers runtime rebuild on B for the runtime rebuild guard", () => {
+  it("swallows B when guarded because repair is automatic", () => {
     const host = stubHost({ kind: "runtime-rebuild-required" });
     expect(handleRuntimeGuardKey(host, Buffer.from("B"))).toBe(true);
-    expect(host.restartRuntimeFromGuard).toHaveBeenCalledTimes(1);
+    expect(host.footerFlash).toContain("repairing");
+  });
+
+  it("lets active busy/error overlays own keys before the guard", () => {
+    const host = stubHost({ kind: "stale", reason: "service-mismatch" });
+    host.dashboardErrorState = { title: "Failed", lines: ["boom"] };
+    expect(handleRuntimeGuardKey(host, Buffer.from("n"))).toBe(false);
   });
 });
