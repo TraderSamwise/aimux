@@ -348,6 +348,85 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
+  it("records and notifies restart repair diagnostics", async () => {
+    const repairNotifier = {
+      record: vi.fn(),
+      notify: vi.fn(),
+    };
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      repairNotifier,
+    });
+
+    expect(repairNotifier.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRoot: "/repo/alpha",
+        action: "control-plane-restart",
+        status: "repaired",
+      }),
+    );
+    expect(repairNotifier.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRoot: "/repo/alpha",
+        action: "dashboard-reload",
+        status: "repaired",
+      }),
+    );
+    expect(repairNotifier.notify).toHaveBeenCalledWith(
+      "Aimux repaired itself",
+      expect.stringContaining("repair steps"),
+    );
+  });
+
+  it("does not fail restart when repair diagnostics fail", async () => {
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      repairNotifier: {
+        record: () => {
+          throw new Error("disk full");
+        },
+        notify: () => {
+          throw new Error("notifications denied");
+        },
+      },
+    });
+
+    expect(result.summary.failures).toBe(0);
+  });
+
   it("scoped restart forces the scoped project service and dashboard", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",

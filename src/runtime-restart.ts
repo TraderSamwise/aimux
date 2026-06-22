@@ -17,6 +17,7 @@ import {
 import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { commandArgValueMatches } from "./process-args.js";
+import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
 
@@ -107,6 +108,7 @@ export interface RestartAimuxControlPlaneOptions {
   verifyAfterRestart?: boolean;
   verificationTimeoutMs?: number;
   verificationIntervalMs?: number;
+  repairNotifier?: RepairNotifier | null;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -574,7 +576,7 @@ export async function restartAimuxControlPlane(
     });
   }
   const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
-  return {
+  const result: RuntimeRestartResult = {
     startedAt: before.generatedAt,
     finishedAt: now().toISOString(),
     before,
@@ -593,6 +595,84 @@ export async function restartAimuxControlPlane(
       failures,
     },
   };
+  emitRepairDiagnostics(result, options.repairNotifier === undefined ? defaultRepairNotifier : options.repairNotifier);
+  return result;
+}
+
+function emitRepairDiagnostics(result: RuntimeRestartResult, notifier: RepairNotifier | null): void {
+  if (!notifier) return;
+  const events = buildRepairEvents(result);
+  for (const event of events) {
+    try {
+      notifier.record(event);
+    } catch {}
+  }
+  if (events.length === 0) return;
+  const repaired = events.filter((event) => event.status === "repaired").length;
+  const failed = events.filter((event) => event.status === "failed").length;
+  const message =
+    failed > 0 ? `${repaired} repair steps completed, ${failed} failed.` : `${repaired} repair steps completed.`;
+  try {
+    notifier.notify(failed > 0 ? "Aimux repair needs attention" : "Aimux repaired itself", message);
+  } catch {}
+}
+
+function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
+  const events: RepairEvent[] = [];
+  const controlStatus = result.summary.failures > 0 ? "failed" : "repaired";
+  for (const project of result.projects) {
+    events.push({
+      ts: result.finishedAt,
+      projectRoot: project.projectRoot,
+      action: "control-plane-restart",
+      reason: result.daemon.previous ? "daemon restarted" : "daemon started",
+      status: controlStatus,
+      details: {
+        previousDaemonPid: result.daemon.previous?.pid ?? null,
+        currentDaemonPid: result.daemon.current.pid,
+      },
+    });
+    if (project.runtime.status === "repaired" || project.runtime.status === "failed") {
+      events.push({
+        ts: result.finishedAt,
+        projectRoot: project.projectRoot,
+        action: "tmux-runtime-repair",
+        reason: project.runtimeRebuildRequired ? "runtime contract drift" : "runtime marker cleanup",
+        status: project.runtime.status,
+        details: { error: project.runtime.error },
+      });
+    }
+    if (project.service.status === "ensured" || project.service.status === "failed") {
+      const beforeProject = result.before.projects.find((entry) => entry.projectRoot === project.projectRoot);
+      events.push({
+        ts: result.finishedAt,
+        projectRoot: project.projectRoot,
+        action: "project-service-ensure",
+        reason: `pre-restart service status: ${beforeProject?.service.status ?? "unknown"}`,
+        status: project.service.status === "ensured" ? "repaired" : "failed",
+        details: {
+          previousPid: beforeProject?.service.pid ?? null,
+          currentPid: project.service.state?.pid ?? null,
+          error: project.service.error,
+        },
+      });
+    }
+    if (project.dashboard.status === "reloaded" || project.dashboard.status === "failed") {
+      events.push({
+        ts: result.finishedAt,
+        projectRoot: project.projectRoot,
+        action: "dashboard-reload",
+        reason: "dashboard process resync",
+        status: project.dashboard.status === "reloaded" ? "repaired" : "failed",
+        details: {
+          sessionName: project.dashboard.sessionName,
+          target: project.dashboard.target,
+          error: project.dashboard.error,
+        },
+      });
+    }
+  }
+  return events;
 }
 
 export function renderRuntimeRestartResult(result: RuntimeRestartResult): string {
