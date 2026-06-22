@@ -53,11 +53,28 @@ describe("MetadataServer threads API", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("exposes project service resource diagnostics in health", async () => {
+  it("keeps project service health cheap", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
 
     const response = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      pid: process.pid,
+      serviceInfo: expect.any(Object),
+    });
+    expect(json.resources).toBeUndefined();
+    expect(json.recentSlowRequests).toBeUndefined();
+    expect(json.plugins).toBeUndefined();
+  });
+
+  it("exposes project service resource diagnostics separately from health", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
     const json = await response.json();
 
     expect(json).toMatchObject({
@@ -96,7 +113,7 @@ describe("MetadataServer threads API", () => {
     expect(endpoint).toBeTruthy();
 
     await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`);
-    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
     const json = await health.json();
 
     expect(json.recentSlowRequests).toEqual([
@@ -126,7 +143,7 @@ describe("MetadataServer threads API", () => {
     await stream.body?.cancel().catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const health = await fetch(`${base}/health`);
+    const health = await fetch(`${base}/diagnostics`);
     const json = await health.json();
     expect(json.recentSlowRequests).toEqual([]);
   });
@@ -152,7 +169,7 @@ describe("MetadataServer threads API", () => {
     const endpoint = server.getAddress();
     expect(endpoint).toBeTruthy();
 
-    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
     const json = await health.json();
 
     expect(json.plugins).toEqual([
@@ -188,6 +205,36 @@ describe("MetadataServer threads API", () => {
     server.notifyChange();
     const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
     expect(third.seq).toBe(2);
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates desktop-state cache when alerts publish project updates", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    server.getEventBus().publishAlert({
+      kind: "needs_input",
+      title: "Needs input",
+      message: "Agent needs input",
+      sessionId: "agent-1",
+      cooldownMs: 0,
+    });
+    const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+
+    expect(second.seq).toBe(2);
     expect(getState).toHaveBeenCalledTimes(2);
   });
 

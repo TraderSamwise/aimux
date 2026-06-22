@@ -152,8 +152,18 @@ async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   removeMetadataEndpoint(projectRoot);
   const result = await restartAimuxControlPlane({ projectRoot });
   const project = result.projects.find((entry) => entry.projectRoot === projectRoot);
+  if (!project) throw new Error("failed to restart project service: project was not included in restart result");
+  if (project.runtime.status === "failed") {
+    throw new Error(project.runtime.error ?? "failed to repair tmux runtime");
+  }
   if (project?.service.status === "failed") {
     throw new Error(project.service.error ?? "failed to restart project service");
+  }
+  if (project.dashboard.status === "failed") {
+    throw new Error(project.dashboard.error ?? "failed to reload dashboard");
+  }
+  if (result.verification.status === "failed") {
+    throw new Error(result.verification.error ?? "post-restart verification failed");
   }
 }
 
@@ -878,7 +888,7 @@ program
         }
       }
 
-      const mux = new Multiplexer();
+      const mux = new Multiplexer({ contextWatcherEnabled: !opts.tmuxDashboardInternal });
       let cleanedUp = false;
       const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
       const cleanupAll = async () => {

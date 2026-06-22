@@ -1,6 +1,7 @@
 export const PROJECT_API_ROUTES = {
   events: "/events",
   health: "/health",
+  diagnostics: "/diagnostics",
   state: "/state",
   desktopState: "/desktop-state",
   coordinationWorklist: "/coordination-worklist",

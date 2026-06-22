@@ -54,9 +54,9 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 This installs the bundled release under `~/.aimux/native/` and links `aimux` into `~/.local/bin`.
 It still requires Node.js >= 24 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
 When replacing an existing install, the installer automatically runs the safe `aimux restart`
-repair: daemon restart, project-service re-ensure, and dashboard reloads. It does not kill agent
-tmux windows. If a release ever requires a destructive tmux runtime rebuild, affected dashboards
-show a blocking rebuild warning instead.
+repair: daemon restart, project-service re-ensure, managed tmux contract repair, and dashboard
+reloads. It does not kill agent tmux windows. If Aimux has to repair itself, it records the reason
+in the project repair log and sends a quiet desktop notification.
 
 To install a specific version:
 
@@ -200,11 +200,8 @@ Runtime lifecycle:
 
 ```bash
 aimux                         # open or attach to the current project runtime
-aimux restart                 # restart daemon/services and reload all known dashboards
+aimux restart                 # repair daemon/services/tmux contracts and reload known dashboards
 aimux doctor versions         # inspect daemon/service/dashboard build coherence
-aimux repair                  # repair the current project runtime in place
-aimux dashboard-reload --open # advanced: recreate/reopen one dashboard window only
-aimux restart-runtime --open  # hard restart the current project runtime
 aimux stop                    # stop the current project runtime
 ```
 
@@ -298,6 +295,7 @@ AIMUX_LOG=1 AIMUX_LOG_CATEGORIES=daemon,session,tmux aimux
 ```
 
 - Project logs are written under `~/.aimux/projects/<project-id>/logs/aimux.jsonl`.
+- Automatic repair diagnostics are written under `~/.aimux/projects/<project-id>/logs/repairs.jsonl`.
 - Daemon logs are written under `~/.aimux/daemon/logs/daemon.jsonl`.
 - Child stdout/stderr is captured separately as `daemon-stdio.log` or `project-service-stdio.log` when logging is enabled.
 
@@ -309,19 +307,19 @@ aimux logs tail --daemon
 aimux logs clear
 ```
 
-- Manual recovery is now:
+- Normal recovery is now:
 
 ```bash
 aimux restart
 aimux doctor versions
 ```
 
-- Project-scoped repair remains available when the tmux topology, statusline, or a single project runtime needs attention:
+- Advanced/debug repair commands still exist, but they are not the normal user path:
 
 ```bash
 aimux repair
-# or, for a full project-scoped rebuild
 aimux restart-runtime --open
+aimux dashboard-reload --open
 ```
 
 Daemon rebuild quirk:
@@ -331,8 +329,8 @@ Daemon rebuild quirk:
 - More generally: if you change any `src/*.ts` runtime or CLI behavior, rebuild before testing or asking someone else to test.
 - `yarn vitest` / `yarn typecheck` validate source, but they do not update the runtime artifact that `aimux` actually executes.
 - If a daemon or project dashboard is already running, run the coherent restart after rebuilding.
-- `aimux restart` restarts the daemon, re-ensures known project services, and reloads existing dashboard windows without killing agent tmux windows.
-- `aimux restart-runtime --open` is the destructive project-scoped reset; use it when the managed tmux runtime itself must be rebuilt.
+- `aimux restart` restarts the daemon, re-ensures known project services, repairs managed tmux contract drift in place, and reloads existing dashboard windows without killing agent tmux windows.
+- Lower-level repair commands are advanced/debug plumbing; user-facing stale dashboard and tmux drift handling should route through `aimux restart`.
 
 ```bash
 yarn build

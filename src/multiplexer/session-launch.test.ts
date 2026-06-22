@@ -1569,7 +1569,7 @@ describe("runDashboard", () => {
     expect(host.writeDashboardClientStatuslineFile).toHaveBeenCalledOnce();
   });
 
-  it("lets the runtime guard swallow keys before active overlays see them", async () => {
+  it("lets the runtime guard block mutating active-overlay keys", async () => {
     const host: any = {
       startHeartbeat: vi.fn(),
       startedInDashboard: false,

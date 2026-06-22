@@ -14,15 +14,24 @@ import {
   type BuildRuntimeCoherenceReportOptions,
   type RuntimeCoherenceReport,
 } from "./runtime-coherence.js";
-import { TMUX_RUNTIME_REBUILD_REQUIRED_OPTION } from "./runtime-owner.js";
+import {
+  AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+  TMUX_RUNTIME_CONTRACT_OPTION,
+  TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
+} from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { commandArgValueMatches } from "./process-args.js";
+import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
 
-export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "skipped" | "failed";
+export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
 
 export interface RuntimeRestartProjectResult {
   projectRoot: string;
   runtimeRebuildRequired: boolean;
+  runtime: {
+    status: RuntimeRestartStepStatus;
+    error: string | null;
+  };
   service: {
     status: RuntimeRestartStepStatus;
     state: ProjectServiceState | null;
@@ -53,6 +62,7 @@ export interface RuntimeRestartResult {
   summary: {
     projects: number;
     servicesEnsured: number;
+    runtimeRepairs: number;
     dashboardsReloaded: number;
     runtimeRebuildRequired: number;
     failures: number;
@@ -71,6 +81,7 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       | "linkWindowToSession"
       | "selectWindow"
       | "setSessionOption"
+      | "configureManagedSession"
     >
   >;
 
@@ -101,6 +112,7 @@ export interface RestartAimuxControlPlaneOptions {
   verifyAfterRestart?: boolean;
   verificationTimeoutMs?: number;
   verificationIntervalMs?: number;
+  repairNotifier?: RepairNotifier | null;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -115,6 +127,10 @@ function emptyProjectResult(projectRoot: string): RuntimeRestartProjectResult {
   return {
     projectRoot,
     runtimeRebuildRequired: false,
+    runtime: {
+      status: "skipped",
+      error: null,
+    },
     service: {
       status: "skipped",
       state: null,
@@ -142,7 +158,7 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   );
 }
 
-function selectRuntimeRebuildProjectRoots(before: RuntimeCoherenceReport): Set<string> {
+function selectRuntimeRepairProjectRoots(before: RuntimeCoherenceReport): Set<string> {
   return new Set(
     before.projects.filter((project) => project.runtime.rebuildRequired).map((project) => project.projectRoot),
   );
@@ -191,37 +207,87 @@ function relinkDashboardToClientSessions(
     if (!sessionName.startsWith(`${hostSession}-client-`)) continue;
     const windows = tmux.listWindows(sessionName);
     const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
-    const missingDashboard = !windows.some((window) => window.name.startsWith("dashboard"));
     if (alreadyLinked) continue;
-    let linked: TmuxTarget;
     try {
-      linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
+      tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
     } catch {
-      linked = tmux.linkWindowToSession(sessionName, dashboardTarget);
-    }
-    if (missingDashboard && tmux.selectWindow) {
-      try {
-        tmux.selectWindow(linked);
-      } catch {}
+      tmux.linkWindowToSession(sessionName, dashboardTarget);
     }
   }
 }
 
-function markRuntimeRebuildRequired(input: {
-  projectRoots: string[];
-  runtimeRebuildProjectRoots: Set<string>;
-  tmux: RuntimeRestartTmux;
-}): void {
-  if (!input.tmux.isAvailable() || !input.tmux.getProjectSession || !input.tmux.setSessionOption) return;
-  for (const projectRoot of input.projectRoots) {
-    const value = input.runtimeRebuildProjectRoots.has(projectRoot) ? "1" : "0";
-    try {
-      input.tmux.setSessionOption(
-        input.tmux.getProjectSession(projectRoot).sessionName,
-        TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
-        value,
+function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRestartTmux): TmuxTarget[] {
+  if (!tmux.isAvailable() || !tmux.getProjectSession || !tmux.listSessionNames || !tmux.listWindows) return [];
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  return tmux
+    .listSessionNames()
+    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .map((sessionName) => {
+      const active = tmux.listWindows!(sessionName).find(
+        (window) => window.active && !window.name.startsWith("dashboard"),
       );
+      return active
+        ? {
+            sessionName,
+            windowId: active.id,
+            windowIndex: active.index,
+            windowName: active.name,
+          }
+        : null;
+    })
+    .filter((target): target is TmuxTarget => Boolean(target));
+}
+
+function restoreActiveWindows(tmux: RuntimeRestartTmux, targets: TmuxTarget[]): void {
+  if (!tmux.isAvailable() || !tmux.hasWindow || !tmux.selectWindow) return;
+  for (const target of targets) {
+    try {
+      if (tmux.hasWindow(target)) tmux.selectWindow(target);
     } catch {}
+  }
+}
+
+function repairRuntimeContract(input: {
+  projectRoot: string;
+  tmux: RuntimeRestartTmux;
+  required: boolean;
+}): RuntimeRestartProjectResult["runtime"] {
+  if (!input.tmux.isAvailable() || !input.tmux.getProjectSession || !input.tmux.setSessionOption) {
+    return input.required
+      ? { status: "failed", error: "tmux runtime repair is unavailable" }
+      : { status: "skipped", error: null };
+  }
+
+  const hostSession = input.tmux.getProjectSession(input.projectRoot).sessionName;
+  try {
+    const repairedSessions = [hostSession];
+    if (input.required) {
+      if (!input.tmux.configureManagedSession) {
+        throw new Error("tmux runtime reconfiguration is unavailable");
+      }
+      input.tmux.configureManagedSession(hostSession, input.projectRoot);
+      if (input.tmux.listSessionNames) {
+        for (const sessionName of input.tmux.listSessionNames()) {
+          if (sessionName.startsWith(`${hostSession}-client-`)) {
+            input.tmux.configureManagedSession(sessionName, input.projectRoot);
+            repairedSessions.push(sessionName);
+          }
+        }
+      }
+    }
+    try {
+      for (const sessionName of repairedSessions) {
+        if (input.required) {
+          input.tmux.setSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION, AIMUX_TMUX_RUNTIME_CONTRACT_VERSION);
+        }
+        input.tmux.setSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0");
+      }
+    } catch (error) {
+      if (input.required) throw error;
+    }
+    return input.required ? { status: "repaired", error: null } : { status: "skipped", error: null };
+  } catch (error) {
+    return { status: "failed", error: errorMessage(error) };
   }
 }
 
@@ -358,19 +424,18 @@ async function verifyPostRestartCoherence(input: {
     try {
       const after = await input.buildRuntimeCoherenceReport(input.coherence);
       latestAfter = after;
+      const afterProjectRoots = new Set(after.projects.map((project) => project.projectRoot));
+      const missingProjects = [...input.projectRoots].filter((projectRoot) => !afterProjectRoots.has(projectRoot));
       const failedProjects = after.projects
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
           if (project.status === "ok") return false;
-          const runtimeOnly =
-            project.runtime.rebuildRequired &&
-            project.service.status === "ok" &&
-            project.dashboards.every((dashboard) => dashboard.status === "ok");
-          return !runtimeOnly;
+          return true;
         })
         .map((project) => project.projectRoot);
+      const unhealthyProjects = [...missingProjects, ...failedProjects];
       latestError =
-        failedProjects.length === 0 ? null : `post-restart version check failed for ${failedProjects.join(", ")}`;
+        unhealthyProjects.length === 0 ? null : `post-restart version check failed for ${unhealthyProjects.join(", ")}`;
       if (!latestError) {
         return {
           status: "ok",
@@ -402,7 +467,7 @@ export async function restartAimuxControlPlane(
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
   const verificationProjectRoots = options.projectRoot ? new Set([options.projectRoot]) : new Set(projectRoots);
-  const runtimeRebuildProjectRoots = selectRuntimeRebuildProjectRoots(before);
+  const runtimeRepairProjectRoots = selectRuntimeRepairProjectRoots(before);
   const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
     const pid = project.service.pid;
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return [];
@@ -460,12 +525,16 @@ export async function restartAimuxControlPlane(
     ((projectRoot, tmux, resolveOptions) =>
       resolveDashboardTarget(projectRoot, tmux as TmuxRuntimeManager, resolveOptions));
   const tmuxAvailable = tmux.isAvailable();
-  markRuntimeRebuildRequired({ projectRoots, runtimeRebuildProjectRoots, tmux });
   const projects: RuntimeRestartProjectResult[] = [];
 
   for (const projectRoot of projectRoots) {
     const result = emptyProjectResult(projectRoot);
-    result.runtimeRebuildRequired = runtimeRebuildProjectRoots.has(projectRoot);
+    result.runtimeRebuildRequired = runtimeRepairProjectRoots.has(projectRoot);
+    result.runtime = repairRuntimeContract({
+      projectRoot,
+      tmux,
+      required: runtimeRepairProjectRoots.has(projectRoot),
+    });
     try {
       result.service.state = await ensureService(projectRoot);
       result.service.status = "ensured";
@@ -481,8 +550,10 @@ export async function restartAimuxControlPlane(
       result.dashboard.error = "tmux is not installed or not available in PATH";
     } else {
       try {
+        const activeWindows = captureActiveNonDashboardWindows(projectRoot, tmux);
         const resolved = resolveDashboard(projectRoot, tmux, { forceReload: true, openInHostSession: true });
         relinkDashboardToClientSessions(projectRoot, tmux, resolved.dashboardTarget);
+        restoreActiveWindows(tmux, activeWindows);
         result.dashboard.status = "reloaded";
         result.dashboard.sessionName = resolved.dashboardSession.sessionName;
         result.dashboard.target = resolved.dashboardTarget;
@@ -496,7 +567,10 @@ export async function restartAimuxControlPlane(
   }
 
   const projectFailures = projects.filter(
-    (project) => project.service.status === "failed" || project.dashboard.status === "failed",
+    (project) =>
+      project.runtime.status === "failed" ||
+      project.service.status === "failed" ||
+      project.dashboard.status === "failed",
   ).length;
   const shouldVerifyAfterRestart = options.verifyAfterRestart ?? !options.buildRuntimeCoherenceReport;
   let verification: RuntimeRestartResult["verification"] = {
@@ -515,7 +589,7 @@ export async function restartAimuxControlPlane(
     });
   }
   const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
-  return {
+  const result: RuntimeRestartResult = {
     startedAt: before.generatedAt,
     finishedAt: now().toISOString(),
     before,
@@ -528,11 +602,90 @@ export async function restartAimuxControlPlane(
     summary: {
       projects: projects.length,
       servicesEnsured: projects.filter((project) => project.service.status === "ensured").length,
+      runtimeRepairs: projects.filter((project) => project.runtime.status === "repaired").length,
       dashboardsReloaded: projects.filter((project) => project.dashboard.status === "reloaded").length,
       runtimeRebuildRequired: projects.filter((project) => project.runtimeRebuildRequired).length,
       failures,
     },
   };
+  emitRepairDiagnostics(result, options.repairNotifier === undefined ? defaultRepairNotifier : options.repairNotifier);
+  return result;
+}
+
+function emitRepairDiagnostics(result: RuntimeRestartResult, notifier: RepairNotifier | null): void {
+  if (!notifier) return;
+  const events = buildRepairEvents(result);
+  for (const event of events) {
+    try {
+      notifier.record(event);
+    } catch {}
+  }
+  if (events.length === 0) return;
+  const repaired = events.filter((event) => event.status === "repaired").length;
+  const failed = events.filter((event) => event.status === "failed").length;
+  const message =
+    failed > 0 ? `${repaired} repair steps completed, ${failed} failed.` : `${repaired} repair steps completed.`;
+  try {
+    notifier.notify(failed > 0 ? "Aimux repair needs attention" : "Aimux repaired itself", message);
+  } catch {}
+}
+
+function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
+  const events: RepairEvent[] = [];
+  const controlStatus = result.summary.failures > 0 ? "failed" : "repaired";
+  for (const project of result.projects) {
+    events.push({
+      ts: result.finishedAt,
+      projectRoot: project.projectRoot,
+      action: "control-plane-restart",
+      reason: result.daemon.previous ? "daemon restarted" : "daemon started",
+      status: controlStatus,
+      details: {
+        previousDaemonPid: result.daemon.previous?.pid ?? null,
+        currentDaemonPid: result.daemon.current.pid,
+      },
+    });
+    if (project.runtime.status === "repaired" || project.runtime.status === "failed") {
+      events.push({
+        ts: result.finishedAt,
+        projectRoot: project.projectRoot,
+        action: "tmux-runtime-repair",
+        reason: project.runtimeRebuildRequired ? "runtime contract drift" : "runtime marker cleanup",
+        status: project.runtime.status,
+        details: { error: project.runtime.error },
+      });
+    }
+    if (project.service.status === "ensured" || project.service.status === "failed") {
+      const beforeProject = result.before.projects.find((entry) => entry.projectRoot === project.projectRoot);
+      events.push({
+        ts: result.finishedAt,
+        projectRoot: project.projectRoot,
+        action: "project-service-ensure",
+        reason: `pre-restart service status: ${beforeProject?.service.status ?? "unknown"}`,
+        status: project.service.status === "ensured" ? "repaired" : "failed",
+        details: {
+          previousPid: beforeProject?.service.pid ?? null,
+          currentPid: project.service.state?.pid ?? null,
+          error: project.service.error,
+        },
+      });
+    }
+    if (project.dashboard.status === "reloaded" || project.dashboard.status === "failed") {
+      events.push({
+        ts: result.finishedAt,
+        projectRoot: project.projectRoot,
+        action: "dashboard-reload",
+        reason: "dashboard process resync",
+        status: project.dashboard.status === "reloaded" ? "repaired" : "failed",
+        details: {
+          sessionName: project.dashboard.sessionName,
+          target: project.dashboard.target,
+          error: project.dashboard.error,
+        },
+      });
+    }
+  }
+  return events;
 }
 
 export function renderRuntimeRestartResult(result: RuntimeRestartResult): string {
@@ -541,26 +694,23 @@ export function renderRuntimeRestartResult(result: RuntimeRestartResult): string
     `  daemon: ${result.daemon.previous ? `restarted pid=${result.daemon.previous.pid}` : "started"} -> pid=${result.daemon.current.pid}`,
     `  projects: ${result.summary.projects}`,
     `  services ensured: ${result.summary.servicesEnsured}`,
+    `  runtime repaired: ${result.summary.runtimeRepairs}`,
     `  dashboards reloaded: ${result.summary.dashboardsReloaded}`,
-    `  runtime rebuild required: ${result.summary.runtimeRebuildRequired}`,
     `  failures: ${result.summary.failures}`,
   ];
 
   if (result.summary.runtimeRebuildRequired > 0) {
     lines.push("");
-    lines.push("Runtime rebuild required:");
+    lines.push("Runtime repaired:");
     for (const project of result.projects.filter((entry) => entry.runtimeRebuildRequired)) {
       lines.push(`  ${project.projectRoot}`);
     }
-    lines.push("Control plane repair completed without killing agents.");
-    lines.push("The dashboard will show a rebuild warning; manual command:");
-    lines.push("  aimux restart-runtime --project-root <project> --open");
   }
 
   for (const project of result.projects) {
     lines.push("");
     lines.push(`Project: ${project.projectRoot}`);
-    if (project.runtimeRebuildRequired) lines.push("  runtime: rebuild required");
+    lines.push(`  runtime: ${project.runtime.status}${project.runtime.error ? ` (${project.runtime.error})` : ""}`);
     lines.push(`  service: ${project.service.status}${project.service.error ? ` (${project.service.error})` : ""}`);
     lines.push(
       `  dashboard: ${project.dashboard.status}${project.dashboard.target ? ` ${project.dashboard.sessionName}:${project.dashboard.target.windowId}` : ""}${project.dashboard.error ? ` (${project.dashboard.error})` : ""}`,

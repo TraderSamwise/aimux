@@ -1,4 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectServiceManifest } from "../project-service-manifest.js";
 
@@ -36,6 +40,22 @@ vi.mock("../daemon.js", () => ({
 vi.mock("node:child_process", () => ({
   spawn: mocks.spawn,
 }));
+
+let previousAimuxHome: string | undefined;
+let testAimuxHome: string | null = null;
+
+beforeEach(() => {
+  previousAimuxHome = process.env.AIMUX_HOME;
+  testAimuxHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-control-"));
+  process.env.AIMUX_HOME = testAimuxHome;
+});
+
+afterEach(() => {
+  if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+  else process.env.AIMUX_HOME = previousAimuxHome;
+  if (testAimuxHome) rmSync(testAimuxHome, { recursive: true, force: true });
+  testAimuxHome = null;
+});
 
 describe("postToProjectService", () => {
   beforeEach(() => {
@@ -410,45 +430,197 @@ describe("showOrchestrationRoutePicker", () => {
   });
 });
 
-describe("reloadDashboardFromGuard", () => {
-  it("uses PATH aimux for dashboard reloads", async () => {
-    const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
+describe("startRuntimeGuardRepair", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not repair transient disconnected service states", async () => {
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    startRuntimeGuardRepair(host as never, { kind: "disconnected" });
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
+  });
+
+  it("uses PATH aimux restart for guarded repair", async () => {
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     const originalArgv = process.argv[1];
     const originalCliBin = process.env.AIMUX_CLI_BIN;
     process.argv[1] = "/Users/sam/cs/aimux/dist/main.js";
     delete process.env.AIMUX_CLI_BIN;
-    const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
 
     try {
-      reloadDashboardFromGuard(host as never);
+      startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
     } finally {
       process.argv[1] = originalArgv;
       if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
       else process.env.AIMUX_CLI_BIN = originalCliBin;
     }
 
-    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["dashboard-reload", "--open"], {
+    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart", "--project", "/repo/app"], {
       detached: true,
       stdio: "ignore",
     });
+    expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
-  it("shows a footer failure when the reload child emits an error", async () => {
-    let onError: (() => void) | undefined;
+  it("does not spawn a second guarded repair while another dashboard owns the repair lock", async () => {
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const firstHost = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+    const secondHost = {
+      projectRoot: "/repo/other",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    startRuntimeGuardRepair(firstHost as never, { kind: "stale", reason: "service-mismatch" });
+    startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(secondHost.dashboardBusyState).toMatchObject({
+      title: "Repairing Aimux",
+      lines: ["Another dashboard is repairing the local control plane."],
+    });
+    expect(secondHost.runtimeGuardRepairBusy).toBe(true);
+  });
+
+  it("reclaims a repair lock owned by an exited repair child", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
+      if (pid === 987654) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      return true;
+    }) as typeof process.kill);
+    mocks.spawn
+      .mockReturnValueOnce({ pid: 987654, on: vi.fn(), unref: vi.fn() })
+      .mockReturnValueOnce({ pid: 987655, on: vi.fn(), unref: vi.fn() });
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const firstHost = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+    const secondHost = {
+      projectRoot: "/repo/other",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startRuntimeGuardRepair(firstHost as never, { kind: "stale", reason: "service-mismatch" });
+      startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
+    } finally {
+      killSpy.mockRestore();
+    }
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a dashboard error when guarded repair fails to spawn", async () => {
+    let onError: ((error: Error) => void) | undefined;
     mocks.spawn.mockReturnValueOnce({
-      on: vi.fn((event: string, handler: () => void) => {
+      on: vi.fn((event: string, handler: (error: Error) => void) => {
         if (event === "error") onError = handler;
       }),
       unref: vi.fn(),
     });
-    const { reloadDashboardFromGuard } = await import("./dashboard-control.js");
-    const host = { footerFlash: "", footerFlashTicks: 0, renderCurrentDashboardView: vi.fn() };
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
 
-    reloadDashboardFromGuard(host as never);
-    onError?.();
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
+    onError?.(new Error("spawn failed"));
 
-    expect(host.footerFlash).toContain("Reload failed");
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
+    expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["spawn failed"]);
+  });
+
+  it("does not repeatedly spawn repair for the same guarded state after failure", async () => {
+    let onError: ((error: Error) => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: (error: Error) => void) => {
+        if (event === "error") onError = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    const state = { kind: "stale", reason: "self-drift" } as const;
+
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    startRuntimeGuardRepair(host as never, state);
+    onError?.(new Error("spawn failed"));
+    startRuntimeGuardRepair(host as never, state);
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears busy state when guarded repair exits successfully", async () => {
+    let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+        if (event === "exit") onExit = handler;
+      }),
+      unref: vi.fn(),
+    });
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      runtimeGuardState: { kind: "stale", reason: "service-mismatch" },
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
+    onExit?.(0, null);
+
+    expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.runtimeGuardState).toEqual({ kind: "ok" });
   });
 
   it("uses AIMUX_CLI_BIN when the install shim exported a custom path", async () => {
@@ -465,76 +637,106 @@ describe("reloadDashboardFromGuard", () => {
   });
 });
 
-describe("restartRuntimeFromGuard", () => {
-  it("uses PATH aimux for guarded runtime rebuilds", async () => {
-    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
-    const originalCliBin = process.env.AIMUX_CLI_BIN;
-    delete process.env.AIMUX_CLI_BIN;
-    const host = {
+describe("refreshRuntimeGuard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+  });
+
+  function runtimeGuardHost() {
+    return {
+      mode: "dashboard",
       projectRoot: "/repo/app",
-      footerFlash: "",
-      footerFlashTicks: 0,
+      runtimeGuardState: { kind: "ok" },
+      runtimeGuardDisconnectProbeCount: 0,
+      runtimeGuardProbing: false,
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
       renderCurrentDashboardView: vi.fn(),
     };
+  }
 
-    try {
-      restartRuntimeFromGuard(host as never);
-    } finally {
-      if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
-      else process.env.AIMUX_CLI_BIN = originalCliBin;
-    }
+  it("does not restart Aimux for repeated disconnected health probes", async () => {
+    mocks.requestJson.mockRejectedValue(new Error("request timed out after 250ms"));
+    const host = runtimeGuardHost();
+    host.runtimeGuardDisconnectProbeCount = 1;
 
-    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart-runtime", "--project-root", "/repo/app", "--open"], {
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "disconnected" });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
+  });
+
+  it("still restarts Aimux when the service manifest is stale", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: {
+        ok: true,
+        pid: 2,
+        serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
+      },
+    });
+    const host = runtimeGuardHost();
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
+    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart", "--project", "/repo/app"], {
       detached: true,
       stdio: "ignore",
     });
+    expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
-  it("passes the active tmux client tty when rebuilding from the guard", async () => {
-    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
-    const host = {
-      projectRoot: "/repo/app",
-      footerFlash: "",
-      footerFlashTicks: 0,
-      renderCurrentDashboardView: vi.fn(),
-      tmuxRuntimeManager: {
-        displayMessage: vi.fn(() => "/dev/ttys123"),
-      },
-    };
-
-    restartRuntimeFromGuard(host as never);
-
-    expect(mocks.spawn).toHaveBeenCalledWith(
-      "aimux",
-      ["restart-runtime", "--project-root", "/repo/app", "--open", "--client-tty", "/dev/ttys123"],
-      {
-        detached: true,
-        stdio: "ignore",
-      },
-    );
-  });
-
-  it("shows a footer failure when the runtime rebuild child emits an error", async () => {
-    let onError: (() => void) | undefined;
-    mocks.spawn.mockReturnValueOnce({
-      on: vi.fn((event: string, handler: () => void) => {
-        if (event === "error") onError = handler;
-      }),
-      unref: vi.fn(),
+  it("keeps the repair overlay while a spawned repair is still running", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() },
     });
-    const { restartRuntimeFromGuard } = await import("./dashboard-control.js");
-    const host = {
-      projectRoot: "/repo/app",
-      footerFlash: "",
-      footerFlashTicks: 0,
-      renderCurrentDashboardView: vi.fn(),
+    const host = runtimeGuardHost();
+    host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
+    host.runtimeGuardRepairing = true;
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "ok" });
+    expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
+  });
+
+  it("clears a competing-repair overlay after the guard recovers", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() },
+    });
+    const host = runtimeGuardHost();
+    host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = {
+      title: "Repairing Aimux",
+      lines: ["Another dashboard is repairing the local control plane."],
+      spinnerFrame: 0,
+      startedAt: Date.now(),
     };
 
-    restartRuntimeFromGuard(host as never);
-    onError?.();
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
 
-    expect(host.footerFlash).toContain("Runtime rebuild failed");
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
+    expect(host.runtimeGuardState).toEqual({ kind: "ok" });
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.runtimeGuardRepairBusy).toBe(false);
   });
 });
 
