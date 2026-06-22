@@ -99,13 +99,15 @@ describe("thread subscreen navigation", () => {
     };
 
     await runThreadHandoffAction(host, "accept", "thread-1");
-    await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true }));
+    await vi.waitFor(() => {
+      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+      expect(host.renderCoordination).toHaveBeenCalledOnce();
+    });
 
     expect(host.postToProjectService).toHaveBeenCalledWith("/handoff/accept", {
       threadId: "thread-1",
       from: "user",
     });
-    expect(host.renderCoordination).toHaveBeenCalledOnce();
   });
 
   it("forces coordination refresh before selecting a relevant thread", async () => {
