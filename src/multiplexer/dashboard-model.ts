@@ -1021,7 +1021,10 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
         if (!isDesktopStateDashboardModel(json)) throw new Error("invalid desktop-state payload");
         return json;
       },
-      { timeoutMs: force ? DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS : DESKTOP_STATE_REFRESH_TIMEOUT_MS },
+      {
+        timeoutMs: force ? DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS : DESKTOP_STATE_REFRESH_TIMEOUT_MS,
+        supersede: force,
+      },
     );
     if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force);
     const json = result.value;

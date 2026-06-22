@@ -63,7 +63,8 @@ export class TuiApiRuntime {
     validate: (value: unknown) => T,
     opts: TuiApiRefreshOptions = {},
   ): Promise<TuiApiRefreshResult<T>> {
-    return this.refresh(resource, async () => validate(await this.options.request(path, opts)), opts);
+    const { timeoutMs } = opts;
+    return this.refresh(resource, async () => validate(await this.options.request(path, { timeoutMs })), opts);
   }
 
   async refresh<T>(
