@@ -716,6 +716,8 @@ describe("startRuntimeGuardRepair", () => {
     onError?.(new Error("spawn failed"));
 
     expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.runtimeGuardRepairBusy).toBe(false);
+    expect(host.dashboardBusyState).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
