@@ -160,11 +160,13 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   const key = commandKey(events[0]);
   const disposition = runtimeGuardKeyDisposition(key);
   if (disposition === "passthrough") return false;
-  host.footerFlash =
+  showDashboardFooterFlash(
+    host,
     host.runtimeGuardState.kind === "disconnected"
       ? "Aimux is reconnecting to the project service"
-      : "Aimux is repairing the local control plane";
-  host.footerFlashTicks = 3;
+      : "Aimux is repairing the local control plane",
+    3,
+  );
   host.renderCurrentDashboardView();
   return true;
 }
@@ -175,6 +177,11 @@ function shouldAutoRepairRuntimeGuard(state: RuntimeGuardState): boolean {
 
 function runtimeGuardRepairKey(state: RuntimeGuardState): string {
   return state.kind === "stale" ? `${state.kind}:${state.reason}` : state.kind;
+}
+
+function showDashboardFooterFlash(host: DashboardControlHost, message: string, ticks: number): void {
+  host.footerFlash = message;
+  host.footerFlashTicks = ticks;
 }
 
 function runtimeGuardRepairLockPath(): string {
@@ -251,8 +258,7 @@ function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string
     host.showDashboardError(title, [message]);
     return;
   }
-  host.footerFlash = `${title}: ${message}`;
-  host.footerFlashTicks = 6;
+  showDashboardFooterFlash(host, `${title}: ${message}`, 6);
   host.renderCurrentDashboardView?.();
 }
 
@@ -272,12 +278,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
-    host.dashboardBusyState = {
-      title: "Repairing Aimux",
-      lines: ["Another dashboard is repairing the local control plane."],
-      spinnerFrame: 0,
-      startedAt: Date.now(),
-    };
+    showDashboardFooterFlash(host, "Aimux repair already running", 3);
     renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
     return;
   }
