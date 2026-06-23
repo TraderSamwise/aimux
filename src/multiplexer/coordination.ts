@@ -16,7 +16,7 @@ import {
   runThreadHandoffAction,
   runThreadStatusAction,
 } from "./subscreens.js";
-import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
 
 type CoordinationHost = any;
 
@@ -33,13 +33,14 @@ export function showCoordination(host: CoordinationHost): void {
   host.setDashboardScreen("coordination");
   host.writeStatuslineFile();
   renderCoordination(host);
-  const lifecycle = captureDashboardLifecycle(host, { screen: "coordination" });
-  void host
-    .refreshCoordinationFromService?.()
-    .then(() => {
-      if (isDashboardLifecycleCurrent(host, lifecycle)) renderCoordination(host);
-    })
-    .catch(() => {});
+  startDashboardLifecycleTask(
+    host,
+    { screen: "coordination" },
+    () => host.refreshCoordinationFromService?.() ?? Promise.resolve(false),
+    {
+      onSuccess: () => renderCoordination(host),
+    },
+  );
 }
 
 export function renderCoordination(host: CoordinationHost): void {
@@ -79,20 +80,30 @@ async function clearNotificationItem(host: CoordinationHost, item: WorklistItem)
 
 // Run a notification mutation through the service, then refresh + re-render. Failures flash.
 function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unknown>): void {
-  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
-  void mutate
-    .then(() => reloadCoordination(host))
-    .then(() => {
-      if (isDashboardLifecycleCurrent(host, lifecycle)) renderCoordination(host);
-    })
-    .catch(() => {
-      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
-      host.footerFlash = "Notification update failed";
-      host.footerFlashTicks = 3;
-      void reloadCoordination(host).finally(() => {
-        if (isDashboardLifecycleCurrent(host, lifecycle)) renderCoordination(host);
-      });
-    });
+  startDashboardLifecycleTask(
+    host,
+    { inputEpoch: true, screen: "coordination" },
+    async () => {
+      await mutate;
+      await reloadCoordination(host);
+    },
+    {
+      onSuccess: () => renderCoordination(host),
+      onError: () => {
+        host.footerFlash = "Notification update failed";
+        host.footerFlashTicks = 3;
+        startDashboardLifecycleTask(
+          host,
+          { inputEpoch: true, screen: "coordination" },
+          () => reloadCoordination(host),
+          {
+            onSuccess: () => renderCoordination(host),
+            onError: () => renderCoordination(host),
+          },
+        );
+      },
+    },
+  );
 }
 
 function dispatchNotificationItem(host: CoordinationHost, key: string, item: WorklistItem): void {

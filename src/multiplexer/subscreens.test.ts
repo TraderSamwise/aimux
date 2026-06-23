@@ -156,6 +156,66 @@ describe("thread subscreen navigation", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("does not flash stale notification mutation failures after later input", async () => {
+    let rejectPost!: (error: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      coordinationIndex: 0,
+      coordinationWorklist: [
+        {
+          key: "n:claude-1",
+          kind: "notification",
+          sessionId: "claude-1",
+          type: "msg",
+          bucket: "awake",
+          title: "Claude needs input",
+          urgency: 1,
+          reachability: "live",
+          actionable: true,
+          stale: false,
+          notification: {
+            key: "claude-1",
+            sessionId: "claude-1",
+            title: "Claude needs input",
+            unreadCount: 1,
+            reachability: "live",
+            actionable: true,
+            stale: false,
+            notifications: [{ id: "note-1", kind: "message", body: "hello" }],
+          },
+        },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+      postToProjectService: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectPost = reject;
+          }),
+      ),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      writeFrame: vi.fn(),
+      getViewportSize: vi.fn(() => ({ cols: 100, rows: 30 })),
+      centerInWidth: vi.fn((text: string) => text),
+      truncatePlain: vi.fn((text: string) => text),
+      wrapKeyValue: vi.fn((_key: string, value: string) => [value]),
+      dashboardState: { detailsSidebarVisible: false },
+    };
+
+    handleCoordinationKey(host, Buffer.from("r"));
+    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { sessionId: "claude-1" });
+    host.dashboardInputEpoch = 2;
+    rejectPost(new Error("late failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(host.footerFlash).toBeUndefined();
+    expect(host.refreshCoordinationFromService).not.toHaveBeenCalled();
+    expect(host.writeFrame).not.toHaveBeenCalled();
+  });
+
   it("forces coordination refresh before selecting a relevant thread", async () => {
     const thread = createThread({
       id: "thread-force",

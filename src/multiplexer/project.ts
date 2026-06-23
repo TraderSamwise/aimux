@@ -3,6 +3,7 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderProjectScreen } from "../tui/screens/subscreen-renderers.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
 
 type ProjectHost = any;
 interface ApiViewRefreshOptions {
@@ -116,8 +117,10 @@ export function showProject(host: ProjectHost): void {
   host.setDashboardScreen("project");
   host.writeStatuslineFile();
   renderProject(host);
-  void refreshProjectObservability(host).then((refreshed) => {
-    if (refreshed && host.isDashboardScreen?.("project")) renderProject(host);
+  startDashboardLifecycleTask(host, { screen: "project" }, () => refreshProjectObservability(host), {
+    onSuccess: (refreshed) => {
+      if (refreshed) renderProject(host);
+    },
   });
 }
 
@@ -154,8 +157,8 @@ export function handleProjectKey(host: ProjectHost, data: Buffer): void {
   }
   const story = host.projectObservability?.story ?? [];
   if (key === "r") {
-    void refreshProjectObservability(host, { force: true }).then(() => {
-      if (host.isDashboardScreen?.("project")) renderProject(host);
+    startDashboardLifecycleTask(host, { screen: "project" }, () => refreshProjectObservability(host, { force: true }), {
+      onSuccess: () => renderProject(host),
     });
     return;
   }

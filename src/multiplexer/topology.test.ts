@@ -153,4 +153,28 @@ describe("refreshTopology", () => {
 
     expect(renderTopologyScreen).not.toHaveBeenCalled();
   });
+
+  it("redraws topology after manual refresh when input changes but the screen stays active", async () => {
+    vi.clearAllMocks();
+    let resolveRefresh!: (value: unknown) => void;
+    const topology = topologyModel([]);
+    const host: any = {
+      dashboardInputEpoch: 1,
+      topology: { rows: [] },
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn((screen: string) => screen === "topology"),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+    };
+
+    handleTopologyKey(host, Buffer.from("r"));
+    host.dashboardInputEpoch = 2;
+    resolveRefresh({ ok: true, topology });
+
+    await vi.waitFor(() => expect(renderTopologyScreen).toHaveBeenCalled());
+  });
 });

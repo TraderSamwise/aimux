@@ -16,7 +16,7 @@ import {
 import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
-import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
 
 type RuntimeStateHost = any;
 
@@ -160,28 +160,28 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
       const now = Date.now();
       if (now >= host.dashboardNextBackgroundRefreshAt) {
         host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
-        const lifecycle = captureDashboardLifecycle(host);
-        void host
-          .refreshDashboardModelFromService()
-          .then((refreshed: boolean) => {
-            if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+        if (dashboardNeedsRender) {
+          host.renderCurrentDashboardView();
+        }
+        startDashboardLifecycleTask(host, {}, () => host.refreshDashboardModelFromService(), {
+          onSuccess: (refreshed: boolean) => {
             // On the Coordination screen, refine the worklist from the service too (fire-and-forget
             // so a slow service never stalls the heartbeat); it re-renders when it settles.
             if (host.isDashboardScreen?.("coordination") && typeof host.refreshCoordinationFromService === "function") {
-              void host
-                .refreshCoordinationFromService()
-                .then(() => {
-                  if (isDashboardLifecycleCurrent(host, lifecycle) && host.isDashboardScreen?.("coordination")) {
-                    host.renderCurrentDashboardView();
-                  }
-                })
-                .catch(() => {});
+              startDashboardLifecycleTask(
+                host,
+                { screen: "coordination" },
+                () => host.refreshCoordinationFromService(),
+                {
+                  onSuccess: () => host.renderCurrentDashboardView(),
+                },
+              );
             }
-            if (refreshed || dashboardNeedsRender) {
+            if (refreshed) {
               host.renderCurrentDashboardView();
             }
-          })
-          .catch(() => undefined);
+          },
+        });
       } else if (dashboardNeedsRender) {
         host.renderCurrentDashboardView();
       }
