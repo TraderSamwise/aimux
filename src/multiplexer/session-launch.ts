@@ -257,7 +257,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
           return;
         }
         const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
-        const refreshed = await host.refreshDashboardModelFromService(true);
+        const refreshed = await host.refreshDashboardModelFromService(true, { lifecycle: repairLifecycle });
         const fresh =
           !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;

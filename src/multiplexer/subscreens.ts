@@ -12,14 +12,11 @@ import {
   isDashboardLifecycleCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
-import { postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type SubscreenHost = any;
 
 function postCoordinationMutation(host: SubscreenHost, path: string, body: unknown): Promise<any> {
-  return postJsonWithTuiApiRuntime(host, path, body, undefined, (requestHost, requestPath, requestBody, opts) =>
-    requestHost.postToProjectService(requestPath, requestBody, opts),
-  );
+  return host.postToProjectService(path, body);
 }
 
 export function attentionScore(host: SubscreenHost, entry: any): number {
