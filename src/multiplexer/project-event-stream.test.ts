@@ -318,6 +318,48 @@ describe("dashboard project event refresh", () => {
     expect(host.footerFlash).toBeUndefined();
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
+
+  it("ignores buffered events after the event adapter stops", async () => {
+    const originalFetch = globalThis.fetch;
+    let enqueue!: (chunk: Uint8Array) => void;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        enqueue = (chunk) => controller.enqueue(chunk);
+      },
+    });
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      body: stream,
+    })) as never;
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockResolvedValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 1234,
+      updatedAt: new Date().toISOString(),
+    });
+    const host: any = {
+      mode: "dashboard",
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startDashboardProjectEventStream(host);
+      await Promise.resolve();
+      stopDashboardProjectEventStream(host);
+      enqueue(
+        new TextEncoder().encode(
+          'event: alert\ndata: {"type":"alert","kind":"task_failed","projectId":"project","title":"Task failed","message":"Failure","ts":"now"}\n\n',
+        ),
+      );
+      await vi.runAllTimersAsync();
+
+      expect(host.footerFlash).toBeUndefined();
+      expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+    } finally {
+      stopDashboardProjectEventStream(host);
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 function projectPayload(title = "SSE project update") {
