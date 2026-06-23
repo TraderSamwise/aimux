@@ -36,7 +36,7 @@ interface DashboardWorktreeMutationOptions {
   pendingAction: PendingWorktreeActionKind;
   lifecycle?: DashboardLifecycleToken;
   request: () => Promise<void>;
-  settle: (lifecycle: DashboardLifecycleToken) => Promise<boolean>;
+  settle: (modelLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
 }
@@ -89,12 +89,13 @@ async function waitForRenderedDashboardWorktreeState(
 
 async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardWorktreeMutationOptions): Promise<void> {
   const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host, { inputEpoch: true });
+  const modelLifecycle = captureDashboardLifecycle(host);
   host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction);
   host.reapplyDashboardPendingActions?.();
   renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
   try {
     await opts.request();
-    assertDashboardWorktreeMutationSettled(await opts.settle(lifecycle), opts.pendingAction);
+    assertDashboardWorktreeMutationSettled(await opts.settle(modelLifecycle), opts.pendingAction);
     host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
     host.reapplyDashboardPendingActions?.();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
@@ -199,12 +200,13 @@ async function waitForRenderedDashboardWorktreeCreate(
   name: string,
   path: string,
   timeoutMs = 180_000,
-  lifecycle?: DashboardLifecycleToken,
+  modelLifecycle?: DashboardLifecycleToken,
+  renderLifecycle?: DashboardLifecycleToken,
 ): Promise<{ ok: true } | { ok: false; error: Error }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (typeof host.refreshDashboardModelFromService === "function") {
-      if (!(await refreshDashboardModelForWorktreeSettlement(host, lifecycle))) {
+      if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
         return { ok: false, error: new Error("project service snapshot unavailable") };
       }
     }
@@ -217,7 +219,7 @@ async function waitForRenderedDashboardWorktreeCreate(
     if (isDashboardWorktreeCreateSettled(group)) {
       return { ok: true };
     }
-    if (isDashboardLifecycleCurrent(host, lifecycle)) {
+    if (isDashboardLifecycleCurrent(host, renderLifecycle)) {
       showOptimisticDashboardWorktreeCreate(host, name);
       host.renderDashboard?.();
     }
@@ -296,7 +298,14 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
       void (async () => {
         try {
           await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
-          const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath, 180_000, uiLifecycle);
+          const result = await waitForRenderedDashboardWorktreeCreate(
+            host,
+            name,
+            targetPath,
+            180_000,
+            settleLifecycle,
+            uiLifecycle,
+          );
           if (!result.ok) {
             throw result.error;
           }
@@ -304,7 +313,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.dashboardPendingActions.clearWorktreeAction(targetPath);
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
-          await host.refreshDashboardModelFromService?.(true, { lifecycle: uiLifecycle });
+          await host.refreshDashboardModelFromService?.(true, { lifecycle: settleLifecycle });
           if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
             return;
           host.dashboardState.focusedWorktreePath = targetPath;
@@ -315,7 +324,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-          await refreshDashboardWorktreeCreateFailure(host, targetPath, uiLifecycle);
+          await refreshDashboardWorktreeCreateFailure(host, targetPath, settleLifecycle);
           if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
             return;
           showDashboardWorktreeCreateFailure(host, name, targetPath, err);

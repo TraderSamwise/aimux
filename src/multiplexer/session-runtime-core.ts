@@ -62,6 +62,7 @@ export function applyDashboardSessionLabel(host: SessionRuntimeHost, sessionId: 
 export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: string, label?: string): Promise<void> {
   if (host.mode === "dashboard") {
     const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const modelLifecycle = captureDashboardLifecycle(host);
     const token = host.setPendingDashboardSessionAction(sessionId, "renaming");
     host.writeStatuslineFile();
     host.renderCurrentDashboardView();
@@ -83,11 +84,11 @@ export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: st
       await host.postToProjectService(PROJECT_API_ROUTES.agents.rename, { sessionId, label });
       host.invalidateDesktopStateSnapshot();
       if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true, { lifecycle });
+        await host.refreshDashboardModelFromService(true, { lifecycle: modelLifecycle });
       }
     } catch (err: unknown) {
       if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true, { lifecycle });
+        await host.refreshDashboardModelFromService(true, { lifecycle: modelLifecycle });
       }
       if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
