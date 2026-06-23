@@ -7,6 +7,7 @@ import {
 } from "../coordination-model.js";
 import { type WorkflowEntry } from "../workflow.js";
 import {
+  captureDashboardLifecycle,
   type DashboardApiViewRefreshOptions,
   isDashboardLifecycleCurrent,
   startDashboardLifecycleTask,
@@ -106,8 +107,8 @@ export function hydrateDashboardNotificationScreenState(host: NotificationHost):
   if (!host.isDashboardScreen?.("coordination")) return;
   startDashboardLifecycleTask(
     host,
-    { screen: "coordination" },
-    () => host.refreshCoordinationFromService?.() ?? Promise.resolve(false),
+    { inputEpoch: true, screen: "coordination" },
+    (token) => host.refreshCoordinationFromService?.({ lifecycle: token }) ?? Promise.resolve(false),
     {
       onSuccess: () => host.renderCurrentDashboardView?.(),
     },
@@ -200,22 +201,24 @@ export async function markCoordinationItemRead(host: NotificationHost, item: Wor
 export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
   const note = item.notification;
   if (!note) return;
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
   const unread = note.unreadCount > 0;
   const settle = async () => {
     if (!unread) return;
     try {
       await markCoordinationItemRead(host, item);
-      await host.refreshCoordinationFromService?.({ force: true });
+      await host.refreshCoordinationFromService?.({ force: true, lifecycle });
     } catch {
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
       if (typeof host.refreshCoordinationFromService === "function") {
-        await host.refreshCoordinationFromService({ force: true }).catch(() => {});
+        await host.refreshCoordinationFromService({ force: true, lifecycle }).catch(() => {});
       }
     }
   };
   if (!item.sessionId) {
     await settle();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.renderCoordination();
     return;
   }

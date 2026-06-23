@@ -33,6 +33,7 @@ import {
   listWorktreeGraveyardEntries as listWorktreeGraveyardEntriesImpl,
   listWorktreeGraveyardPaths,
 } from "./worktree-graveyard.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
@@ -221,8 +222,11 @@ export const persistenceMethods = {
     if (changed && input?.dryRun !== true) {
       this.metadataServer?.notifyChange?.();
       if (this.isDashboardScreen?.("coordination")) {
-        void this.refreshCoordinationFromService?.()
-          .then(() => this.renderCurrentDashboardView?.())
+        const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true, screen: "coordination" });
+        void this.refreshCoordinationFromService?.({ lifecycle })
+          .then(() => {
+            if (isDashboardLifecycleCurrent(this, lifecycle)) this.renderCurrentDashboardView?.();
+          })
           .catch(() => {});
       }
     }
