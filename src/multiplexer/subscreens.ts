@@ -62,7 +62,7 @@ export async function openRelevantThreadForSession(host: SubscreenHost, sessionI
   });
   const refreshed =
     typeof host.refreshCoordinationFromService === "function"
-      ? await host.refreshCoordinationFromService({ force: true })
+      ? await host.refreshCoordinationFromService({ force: true, lifecycle })
       : true;
   if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
   if (!refreshed && !host.coordinationLoaded) {

@@ -240,9 +240,9 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     }
     renderGraveyard(host);
   } catch (error) {
-    if (host.graveyardWorktreeDeleteConfirm === entry) host.graveyardWorktreeDeleteConfirm = null;
     const message = error instanceof Error ? error.message : String(error);
     if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (host.graveyardWorktreeDeleteConfirm === entry) host.graveyardWorktreeDeleteConfirm = null;
     host.showDashboardError(`Failed to delete "${entry.name}"`, [message]);
     if (host.mode === "dashboard") {
       void refreshGraveyardEntriesFromService(host, { force: true, renderLifecycle: lifecycle });
