@@ -4,12 +4,13 @@ import type { LibraryEntry } from "../library.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
-import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import {
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+  type DashboardApiViewRefreshOptions,
+} from "./dashboard-lifecycle.js";
 
 type LibraryHost = any;
-interface ApiViewRefreshOptions {
-  force?: boolean;
-}
 const LIBRARY_RESOURCE = "library";
 
 function isLibraryEntry(value: any): value is LibraryEntry {
@@ -48,8 +49,9 @@ function validateLibraryPayload(value: unknown): LibraryEntry[] {
   return res.entries;
 }
 
-export async function refreshLibrary(host: LibraryHost, options: ApiViewRefreshOptions = {}): Promise<boolean> {
+export async function refreshLibrary(host: LibraryHost, options: DashboardApiViewRefreshOptions = {}): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     ensureLibraryEntries(host);
     return false;
   }
@@ -60,6 +62,7 @@ export async function refreshLibrary(host: LibraryHost, options: ApiViewRefreshO
       validateLibraryPayload,
       { supersede: options.force },
     );
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     if (!result.ok || !result.value) {
       ensureLibraryEntries(host);
       return false;
@@ -67,6 +70,7 @@ export async function refreshLibrary(host: LibraryHost, options: ApiViewRefreshO
     applyLibraryEntries(host, result.value);
     return true;
   } catch {
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     ensureLibraryEntries(host);
     return false;
   }
@@ -78,7 +82,7 @@ export function showLibrary(host: LibraryHost): void {
   host.setDashboardScreen("library");
   host.writeStatuslineFile();
   renderLibrary(host);
-  startDashboardLifecycleTask(host, { screen: "library" }, () => refreshLibrary(host), {
+  startDashboardLifecycleTask(host, { screen: "library" }, (lifecycle) => refreshLibrary(host, { lifecycle }), {
     onSuccess: (refreshed) => {
       if (refreshed) renderLibrary(host);
     },
@@ -113,9 +117,14 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
     };
   }
 
-  startDashboardLifecycleTask(host, { screen: "library" }, () => refreshLibrary(host, { force: true }), {
-    onSuccess: () => renderLibrary(host),
-  });
+  startDashboardLifecycleTask(
+    host,
+    { screen: "library" },
+    (lifecycle) => refreshLibrary(host, { force: true, lifecycle }),
+    {
+      onSuccess: () => renderLibrary(host),
+    },
+  );
   if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
   if (host.dashboardErrorState) {
     host.renderDashboardErrorOverlay();
@@ -149,9 +158,14 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    startDashboardLifecycleTask(host, { screen: "library" }, () => refreshLibrary(host, { force: true }), {
-      onSuccess: () => renderLibrary(host),
-    });
+    startDashboardLifecycleTask(
+      host,
+      { screen: "library" },
+      (lifecycle) => refreshLibrary(host, { force: true, lifecycle }),
+      {
+        onSuccess: () => renderLibrary(host),
+      },
+    );
     return;
   }
   const entries = host.libraryEntries ?? [];

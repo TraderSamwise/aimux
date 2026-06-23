@@ -3,12 +3,13 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
-import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import {
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+  type DashboardApiViewRefreshOptions,
+} from "./dashboard-lifecycle.js";
 
 type TopologyHost = any;
-interface ApiViewRefreshOptions {
-  force?: boolean;
-}
 const TOPOLOGY_RESOURCE = "topology";
 
 function emptyTopology(): ProjectTopology {
@@ -81,8 +82,9 @@ function validateTopologyPayload(value: unknown): ProjectTopology {
   return res.topology;
 }
 
-export async function refreshTopology(host: TopologyHost, options: ApiViewRefreshOptions = {}): Promise<boolean> {
+export async function refreshTopology(host: TopologyHost, options: DashboardApiViewRefreshOptions = {}): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     ensureTopology(host);
     return false;
   }
@@ -93,6 +95,7 @@ export async function refreshTopology(host: TopologyHost, options: ApiViewRefres
       validateTopologyPayload,
       { supersede: options.force },
     );
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     if (!result.ok || !result.value) {
       ensureTopology(host);
       return false;
@@ -100,6 +103,7 @@ export async function refreshTopology(host: TopologyHost, options: ApiViewRefres
     applyTopology(host, result.value);
     return true;
   } catch {
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     ensureTopology(host);
     return false;
   }
@@ -111,7 +115,7 @@ export function showTopology(host: TopologyHost): void {
   host.setDashboardScreen("topology");
   host.writeStatuslineFile();
   renderTopology(host);
-  startDashboardLifecycleTask(host, { screen: "topology" }, () => refreshTopology(host), {
+  startDashboardLifecycleTask(host, { screen: "topology" }, (lifecycle) => refreshTopology(host, { lifecycle }), {
     onSuccess: (refreshed) => {
       if (refreshed) renderTopology(host);
     },
@@ -157,9 +161,14 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    startDashboardLifecycleTask(host, { screen: "topology" }, () => refreshTopology(host, { force: true }), {
-      onSuccess: () => renderTopology(host),
-    });
+    startDashboardLifecycleTask(
+      host,
+      { screen: "topology" },
+      (lifecycle) => refreshTopology(host, { force: true, lifecycle }),
+      {
+        onSuccess: () => renderTopology(host),
+      },
+    );
     return;
   }
   const rows = host.topology?.rows ?? [];
