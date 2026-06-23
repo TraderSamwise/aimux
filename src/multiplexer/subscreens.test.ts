@@ -103,14 +103,21 @@ describe("thread subscreen navigation", () => {
 
     await runThreadHandoffAction(host, "accept", "thread-1");
     await vi.waitFor(() => {
-      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+        force: true,
+        lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "coordination" }),
+      });
       expect(host.renderCoordination).toHaveBeenCalledOnce();
     });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/handoff/accept", {
-      threadId: "thread-1",
-      from: "user",
-    });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/handoff/accept",
+      {
+        threadId: "thread-1",
+        from: "user",
+      },
+      undefined,
+    );
   });
 
   it("shows refresh failure instead of success when workflow mutation snapshot reload fails", async () => {
@@ -151,7 +158,10 @@ describe("thread subscreen navigation", () => {
     resolvePost({ ok: true });
     await action;
 
-    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+      force: true,
+      lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "coordination" }),
+    });
     expect(host.renderCoordination).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });

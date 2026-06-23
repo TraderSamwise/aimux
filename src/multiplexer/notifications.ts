@@ -6,12 +6,17 @@ import {
   type WorklistItem,
 } from "../coordination-model.js";
 import { type WorkflowEntry } from "../workflow.js";
-import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import {
+  type DashboardLifecycleToken,
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+} from "./dashboard-lifecycle.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
 interface ApiViewRefreshOptions {
   force?: boolean;
+  lifecycle?: DashboardLifecycleToken;
 }
 const COORDINATION_WORKLIST_RESOURCE = "coordination-worklist";
 
@@ -93,6 +98,7 @@ export async function refreshCoordinationFromService(
       { supersede: options.force },
     );
     if (!result.ok || !result.value) return false;
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     applyCoordinationModel(host, result.value);
     return true;
   } catch {
