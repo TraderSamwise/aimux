@@ -204,6 +204,7 @@ describe("thread subscreen navigation", () => {
     };
 
     handleCoordinationKey(host, Buffer.from("r"));
+    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", { sessionId: "claude-1" });
     host.dashboardInputEpoch = 2;
     rejectPost(new Error("late failure"));
     await Promise.resolve();
