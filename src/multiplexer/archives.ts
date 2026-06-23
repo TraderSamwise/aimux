@@ -314,6 +314,7 @@ export async function refreshGraveyardEntriesFromService(
       }
       return false;
     }
+    if (!isRefreshLifecycleCurrent(host, options)) return false;
     applyGraveyardPayload(host, result.value);
     if (isRefreshRenderLifecycleCurrent(host, options) && host.isDashboardScreen?.("graveyard")) {
       renderGraveyard(host);

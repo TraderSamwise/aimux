@@ -30,8 +30,12 @@ import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-
 import { assertSessionRestorable } from "../session-restorability.js";
 import { log } from "../debug.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { type DashboardLifecycleToken, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 
 type DashboardModelHost = any;
+export interface DashboardModelRefreshOptions {
+  lifecycle?: DashboardLifecycleToken;
+}
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
 interface DashboardStateSnapshotOptions {
   includeRuntimeInfo?: boolean;
@@ -1009,7 +1013,11 @@ function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, e
   return false;
 }
 
-export async function refreshDashboardModelFromService(host: DashboardModelHost, force = false): Promise<boolean> {
+export async function refreshDashboardModelFromService(
+  host: DashboardModelHost,
+  force = false,
+  options: DashboardModelRefreshOptions = {},
+): Promise<boolean> {
   if (host.mode !== "dashboard") return false;
   if (!force && host.dashboardModelRefreshedAt > 0 && Date.now() - host.dashboardModelRefreshedAt < 750) {
     return false;
@@ -1030,6 +1038,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
     );
     if (!result.ok && result.error === undefined) return false;
     if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force, result.error);
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     const json = result.value;
     (host as any).dashboardModelServiceRefreshedAt = Date.now();
     (host as any).dashboardModelServiceRefreshError = undefined;

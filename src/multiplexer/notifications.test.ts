@@ -381,7 +381,6 @@ describe("coordination thread workflow keys", () => {
           taskId: "task-1",
           from: "user",
         },
-        undefined,
       ),
     );
 
@@ -393,7 +392,6 @@ describe("coordination thread workflow keys", () => {
           taskId: "task-1",
           from: "user",
         },
-        undefined,
       ),
     );
 
@@ -405,7 +403,6 @@ describe("coordination thread workflow keys", () => {
           taskId: "task-1",
           from: "user",
         },
-        undefined,
       ),
     );
   });

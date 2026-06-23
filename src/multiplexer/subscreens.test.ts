@@ -146,7 +146,6 @@ describe("thread subscreen navigation", () => {
         threadId: "thread-1",
         from: "user",
       },
-      undefined,
     );
   });
 

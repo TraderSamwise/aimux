@@ -147,9 +147,10 @@ describe("refreshGraveyardEntriesFromService", () => {
     host.dashboardInputEpoch = 1;
     resolveRefresh(payload);
 
-    await expect(refresh).resolves.toBe(true);
+    await expect(refresh).resolves.toBe(false);
 
-    expect(host.graveyardViewModel).toBe(payload.viewModel);
+    expect(host.graveyardViewModel).toBeUndefined();
+    expect(host.graveyardIndex).toBe(-1);
     expect(renderGraveyardScreen).not.toHaveBeenCalled();
   });
 
