@@ -3,14 +3,16 @@ import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
 import { postToProjectService as postToProjectServiceTransport } from "./dashboard-control.js";
-import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import {
+  captureDashboardLifecycle,
+  type DashboardApiViewRefreshOptions,
+  type DashboardLifecycleToken,
+  isDashboardLifecycleCurrent,
+} from "./dashboard-lifecycle.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
 import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type ArchivesHost = any;
-interface ApiViewRefreshOptions {
-  force?: boolean;
-}
 const GRAVEYARD_RESOURCE = "graveyard";
 
 function postGraveyardMutation(
@@ -30,12 +32,14 @@ export function showGraveyard(host: ArchivesHost): void {
   host.setDashboardScreen("graveyard");
   host.writeStatuslineFile();
   renderGraveyard(host);
-  void refreshGraveyardEntriesFromService(host);
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "graveyard" });
+  void refreshGraveyardEntriesFromService(host, { lifecycle });
 }
 
 export function hydrateDashboardArchiveScreenState(host: ArchivesHost): void {
   if (host.isDashboardScreen?.("graveyard")) {
-    void refreshGraveyardEntriesFromService(host);
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "graveyard" });
+    void refreshGraveyardEntriesFromService(host, { lifecycle });
   }
 }
 
@@ -149,16 +153,16 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
         : host.resurrectGraveyardSession(item.entry.id);
   void promise
     .then(async () => {
-      host.graveyardWorktreeDeleteConfirm = null;
       if (host.mode === "dashboard") {
-        if (!(await refreshGraveyardEntriesFromService(host, { force: true }))) {
+        if (!(await refreshGraveyardEntriesFromService(host, { force: true, lifecycle }))) {
           throw new Error("graveyard snapshot unavailable after resurrection");
         }
-        await refreshDashboardAfterGraveyardMutation(host);
+        await refreshDashboardAfterGraveyardMutation(host, lifecycle);
       } else {
         applyGraveyardPayload(host, emptyGraveyardPayload());
       }
       if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.graveyardWorktreeDeleteConfirm = null;
       if (getSelectableGraveyardRows(host).length === 0) {
         host.setDashboardScreen("dashboard");
         if (host.mode === "dashboard") {
@@ -179,8 +183,8 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.showDashboardError?.(`Failed to resurrect "${label}"`, [message]);
       if (host.mode === "dashboard") {
-        void refreshGraveyardEntriesFromService(host, { force: true });
-        void refreshDashboardAfterGraveyardMutation(host);
+        void refreshGraveyardEntriesFromService(host, { force: true, lifecycle });
+        void refreshDashboardAfterGraveyardMutation(host, lifecycle);
       }
     });
 }
@@ -214,17 +218,17 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     } else {
       await host.deleteGraveyardWorktree(entry.path);
     }
-    host.graveyardWorktreeDeleteConfirm = null;
     if (host.mode === "dashboard") {
-      if (!(await refreshGraveyardEntriesFromService(host, { force: true }))) {
+      if (!(await refreshGraveyardEntriesFromService(host, { force: true, lifecycle }))) {
         throw new Error("graveyard snapshot unavailable after delete");
       }
-      await refreshDashboardAfterGraveyardMutation(host);
+      await refreshDashboardAfterGraveyardMutation(host, lifecycle);
     } else {
       applyGraveyardPayload(host, emptyGraveyardPayload());
     }
     clampGraveyardSelection(host);
     if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (host.graveyardWorktreeDeleteConfirm === entry) host.graveyardWorktreeDeleteConfirm = null;
     if (getSelectableGraveyardRows(host).length === 0) {
       host.setDashboardScreen("dashboard");
       host.renderDashboard();
@@ -232,13 +236,13 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
     }
     renderGraveyard(host);
   } catch (error) {
-    host.graveyardWorktreeDeleteConfirm = null;
     const message = error instanceof Error ? error.message : String(error);
     if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (host.graveyardWorktreeDeleteConfirm === entry) host.graveyardWorktreeDeleteConfirm = null;
     host.showDashboardError(`Failed to delete "${entry.name}"`, [message]);
     if (host.mode === "dashboard") {
-      void refreshGraveyardEntriesFromService(host, { force: true });
-      void refreshDashboardAfterGraveyardMutation(host);
+      void refreshGraveyardEntriesFromService(host, { force: true, lifecycle });
+      void refreshDashboardAfterGraveyardMutation(host, lifecycle);
     }
   }
 }
@@ -247,10 +251,13 @@ function emptyGraveyardPayload(): { entries: any[]; worktrees: any[]; viewModel:
   return { entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
 }
 
-async function refreshDashboardAfterGraveyardMutation(host: ArchivesHost): Promise<void> {
+async function refreshDashboardAfterGraveyardMutation(
+  host: ArchivesHost,
+  lifecycle?: DashboardLifecycleToken,
+): Promise<void> {
   if (host.mode !== "dashboard") return;
   if (typeof host.refreshDashboardModelFromService === "function") {
-    await host.refreshDashboardModelFromService(true).catch(() => false);
+    await host.refreshDashboardModelFromService(true, lifecycle ? { lifecycle } : undefined).catch(() => false);
   }
 }
 
@@ -285,10 +292,12 @@ function applyGraveyardPayload(
 
 export async function refreshGraveyardEntriesFromService(
   host: ArchivesHost,
-  options: ApiViewRefreshOptions = {},
+  options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") {
-    if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+    if (isRefreshLifecycleCurrent(host, options) && !isGraveyardViewModel(host.graveyardViewModel)) {
+      applyGraveyardPayload(host, emptyGraveyardPayload());
+    }
     return false;
   }
   try {
@@ -299,22 +308,36 @@ export async function refreshGraveyardEntriesFromService(
       { timeoutMs: 3000, supersede: options.force },
     );
     if (!result.ok || !result.value) {
-      if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+      if (isRefreshLifecycleCurrent(host, options) && !isGraveyardViewModel(host.graveyardViewModel)) {
+        applyGraveyardPayload(host, emptyGraveyardPayload());
+      }
       return false;
     }
+    if (!isRefreshLifecycleCurrent(host, options)) return false;
     applyGraveyardPayload(host, result.value);
-    if (host.isDashboardScreen?.("graveyard")) {
+    if (isRefreshRenderLifecycleCurrent(host, options) && host.isDashboardScreen?.("graveyard")) {
       renderGraveyard(host);
     }
     return true;
   } catch (error) {
-    if (!isGraveyardViewModel(host.graveyardViewModel)) applyGraveyardPayload(host, emptyGraveyardPayload());
+    if (isRefreshLifecycleCurrent(host, options) && !isGraveyardViewModel(host.graveyardViewModel)) {
+      applyGraveyardPayload(host, emptyGraveyardPayload());
+    }
     debug(
       `failed to refresh graveyard from service: ${error instanceof Error ? error.message : String(error)}`,
       "session",
     );
     return false;
   }
+}
+
+function isRefreshLifecycleCurrent(host: ArchivesHost, options: DashboardApiViewRefreshOptions): boolean {
+  return !options.lifecycle || isDashboardLifecycleCurrent(host, options.lifecycle);
+}
+
+function isRefreshRenderLifecycleCurrent(host: ArchivesHost, options: DashboardApiViewRefreshOptions): boolean {
+  const lifecycle = options.renderLifecycle ?? options.lifecycle;
+  return !lifecycle || isDashboardLifecycleCurrent(host, lifecycle);
 }
 
 export function renderGraveyardDetailsForHost(host: ArchivesHost, width: number, height: number): string[] {

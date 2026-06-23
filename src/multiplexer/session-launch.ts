@@ -23,6 +23,7 @@ import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 
 type SessionLaunchHost = any;
 
@@ -234,26 +235,38 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   }, 40);
 
   host.mode = "dashboard";
+  const dashboardRunGeneration = (host.dashboardRunGeneration ?? 0) + 1;
+  host.dashboardRunGeneration = dashboardRunGeneration;
+  if (typeof host.dashboardInputEpoch !== "number") host.dashboardInputEpoch = 0;
   host.loadDashboardUiState();
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
-  const primed = await host.refreshDashboardModelFromService(true);
+  const startupLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const primed = await host.refreshDashboardModelFromService(true, { lifecycle: startupLifecycle });
   if (!primed) {
-    host.dashboardBusyState = {
+    const startupBusyState = {
       title: "Connecting Aimux",
       lines: ["Loading project state from the local service."],
       spinnerFrame: 0,
       startedAt: Date.now(),
     };
+    host.dashboardBusyState = startupBusyState;
+    const repairLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const isRepairLifecycleCurrent = () =>
+      host.dashboardRunGeneration === dashboardRunGeneration && isDashboardLifecycleCurrent(host, repairLifecycle);
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
+        if (!isRepairLifecycleCurrent()) {
+          if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+          return;
+        }
         const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
-        const refreshed = await host.refreshDashboardModelFromService(true);
+        const refreshed = await host.refreshDashboardModelFromService(true, { lifecycle: repairLifecycle });
         const fresh =
           !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
-        host.dashboardBusyState = null;
-        if (host.mode !== "dashboard") return;
+        if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+        if (!isRepairLifecycleCurrent()) return;
         if (refreshed || fresh || !host.dashboardModelServiceRefreshError) {
           host.renderCurrentDashboardView();
           return;
@@ -266,10 +279,9 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
         host.renderCurrentDashboardView();
       })
       .catch((error: unknown) => {
-        host.dashboardBusyState = null;
-        if (host.mode === "dashboard") {
-          host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
-        }
+        if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+        if (!isRepairLifecycleCurrent()) return;
+        host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
       });
   }
   host.terminalHost.enterAlternateScreen(true);

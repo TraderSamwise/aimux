@@ -125,6 +125,54 @@ describe("refreshGraveyardEntriesFromService", () => {
     expect(host.listWorktreeGraveyardEntries).not.toHaveBeenCalled();
     expect(host.graveyardViewModel).toEqual({ rows: [], selectableRows: [] });
   });
+
+  it("does not render a graveyard refresh after newer dashboard input", async () => {
+    const payload = graveyardPayload();
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      graveyardIndex: -1,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
+    };
+
+    const lifecycle = { mode: "dashboard" as const, inputEpoch: 0, requiresInputEpoch: true, screen: "graveyard" };
+    const refresh = refreshGraveyardEntriesFromService(host, { lifecycle });
+    host.dashboardInputEpoch = 1;
+    resolveRefresh(payload);
+
+    await expect(refresh).resolves.toBe(false);
+
+    expect(host.graveyardViewModel).toBeUndefined();
+    expect(host.graveyardIndex).toBe(-1);
+    expect(renderGraveyardScreen).not.toHaveBeenCalled();
+  });
+
+  it("does not wipe graveyard state from a stale invalid refresh", async () => {
+    const payload = graveyardPayload();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      graveyardEntries: payload.entries,
+      worktreeGraveyardEntries: payload.worktrees,
+      graveyardViewModel: payload.viewModel,
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [], worktrees: [] })),
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
+    };
+
+    const lifecycle = { mode: "dashboard" as const, inputEpoch: 0, requiresInputEpoch: true, screen: "graveyard" };
+
+    await expect(refreshGraveyardEntriesFromService(host, { lifecycle })).resolves.toBe(false);
+
+    expect(host.graveyardViewModel).toBe(payload.viewModel);
+    expect(renderGraveyardScreen).not.toHaveBeenCalled();
+  });
 });
 
 describe("resurrectGraveyardEntry", () => {
@@ -163,7 +211,14 @@ describe("resurrectGraveyardEntry", () => {
       ),
     );
     await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/graveyard", { timeoutMs: 3000 }));
-    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true));
+    await vi.waitFor(() =>
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "graveyard" }),
+        }),
+      ),
+    );
 
     expect(host.listGraveyardEntries).not.toHaveBeenCalled();
     expect(host.listWorktreeGraveyardEntries).not.toHaveBeenCalled();
@@ -191,7 +246,49 @@ describe("resurrectGraveyardEntry", () => {
       expect(host.showDashboardError).toHaveBeenCalledWith('Failed to resurrect "codex-old"', ["late timeout"]),
     );
     await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/graveyard", { timeoutMs: 3000 }));
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "graveyard" }),
+      }),
+    );
+  });
+
+  it("does not apply stale graveyard mutation refreshes after newer dashboard input", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const initial = graveyardPayload();
+    const refreshed = { ok: true, entries: [], worktrees: [], viewModel: { rows: [], selectableRows: [] } };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
+      activeIndex: 0,
+      graveyardIndex: 0,
+      graveyardViewModel: initial.viewModel,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      showDashboardError: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      renderDashboard: vi.fn(),
+    };
+
+    resurrectGraveyardEntry(host, 0);
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    resolveRefresh(refreshed);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(host.graveyardViewModel).toBe(initial.viewModel);
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.setDashboardScreen).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
   it("does not suppress non-dashboard resurrection failures", async () => {
@@ -291,7 +388,12 @@ describe("resurrectGraveyardEntry", () => {
       ]),
     );
     await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledTimes(2));
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "graveyard" }),
+      }),
+    );
   });
 
   it("suppresses stale worktree delete errors after leaving graveyard", async () => {
@@ -322,7 +424,8 @@ describe("resurrectGraveyardEntry", () => {
     host.dashboardInputEpoch = 1;
     rejectDelete(new Error("delete failed"));
 
-    await vi.waitFor(() => expect(host.graveyardWorktreeDeleteConfirm).toBeNull());
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(host.graveyardWorktreeDeleteConfirm).toBe(entry);
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });

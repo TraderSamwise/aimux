@@ -12,6 +12,7 @@ import {
   refreshDesktopStateSnapshot as refreshDesktopStateSnapshotImpl,
   refreshLocalDashboardModel as refreshLocalDashboardModelImpl,
   startProjectServices as startProjectServicesImpl,
+  type DashboardModelRefreshOptions,
 } from "./dashboard-model.js";
 import { hydrateDashboardArchiveScreenState } from "./archives.js";
 import { hydrateDashboardNotificationScreenState } from "./notifications.js";
@@ -299,8 +300,12 @@ export const dashboardStateMethods = {
     return buildDesktopStateSnapshotImpl(this, options);
   },
 
-  async refreshDashboardModelFromService(this: any, force = false): Promise<boolean> {
-    return refreshDashboardModelFromServiceImpl(this, force);
+  async refreshDashboardModelFromService(
+    this: any,
+    force = false,
+    options?: DashboardModelRefreshOptions,
+  ): Promise<boolean> {
+    return refreshDashboardModelFromServiceImpl(this, force, options);
   },
 
   refreshLocalDashboardModel(this: any): void {

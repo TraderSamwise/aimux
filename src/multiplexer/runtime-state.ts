@@ -163,25 +163,31 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
         if (dashboardNeedsRender) {
           host.renderCurrentDashboardView();
         }
-        startDashboardLifecycleTask(host, {}, () => host.refreshDashboardModelFromService(), {
-          onSuccess: (refreshed: boolean) => {
-            // On the Coordination screen, refine the worklist from the service too (fire-and-forget
-            // so a slow service never stalls the heartbeat); it re-renders when it settles.
-            if (host.isDashboardScreen?.("coordination") && typeof host.refreshCoordinationFromService === "function") {
-              startDashboardLifecycleTask(
-                host,
-                { screen: "coordination" },
-                () => host.refreshCoordinationFromService(),
-                {
-                  onSuccess: () => host.renderCurrentDashboardView(),
-                },
-              );
-            }
-            if (refreshed) {
-              host.renderCurrentDashboardView();
-            }
+        startDashboardLifecycleTask(
+          host,
+          { inputEpoch: true },
+          (token) => host.refreshDashboardModelFromService(false, { lifecycle: token }),
+          {
+            onSuccess: (refreshed: boolean) => {
+              if (
+                host.isDashboardScreen?.("coordination") &&
+                typeof host.refreshCoordinationFromService === "function"
+              ) {
+                startDashboardLifecycleTask(
+                  host,
+                  { inputEpoch: true, screen: "coordination" },
+                  (token) => host.refreshCoordinationFromService({ lifecycle: token }),
+                  {
+                    onSuccess: () => host.renderCurrentDashboardView(),
+                  },
+                );
+              }
+              if (refreshed) {
+                host.renderCurrentDashboardView();
+              }
+            },
           },
-        });
+        );
       } else if (dashboardNeedsRender) {
         host.renderCurrentDashboardView();
       }
