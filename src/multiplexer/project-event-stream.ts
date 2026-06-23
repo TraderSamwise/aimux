@@ -31,11 +31,13 @@ class DashboardProjectEventAdapter {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingViews: Set<ProjectApiView> | null = null;
   private generation = 0;
+  private disposed = false;
 
   constructor(private readonly host: ProjectEventStreamHost) {}
 
   start(): void {
     this.stop();
+    this.disposed = false;
     this.generation += 1;
     const controller = new AbortController();
     this.controller = controller;
@@ -60,7 +62,13 @@ class DashboardProjectEventAdapter {
     this.pendingViews = null;
   }
 
+  dispose(): void {
+    this.stop();
+    this.disposed = true;
+  }
+
   handleEvent(name: string, payload: unknown): void {
+    if (this.disposed) return;
     if (!payload || typeof payload !== "object") return;
     if (name === PROJECT_API_EVENT_NAMES.ready) {
       this.scheduleViewRefresh(PROJECT_API_VIEWS);
@@ -79,6 +87,7 @@ class DashboardProjectEventAdapter {
   }
 
   scheduleViewRefresh(views: readonly ProjectApiView[]): void {
+    if (this.disposed) return;
     const pending = this.pendingViews ?? new Set<ProjectApiView>();
     for (const view of views) pending.add(view);
     this.pendingViews = pending;
@@ -127,7 +136,10 @@ class DashboardProjectEventAdapter {
         if (!response.ok || !response.body) {
           throw new Error(`event stream request failed: ${response.status}`);
         }
-        await readEventStream(response.body, signal, (name, payload) => this.handleEvent(name, payload));
+        const generation = this.generation;
+        await readEventStream(response.body, signal, (name, payload) => {
+          if (generation === this.generation) this.handleEvent(name, payload);
+        });
         if (!signal.aborted && this.host.mode === "dashboard") {
           debug("dashboard project event stream closed; reconnecting", "dashboard");
           await sleep(RETRY_MS, signal);
@@ -213,6 +225,7 @@ class DashboardProjectEventAdapter {
     if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(this.host, token))) return;
     this.host.renderCurrentDashboardView?.();
   }
+
 }
 
 function getOrCreateDashboardProjectEventAdapter(host: ProjectEventStreamHost): DashboardProjectEventAdapter {
@@ -226,7 +239,8 @@ export function startDashboardProjectEventStream(host: ProjectEventStreamHost): 
 }
 
 export function stopDashboardProjectEventStream(host: ProjectEventStreamHost): void {
-  host.tuiProjectEventAdapter?.stop?.();
+  const adapter = host.tuiProjectEventAdapter;
+  adapter?.dispose?.();
   host.tuiProjectEventAdapter = null;
 }
 
@@ -244,6 +258,7 @@ async function readEventStream(
     while (!signal.aborted) {
       const { done, value } = await reader.read();
       if (done) return;
+      if (signal.aborted) return;
       pending += decoder.decode(value, { stream: true });
       let newline = pending.indexOf("\n");
       while (newline >= 0) {
