@@ -174,6 +174,7 @@ describe("worktrees dashboard mutation protocol", () => {
         }),
     );
     const pending = createPendingActionsStore();
+    let refreshCount = 0;
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -186,6 +187,11 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount === 1) {
+          applyRawWorktrees(host, pending, []);
+          return true;
+        }
         applyRawWorktrees(host, pending, [
           {
             name: "demo",

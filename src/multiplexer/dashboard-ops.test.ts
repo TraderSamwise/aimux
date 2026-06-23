@@ -485,6 +485,64 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("uses the initiating input epoch for queued dashboard restores", async () => {
+    const first = deferred();
+    const liveIds = new Set<string>();
+    const postOrder: string[] = [];
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        postOrder.push(body.sessionId);
+        if (body.sessionId === "sess-1") {
+          await first.promise;
+        }
+        liveIds.add(body.sessionId);
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() =>
+        [...liveIds].map((id) => ({ id, command: "claude", status: "waiting", tmuxWindowId: `@${id}` })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    const restoreOne = resumeOfflineSessionWithFeedback(host, {
+      id: "sess-1",
+      command: "claude",
+      label: "one",
+      backendSessionId: "backend-1",
+    });
+    await nextTick();
+    const restoreTwo = resumeOfflineSessionWithFeedback(host, {
+      id: "sess-2",
+      command: "claude",
+      label: "two",
+      backendSessionId: "backend-2",
+    });
+    await nextTick();
+    host.footerFlash = "newer dashboard input";
+    host.renderDashboard.mockClear();
+    host.dashboardInputEpoch = 1;
+    first.resolve();
+    await Promise.all([restoreOne, restoreTwo]);
+
+    expect(postOrder).toEqual(["sess-1", "sess-2"]);
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-2")).toBeNull();
+    expect(host.footerFlash).toBe("newer dashboard input");
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("surfaces partial teammate restore failures after restoring the parent agent", async () => {
     const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
@@ -996,6 +1054,7 @@ describe("dashboard-ops", () => {
     ];
     let sessionIndex = 0;
     const host = {
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
@@ -1038,6 +1097,7 @@ describe("dashboard-ops", () => {
     const sessions = [[], [{ id: "codex-fork12", status: "running", tmuxWindowId: "@43" }]];
     let sessionIndex = 0;
     const host = {
+      dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
