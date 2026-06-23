@@ -458,6 +458,32 @@ describe("dashboard live target activation", () => {
     }
   });
 
+  it("suppresses stale agent focus errors when dashboard input invalidates the activation", async () => {
+    const token = { targetKind: "session", targetId: "codex-1", inputEpoch: 0 };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardActivationToken: token,
+      postToProjectService: vi.fn(async () => {
+        host.dashboardInputEpoch = 1;
+        throw new Error("tmux focus failed");
+      }),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+      },
+      showDashboardError: vi.fn(),
+    };
+    const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1", status: "offline" }, 1000)).resolves.toBe(
+      "missing",
+    );
+
+    expect(host.postToProjectService).toHaveBeenCalledTimes(1);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("opens services through the project-service control API in dashboard mode", async () => {
     const { waitAndOpenLiveTmuxWindowForService } = await import("./dashboard-control.js");
     const host: any = {
