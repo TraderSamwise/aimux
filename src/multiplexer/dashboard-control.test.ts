@@ -526,22 +526,20 @@ describe("showOrchestrationRoutePicker", () => {
       pid: 2,
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
-    mocks.requestJson
-      .mockResolvedValueOnce(healthyServiceResponse())
-      .mockResolvedValueOnce({
-        status: 200,
-        json: {
-          ok: true,
-          options: [
-            {
-              label: "Role: reviewer [1: codex-1]",
-              assignee: "reviewer",
-              worktreePath: "/repo/.aimux/worktrees/demo",
-              recipientIds: ["codex-1"],
-            },
-          ],
-        },
-      });
+    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse()).mockResolvedValueOnce({
+      status: 200,
+      json: {
+        ok: true,
+        options: [
+          {
+            label: "Role: reviewer [1: codex-1]",
+            assignee: "reviewer",
+            worktreePath: "/repo/.aimux/worktrees/demo",
+            recipientIds: ["codex-1"],
+          },
+        ],
+      },
+    });
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -883,7 +881,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
     expect(host.runtimeGuardState).toEqual({ kind: "ok" });
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
   });
 
   it("keeps guard failure visible when guarded repair exits but verification is still stale", async () => {

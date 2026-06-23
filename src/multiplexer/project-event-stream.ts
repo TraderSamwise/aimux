@@ -12,7 +12,12 @@ import {
 import type { AlertEvent } from "../project-events.js";
 import { refreshGraveyardEntriesFromService } from "./archives.js";
 import { resolveCurrentProjectServiceEndpointForDashboard } from "./dashboard-control.js";
-import { captureDashboardLifecycle, isDashboardLifecycleCurrent, type DashboardLifecycleToken } from "./dashboard-lifecycle.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { refreshLibrary } from "./library.js";
 import { refreshProjectObservability } from "./project.js";
 import { refreshTopology } from "./topology.js";
@@ -217,7 +222,7 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
     ])
   ) {
     renderLifecycles.push(lifecycle);
-    work.push(host.refreshDashboardModelFromService?.(true, { lifecycle }));
+    work.push(refreshDashboardModelThroughApi(host, { force: true, lifecycle }));
   }
   if (
     host.isDashboardScreen?.("coordination") &&

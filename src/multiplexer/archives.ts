@@ -11,6 +11,7 @@ import {
 } from "./dashboard-lifecycle.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
 import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type ArchivesHost = any;
 const GRAVEYARD_RESOURCE = "graveyard";
@@ -256,9 +257,7 @@ async function refreshDashboardAfterGraveyardMutation(
   lifecycle?: DashboardLifecycleToken,
 ): Promise<void> {
   if (host.mode !== "dashboard") return;
-  if (typeof host.refreshDashboardModelFromService === "function") {
-    await host.refreshDashboardModelFromService(true, lifecycle ? { lifecycle } : undefined).catch(() => false);
-  }
+  await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
 }
 
 function isGraveyardViewModel(value: any): value is GraveyardViewModel {

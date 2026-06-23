@@ -17,6 +17,7 @@ import { listTopologyServiceStates } from "../runtime-core/topology-services.js"
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
 import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type RuntimeStateHost = any;
 
@@ -163,31 +164,23 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
         if (dashboardNeedsRender) {
           host.renderCurrentDashboardView();
         }
-        startDashboardLifecycleTask(
-          host,
-          { inputEpoch: true },
-          (token) => host.refreshDashboardModelFromService(false, { lifecycle: token }),
-          {
-            onSuccess: (refreshed: boolean) => {
-              if (
-                host.isDashboardScreen?.("coordination") &&
-                typeof host.refreshCoordinationFromService === "function"
-              ) {
-                startDashboardLifecycleTask(
-                  host,
-                  { inputEpoch: true, screen: "coordination" },
-                  (token) => host.refreshCoordinationFromService({ lifecycle: token }),
-                  {
-                    onSuccess: () => host.renderCurrentDashboardView(),
-                  },
-                );
-              }
-              if (refreshed) {
-                host.renderCurrentDashboardView();
-              }
-            },
+        startDashboardLifecycleTask(host, {}, (token) => refreshDashboardModelThroughApi(host, { lifecycle: token }), {
+          onSuccess: (refreshed: boolean) => {
+            if (host.isDashboardScreen?.("coordination") && typeof host.refreshCoordinationFromService === "function") {
+              startDashboardLifecycleTask(
+                host,
+                { inputEpoch: true, screen: "coordination" },
+                (token) => host.refreshCoordinationFromService({ lifecycle: token }),
+                {
+                  onSuccess: () => host.renderCurrentDashboardView(),
+                },
+              );
+            }
+            if (refreshed) {
+              host.renderCurrentDashboardView();
+            }
           },
-        );
+        });
       } else if (dashboardNeedsRender) {
         host.renderCurrentDashboardView();
       }

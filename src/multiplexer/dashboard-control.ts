@@ -43,6 +43,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import {
   probeRuntimeGuard,
   runtimeGuardEquals,
@@ -313,9 +314,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
       return;
     }
-    const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
-    await host.refreshDashboardModelFromService?.(true);
-    if (host.dashboardModelServiceRefreshError || (host.dashboardModelServiceRefreshedAt ?? 0) <= beforeRefresh) {
+    if (!(await refreshDashboardModelThroughApi(host, { force: true }))) {
       fail("aimux repair completed but dashboard data is still unavailable");
       return;
     }

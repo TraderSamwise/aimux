@@ -1817,6 +1817,7 @@ describe("runDashboard", () => {
         lifecycle: expect.objectContaining({ inputEpoch: 0 }),
       }),
     );
+    await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
     host.resolveRun(0);
     await expect(runPromise).resolves.toBe(0);
   });

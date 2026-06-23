@@ -25,6 +25,7 @@ import { AIMUX_VERSION } from "../version.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
@@ -50,19 +51,15 @@ export const dashboardViewMethods = {
       pendingTarget,
       itemId,
       () => {
-        void this.refreshDashboardModelFromService?.(true)
-          .catch(() => undefined)
-          .then(() => {
-            if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
-          });
+        void refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle }).then(() => {
+          if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
+        });
       },
       {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
           if (!isDashboardLifecycleCurrent(this, settleLifecycle)) return true;
-          if (typeof this.refreshDashboardModelFromService === "function") {
-            await this.refreshDashboardModelFromService(true, { lifecycle: settleLifecycle });
-          }
+          await refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle });
           if (pendingTarget === "worktree") {
             const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
