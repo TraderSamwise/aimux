@@ -16,7 +16,11 @@ import {
 import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
-import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+} from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type RuntimeStateHost = any;
@@ -164,9 +168,15 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
         if (dashboardNeedsRender) {
           host.renderCurrentDashboardView();
         }
-        startDashboardLifecycleTask(host, {}, (token) => refreshDashboardModelThroughApi(host, { lifecycle: token }), {
-          onSuccess: (refreshed: boolean) => {
-            if (host.isDashboardScreen?.("coordination") && typeof host.refreshCoordinationFromService === "function") {
+        const modelLifecycle = captureDashboardLifecycle(host);
+        const renderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+        void refreshDashboardModelThroughApi(host, { lifecycle: modelLifecycle })
+          .then((refreshed: boolean) => {
+            if (
+              isDashboardLifecycleCurrent(host, renderLifecycle) &&
+              host.isDashboardScreen?.("coordination") &&
+              typeof host.refreshCoordinationFromService === "function"
+            ) {
               startDashboardLifecycleTask(
                 host,
                 { inputEpoch: true, screen: "coordination" },
@@ -176,11 +186,11 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
                 },
               );
             }
-            if (refreshed) {
+            if (refreshed && isDashboardLifecycleCurrent(host, renderLifecycle)) {
               host.renderCurrentDashboardView();
             }
-          },
-        });
+          })
+          .catch(() => undefined);
       } else if (dashboardNeedsRender) {
         host.renderCurrentDashboardView();
       }
