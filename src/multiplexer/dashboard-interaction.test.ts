@@ -369,6 +369,48 @@ describe("dashboardInteractionMethods", () => {
     expect(host.isSessionRuntimeLive).not.toHaveBeenCalled();
   });
 
+  it("routes worktree row reorders through the dashboard API adapter", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [
+          { kind: "session", id: "codex-1" },
+          { kind: "session", id: "claude-1" },
+        ],
+        sessionIndex: 0,
+      },
+      dashboardUiStateStore: {
+        moveEntryWithinWorktree: vi.fn(() => true),
+        orderWorktreeGroups: vi.fn((groups) => groups),
+      },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo" }],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\x1b[1;2B"));
+
+    expect(host.dashboardUiStateStore.moveEntryWithinWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedId: "codex-1",
+        direction: "down",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true }),
+    );
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("waits briefly for a live agent window to become enterable", async () => {
     const entry = {
       id: "codex-1",

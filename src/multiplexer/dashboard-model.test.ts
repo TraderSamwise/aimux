@@ -1064,8 +1064,47 @@ describe("metadata pending actions", () => {
 
     settled.resolve(true);
 
-    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true));
+    await vi.waitFor(() =>
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          lifecycle: expect.objectContaining({ mode: "dashboard" }),
+        }),
+      ),
+    );
     expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("does not render a pending-action model reconcile after dashboard exit", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      mode: "dashboard",
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.mode = "session";
+        return true;
+      }),
+      isDashboardScreen: vi.fn(() => true),
+      renderDashboard: vi.fn(),
+    };
+    const settled = deferred<boolean>();
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "codex-1",
+        "starting",
+        () => ({ sessionId: "codex-1" }),
+        undefined,
+        () => settled.promise,
+      ),
+    ).resolves.toEqual({ sessionId: "codex-1" });
+
+    settled.resolve(true);
+
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalled());
+    expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
   it("does not let an older session settle clear a newer pending action", async () => {

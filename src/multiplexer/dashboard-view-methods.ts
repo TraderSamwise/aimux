@@ -51,9 +51,11 @@ export const dashboardViewMethods = {
       pendingTarget,
       itemId,
       () => {
-        void refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle }).then(() => {
-          if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
-        });
+        void refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle })
+          .then(() => {
+            if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
+          })
+          .catch(() => undefined);
       },
       {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
