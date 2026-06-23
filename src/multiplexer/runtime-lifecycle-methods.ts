@@ -337,6 +337,9 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       clearTimeout((this as any).tuiApiRecoveryTimer);
       (this as any).tuiApiRecoveryTimer = null;
     }
+    (this as any).tuiApiRecoveryDueAt = undefined;
+    (this as any).tuiApiRecoveryPending = false;
+    (this as any).tuiApiRecoveryInFlight = false;
     (this as any).tuiApiRuntime?.dispose?.();
     (this as any).tuiApiRuntime = null;
     (this as any).stopGraveyardCleanup?.();

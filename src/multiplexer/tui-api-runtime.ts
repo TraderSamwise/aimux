@@ -11,6 +11,10 @@ export interface TuiApiRuntimeOptions {
   onRequestFailure?: (error: unknown) => void;
 }
 
+interface TuiApiRecoveryOptions {
+  immediate?: boolean;
+}
+
 type TuiApiRequestTransport = (path: string, opts?: TuiApiRequestOptions) => Promise<unknown>;
 type TuiApiMutationTransport = (path: string, body: unknown, opts?: TuiApiRequestOptions) => Promise<unknown>;
 
@@ -44,6 +48,9 @@ export interface TuiApiMutationResult<T> {
 interface ResourceState<T = unknown> extends TuiApiResourceSnapshot<T> {
   pendingPromise?: Promise<TuiApiRefreshResult<T>>;
 }
+
+export const TUI_API_RECOVERY_DEBOUNCE_MS = 250;
+export const TUI_API_RECOVERY_COOLDOWN_MS = 1000;
 
 export class TuiApiRuntime {
   private readonly resources = new Map<string, ResourceState>();
@@ -237,15 +244,58 @@ export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {
   return host.tuiApiRuntime;
 }
 
-export function scheduleTuiApiRecovery(host: any): void {
+function tuiApiRecoveryDelay(host: any, immediate: boolean): number {
+  if (typeof host.tuiApiLastRecoveryAt !== "number") {
+    return immediate ? 0 : TUI_API_RECOVERY_DEBOUNCE_MS;
+  }
+  const sinceLast = Date.now() - host.tuiApiLastRecoveryAt;
+  const cooldownDelay = Math.max(0, TUI_API_RECOVERY_COOLDOWN_MS - sinceLast);
+  return Math.max(immediate ? 0 : TUI_API_RECOVERY_DEBOUNCE_MS, cooldownDelay);
+}
+
+async function runScheduledTuiApiRecovery(host: any): Promise<void> {
+  if (host.mode && host.mode !== "dashboard") {
+    host.tuiApiRecoveryPending = false;
+    return;
+  }
+  if (host.tuiApiRecoveryInFlight) {
+    host.tuiApiRecoveryPending = true;
+    return;
+  }
+  if (host.runtimeGuardProbing) {
+    host.tuiApiRecoveryPending = true;
+    scheduleTuiApiRecovery(host);
+    return;
+  }
+  host.tuiApiRecoveryPending = false;
+  host.tuiApiRecoveryInFlight = true;
+  try {
+    const result = host.refreshRuntimeGuard?.();
+    if (result && typeof result.then === "function") await result;
+  } finally {
+    host.tuiApiRecoveryInFlight = false;
+    host.tuiApiLastRecoveryAt = Date.now();
+    if (host.tuiApiRecoveryPending) scheduleTuiApiRecovery(host);
+  }
+}
+
+export function scheduleTuiApiRecovery(host: any, opts: TuiApiRecoveryOptions = {}): void {
   if (host.mode && host.mode !== "dashboard") return;
-  if (host.tuiApiRecoveryTimer) return;
+  host.tuiApiRecoveryPending = true;
+  if (host.tuiApiRecoveryInFlight) return;
+  const delay = tuiApiRecoveryDelay(host, opts.immediate === true);
+  const dueAt = Date.now() + delay;
+  if (host.tuiApiRecoveryTimer) {
+    if ((host.tuiApiRecoveryDueAt ?? Number.POSITIVE_INFINITY) <= dueAt) return;
+    clearTimeout(host.tuiApiRecoveryTimer);
+  }
+  host.tuiApiRecoveryDueAt = dueAt;
   host.tuiApiRecoveryTimer = setTimeout(() => {
     host.tuiApiRecoveryTimer = null;
-    if (host.mode && host.mode !== "dashboard") return;
-    const result = host.refreshRuntimeGuard?.();
-    if (result && typeof result.catch === "function") void result.catch(() => undefined);
-  }, 25);
+    host.tuiApiRecoveryDueAt = undefined;
+    void runScheduledTuiApiRecovery(host).catch(() => undefined);
+  }, delay);
+  host.tuiApiRecoveryTimer.unref?.();
 }
 
 export async function postJsonWithTuiApiRuntime(
