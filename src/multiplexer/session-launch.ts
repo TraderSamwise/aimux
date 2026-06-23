@@ -247,7 +247,8 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       startedAt: Date.now(),
     };
     host.dashboardBusyState = startupBusyState;
-    const repairLifecycle = captureDashboardLifecycle(host);
+    if (typeof host.dashboardInputEpoch !== "number") host.dashboardInputEpoch = 0;
+    const repairLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     void host
       .ensureDashboardControlPlane()
       .then(async () => {

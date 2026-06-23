@@ -1713,7 +1713,7 @@ describe("runDashboard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalled();
   });
 
-  it("does not render or report stale startup repair after leaving dashboard mode", async () => {
+  it("does not render or report stale startup repair after later dashboard input", async () => {
     const host: any = {
       startHeartbeat: vi.fn(),
       startedInDashboard: false,
@@ -1746,10 +1746,11 @@ describe("runDashboard", () => {
           host.dashboardModelServiceRefreshError = undefined;
           host.dashboardModelServiceRefreshedAt = 2;
           return true;
-      }),
+        }),
       refreshLocalDashboardModel: vi.fn(),
       ensureDashboardControlPlane: vi.fn(async () => {
-        host.mode = "session";
+        host.mode = "dashboard";
+        host.dashboardInputEpoch = 1;
       }),
       startStatusRefresh: vi.fn(),
       showDashboardError: vi.fn(),

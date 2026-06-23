@@ -369,7 +369,8 @@ describe("resurrectGraveyardEntry", () => {
     host.dashboardInputEpoch = 1;
     rejectDelete(new Error("delete failed"));
 
-    await vi.waitFor(() => expect(host.graveyardWorktreeDeleteConfirm).toBeNull());
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(host.graveyardWorktreeDeleteConfirm).toBe(entry);
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });
