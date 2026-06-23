@@ -6,10 +6,17 @@ export interface DashboardLifecycleToken {
 }
 
 type DashboardLifecycleHost = any;
+type DashboardLifecycleCaptureOptions = { inputEpoch?: boolean; screen?: string };
+
+interface DashboardLifecycleTaskHandlers<T> {
+  onSuccess?: (value: T, token: DashboardLifecycleToken) => void;
+  onError?: (error: unknown, token: DashboardLifecycleToken) => void;
+  onFinally?: (token: DashboardLifecycleToken) => void;
+}
 
 export function captureDashboardLifecycle(
   host: DashboardLifecycleHost,
-  opts: { inputEpoch?: boolean; screen?: string } = {},
+  opts: DashboardLifecycleCaptureOptions = {},
 ): DashboardLifecycleToken {
   return {
     mode: host.mode === undefined || host.mode === "dashboard" ? "dashboard" : "other",
@@ -43,4 +50,34 @@ export function renderDashboardIfCurrent(
   render: () => void,
 ): void {
   if (isDashboardLifecycleCurrent(host, token)) render();
+}
+
+export function startDashboardLifecycleTask<T>(
+  host: DashboardLifecycleHost,
+  opts: DashboardLifecycleCaptureOptions,
+  work: (token: DashboardLifecycleToken) => Promise<T>,
+  handlers: DashboardLifecycleTaskHandlers<T> = {},
+): void {
+  const token = captureDashboardLifecycle(host, opts);
+  const invokeIfCurrent = (callback: (() => void) | undefined): void => {
+    if (!callback || !isDashboardLifecycleCurrent(host, token)) return;
+    try {
+      callback();
+    } catch {}
+  };
+  let promise: Promise<T>;
+  try {
+    promise = work(token);
+  } catch (error) {
+    invokeIfCurrent(() => handlers.onError?.(error, token));
+    invokeIfCurrent(() => handlers.onFinally?.(token));
+    return;
+  }
+  void promise
+    .then(
+      (value) => invokeIfCurrent(() => handlers.onSuccess?.(value, token)),
+      (error: unknown) => invokeIfCurrent(() => handlers.onError?.(error, token)),
+    )
+    .finally(() => invokeIfCurrent(() => handlers.onFinally?.(token)))
+    .catch(() => undefined);
 }

@@ -4,7 +4,24 @@ import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
   renderDashboardIfCurrent,
+  startDashboardLifecycleTask,
 } from "./dashboard-lifecycle.js";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushLifecycleTask(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("dashboard lifecycle guards", () => {
   it("keeps unscoped dashboard lifecycle tokens current while the host stays in dashboard mode", () => {
@@ -50,5 +67,73 @@ describe("dashboard lifecycle guards", () => {
     renderDashboardIfCurrent(host, token, render);
 
     expect(render).toHaveBeenCalledOnce();
+  });
+
+  it("runs lifecycle task success handlers only while the token is current", async () => {
+    const pending = deferred<string>();
+    const onSuccess = vi.fn();
+    const onFinally = vi.fn();
+    const host: any = { mode: "dashboard", dashboardInputEpoch: 1, dashboardState: { screen: "project" } };
+
+    startDashboardLifecycleTask(host, { inputEpoch: true, screen: "project" }, () => pending.promise, {
+      onSuccess,
+      onFinally,
+    });
+    host.dashboardInputEpoch = 2;
+    pending.resolve("done");
+    await pending.promise;
+    await flushLifecycleTask();
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onFinally).not.toHaveBeenCalled();
+  });
+
+  it("runs lifecycle task error handlers only while the token is current", async () => {
+    const pending = deferred<string>();
+    const onError = vi.fn();
+    const host: any = { mode: "dashboard", dashboardInputEpoch: 1, dashboardState: { screen: "coordination" } };
+
+    startDashboardLifecycleTask(host, { inputEpoch: true, screen: "coordination" }, () => pending.promise, {
+      onError,
+    });
+    host.mode = "session";
+    pending.reject(new Error("late failure"));
+    await pending.promise.catch(() => undefined);
+    await Promise.resolve();
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("runs lifecycle task handlers when the token remains current", async () => {
+    const onSuccess = vi.fn();
+    const onFinally = vi.fn();
+    const host: any = { mode: "dashboard", dashboardInputEpoch: 1, dashboardState: { screen: "library" } };
+
+    startDashboardLifecycleTask(host, { inputEpoch: true, screen: "library" }, async () => "ok", {
+      onSuccess,
+      onFinally,
+    });
+
+    await vi.waitFor(() =>
+      expect(onSuccess).toHaveBeenCalledWith("ok", expect.objectContaining({ inputEpoch: 1, screen: "library" })),
+    );
+    await vi.waitFor(() =>
+      expect(onFinally).toHaveBeenCalledWith(expect.objectContaining({ inputEpoch: 1, screen: "library" })),
+    );
+  });
+
+  it("does not route success handler exceptions to the error handler", async () => {
+    const onError = vi.fn();
+    const host: any = { mode: "dashboard", dashboardState: { screen: "library" } };
+
+    startDashboardLifecycleTask(host, { screen: "library" }, async () => "ok", {
+      onSuccess: () => {
+        throw new Error("render failed");
+      },
+      onError,
+    });
+    await flushLifecycleTask();
+
+    expect(onError).not.toHaveBeenCalled();
   });
 });

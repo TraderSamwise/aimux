@@ -153,4 +153,28 @@ describe("refreshProjectObservability", () => {
 
     expect(renderProjectScreen).not.toHaveBeenCalled();
   });
+
+  it("redraws project after manual refresh when input changes but the screen stays active", async () => {
+    vi.clearAllMocks();
+    let resolveRefresh!: (value: unknown) => void;
+    const project = projectModel([]);
+    const host: any = {
+      dashboardInputEpoch: 1,
+      projectObservability: { story: [] },
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn((screen: string) => screen === "project"),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+    };
+
+    handleProjectKey(host, Buffer.from("r"));
+    host.dashboardInputEpoch = 2;
+    resolveRefresh({ ok: true, project });
+
+    await vi.waitFor(() => expect(renderProjectScreen).toHaveBeenCalled());
+  });
 });
