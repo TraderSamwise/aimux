@@ -164,7 +164,7 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("continues worktree create settlement after later dashboard input", async () => {
+  it("continues worktree create settlement without stale UI after later dashboard input", async () => {
     postToProjectService.mockClear();
     let resolveCreate!: () => void;
     postToProjectService.mockImplementationOnce(
@@ -203,12 +203,17 @@ describe("worktrees dashboard mutation protocol", () => {
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardState.focusedWorktreePath = "/repo/.aimux/worktrees/other";
+    host.dashboardUiStateStore.markSelectionDirty.mockClear();
+    host.renderDashboard.mockClear();
     host.dashboardInputEpoch = 1;
     resolveCreate();
 
     await vi.waitFor(() => expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull());
     expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({ name: "demo", branch: "demo" });
-    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/other");
+    expect(host.dashboardUiStateStore.markSelectionDirty).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -262,6 +267,63 @@ describe("worktrees dashboard mutation protocol", () => {
       operationFailure: expect.objectContaining({ message: "branch already exists" }),
     });
     expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
+  });
+
+  it("does not show stale worktree create failure after later dashboard input", async () => {
+    postToProjectService.mockClear();
+    let rejectCreate!: (reason?: unknown) => void;
+    postToProjectService.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCreate = reject;
+        }),
+    );
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        applyRawWorktrees(host, pending, [
+          {
+            name: "demo",
+            branch: "(failed)",
+            path: "/repo/.aimux/worktrees/demo",
+            sessions: [],
+            services: [],
+            operationFailure: {
+              targetKind: "worktree",
+              operation: "create",
+              message: "branch already exists",
+              worktreePath: "/repo/.aimux/worktrees/demo",
+            },
+          },
+        ]);
+        return true;
+      }),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledOnce());
+    host.renderDashboard.mockClear();
+    host.dashboardInputEpoch = 1;
+    rejectCreate(new Error("branch already exists"));
+
+    await vi.waitFor(() => expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull());
+    expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({ name: "demo", branch: "(failed)" });
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
   it("waits for service-projected create failures after overlapping refreshes", async () => {

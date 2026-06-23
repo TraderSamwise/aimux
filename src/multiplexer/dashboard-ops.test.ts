@@ -527,6 +527,40 @@ describe("dashboard-ops", () => {
     ]);
   });
 
+  it("does not surface teammate restore warnings after newer dashboard input", async () => {
+    const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
+    const request = deferred<any>();
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "waiting", tmuxWindowId: "@21" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    const restore = resumeOfflineSessionWithFeedback(host, session);
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    request.resolve({
+      ok: true,
+      teammateFailures: [{ sessionId: "codex-1", error: "missing backend session id" }],
+    });
+    await restore;
+
+    expect(host.dashboardPendingActions.getSessionAction("parent-1")).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("surfaces structured teammate restore failures without a warning string", async () => {
     const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const host = {
@@ -914,6 +948,43 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
     expect(host.footerFlash).toBe("Sent claude to graveyard");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not adjust dashboard selection after stale graveyard completion", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const request = deferred();
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      offlineSessions: [] as any[],
+      sessions: [session],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      getSessionLabel: vi.fn(() => "claude"),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => []),
+      adjustAfterRemove: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+
+    const graveyard = graveyardSessionWithFeedback(host, "sess-1", true);
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    request.resolve();
+    await graveyard;
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.adjustAfterRemove).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("");
+    expect(host.renderDashboard).toHaveBeenCalledTimes(1);
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 

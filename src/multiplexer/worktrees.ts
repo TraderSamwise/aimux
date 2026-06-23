@@ -280,12 +280,13 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
         return;
       }
       const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
-      const lifecycle = captureDashboardLifecycle(host);
+      const settleLifecycle = captureDashboardLifecycle(host);
+      const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
       host.renderDashboard();
       void (async () => {
         try {
           await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
-          const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath, 180_000, lifecycle);
+          const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath, 180_000, uiLifecycle);
           if (!result.ok) {
             throw result.error;
           }
@@ -294,7 +295,8 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           await host.refreshDashboardModelFromService?.(true);
-          if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+          if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
+            return;
           host.dashboardState.focusedWorktreePath = targetPath;
           host.dashboardUiStateStore.markSelectionDirty();
           host.renderDashboard();
@@ -304,7 +306,8 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
           await refreshDashboardWorktreeCreateFailure(host, targetPath);
-          if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+          if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
+            return;
           showDashboardWorktreeCreateFailure(host, name, targetPath, err);
         }
       })();
