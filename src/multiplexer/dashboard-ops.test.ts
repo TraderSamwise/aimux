@@ -719,7 +719,10 @@ describe("dashboard-ops", () => {
 
     expect(host.waitForSessionStart).not.toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ lifecycle: expect.objectContaining({ inputEpoch: 0 }) }),
+    );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored codex");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -888,7 +891,10 @@ describe("dashboard-ops", () => {
 
     expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ lifecycle: expect.objectContaining({ inputEpoch: 0 }) }),
+    );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();

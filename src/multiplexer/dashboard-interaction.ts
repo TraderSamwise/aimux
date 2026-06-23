@@ -470,7 +470,7 @@ export const dashboardInteractionMethods = {
               worktreePath: this.dashboardState.focusedWorktreePath,
             })
               .then(async () => {
-                await this.refreshDashboardModelFromService(true);
+                await this.refreshDashboardModelFromService(true, { lifecycle });
                 renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
               })
               .catch((error: unknown) => {
