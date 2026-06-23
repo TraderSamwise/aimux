@@ -761,7 +761,7 @@ async function showOrchestrationRoutePickerFromService(
       host,
       `${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`,
       undefined,
-      (requestHost, path, opts) => requestHost.getFromProjectService(path, opts),
+      (requestHost, path, opts) => getFromProjectService(requestHost, path, opts),
     );
     if (!res?.ok || !Array.isArray(res.options) || !res.options.every(validOrchestrationRouteOption)) {
       throw new Error("invalid orchestration route options payload");

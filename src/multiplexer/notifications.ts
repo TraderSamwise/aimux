@@ -7,17 +7,13 @@ import {
 } from "../coordination-model.js";
 import { type WorkflowEntry } from "../workflow.js";
 import {
-  type DashboardLifecycleToken,
+  type DashboardApiViewRefreshOptions,
   isDashboardLifecycleCurrent,
   startDashboardLifecycleTask,
 } from "./dashboard-lifecycle.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
-interface ApiViewRefreshOptions {
-  force?: boolean;
-  lifecycle?: DashboardLifecycleToken;
-}
 const COORDINATION_WORKLIST_RESOURCE = "coordination-worklist";
 
 /** Per-row reconciliation flags, index-aligned with host.notificationEntries. */
@@ -87,7 +83,7 @@ export function applyCoordinationFilter(host: NotificationHost): void {
 // failure preserve the last service payload so version skew cannot silently fork the view.
 export async function refreshCoordinationFromService(
   host: NotificationHost,
-  options: ApiViewRefreshOptions = {},
+  options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") return false;
   try {

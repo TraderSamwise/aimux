@@ -5,6 +5,12 @@ export interface DashboardLifecycleToken {
   readonly screen?: string;
 }
 
+export interface DashboardApiViewRefreshOptions {
+  force?: boolean;
+  lifecycle?: DashboardLifecycleToken;
+  renderLifecycle?: DashboardLifecycleToken;
+}
+
 type DashboardLifecycleHost = any;
 type DashboardLifecycleCaptureOptions = { inputEpoch?: boolean; screen?: string };
 

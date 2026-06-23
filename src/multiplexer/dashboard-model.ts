@@ -1013,6 +1013,13 @@ function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, e
   return false;
 }
 
+function isDashboardModelRefreshLifecycleCurrent(
+  host: DashboardModelHost,
+  options: DashboardModelRefreshOptions,
+): boolean {
+  return !options.lifecycle || isDashboardLifecycleCurrent(host, options.lifecycle);
+}
+
 export async function refreshDashboardModelFromService(
   host: DashboardModelHost,
   force = false,
@@ -1023,7 +1030,10 @@ export async function refreshDashboardModelFromService(
     return false;
   }
   try {
-    if (typeof host.getFromProjectService !== "function") return failDashboardServiceRefresh(host, force);
+    if (typeof host.getFromProjectService !== "function") {
+      if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
+      return failDashboardServiceRefresh(host, force);
+    }
     const result = await getOrCreateTuiApiRuntime(host).refreshJson(
       "desktop-state",
       "/desktop-state",
@@ -1037,8 +1047,11 @@ export async function refreshDashboardModelFromService(
       },
     );
     if (!result.ok && result.error === undefined) return false;
-    if (!result.ok || !result.value) return failDashboardServiceRefresh(host, force, result.error);
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
+    if (!result.ok || !result.value) {
+      if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
+      return failDashboardServiceRefresh(host, force, result.error);
+    }
+    if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
     const json = result.value;
     (host as any).dashboardModelServiceRefreshedAt = Date.now();
     (host as any).dashboardModelServiceRefreshError = undefined;
@@ -1056,6 +1069,7 @@ export async function refreshDashboardModelFromService(
     }
     return applied;
   } catch (error) {
+    if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
     return failDashboardServiceRefresh(host, force, error);
   }
 }
