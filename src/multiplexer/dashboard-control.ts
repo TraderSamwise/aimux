@@ -56,7 +56,8 @@ import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
-const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 500;
+const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
+type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
 function writeStatuslineTextFile(name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
@@ -895,22 +896,32 @@ async function requestProjectService(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
-    const current = await endpointIsCurrentForRequest(
-      host,
-      endpoint,
-      Math.min(250, remainingProjectServiceDeadline(deadline)),
-    );
-    if (!current && Date.now() < deadline) {
-      clearProjectServiceEndpointHealth(host);
-      removeMetadataEndpoint(projectRoot);
-      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
-        restartProjectService: true,
-      });
-      await sleepProjectServiceRetry(attempt, deadline);
-      continue;
-    }
-    if (!current) {
-      throw new Error("project service endpoint is stale");
+    if (opts.method === "POST") {
+      const endpointState = await endpointStateForRequest(
+        host,
+        endpoint,
+        Math.min(1000, remainingProjectServiceDeadline(deadline)),
+      );
+      if (endpointState === "stale" && Date.now() < deadline) {
+        clearProjectServiceEndpointHealth(host);
+        removeMetadataEndpoint(projectRoot);
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
+        await sleepProjectServiceRetry(attempt, deadline);
+        continue;
+      }
+      if (endpointState === "stale") {
+        throw new Error("project service endpoint is stale");
+      }
+      if (endpointState === "unknown") {
+        lastError = new Error("project service endpoint could not be verified");
+        if (Date.now() < deadline) {
+          await sleepProjectServiceRetry(attempt, deadline);
+          continue;
+        }
+        throw lastError;
+      }
     }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
@@ -959,49 +970,58 @@ export async function resolveCurrentProjectServiceEndpointForDashboard(
 ): Promise<{ host: string; port: number; pid?: number } | null> {
   const projectRoot = process.cwd();
   const deadline = Date.now() + timeoutMs;
-  let endpoint = loadMetadataEndpoint(projectRoot);
-  if (!endpoint) {
-    await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
-    endpoint = loadMetadataEndpoint(projectRoot);
+  for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
+    let endpoint = loadMetadataEndpoint(projectRoot);
+    if (!endpoint) {
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      endpoint = loadMetadataEndpoint(projectRoot);
+    }
+    if (!endpoint) {
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    const endpointState = await endpointStateForRequest(host, endpoint, remainingProjectServiceDeadline(deadline));
+    if (endpointState === "current") return endpoint;
+    if (endpointState === "stale" && Date.now() < deadline) {
+      clearProjectServiceEndpointHealth(host);
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
+    }
+    await sleepProjectServiceRetry(attempt, deadline);
   }
-  if (!endpoint) return null;
-  const current = await endpointIsCurrentForRequest(
-    host,
-    endpoint,
-    Math.min(250, remainingProjectServiceDeadline(deadline)),
-  );
-  if (current) return endpoint;
-  clearProjectServiceEndpointHealth(host);
-  removeMetadataEndpoint(projectRoot);
-  if (Date.now() >= deadline) return null;
-  await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
-    restartProjectService: true,
-  });
-  endpoint = loadMetadataEndpoint(projectRoot);
-  if (!endpoint) return null;
-  return (await endpointIsCurrentForRequest(host, endpoint, Math.min(250, remainingProjectServiceDeadline(deadline))))
-    ? endpoint
-    : null;
+  return null;
 }
 
-async function endpointIsCurrentForRequest(
+async function endpointStateForRequest(
   host: DashboardControlHost,
   endpoint: { host: string; port: number; pid?: number },
   timeoutMs: number,
-): Promise<boolean> {
+): Promise<ProjectServiceEndpointState> {
   const key = projectServiceEndpointHealthKey(endpoint);
   const cached = host.dashboardProjectServiceEndpointHealth as { key?: string; checkedAt?: number } | undefined;
   if (cached?.key === key && typeof cached.checkedAt === "number") {
-    if (Date.now() - cached.checkedAt <= PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS) return true;
+    if (Date.now() - cached.checkedAt <= PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS) return "current";
   }
   const current = await endpointMatchesCurrentProjectService(endpoint, timeoutMs);
-  if (current) host.dashboardProjectServiceEndpointHealth = { key, checkedAt: Date.now() };
+  if (current === "current") markProjectServiceEndpointCurrent(host, endpoint);
   else clearProjectServiceEndpointHealth(host);
   return current;
 }
 
 function projectServiceEndpointHealthKey(endpoint: { host: string; port: number; pid?: number }): string {
   return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}`;
+}
+
+function markProjectServiceEndpointCurrent(
+  host: DashboardControlHost,
+  endpoint: { host: string; port: number; pid?: number },
+): void {
+  host.dashboardProjectServiceEndpointHealth = {
+    key: projectServiceEndpointHealthKey(endpoint),
+    checkedAt: Date.now(),
+  };
 }
 
 function clearProjectServiceEndpointHealth(host: DashboardControlHost): void {
@@ -1011,22 +1031,24 @@ function clearProjectServiceEndpointHealth(host: DashboardControlHost): void {
 async function endpointMatchesCurrentProjectService(
   endpoint: { host: string; port: number; pid?: number },
   timeoutMs: number,
-): Promise<boolean> {
+): Promise<ProjectServiceEndpointState> {
   try {
     const { status, json } = await requestJson<{
       pid?: number;
       projectStateDir?: string;
       serviceInfo?: ProjectServiceManifest;
     }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
+    if (status < 200 || status >= 300) return "unknown";
     return (
-      status >= 200 &&
-      status < 300 &&
       json?.pid === endpoint.pid &&
       json?.projectStateDir === getProjectStateDirFor(process.cwd()) &&
       manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
-    );
-  } catch {
-    return false;
+    )
+      ? "current"
+      : "stale";
+  } catch (error) {
+    if (isHttpTimeoutError(error)) return "unknown";
+    return isProjectServiceConnectionError(error) ? "stale" : "unknown";
   }
 }
 

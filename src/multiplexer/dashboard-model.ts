@@ -15,7 +15,7 @@ import { isNotificationStale } from "../coordination-model.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
-import { isDashboardWindowName } from "../tmux/runtime-manager.js";
+import { isDashboardWindowName, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type {
@@ -43,6 +43,7 @@ export interface DashboardModelRefreshOptions {
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
 interface DashboardStateSnapshotOptions {
   includeRuntimeInfo?: boolean;
+  managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
 }
 
 const METADATA_PENDING_SETTLE_TIMEOUT_MS = 10_000;
@@ -654,7 +655,11 @@ export function refreshDesktopStateSnapshot(
 
 export function computeDashboardSessions(
   host: DashboardModelHost,
-  options: { includeTeammates?: boolean; includeRuntimeInfo?: boolean } = {},
+  options: {
+    includeTeammates?: boolean;
+    includeRuntimeInfo?: boolean;
+    managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
+  } = {},
 ): DashboardSession[] {
   const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const lastUsedState = loadLastUsedState(process.cwd());
@@ -769,7 +774,8 @@ export function computeDashboardSessions(
   });
   const metadataBySessionId = new Map<string, { createdAt?: string; target?: { windowIndex?: number } }>();
   const notificationsBySessionId = summarizeUnreadNotificationsBySession();
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+  for (const { target, metadata } of managedWindows) {
     if (metadata.kind !== "agent") continue;
     if (includeRuntimeInfo && host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) {
       continue;
@@ -834,7 +840,10 @@ export function computeDashboardSessions(
 export function computeDashboardServices(
   host: DashboardModelHost,
   worktrees = host.listDesktopWorktrees(),
-  options: { includeRuntimeInfo?: boolean } = {},
+  options: {
+    includeRuntimeInfo?: boolean;
+    managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
+  } = {},
 ): DashboardService[] {
   const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
@@ -844,8 +853,8 @@ export function computeDashboardServices(
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
   );
-  const liveServices = host.tmuxRuntimeManager
-    .listProjectManagedWindows(process.cwd())
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+  const liveServices = managedWindows
     .filter(({ target, metadata }: any) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
     .filter(({ metadata }: any) => !offlineServiceIds.has(metadata.sessionId))
     .filter(({ metadata }: any) => !(metadata.worktreePath && hiddenWorktreePaths.has(metadata.worktreePath)))
@@ -934,6 +943,7 @@ export function readTmuxProcessInfo(
 export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
   if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
   );
@@ -955,11 +965,12 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost, options: Das
   if (mainWorktree) {
     mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
   }
-  const sessions = computeDashboardSessions(host, options);
-  const teammates = computeDashboardSessions(host, { ...options, includeTeammates: true }).filter((session) =>
+  const sessionOptions = { ...options, managedWindows };
+  const sessions = computeDashboardSessions(host, sessionOptions);
+  const teammates = computeDashboardSessions(host, { ...sessionOptions, includeTeammates: true }).filter((session) =>
     isTeammateSession(session),
   );
-  const services = computeDashboardServices(host, worktrees, options);
+  const services = computeDashboardServices(host, worktrees, { ...options, managedWindows });
   const worktreeGroups = buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath);
   return {
     sessions,
@@ -1011,6 +1022,28 @@ function isDesktopStateDashboardModel(value: any): value is {
   );
 }
 
+function hasLiveTmuxAgentWindow(host: DashboardModelHost): boolean {
+  try {
+    const entries = host.tmuxRuntimeManager?.listProjectManagedWindows?.(process.cwd());
+    if (!Array.isArray(entries)) return false;
+    return entries.some((entry: any) => {
+      if (entry?.metadata?.kind !== "agent") return false;
+      if (typeof host.tmuxRuntimeManager?.isWindowAlive === "function") {
+        if (!host.tmuxRuntimeManager.isWindowAlive(entry.target)) return false;
+      } else if (entry?.target?.paneDead === true) {
+        return false;
+      }
+      return !isDashboardWindowName(entry?.target?.windowName);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function isContradictoryEmptyDesktopState(host: DashboardModelHost, json: { sessions: unknown[] }): boolean {
+  return json.sessions.length === 0 && hasLiveTmuxAgentWindow(host);
+}
+
 function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, error?: unknown): false {
   (host as any).dashboardModelServiceRefreshError =
     error instanceof Error ? error : new Error(error ? String(error) : "dashboard service refresh failed");
@@ -1058,6 +1091,9 @@ export async function refreshDashboardModelFromService(
     }
     if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
     const json = result.value;
+    if (isContradictoryEmptyDesktopState(host, json)) {
+      return failDashboardServiceRefresh(host, force, "project service returned empty state while tmux has live agents");
+    }
     (host as any).dashboardModelServiceRefreshedAt = Date.now();
     (host as any).dashboardModelServiceRefreshError = undefined;
     const applied = applyDashboardModel(

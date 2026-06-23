@@ -1577,7 +1577,7 @@ program
     await initPaths(projectRoot);
     initProject();
 
-    const mux = new Multiplexer();
+    const mux = new Multiplexer({ contextWatcherEnabled: false });
     let cleanedUp = false;
     const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
     const cleanupAll = async () => {
