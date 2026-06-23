@@ -61,7 +61,7 @@ export const dashboardViewMethods = {
         isSettled: async () => {
           if (!isDashboardLifecycleCurrent(this, settleLifecycle)) return true;
           if (typeof this.refreshDashboardModelFromService === "function") {
-            await this.refreshDashboardModelFromService(true, { lifecycle: uiLifecycle });
+            await this.refreshDashboardModelFromService(true, { lifecycle: settleLifecycle });
           }
           if (pendingTarget === "worktree") {
             const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
