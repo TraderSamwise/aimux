@@ -22,17 +22,16 @@ function createDoctorExec(): TmuxExec {
     if (joined === "show-options -v -t aimux-mobile-abc status-format[0]") return "#(top)";
     if (joined === "show-options -v -t aimux-mobile-abc status-format[1]") return "#(bottom)";
     if (joined.startsWith("list-windows -t aimux-mobile-abc -F ")) {
-      return "@0\t0\tdashboard\t0\n@3\t3\tcodex\t1";
-    }
-    if (joined === "show-window-options -v -t @0 @aimux-meta") throw new Error("missing");
-    if (joined === "show-window-options -v -t @3 @aimux-meta") {
-      return JSON.stringify({
-        sessionId: "codex-abc123",
-        command: "codex",
-        args: ["--full-auto"],
-        toolConfigKey: "codex",
-        worktreePath: "/repo/mobile",
-      });
+      return [
+        "@0\t0\tdashboard\t0\t0\t0\t",
+        `@3\t3\tcodex\t1\t0\t0\t${JSON.stringify({
+          sessionId: "codex-abc123",
+          command: "codex",
+          args: ["--full-auto"],
+          toolConfigKey: "codex",
+          worktreePath: "/repo/mobile",
+        })}`,
+      ].join("\n");
     }
     if (joined === "show-window-options -v -t @3 @aimux-tool") return "codex";
     if (joined === "show-window-options -v -t @3 allow-passthrough") return "on";

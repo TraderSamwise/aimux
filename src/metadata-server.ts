@@ -684,7 +684,7 @@ const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
   PROJECT_API_ROUTES.agents.interactionRequest,
   PROJECT_API_ROUTES.agents.interactionWait,
 ]);
-const DESKTOP_STATE_CACHE_TTL_MS = 100;
+const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
 
 interface ProjectServiceResourceSnapshot {
   uptimeMs: number;
@@ -1173,12 +1173,14 @@ export class MetadataServer {
   private unsubscribeAlertSink: (() => void) | null = null;
   private readonly recentSlowRequests: ProjectServiceSlowRequest[] = [];
   private desktopStateCache: { ts: number; state: Record<string, unknown> } | null = null;
+  private desktopStateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private desktopStateRefreshing = false;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
-      this.desktopStateCache = null;
+      this.scheduleDesktopStateRefresh();
       notifyAlert(event);
     });
   }
@@ -1202,6 +1204,9 @@ export class MetadataServer {
   stop(): void {
     this.server?.close();
     this.server = null;
+    if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
+    this.desktopStateRefreshTimer = null;
+    this.desktopStateRefreshing = false;
     this.unsubscribeAlertSink?.();
     this.unsubscribeAlertSink = null;
   }
@@ -1229,9 +1234,29 @@ export class MetadataServer {
       worktreePath?: string;
     } = {},
   ): void {
-    this.desktopStateCache = null;
+    this.scheduleDesktopStateRefresh();
     this.eventBus.publishProjectUpdate(input);
     this.options.onChange?.();
+  }
+
+  private refreshDesktopStateCache(): Record<string, unknown> {
+    const state = this.options.desktop?.getState?.() ?? {};
+    this.desktopStateCache = { ts: Date.now(), state };
+    return state;
+  }
+
+  private scheduleDesktopStateRefresh(delayMs = 0): void {
+    if (!this.options.desktop?.getState || this.desktopStateRefreshTimer || this.desktopStateRefreshing) return;
+    this.desktopStateRefreshTimer = setTimeout(() => {
+      this.desktopStateRefreshTimer = null;
+      this.desktopStateRefreshing = true;
+      try {
+        this.refreshDesktopStateCache();
+      } finally {
+        this.desktopStateRefreshing = false;
+      }
+    }, delayMs);
+    this.desktopStateRefreshTimer.unref?.();
   }
 
   private getDesktopStateSnapshot(): Record<string, unknown> {
@@ -1239,9 +1264,11 @@ export class MetadataServer {
     if (this.desktopStateCache && now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS) {
       return this.desktopStateCache.state;
     }
-    const state = this.options.desktop?.getState?.() ?? {};
-    this.desktopStateCache = { ts: now, state };
-    return state;
+    if (this.desktopStateCache) {
+      this.scheduleDesktopStateRefresh();
+      return this.desktopStateCache.state;
+    }
+    return this.refreshDesktopStateCache();
   }
 
   // Settle a session the transcript reconciler found stuck "working": drop the

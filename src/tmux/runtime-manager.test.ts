@@ -78,7 +78,24 @@ describe("TmuxRuntimeManager", () => {
     expect(a.sessionName).toBe(b.sessionName);
     expect(a.projectId).toBe(b.projectId);
     expect(a.sessionName).not.toBe(c.sessionName);
-    expect(a.sessionName).toMatch(/^aimux-mobile-/);
+    expect(a.projectId).toMatch(/^mobile-[a-f0-9]{12}$/);
+    expect(a.sessionName).toBe(`aimux-${a.projectId}`);
+  });
+
+  it("renames legacy sha1 project sessions to the canonical project id", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "has-session -t aimux-mobile-7a62ea91ca") return "";
+      if (joined.startsWith("has-session -t ")) throw new Error("missing");
+      if (joined.startsWith("show-options -v -t aimux-mobile-")) return "";
+      if (joined.startsWith("list-windows -t aimux-mobile-")) return "";
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+    const session = manager.ensureProjectSession("/repo/mobile");
+
+    expect(exec).toHaveBeenCalledWith(["rename-session", "-t", "aimux-mobile-7a62ea91ca", session.sessionName]);
+    expect(exec.mock.calls.some(([args]) => args[0] === "new-session")).toBe(false);
   });
 
   it("creates a detached project session when missing", () => {
@@ -389,45 +406,42 @@ describe("TmuxRuntimeManager", () => {
       if (joined === "list-sessions -F #{session_name}") {
         return `${hostSessionName}\n${clientSessionName}\nother`;
       }
-      if (
-        joined ===
-        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
-      ) {
-        return "@3\t3\tcodex\t1\t100\t0\n@9\t9\tshell\t0\t90\t0";
+      if (joined.startsWith(`list-windows -t ${hostSessionName} -F `)) {
+        return [
+          `@3\t3\tcodex\t1\t100\t0\t${JSON.stringify({
+            sessionId: "codex-abc123",
+            command: "codex",
+            args: ["--full-auto"],
+            toolConfigKey: "codex",
+            worktreePath: "/repo/mobile",
+          })}`,
+          `@9\t9\tshell\t0\t90\t0\t${JSON.stringify({
+            sessionId: "service-123",
+            command: "shell",
+            args: ["-lc", "npm run dev"],
+            toolConfigKey: "service",
+            worktreePath: "/repo/mobile",
+            kind: "service",
+          })}`,
+        ].join("\n");
       }
-      if (
-        joined ===
-        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
-      ) {
-        return "@3\t3\tcodex\t0\t100\t0\n@10\t10\tdashboard\t1\t110\t1";
-      }
-      if (joined === "show-window-options -v -t @3 @aimux-meta") {
-        return JSON.stringify({
-          sessionId: "codex-abc123",
-          command: "codex",
-          args: ["--full-auto"],
-          toolConfigKey: "codex",
-          worktreePath: "/repo/mobile",
-        });
-      }
-      if (joined === "show-window-options -v -t @9 @aimux-meta") {
-        return JSON.stringify({
-          sessionId: "service-123",
-          command: "shell",
-          args: ["-lc", "npm run dev"],
-          toolConfigKey: "service",
-          worktreePath: "/repo/mobile",
-          kind: "service",
-        });
-      }
-      if (joined === "show-window-options -v -t @10 @aimux-meta") {
-        return JSON.stringify({
-          sessionId: "dashboard-123",
-          command: "dashboard",
-          args: [],
-          toolConfigKey: "dashboard",
-          worktreePath: "/repo/mobile",
-        });
+      if (joined.startsWith(`list-windows -t ${clientSessionName} -F `)) {
+        return [
+          `@3\t3\tcodex\t0\t100\t0\t${JSON.stringify({
+            sessionId: "codex-abc123",
+            command: "codex",
+            args: ["--full-auto"],
+            toolConfigKey: "codex",
+            worktreePath: "/repo/mobile",
+          })}`,
+          `@10\t10\tdashboard\t1\t110\t1\t${JSON.stringify({
+            sessionId: "dashboard-123",
+            command: "dashboard",
+            args: [],
+            toolConfigKey: "dashboard",
+            worktreePath: "/repo/mobile",
+          })}`,
+        ].join("\n");
       }
       if (joined.startsWith("show-window-options -v -t ")) throw new Error("missing");
       return "";
@@ -448,21 +462,15 @@ describe("TmuxRuntimeManager", () => {
     const exec = vi.fn<TmuxExec>((args: string[]) => {
       const joined = args.join(" ");
       if (joined === "-V") return "tmux 3.5a";
-      if (
-        joined ===
-        "list-windows -t aimux-mobile-abc -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}"
-      ) {
-        return "@3\t3\tcodex\t1\t100";
-      }
-      if (joined === "show-window-options -v -t @3 @aimux-meta") {
-        return JSON.stringify({
+      if (joined.startsWith("list-windows -t aimux-mobile-abc -F ")) {
+        return `@3\t3\tcodex\t1\t100\t0\t${JSON.stringify({
           kind: "agent",
           sessionId: "codex-new",
           backendSessionId: "backend-existing",
           command: "codex",
           args: [],
           toolConfigKey: "codex",
-        });
+        })}`;
       }
       return "";
     });

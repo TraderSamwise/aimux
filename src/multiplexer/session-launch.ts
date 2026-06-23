@@ -300,9 +300,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
-  await host.startProjectServices();
   reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
+  host.refreshDesktopStateSnapshot();
+  await host.startProjectServices();
   host.startStatusRefresh();
   host.startGraveyardCleanup?.();
   if (host.cleanupGraveyard && !host.graveyardCleanupRunning) {
@@ -328,7 +329,6 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
         host.inboxCleanupRunning = false;
       });
   }
-  host.refreshDesktopStateSnapshot();
   host.writeStatuslineFile();
 
   const exitCode = await new Promise<number>((resolve) => {

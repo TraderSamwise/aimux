@@ -64,6 +64,9 @@ describe("createBuiltinMetadataWatchers", () => {
         setActivity() {},
         setAttention() {},
       },
+      sessions: {
+        list: () => [{ id: "s1" }],
+      },
     });
 
     for (const watcher of watchers) watcher.start?.();
@@ -71,6 +74,57 @@ describe("createBuiltinMetadataWatchers", () => {
     expect(statuses).toContainEqual(["s1", "Working through auth", "info"]);
     expect(progresses).toContainEqual(["s1", 1, 3, "plan"]);
     expect(events).toContainEqual(["s1", "status", "Working through auth"]);
+  });
+
+  it("does not rewrite unchanged status and plan progress on every poll", async () => {
+    vi.useFakeTimers();
+    mkdirSync(getStatusDir(), { recursive: true });
+    mkdirSync(getPlansDir(), { recursive: true });
+    writeFileSync(join(getStatusDir(), "s1.md"), "Still working\n");
+    writeFileSync(join(getPlansDir(), "s1.md"), ["- [x] inspect", "- [ ] patch"].join("\n"));
+
+    const watchers = createBuiltinMetadataWatchers({
+      projectRoot: repoRoot,
+      projectId: "proj",
+      serverHost: "127.0.0.1",
+      serverPort: 43000,
+      metadata: {
+        setStatus(session, text, tone) {
+          statuses.push([session, text, tone]);
+        },
+        setProgress(session, current, total, label) {
+          progresses.push([session, current, total, label]);
+        },
+        log() {},
+        clearLog() {},
+        setContext() {},
+        emitEvent(session, event) {
+          events.push([session, event.kind, event.message]);
+        },
+        markSeen() {},
+        setActivity() {},
+        setAttention() {},
+      },
+      sessions: {
+        list: () => [{ id: "s1" }],
+      },
+    });
+
+    for (const watcher of watchers) watcher.start?.();
+
+    expect(statuses).toEqual([["s1", "Still working", "info"]]);
+    expect(progresses).toEqual([["s1", 1, 2, "plan"]]);
+    expect(events).toEqual([["s1", "status", "Still working"]]);
+
+    await vi.advanceTimersByTimeAsync(2_100);
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(2_100);
+    await vi.advanceTimersByTimeAsync(100);
+    for (const watcher of watchers) await watcher.stop?.();
+
+    expect(statuses).toEqual([["s1", "Still working", "info"]]);
+    expect(progresses).toEqual([["s1", 1, 2, "plan"]]);
+    expect(events).toEqual([["s1", "status", "Still working"]]);
   });
 
   it("primes initial task and history metadata without replaying logs or events", async () => {
@@ -112,6 +166,9 @@ describe("createBuiltinMetadataWatchers", () => {
         setActivity() {},
         setAttention() {},
       },
+      sessions: {
+        list: () => [{ id: "s1" }],
+      },
     });
 
     for (const watcher of watchers) watcher.start?.();
@@ -150,6 +207,9 @@ describe("createBuiltinMetadataWatchers", () => {
         markSeen() {},
         setActivity() {},
         setAttention() {},
+      },
+      sessions: {
+        list: () => [{ id: "s1" }],
       },
     });
 
@@ -217,11 +277,62 @@ describe("createBuiltinMetadataWatchers", () => {
         setActivity() {},
         setAttention() {},
       },
+      sessions: {
+        list: () => [{ id: "s1" }],
+      },
     });
 
     for (const watcher of watchers) watcher.start?.();
 
     expect(logs).not.toContainEqual(["s1", "Done: Review of bybit-open-trigger", "tasks"]);
     expect(events).not.toContainEqual(["s1", "task_done", "Done: Review of bybit-open-trigger"]);
+  });
+
+  it("does not scan history for sessions outside live topology", async () => {
+    vi.useFakeTimers();
+    mkdirSync(getHistoryDir(), { recursive: true });
+    appendTurn("old-agent", {
+      ts: "2026-01-01T00:00:00.000Z",
+      type: "response",
+      content: "Old response",
+    });
+
+    const watchers = createBuiltinMetadataWatchers({
+      projectRoot: repoRoot,
+      projectId: "proj",
+      serverHost: "127.0.0.1",
+      serverPort: 43000,
+      metadata: {
+        setStatus() {},
+        setProgress() {},
+        log(session, message, opts) {
+          logs.push([session, message, opts?.source]);
+        },
+        clearLog() {},
+        setContext() {},
+        emitEvent(session, event) {
+          events.push([session, event.kind, event.message]);
+        },
+        markSeen() {},
+        setActivity() {},
+        setAttention() {},
+      },
+      sessions: {
+        list: () => [],
+      },
+    });
+
+    for (const watcher of watchers) watcher.start?.();
+    appendTurn("old-agent", {
+      ts: "2026-01-01T00:00:01.000Z",
+      type: "response",
+      content: "Ignored response",
+    });
+    await vi.advanceTimersByTimeAsync(2_100);
+    await vi.advanceTimersByTimeAsync(100);
+    for (const watcher of watchers) await watcher.stop?.();
+
+    expect(logs).not.toContainEqual(["old-agent", "Response: Ignored response", "history"]);
+    expect(events).not.toContainEqual(["old-agent", "response", "Ignored response"]);
   });
 });

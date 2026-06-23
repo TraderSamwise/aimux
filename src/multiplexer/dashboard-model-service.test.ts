@@ -24,6 +24,9 @@ function hostDouble(): any {
       orderWorktreeGroups: vi.fn((groups) => groups),
       markSelectionDirty: vi.fn(),
     },
+    tmuxRuntimeManager: {
+      listProjectManagedWindows: vi.fn(() => []),
+    },
   };
 }
 
@@ -192,6 +195,42 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 5000 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
+    await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not apply an empty desktop-state snapshot while tmux still has live agents", async () => {
+    const host = hostDouble();
+    host.tmuxRuntimeManager.listProjectManagedWindows.mockReturnValueOnce([
+      {
+        target: { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" },
+        metadata: { kind: "agent", sessionId: "codex-1" },
+      },
+    ]);
+    host.getFromProjectService.mockResolvedValueOnce({
+      ok: true,
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktrees: [],
+      worktreeGroups: [
+        {
+          name: "Main Checkout",
+          branch: "main",
+          path: undefined,
+          status: "offline",
+          sessions: [],
+          services: [],
+        },
+      ],
+      operationFailures: [],
+      mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+    });
+
+    await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(false);
+
+    expect(host.dashboardSessionsCache).toBeUndefined();
+    expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
+    expect(host.dashboardModelServiceRefreshError).toBeInstanceOf(Error);
     await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
   });
 });
