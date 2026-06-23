@@ -235,6 +235,8 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   }, 40);
 
   host.mode = "dashboard";
+  const dashboardRunGeneration = (host.dashboardRunGeneration ?? 0) + 1;
+  host.dashboardRunGeneration = dashboardRunGeneration;
   host.loadDashboardUiState();
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
@@ -249,10 +251,12 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     host.dashboardBusyState = startupBusyState;
     if (typeof host.dashboardInputEpoch !== "number") host.dashboardInputEpoch = 0;
     const repairLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const isRepairLifecycleCurrent = () =>
+      host.dashboardRunGeneration === dashboardRunGeneration && isDashboardLifecycleCurrent(host, repairLifecycle);
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
-        if (!isDashboardLifecycleCurrent(host, repairLifecycle)) {
+        if (!isRepairLifecycleCurrent()) {
           if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
           return;
         }
@@ -261,7 +265,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
         const fresh =
           !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
-        if (!isDashboardLifecycleCurrent(host, repairLifecycle)) return;
+        if (!isRepairLifecycleCurrent()) return;
         if (refreshed || fresh || !host.dashboardModelServiceRefreshError) {
           host.renderCurrentDashboardView();
           return;
@@ -275,7 +279,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       })
       .catch((error: unknown) => {
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
-        if (!isDashboardLifecycleCurrent(host, repairLifecycle)) return;
+        if (!isRepairLifecycleCurrent()) return;
         host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
       });
   }
