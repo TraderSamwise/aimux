@@ -94,7 +94,7 @@ describe("refreshDashboardModelFromService", () => {
     ]);
     expect(host.dashboardModelServiceRefreshedAt).toBeGreaterThan(0);
     expect(host.dashboardModelServiceRefreshError).toBeUndefined();
-    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
   });
 
   it("lets forced refreshes supersede an older pending background refresh", async () => {
@@ -114,7 +114,7 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
     expect(host.dashboardSessionsCache.map((session: any) => session.id)).toEqual(["fresh"]);
     expect(host.dashboardModelServiceRefreshError).toBeUndefined();
-    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
   });
 
   it("does not apply desktop-state when the refresh lifecycle is stale", async () => {
@@ -192,6 +192,6 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state", { timeoutMs: 5000 });
     expect(host.dashboardSessionsCache).toBeUndefined();
     expect(host.dashboardWorktreeGroupsCache).toBeUndefined();
-    expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
   });
 });
