@@ -139,4 +139,27 @@ describe("refreshLibrary", () => {
 
     expect(renderLibraryScreen).not.toHaveBeenCalled();
   });
+
+  it("redraws library after manual refresh when input changes but the screen stays active", async () => {
+    vi.clearAllMocks();
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      dashboardInputEpoch: 1,
+      libraryEntries: [],
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn((screen: string) => screen === "library"),
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+    };
+
+    handleLibraryKey(host, Buffer.from("r"));
+    host.dashboardInputEpoch = 2;
+    resolveRefresh({ ok: true, entries: [] });
+
+    await vi.waitFor(() => expect(renderLibraryScreen).toHaveBeenCalled());
+  });
 });

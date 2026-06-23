@@ -104,7 +104,7 @@ export function hydrateDashboardNotificationScreenState(host: NotificationHost):
   if (!host.isDashboardScreen?.("coordination")) return;
   startDashboardLifecycleTask(
     host,
-    { inputEpoch: true, screen: "coordination" },
+    { screen: "coordination" },
     () => host.refreshCoordinationFromService?.() ?? Promise.resolve(false),
     {
       onSuccess: () => host.renderCurrentDashboardView?.(),

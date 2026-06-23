@@ -117,7 +117,7 @@ export function showProject(host: ProjectHost): void {
   host.setDashboardScreen("project");
   host.writeStatuslineFile();
   renderProject(host);
-  startDashboardLifecycleTask(host, { inputEpoch: true, screen: "project" }, () => refreshProjectObservability(host), {
+  startDashboardLifecycleTask(host, { screen: "project" }, () => refreshProjectObservability(host), {
     onSuccess: (refreshed) => {
       if (refreshed) renderProject(host);
     },
@@ -157,14 +157,9 @@ export function handleProjectKey(host: ProjectHost, data: Buffer): void {
   }
   const story = host.projectObservability?.story ?? [];
   if (key === "r") {
-    startDashboardLifecycleTask(
-      host,
-      { inputEpoch: true, screen: "project" },
-      () => refreshProjectObservability(host, { force: true }),
-      {
-        onSuccess: () => renderProject(host),
-      },
-    );
+    startDashboardLifecycleTask(host, { screen: "project" }, () => refreshProjectObservability(host, { force: true }), {
+      onSuccess: () => renderProject(host),
+    });
     return;
   }
   if (key === "down" || key === "j") {
