@@ -85,6 +85,7 @@ interface DashboardSessionMutationOptions {
   sessionSeed?: DashboardSession;
   request: () => Promise<void>;
   settle: (lifecycle: DashboardLifecycleToken) => Promise<boolean>;
+  lifecycle?: DashboardLifecycleToken;
   onBeforeRequest?: () => void;
   onAfterSettle?: () => void;
   onError?: () => Promise<void> | void;
@@ -285,11 +286,11 @@ async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
 ): Promise<void> {
-  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host, { inputEpoch: true });
   const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
     sessionSeed: opts.sessionSeed,
   });
-  opts.onBeforeRequest?.();
+  if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
   renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
   const clearPending = () => {
     if (typeof token === "number") {
@@ -327,7 +328,7 @@ async function runDashboardServiceMutation(
   const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
     serviceSeed: opts.serviceSeed,
   });
-  opts.onBeforeRequest?.();
+  if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
   renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
   const clearPending = () => {
     if (typeof token === "number") {
@@ -661,7 +662,7 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
-    const warningLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     if (
       host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
       queuedAgentRestoresFor(host).has(session.id)
@@ -690,6 +691,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         sessionId: session.id,
         pendingAction: "starting",
         sessionSeed,
+        lifecycle,
         onBeforeRequest: () => {
           host.footerFlash = `Restoring ${label}`;
           host.footerFlashTicks = 3;
@@ -708,7 +710,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
       });
     });
     const warningLines = restoreWarningLines(resumeResult);
-    if (warningLines.length > 0 && isDashboardLifecycleCurrent(host, warningLifecycle)) {
+    if (warningLines.length > 0 && isDashboardLifecycleCurrent(host, lifecycle)) {
       host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
     }
     return;

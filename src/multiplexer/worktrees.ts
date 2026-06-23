@@ -213,8 +213,10 @@ async function waitForRenderedDashboardWorktreeCreate(
     if (isDashboardWorktreeCreateSettled(group)) {
       return { ok: true };
     }
-    showOptimisticDashboardWorktreeCreate(host, name);
-    renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard?.());
+    if (isDashboardLifecycleCurrent(host, lifecycle)) {
+      showOptimisticDashboardWorktreeCreate(host, name);
+      host.renderDashboard?.();
+    }
     await sleep(250);
   }
   return { ok: false, error: new Error("worktree creating did not settle before timing out") };
