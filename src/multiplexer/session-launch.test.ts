@@ -1425,7 +1425,7 @@ describe("resumeSessions", () => {
 });
 
 describe("runProjectService", () => {
-  it("starts without legacy dispatchers", async () => {
+  it("adopts live topology before exposing the project service", async () => {
     const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
@@ -1447,10 +1447,13 @@ describe("runProjectService", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.mode).toBe("project-service");
-    expect(host.startProjectServices.mock.invocationCallOrder[0]).toBeLessThan(
-      host.syncSessionsFromTopology.mock.invocationCallOrder[0],
+    expect(host.syncSessionsFromTopology.mock.invocationCallOrder[0]).toBeLessThan(
+      host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0],
     );
-    expect(host.startProjectServices.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      host.startProjectServices.mock.invocationCallOrder[0],
+    );
+    expect(host.syncSessionsFromTopology.mock.invocationCallOrder[0]).toBeLessThan(
       host.writeInstructionFiles.mock.invocationCallOrder[0],
     );
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();

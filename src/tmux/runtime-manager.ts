@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import { debug, log } from "../debug.js";
-import { getProjectStateDirFor } from "../paths.js";
+import { getProjectIdFor, getProjectStateDirFor } from "../paths.js";
 import {
   AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
   getRuntimeOwnerId,
@@ -195,8 +195,7 @@ export class TmuxRuntimeManager {
   }
 
   getProjectSession(projectRoot: string): TmuxSessionRef {
-    const projectId = createHash("sha1").update(projectRoot).digest("hex").slice(0, 10);
-    const slug = basename(projectRoot).replace(/[^a-zA-Z0-9_-]+/g, "-") || "project";
+    const projectId = getProjectIdFor(projectRoot);
     let prefix = "aimux";
     try {
       prefix = loadConfig().runtime.tmux.sessionPrefix || "aimux";
@@ -204,8 +203,14 @@ export class TmuxRuntimeManager {
     return {
       projectRoot,
       projectId,
-      sessionName: `${prefix}-${slug}-${projectId}`,
+      sessionName: `${prefix}-${projectId}`,
     };
+  }
+
+  private getLegacyProjectSessionName(projectRoot: string): string {
+    const projectId = createHash("sha1").update(projectRoot).digest("hex").slice(0, 10);
+    const slug = basename(projectRoot).replace(/[^a-zA-Z0-9_-]+/g, "-") || "project";
+    return `${this.getSessionPrefix()}-${slug}-${projectId}`;
   }
 
   getProjectClientSessionName(hostSessionName: string, clientSuffix: string): string {
@@ -364,7 +369,14 @@ export class TmuxRuntimeManager {
 
   ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
-    const exists = this.hasSession(session.sessionName);
+    let exists = this.hasSession(session.sessionName);
+    if (!exists) {
+      const legacySessionName = this.getLegacyProjectSessionName(projectRoot);
+      if (legacySessionName !== session.sessionName && this.hasSession(legacySessionName)) {
+        this.exec(["rename-session", "-t", legacySessionName, session.sessionName]);
+        exists = true;
+      }
+    }
     const currentRuntimeContract = exists
       ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
       : null;
@@ -712,7 +724,35 @@ export class TmuxRuntimeManager {
   }
 
   listManagedWindows(sessionName: string): Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> {
-    const windows = this.listWindows(sessionName);
+    let raw = "";
+    try {
+      raw = this.exec([
+        "list-windows",
+        "-t",
+        sessionName,
+        "-F",
+        "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}",
+      ]);
+    } catch {
+      return [];
+    }
+    const windows = raw
+      ? raw
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const [id, index, name, active, activity, paneDead, metadataRaw = ""] = line.split("\t");
+            return {
+              id,
+              index: Number(index),
+              name,
+              active: active === "1",
+              activity: activity ? Number(activity) : undefined,
+              paneDead: paneDead === "1",
+              metadataRaw,
+            };
+          })
+      : [];
     const managed: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> = [];
     for (const window of windows) {
       const target: TmuxTarget = {
@@ -722,7 +762,10 @@ export class TmuxRuntimeManager {
         windowName: window.name,
         paneDead: window.paneDead,
       };
-      const metadata = this.getWindowMetadata(target);
+      let metadata: TmuxWindowMetadata | null = null;
+      try {
+        metadata = window.metadataRaw ? (JSON.parse(window.metadataRaw) as TmuxWindowMetadata) : null;
+      } catch {}
       if (!metadata) continue;
       managed.push({ target, metadata });
     }

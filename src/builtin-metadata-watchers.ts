@@ -4,7 +4,7 @@ import { getPlansDir, getStatusDir, getHistoryDir, getRuntimeExchangePath } from
 import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
-import { listSessionIds, readHistory } from "./context/history.js";
+import { readHistory } from "./context/history.js";
 
 function safeRead(path: string): string {
   try {
@@ -75,6 +75,7 @@ class DirectoryPoller implements AimuxPluginInstance {
 export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginInstance[] {
   const { metadata } = api;
   const lastStatusBySession = new Map<string, string>();
+  const lastProgressBySession = new Map<string, string>();
   const lastTaskBySession = new Map<string, string>();
   const lastHistoryBySession = new Map<string, string>();
   let taskWatcherPrimed = false;
@@ -85,6 +86,9 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
       if (!sessionId) continue;
       const progress = parsePlanProgress(safeRead(join(getPlansDir(), file)));
       if (progress) {
+        const progressKey = `${progress.current}/${progress.total}/${progress.label ?? ""}`;
+        if (lastProgressBySession.get(sessionId) === progressKey) continue;
+        lastProgressBySession.set(sessionId, progressKey);
         metadata.setProgress(sessionId, progress.current, progress.total, progress.label);
       }
     }
@@ -96,11 +100,10 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
       if (!sessionId) continue;
       const headline = parseStatusHeadline(safeRead(join(getStatusDir(), file)));
       if (headline) {
+        if (lastStatusBySession.get(sessionId) === headline) continue;
+        lastStatusBySession.set(sessionId, headline);
         metadata.setStatus(sessionId, headline, "info");
-        if (lastStatusBySession.get(sessionId) !== headline) {
-          metadata.emitEvent(sessionId, { kind: "status", message: headline, tone: "info", source: "status" });
-          lastStatusBySession.set(sessionId, headline);
-        }
+        metadata.emitEvent(sessionId, { kind: "status", message: headline, tone: "info", source: "status" });
       }
     }
   });
@@ -139,7 +142,7 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
   });
 
   const historyWatcher = new DirectoryPoller(getHistoryDir(), () => {
-    for (const sessionId of listSessionIds()) {
+    for (const { id: sessionId } of api.sessions.list()) {
       const turns = readHistory(sessionId, { lastN: 1, maxBytes: 16 * 1024 });
       const turn = turns.at(-1);
       if (!turn) continue;

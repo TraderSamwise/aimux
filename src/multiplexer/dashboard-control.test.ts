@@ -17,12 +17,12 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
 }));
 
-function healthyServiceResponse(pid = 2) {
+function healthyServiceResponse(pid = 2, projectRoot = process.cwd()) {
   return {
     status: 200,
     json: {
       ok: true,
-      projectStateDir: getProjectStateDirFor(process.cwd()),
+      projectStateDir: getProjectStateDirFor(projectRoot),
       pid,
       serviceInfo: getProjectServiceManifest(),
     },
@@ -114,9 +114,8 @@ describe("postToProjectService", () => {
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
-  it("validates the first GET endpoint and caches recent health", async () => {
+  it("uses GET routes directly without health preflight", async () => {
     mocks.requestJson
-      .mockResolvedValueOnce(healthyServiceResponse())
       .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 1 } })
       .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 2 } });
     const { getFromProjectService } = await import("./dashboard-control.js");
@@ -134,16 +133,14 @@ describe("postToProjectService", () => {
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
     expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
-    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
-    expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+    expect(mocks.requestJson.mock.calls[0][0]).toContain("/desktop-state");
     expect(mocks.requestJson.mock.calls[1][0]).toContain("/desktop-state");
-    expect(mocks.requestJson.mock.calls[2][0]).toContain("/desktop-state");
   });
 
   it("retries transient GET timeouts without restarting the project service", async () => {
     const timeout = Object.assign(new Error("request timed out after 250ms"), { code: "ETIMEDOUT" });
     mocks.requestJson
-      .mockResolvedValueOnce(healthyServiceResponse())
       .mockRejectedValueOnce(timeout)
       .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 3 } });
     const { getFromProjectService } = await import("./dashboard-control.js");
@@ -156,7 +153,23 @@ describe("postToProjectService", () => {
     expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
-    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not restart the project service when a GET route succeeds", async () => {
+    mocks.requestJson.mockResolvedValueOnce({ status: 200, json: { ok: true, value: 8 } });
+    const { getFromProjectService } = await import("./dashboard-control.js");
+
+    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
+      ok: true,
+      value: 8,
+    });
+
+    expect(mocks.stopProjectService).not.toHaveBeenCalled();
+    expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
+    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+    expect(mocks.requestJson.mock.calls[0][0]).toContain("/desktop-state");
   });
 
   it("surfaces POST timeouts without replaying a mutating request", async () => {
@@ -200,34 +213,7 @@ describe("postToProjectService", () => {
     expect(mocks.requestJson.mock.calls[2][0]).toContain("/agents/resume");
   });
 
-  it("restarts stale project-service endpoints before GET reads", async () => {
-    mocks.requestJson
-      .mockResolvedValueOnce({
-        status: 200,
-        json: {
-          ok: true,
-          pid: 2,
-          serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
-        },
-      })
-      .mockResolvedValueOnce(healthyServiceResponse())
-      .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 4 } });
-    const { getFromProjectService } = await import("./dashboard-control.js");
-
-    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
-      ok: true,
-      value: 4,
-    });
-
-    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.requestJson).toHaveBeenCalledTimes(3);
-    expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
-    expect(mocks.requestJson.mock.calls[2][0]).toContain("/desktop-state");
-  });
-
-  it("rejects project-service endpoints for a different project state dir", async () => {
+  it("rejects mutating requests to endpoints for a different project state dir", async () => {
     mocks.requestJson
       .mockResolvedValueOnce({
         status: 200,
@@ -240,12 +226,11 @@ describe("postToProjectService", () => {
       })
       .mockResolvedValueOnce(healthyServiceResponse())
       .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 7 } });
-    const { getFromProjectService } = await import("./dashboard-control.js");
+    const { postToProjectService } = await import("./dashboard-control.js");
 
-    await expect(getFromProjectService({ dashboardServiceRecovery: null }, "/desktop-state")).resolves.toEqual({
-      ok: true,
-      value: 7,
-    });
+    await expect(
+      postToProjectService({ dashboardServiceRecovery: null }, "/agents/resume", { sessionId: "claude-1" }),
+    ).resolves.toEqual({ ok: true, value: 7 });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
@@ -256,9 +241,7 @@ describe("postToProjectService", () => {
   it("recovers after route connection-refused", async () => {
     const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:43444"), { code: "ECONNREFUSED" });
     mocks.requestJson
-      .mockResolvedValueOnce(healthyServiceResponse())
       .mockRejectedValueOnce(refused)
-      .mockResolvedValueOnce(healthyServiceResponse())
       .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 4 } });
     const { getFromProjectService } = await import("./dashboard-control.js");
 
@@ -270,14 +253,12 @@ describe("postToProjectService", () => {
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.requestJson).toHaveBeenCalledTimes(4);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
   it("restarts the project service before retrying retryable HTTP statuses", async () => {
     mocks.requestJson
-      .mockResolvedValueOnce(healthyServiceResponse())
       .mockResolvedValueOnce({ status: 503, json: { ok: false, error: "starting" } })
-      .mockResolvedValueOnce(healthyServiceResponse())
       .mockResolvedValueOnce({ status: 200, json: { ok: true, value: 6 } });
     const { getFromProjectService } = await import("./dashboard-control.js");
 
@@ -288,7 +269,7 @@ describe("postToProjectService", () => {
 
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.requestJson).toHaveBeenCalledTimes(4);
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
   it("bounds control-plane recovery by the project-service request timeout", async () => {
@@ -340,8 +321,7 @@ describe("postToProjectService", () => {
     expect(mocks.ensureProjectService).toHaveBeenCalledTimes(2);
   });
 
-  it("validates endpoints for raw dashboard streams before returning them", async () => {
-    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse());
+  it("returns metadata endpoints for raw dashboard streams without health preflight", async () => {
     const { resolveCurrentProjectServiceEndpointForDashboard } = await import("./dashboard-control.js");
     const endpoint = { host: "127.0.0.1", port: 43444, pid: 2 };
     mocks.loadMetadataEndpoint.mockReturnValue(endpoint);
@@ -350,10 +330,7 @@ describe("postToProjectService", () => {
       endpoint,
     );
 
-    expect(mocks.requestJson).toHaveBeenCalledWith(
-      "http://127.0.0.1:43444/health",
-      expect.objectContaining({ timeoutMs: expect.any(Number) }),
-    );
+    expect(mocks.requestJson).not.toHaveBeenCalled();
   });
 });
 
@@ -526,7 +503,7 @@ describe("showOrchestrationRoutePicker", () => {
       pid: 2,
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
-    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse()).mockResolvedValueOnce({
+    mocks.requestJson.mockResolvedValueOnce({
       status: 200,
       json: {
         ok: true,
@@ -561,7 +538,7 @@ describe("showOrchestrationRoutePicker", () => {
     await vi.waitFor(() => expect(host.renderOrchestrationRoutePicker).toHaveBeenCalledOnce());
 
     expect(host.getFromProjectService).not.toHaveBeenCalled();
-    expect(mocks.requestJson.mock.calls[1][0]).toContain(
+    expect(mocks.requestJson.mock.calls[0][0]).toContain(
       "/orchestration/routes?mode=task&selectedSessionId=codex-1&worktreePath=%2Frepo%2F.aimux%2Fworktrees%2Fdemo",
     );
     expect(host.orchestrationRouteMode).toBe("task");
@@ -585,9 +562,7 @@ describe("showOrchestrationRoutePicker", () => {
       pid: 2,
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
-    mocks.requestJson
-      .mockResolvedValueOnce(healthyServiceResponse())
-      .mockResolvedValueOnce({ status: 200, json: { ok: true, options: [{ recipientIds: "codex-1" }] } });
+    mocks.requestJson.mockResolvedValueOnce({ status: 200, json: { ok: true, options: [{ recipientIds: "codex-1" }] } });
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -616,7 +591,7 @@ describe("showOrchestrationRoutePicker", () => {
       pid: 2,
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
-    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse()).mockImplementationOnce(
+    mocks.requestJson.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolveRoutes = (value) => resolve({ status: 200, json: value });
@@ -635,7 +610,7 @@ describe("showOrchestrationRoutePicker", () => {
     };
 
     showOrchestrationRoutePicker(host, "message");
-    await vi.waitFor(() => expect(mocks.requestJson).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mocks.requestJson).toHaveBeenCalledTimes(1));
     host.dashboardInputEpoch = 1;
     resolveRoutes({ ok: true, options: [{ label: "Agent", sessionId: "codex-1" }] });
     await Promise.resolve();
@@ -856,7 +831,7 @@ describe("startRuntimeGuardRepair", () => {
       pid: 2,
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
-    mocks.requestJson.mockResolvedValue(healthyServiceResponse());
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = {
       projectRoot: "/repo/app",
       runtimeGuardRepairing: false,
@@ -899,7 +874,7 @@ describe("startRuntimeGuardRepair", () => {
       pid: 2,
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
-    mocks.requestJson.mockResolvedValue(healthyServiceResponse());
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = {
       mode: "dashboard",
       projectRoot: "/repo/app",
