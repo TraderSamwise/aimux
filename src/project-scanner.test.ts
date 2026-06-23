@@ -19,6 +19,7 @@ vi.mock("node:os", async () => {
 
 vi.mock("./paths.js", () => ({
   getAimuxDirFor: (cwd: string) => join(cwd, ".aimux"),
+  getProjectIdFor: (cwd: string) => registryProjects.find((project) => project.repoRoot === cwd)?.id ?? "unknown",
   getProjectStateDirById: (id: string) => join(tmpHome, ".aimux", "projects", id),
   listProjects: () => registryProjects,
 }));
@@ -273,13 +274,13 @@ describe("project-scanner", () => {
           id: "proj-a",
           name: "project-a",
           path: projectA,
-          dashboardSessionName: expect.stringMatching(/^aimux-project-a-/),
+          dashboardSessionName: "aimux-proj-a",
         }),
         expect.objectContaining({
           id: "proj-b",
           name: "project-b",
           path: projectB,
-          dashboardSessionName: expect.stringMatching(/^aimux-project-b-/),
+          dashboardSessionName: "aimux-proj-b",
         }),
       ]),
     );

@@ -181,7 +181,7 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
-  it("budgets rapid desktop-state reads and invalidates on project changes", async () => {
+  it("caches desktop-state reads but refreshes immediately after project changes", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
       teammates: [],
@@ -202,13 +202,18 @@ describe("MetadataServer threads API", () => {
     expect(second.seq).toBe(1);
     expect(getState).toHaveBeenCalledTimes(1);
 
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const cached = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(cached.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
     server.notifyChange();
     const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
     expect(third.seq).toBe(2);
     expect(getState).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates desktop-state cache when alerts publish project updates", async () => {
+  it("refreshes desktop-state cache when alerts publish project updates", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
       teammates: [],
@@ -232,6 +237,7 @@ describe("MetadataServer threads API", () => {
       sessionId: "agent-1",
       cooldownMs: 0,
     });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
 
     expect(second.seq).toBe(2);
