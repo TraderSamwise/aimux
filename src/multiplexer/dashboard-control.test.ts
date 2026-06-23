@@ -697,7 +697,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
-  it("does not spawn a second guarded repair while another dashboard owns the repair lock", async () => {
+  it("does not block navigation while another dashboard owns the repair lock", async () => {
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     const firstHost = {
       projectRoot: "/repo/app",
@@ -719,10 +719,9 @@ describe("startRuntimeGuardRepair", () => {
     startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
 
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
-    expect(secondHost.dashboardBusyState).toMatchObject({
-      title: "Repairing Aimux",
-      lines: ["Another dashboard is repairing the local control plane."],
-    });
+    expect(secondHost.dashboardBusyState).toBeNull();
+    expect(secondHost.footerFlash).toBe("Aimux repair already running");
+    expect(secondHost.footerFlashTicks).toBe(3);
     expect(secondHost.runtimeGuardRepairBusy).toBe(true);
   });
 
