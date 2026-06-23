@@ -43,7 +43,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import {
   probeRuntimeGuard,
   runtimeGuardEquals,
@@ -556,7 +556,7 @@ export function openLiveTmuxWindowForEntry(
     const target = openManagedSessionWindow(host.tmuxRuntimeManager, process.cwd(), entry);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void host.postToProjectService(PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
     updateNotificationContext("tui", {
       focused: true,
       sessionId: entry.id,
@@ -603,7 +603,7 @@ export function openLiveTmuxWindowForService(
     const target = openManagedServiceWindow(host.tmuxRuntimeManager, process.cwd(), serviceId);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void host.postToProjectService(PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
     noteLastUsedItem(host, serviceId);
     return "opened";
   } catch (error) {
@@ -648,7 +648,8 @@ async function openProjectServiceNotificationTarget(
   activationToken: any | undefined,
 ): Promise<"opened" | "missing" | "error"> {
   try {
-    await host.postToProjectService(
+    await mutateDashboardApi(
+      host,
       PROJECT_API_ROUTES.controls.openNotificationTarget,
       {
         sessionId,

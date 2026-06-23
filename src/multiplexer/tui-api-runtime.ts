@@ -225,6 +225,8 @@ export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {
   host.tuiApiRuntime = new TuiApiRuntime({
     request: (path, opts) =>
       opts === undefined ? host.getFromProjectService(path) : host.getFromProjectService(path, opts),
+    mutate: (path, body, opts) =>
+      opts === undefined ? host.postToProjectService(path, body) : host.postToProjectService(path, body, opts),
     onConnectionStateChange: (state) => {
       host.tuiApiConnectionState = state;
     },

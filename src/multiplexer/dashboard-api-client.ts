@@ -1,5 +1,5 @@
 import { isDashboardLifecycleCurrent, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { getOrCreateTuiApiRuntime, type TuiApiRequestOptions } from "./tui-api-runtime.js";
 
 type DashboardApiHost = any;
 
@@ -70,4 +70,16 @@ export async function refreshDashboardModelThroughApi(
   } catch {
     return false;
   }
+}
+
+export async function mutateDashboardApi<T = any>(
+  host: DashboardApiHost,
+  path: string,
+  body: unknown,
+  opts: TuiApiRequestOptions | undefined = undefined,
+  validate: (value: unknown) => T = (value) => value as T,
+): Promise<T> {
+  const result = await getOrCreateTuiApiRuntime(host).mutateJson(path, body, validate, opts);
+  if (!result.ok) throw result.error instanceof Error ? result.error : new Error(String(result.error));
+  return result.value as T;
 }

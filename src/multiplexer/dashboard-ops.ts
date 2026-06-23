@@ -24,7 +24,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -408,7 +408,8 @@ export async function spawnDashboardAgentWithFeedback(
       host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath);
     },
     request: async () => {
-      await host.postToProjectService(
+      await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.agents.spawn,
         {
           tool: input.tool,
@@ -453,7 +454,8 @@ export async function forkDashboardAgentWithFeedback(
       host.preferDashboardEntrySelection("session", input.targetSessionId, input.worktreePath);
     },
     request: async () => {
-      await host.postToProjectService(
+      await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.agents.fork,
         {
           sourceSessionId: input.sourceSessionId,
@@ -533,7 +535,8 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService(
+        await mutateDashboardApi(
+          host,
           PROJECT_API_ROUTES.agents.stop,
           { sessionId: session.id },
           { timeoutMs: 10_000 },
@@ -664,7 +667,7 @@ export async function graveyardSessionWithFeedback(
       pendingAction: "graveyarding",
       sessionSeed,
       request: async () => {
-        await host.postToProjectService(PROJECT_API_ROUTES.agents.kill, { sessionId }, { timeoutMs: 10_000 });
+        await mutateDashboardApi(host, PROJECT_API_ROUTES.agents.kill, { sessionId }, { timeoutMs: 10_000 });
       },
       settle: (modelLifecycle) => waitForStableDashboardSessionAbsence(host, sessionId, 10_000, 350, modelLifecycle),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
@@ -715,7 +718,8 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
           host.footerFlashTicks = 3;
         },
         request: async () => {
-          resumeResult = await host.postToProjectService(
+          resumeResult = await mutateDashboardApi(
+            host,
             PROJECT_API_ROUTES.agents.resume,
             { sessionId: session.id },
             { timeoutMs: 60_000 },
@@ -762,7 +766,8 @@ export async function resumeOfflineServiceWithFeedback(
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService(
+        await mutateDashboardApi(
+          host,
           PROJECT_API_ROUTES.services.resume,
           { serviceId: service.id },
           { timeoutMs: 10_000 },
@@ -829,7 +834,8 @@ export async function createDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService(
+      await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.services.create,
         { serviceId, command: commandLine, worktreePath },
         { timeoutMs: 10_000 },
@@ -871,7 +877,8 @@ export async function stopDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService(
+      await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.services.stop,
         { serviceId: service.id },
         { timeoutMs: 10_000 },
@@ -892,7 +899,8 @@ export async function removeDashboardServiceWithFeedback(
     serviceId: service.id,
     pendingAction: "removing",
     request: async () => {
-      await host.postToProjectService(
+      await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.services.remove,
         { serviceId: service.id },
         { timeoutMs: 10_000 },
@@ -927,7 +935,8 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         host.resumeOfflineSession(session);
         return;
       }
-      const result = await host.postToProjectService(
+      const result = await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.agents.resume,
         { sessionId: session.id },
         { timeoutMs: 10_000 },
@@ -989,7 +998,8 @@ export async function migrateSessionWithFeedback(
     pendingAction: "migrating",
     sessionSeed,
     request: async () => {
-      await host.postToProjectService(
+      await mutateDashboardApi(
+        host,
         PROJECT_API_ROUTES.agents.migrate,
         { sessionId: session.id, worktreePath: targetPath },
         { timeoutMs: 10_000 },
