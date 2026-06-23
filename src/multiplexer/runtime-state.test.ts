@@ -127,6 +127,28 @@ describe("startStatusRefresh", () => {
     expect(host.refreshCoordinationFromService).not.toHaveBeenCalled();
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
+
+  it("renders heartbeat-only dashboard feedback without waiting for background refresh", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => true) },
+      mode: "dashboard",
+      dashboardNextBackgroundRefreshAt: 0,
+      refreshDashboardModelFromService: vi.fn(() => new Promise<boolean>(() => undefined)),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
 });
 
 describe("resumeOfflineSession", () => {

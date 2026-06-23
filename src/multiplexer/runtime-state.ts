@@ -160,6 +160,9 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
       const now = Date.now();
       if (now >= host.dashboardNextBackgroundRefreshAt) {
         host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
+        if (dashboardNeedsRender) {
+          host.renderCurrentDashboardView();
+        }
         startDashboardLifecycleTask(host, {}, () => host.refreshDashboardModelFromService(), {
           onSuccess: (refreshed: boolean) => {
             // On the Coordination screen, refine the worklist from the service too (fire-and-forget
@@ -174,7 +177,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
                 },
               );
             }
-            if (refreshed || dashboardNeedsRender) {
+            if (refreshed) {
               host.renderCurrentDashboardView();
             }
           },

@@ -17,6 +17,12 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function flushLifecycleTask(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("dashboard lifecycle guards", () => {
   it("keeps unscoped dashboard lifecycle tokens current while the host stays in dashboard mode", () => {
     const host: any = { mode: "dashboard" };
@@ -76,7 +82,7 @@ describe("dashboard lifecycle guards", () => {
     host.dashboardInputEpoch = 2;
     pending.resolve("done");
     await pending.promise;
-    await Promise.resolve();
+    await flushLifecycleTask();
 
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onFinally).not.toHaveBeenCalled();
@@ -111,6 +117,23 @@ describe("dashboard lifecycle guards", () => {
     await vi.waitFor(() =>
       expect(onSuccess).toHaveBeenCalledWith("ok", expect.objectContaining({ inputEpoch: 1, screen: "library" })),
     );
-    expect(onFinally).toHaveBeenCalledWith(expect.objectContaining({ inputEpoch: 1, screen: "library" }));
+    await vi.waitFor(() =>
+      expect(onFinally).toHaveBeenCalledWith(expect.objectContaining({ inputEpoch: 1, screen: "library" })),
+    );
+  });
+
+  it("does not route success handler exceptions to the error handler", async () => {
+    const onError = vi.fn();
+    const host: any = { mode: "dashboard", dashboardState: { screen: "library" } };
+
+    startDashboardLifecycleTask(host, { screen: "library" }, async () => "ok", {
+      onSuccess: () => {
+        throw new Error("render failed");
+      },
+      onError,
+    });
+    await flushLifecycleTask();
+
+    expect(onError).not.toHaveBeenCalled();
   });
 });
