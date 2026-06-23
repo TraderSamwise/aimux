@@ -111,7 +111,7 @@ export function showTopology(host: TopologyHost): void {
   host.setDashboardScreen("topology");
   host.writeStatuslineFile();
   renderTopology(host);
-  startDashboardLifecycleTask(host, { inputEpoch: true, screen: "topology" }, () => refreshTopology(host), {
+  startDashboardLifecycleTask(host, { screen: "topology" }, () => refreshTopology(host), {
     onSuccess: (refreshed) => {
       if (refreshed) renderTopology(host);
     },
@@ -157,14 +157,9 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    startDashboardLifecycleTask(
-      host,
-      { inputEpoch: true, screen: "topology" },
-      () => refreshTopology(host, { force: true }),
-      {
-        onSuccess: () => renderTopology(host),
-      },
-    );
+    startDashboardLifecycleTask(host, { screen: "topology" }, () => refreshTopology(host, { force: true }), {
+      onSuccess: () => renderTopology(host),
+    });
     return;
   }
   const rows = host.topology?.rows ?? [];

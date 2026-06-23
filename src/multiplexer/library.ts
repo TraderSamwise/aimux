@@ -78,7 +78,7 @@ export function showLibrary(host: LibraryHost): void {
   host.setDashboardScreen("library");
   host.writeStatuslineFile();
   renderLibrary(host);
-  startDashboardLifecycleTask(host, { inputEpoch: true, screen: "library" }, () => refreshLibrary(host), {
+  startDashboardLifecycleTask(host, { screen: "library" }, () => refreshLibrary(host), {
     onSuccess: (refreshed) => {
       if (refreshed) renderLibrary(host);
     },
@@ -113,14 +113,9 @@ function openEntryInEditor(host: LibraryHost, path: string): void {
     };
   }
 
-  startDashboardLifecycleTask(
-    host,
-    { inputEpoch: true, screen: "library" },
-    () => refreshLibrary(host, { force: true }),
-    {
-      onSuccess: () => renderLibrary(host),
-    },
-  );
+  startDashboardLifecycleTask(host, { screen: "library" }, () => refreshLibrary(host, { force: true }), {
+    onSuccess: () => renderLibrary(host),
+  });
   if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
   if (host.dashboardErrorState) {
     host.renderDashboardErrorOverlay();
@@ -154,14 +149,9 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
-    startDashboardLifecycleTask(
-      host,
-      { inputEpoch: true, screen: "library" },
-      () => refreshLibrary(host, { force: true }),
-      {
-        onSuccess: () => renderLibrary(host),
-      },
-    );
+    startDashboardLifecycleTask(host, { screen: "library" }, () => refreshLibrary(host, { force: true }), {
+      onSuccess: () => renderLibrary(host),
+    });
     return;
   }
   const entries = host.libraryEntries ?? [];
