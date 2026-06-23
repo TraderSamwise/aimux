@@ -211,23 +211,27 @@ describe("TuiApiRuntime", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it("does not let wrapper mutations replace or require the default mutation transport", async () => {
+  it("keeps wrapper mutations scoped while preserving the default mutation transport", async () => {
     const host: any = {
       getFromProjectService: vi.fn(async () => ({ ok: true })),
+      postToProjectService: vi.fn(async (_path: string, body: unknown) => ({ ok: true, body })),
     };
     const runtime = getOrCreateTuiApiRuntime(host);
     const mutate = vi.fn(async () => ({ ok: true, value: "wrapper" }));
 
-    await expect(postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "a" }, undefined, mutate)).resolves.toEqual({
+    await expect(
+      postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "a" }, undefined, mutate),
+    ).resolves.toEqual({
       ok: true,
       value: "wrapper",
     });
     await expect(runtime.mutateJson("/agents/stop", { sessionId: "b" }, (value) => value)).resolves.toMatchObject({
-      ok: false,
-      error: expect.any(Error),
+      ok: true,
+      value: { ok: true, body: { sessionId: "b" } },
     });
 
     expect(mutate).toHaveBeenCalledTimes(1);
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "b" });
   });
 
   it("bootstraps direct resource refreshes through the dashboard GET wrapper", async () => {

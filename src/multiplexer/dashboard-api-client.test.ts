@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { refreshDashboardApiResource, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import {
+  mutateDashboardApi,
+  refreshDashboardApiResource,
+  refreshDashboardModelThroughApi,
+} from "./dashboard-api-client.js";
 
 describe("dashboard-api-client", () => {
   it("applies resource snapshots through the TUI API runtime", async () => {
@@ -95,5 +99,19 @@ describe("dashboard-api-client", () => {
     };
 
     await expect(refreshDashboardModelThroughApi(host, { force: true })).resolves.toBe(false);
+  });
+
+  it("mutates through the shared TUI API runtime", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: unknown) => ({ ok: true, body })),
+    };
+
+    await expect(mutateDashboardApi(host, "/agents/stop", { sessionId: "a" })).resolves.toEqual({
+      ok: true,
+      body: { sessionId: "a" },
+    });
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "a" });
   });
 });

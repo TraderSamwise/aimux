@@ -19,7 +19,7 @@ import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionRuntimeHost = any;
 
@@ -82,7 +82,7 @@ export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: st
       host.setPendingDashboardSessionAction(sessionId, null);
     };
     try {
-      await host.postToProjectService(PROJECT_API_ROUTES.agents.rename, { sessionId, label });
+      await mutateDashboardApi(host, PROJECT_API_ROUTES.agents.rename, { sessionId, label });
       host.invalidateDesktopStateSnapshot();
       await refreshDashboardModelThroughApi(host, { force: true, lifecycle: modelLifecycle });
     } catch (err: unknown) {

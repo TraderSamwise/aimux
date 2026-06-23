@@ -12,6 +12,7 @@ import {
   isDashboardLifecycleCurrent,
   startDashboardLifecycleTask,
 } from "./dashboard-lifecycle.js";
+import { mutateDashboardApi } from "./dashboard-api-client.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
@@ -190,10 +191,10 @@ export async function markCoordinationItemRead(host: NotificationHost, item: Wor
   const note = item.notification;
   if (!note) return;
   if (item.sessionId) {
-    await host.postToProjectService(PROJECT_API_ROUTES.notifications.read, { sessionId: item.sessionId });
+    await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, { sessionId: item.sessionId });
   } else {
     for (const record of note.notifications) {
-      await host.postToProjectService(PROJECT_API_ROUTES.notifications.read, { id: record.id });
+      await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, { id: record.id });
     }
   }
 }
