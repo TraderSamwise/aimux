@@ -61,9 +61,12 @@ export async function refreshDashboardModelThroughApi(
 ): Promise<boolean> {
   if (!isDashboardApiLifecycleCurrent(host, options)) return false;
   if (typeof host.refreshDashboardModelFromService !== "function") return false;
+  const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
   try {
     const refreshOptions = options.lifecycle ? { lifecycle: options.lifecycle } : undefined;
-    return await host.refreshDashboardModelFromService(options.force === true, refreshOptions);
+    const result = await host.refreshDashboardModelFromService(options.force === true, refreshOptions);
+    if (host.dashboardModelServiceRefreshError) return false;
+    return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
   } catch {
     return false;
   }

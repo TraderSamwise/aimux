@@ -19,6 +19,7 @@ import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionRuntimeHost = any;
 
@@ -83,13 +84,9 @@ export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: st
     try {
       await host.postToProjectService(PROJECT_API_ROUTES.agents.rename, { sessionId, label });
       host.invalidateDesktopStateSnapshot();
-      if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true, { lifecycle: modelLifecycle });
-      }
+      await refreshDashboardModelThroughApi(host, { force: true, lifecycle: modelLifecycle });
     } catch (err: unknown) {
-      if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true, { lifecycle: modelLifecycle });
-      }
+      await refreshDashboardModelThroughApi(host, { force: true, lifecycle: modelLifecycle });
       if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
       host.footerFlashTicks = 4;

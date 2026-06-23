@@ -24,6 +24,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -139,18 +140,21 @@ async function refreshDashboardModelAfterAuthoritativeMutation(
   host: DashboardOpsHost,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
-  return refreshDashboardModelForSettlement(host, lifecycle);
+  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+}
+
+async function refreshDashboardModelAfterMutationError(
+  host: DashboardOpsHost,
+  lifecycle?: DashboardLifecycleToken,
+): Promise<void> {
+  await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
 }
 
 async function refreshDashboardModelForSettlement(
   host: DashboardOpsHost,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
-  if (typeof host.refreshDashboardModelFromService !== "function") return false;
-  const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
-  const result = await host.refreshDashboardModelFromService(true, lifecycle ? { lifecycle } : undefined);
-  if (host.dashboardModelServiceRefreshError) return false;
-  return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
 }
 
 async function waitForStableDashboardSessionAbsence(
@@ -419,7 +423,7 @@ export async function spawnDashboardAgentWithFeedback(
     },
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, input.sessionId, 10_000, modelLifecycle, renderLifecycle),
-    onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to create ${input.tool} agent`,
   });
 }
@@ -465,7 +469,7 @@ export async function forkDashboardAgentWithFeedback(
     },
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, input.targetSessionId, 10_000, modelLifecycle, renderLifecycle),
-    onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Cannot fork session",
   });
 }
@@ -537,7 +541,7 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
       },
       settle: (modelLifecycle) => refreshDashboardModelAfterAuthoritativeMutation(host, modelLifecycle),
       successFlash: { message: `Stopped ${label}` },
-      onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+      onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to stop "${label}"`,
     });
     return;
@@ -665,7 +669,7 @@ export async function graveyardSessionWithFeedback(
       settle: (modelLifecycle) => waitForStableDashboardSessionAbsence(host, sessionId, 10_000, 350, modelLifecycle),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
       successFlash: { message: `Sent ${label} to graveyard` },
-      onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+      onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to graveyard "${label}"`,
     });
     return;
@@ -720,7 +724,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         settle: (modelLifecycle, renderLifecycle) =>
           waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
         successFlash: { message: `Restored ${label}` },
-        onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+        onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
         errorTitle: `Failed to restore "${label}"`,
       });
     });
@@ -774,7 +778,7 @@ export async function resumeOfflineServiceWithFeedback(
           renderLifecycle,
         ),
       successFlash: { message: `◆ Started service ${service.label ?? service.id}` },
-      onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+      onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: "Failed to start service",
     });
     return;
@@ -841,7 +845,7 @@ export async function createDashboardServiceWithFeedback(
         renderLifecycle,
       ),
     successFlash: { message: `◆ Created service ${label}` },
-    onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to create service",
   });
 }
@@ -875,7 +879,7 @@ export async function stopDashboardServiceWithFeedback(
     },
     settle: (modelLifecycle) => refreshDashboardModelAfterAuthoritativeMutation(host, modelLifecycle),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
-    onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to stop service",
   });
 }
@@ -896,7 +900,7 @@ export async function removeDashboardServiceWithFeedback(
     },
     settle: (modelLifecycle) => waitForStableDashboardServiceAbsence(host, service.id, 10_000, 350, modelLifecycle),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
-    onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to delete service",
   });
 }
@@ -994,7 +998,7 @@ export async function migrateSessionWithFeedback(
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
     successFlash: { message: `Migrated ${label} to ${targetName}` },
-    onError: (lifecycle) => host.refreshDashboardModelFromService(true, { lifecycle }),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to migrate "${label}"`,
   });
 }

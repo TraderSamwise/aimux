@@ -19,6 +19,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type WorktreeHost = any;
 
@@ -55,11 +56,7 @@ async function refreshDashboardModelForWorktreeSettlement(
   host: WorktreeHost,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
-  if (typeof host.refreshDashboardModelFromService !== "function") return false;
-  const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
-  const result = await host.refreshDashboardModelFromService(true, lifecycle ? { lifecycle } : undefined);
-  if (host.dashboardModelServiceRefreshError) return false;
-  return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
 }
 
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
@@ -205,10 +202,8 @@ async function waitForRenderedDashboardWorktreeCreate(
 ): Promise<{ ok: true } | { ok: false; error: Error }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (typeof host.refreshDashboardModelFromService === "function") {
-      if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
-        return { ok: false, error: new Error("project service snapshot unavailable") };
-      }
+    if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
+      return { ok: false, error: new Error("project service snapshot unavailable") };
     }
     const failure = findDashboardWorktreeCreateFailure(host, path);
     if (failure) {
@@ -233,7 +228,6 @@ async function refreshDashboardWorktreeCreateFailure(
   path: string,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<void> {
-  if (typeof host.refreshDashboardModelFromService !== "function") return;
   const deadline = Date.now() + 1000;
   for (;;) {
     if (findDashboardWorktreeCreateFailure(host, path)) return;
@@ -313,7 +307,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.dashboardPendingActions.clearWorktreeAction(targetPath);
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
-          await host.refreshDashboardModelFromService?.(true, { lifecycle: settleLifecycle });
+          await refreshDashboardModelThroughApi(host, { force: true, lifecycle: settleLifecycle });
           if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
             return;
           host.dashboardState.focusedWorktreePath = targetPath;
