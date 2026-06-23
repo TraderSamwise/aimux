@@ -29,7 +29,7 @@ import { listTopologySessionStates } from "../runtime-core/topology-sessions.js"
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
 import { log } from "../debug.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { getOrCreateTuiApiRuntime, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
 import {
   captureDashboardLifecycle,
   type DashboardLifecycleToken,
@@ -1014,9 +1014,7 @@ function isDesktopStateDashboardModel(value: any): value is {
 function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, error?: unknown): false {
   (host as any).dashboardModelServiceRefreshError =
     error instanceof Error ? error : new Error(error ? String(error) : "dashboard service refresh failed");
-  if (force && typeof host.refreshRuntimeGuard === "function") {
-    void host.refreshRuntimeGuard();
-  }
+  if (force) scheduleTuiApiRecovery(host, { immediate: true });
   return false;
 }
 
@@ -1071,9 +1069,7 @@ export async function refreshDashboardModelFromService(
       json.mainCheckoutInfo,
       json.operationFailures ?? [],
     );
-    if (applied && typeof host.refreshRuntimeGuard === "function") {
-      void host.refreshRuntimeGuard();
-    }
+    if (applied) scheduleTuiApiRecovery(host, { immediate: true });
     return applied;
   } catch (error) {
     if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;

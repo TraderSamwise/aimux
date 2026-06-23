@@ -4,7 +4,10 @@ import {
   getJsonWithTuiApiRuntime,
   getOrCreateTuiApiRuntime,
   postJsonWithTuiApiRuntime,
+  scheduleTuiApiRecovery,
   TuiApiRuntime,
+  TUI_API_RECOVERY_COOLDOWN_MS,
+  TUI_API_RECOVERY_DEBOUNCE_MS,
 } from "./tui-api-runtime.js";
 
 function deferred<T>() {
@@ -160,7 +163,78 @@ describe("TuiApiRuntime", () => {
       ).rejects.toThrow("still offline");
 
       expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cooldowns repeated runtime guard recovery probes", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+      };
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS - 1);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries pending recovery after an in-flight guard probe completes", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = deferred<void>();
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(undefined),
+      };
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      first.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
+
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not consume recovery while an external guard probe is active", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        runtimeGuardProbing: true,
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+      };
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+      expect(host.tuiApiLastRecoveryAt).toBeUndefined();
+      expect(host.tuiApiRecoveryPending).toBe(true);
+
+      host.runtimeGuardProbing = false;
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
+
       expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
@@ -230,12 +304,12 @@ describe("TuiApiRuntime", () => {
       value: { ok: true, body: { sessionId: "b" } },
     });
     const opts = { timeoutMs: 10_000 };
-    await expect(
-      runtime.mutateJson("/agents/stop", { sessionId: "c" }, (value) => value, opts),
-    ).resolves.toMatchObject({
-      ok: true,
-      value: { ok: true, body: { sessionId: "c" } },
-    });
+    await expect(runtime.mutateJson("/agents/stop", { sessionId: "c" }, (value) => value, opts)).resolves.toMatchObject(
+      {
+        ok: true,
+        value: { ok: true, body: { sessionId: "c" } },
+      },
+    );
 
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "b" });
@@ -275,7 +349,7 @@ describe("TuiApiRuntime", () => {
         ok: false,
       });
       host.mode = "session";
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
 
       expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
     } finally {

@@ -263,6 +263,9 @@ describe("runtime lifecycle state persistence", () => {
         stopProjectServiceRefresh: vi.fn(),
         tuiProjectEventAdapter: { stop: vi.fn() },
         tuiApiRecoveryTimer: setTimeout(refreshRuntimeGuard, 25),
+        tuiApiRecoveryDueAt: Date.now() + 25,
+        tuiApiRecoveryPending: true,
+        tuiApiRecoveryInFlight: true,
         tuiApiRuntime: { dispose: vi.fn() },
         stopGraveyardCleanup: vi.fn(),
         stopInboxCleanup: vi.fn(),
@@ -278,6 +281,9 @@ describe("runtime lifecycle state persistence", () => {
       vi.advanceTimersByTime(25);
 
       expect(teardownHost.tuiApiRecoveryTimer).toBeNull();
+      expect(teardownHost.tuiApiRecoveryDueAt).toBeUndefined();
+      expect(teardownHost.tuiApiRecoveryPending).toBe(false);
+      expect(teardownHost.tuiApiRecoveryInFlight).toBe(false);
       expect(refreshRuntimeGuard).not.toHaveBeenCalled();
       expect(teardownHost.tuiProjectEventAdapter).toBeNull();
       expect(teardownHost.tuiApiRuntime).toBeNull();
