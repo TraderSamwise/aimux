@@ -33,6 +33,7 @@ import { type LibraryEntry } from "../library.js";
 import { type ProjectTopology } from "../project-topology.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type { WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import {
@@ -203,11 +204,14 @@ export class Multiplexer {
   private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
-      void this.refreshDashboardModelFromService(true).then(() => {
-        if (this.mode === "dashboard") {
-          this.renderCurrentDashboardView();
-        }
-      });
+      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+      void this.refreshDashboardModelFromService(true, { lifecycle })
+        .then(() => {
+          if (isDashboardLifecycleCurrent(this, lifecycle)) {
+            this.renderCurrentDashboardView();
+          }
+        })
+        .catch(() => undefined);
       this.renderCurrentDashboardView();
     }
   });
