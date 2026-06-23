@@ -167,7 +167,7 @@ describe("TuiApiRuntime", () => {
     }
   });
 
-  it("lets an existing runtime update its request transport before direct reads", async () => {
+  it("does not let wrapper reads replace the default refresh transport", async () => {
     const host: any = {
       getFromProjectService: vi.fn(async () => ({ ok: true, value: "fallback" })),
     };
@@ -180,11 +180,54 @@ describe("TuiApiRuntime", () => {
     });
     await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
       ok: true,
-      value: { ok: true, value: "transport" },
+      value: { ok: true, value: "fallback" },
     });
 
-    expect(host.getFromProjectService).not.toHaveBeenCalled();
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps concurrent wrapper read transports scoped to their call", async () => {
+    const defaultRefresh = deferred<unknown>();
+    const wrapperRead = deferred<unknown>();
+    const host: any = {
+      getFromProjectService: vi.fn(() => defaultRefresh.promise),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    const request = vi.fn(() => wrapperRead.promise);
+
+    const refresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    const read = getJsonWithTuiApiRuntime(host, "/desktop-state", undefined, request);
+
+    wrapperRead.resolve({ ok: true, value: "wrapper" });
+    await expect(read).resolves.toEqual({ ok: true, value: "wrapper" });
+    defaultRefresh.resolve({ ok: true, value: "default" });
+    await expect(refresh).resolves.toMatchObject({
+      ok: true,
+      value: { ok: true, value: "default" },
+    });
+
+    expect(host.getFromProjectService).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let wrapper mutations replace or require the default mutation transport", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(async () => ({ ok: true })),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    const mutate = vi.fn(async () => ({ ok: true, value: "wrapper" }));
+
+    await expect(postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "a" }, undefined, mutate)).resolves.toEqual({
+      ok: true,
+      value: "wrapper",
+    });
+    await expect(runtime.mutateJson("/agents/stop", { sessionId: "b" }, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error: expect.any(Error),
+    });
+
+    expect(mutate).toHaveBeenCalledTimes(1);
   });
 
   it("bootstraps direct resource refreshes through the dashboard GET wrapper", async () => {
