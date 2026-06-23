@@ -111,7 +111,10 @@ describe("worktrees dashboard mutation protocol", () => {
       { name: "demo" },
       { timeoutMs: 180_000 },
     );
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ lifecycle: expect.objectContaining({ inputEpoch: 0 }) }),
+    );
     expect(host.settleDashboardCreatePending).not.toHaveBeenCalled();
     expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
