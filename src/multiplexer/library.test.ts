@@ -140,6 +140,32 @@ describe("refreshLibrary", () => {
     expect(renderLibraryScreen).not.toHaveBeenCalled();
   });
 
+  it("keeps the old entries when a pending lifecycle refresh completes after navigation", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const previous = [libraryEntry("plan:old")];
+    const next = [libraryEntry("plan:new")];
+    const host: any = {
+      dashboardInputEpoch: 1,
+      libraryEntries: previous,
+      libraryLoaded: true,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const refresh = refreshLibrary(host, {
+      lifecycle: { mode: "dashboard", inputEpoch: 1, requiresInputEpoch: true },
+    });
+    host.dashboardInputEpoch = 2;
+    resolveRefresh({ ok: true, entries: next });
+
+    await expect(refresh).resolves.toBe(false);
+    expect(host.libraryEntries).toBe(previous);
+  });
+
   it("redraws library after manual refresh when input changes but the screen stays active", async () => {
     vi.clearAllMocks();
     let resolveRefresh!: (value: unknown) => void;

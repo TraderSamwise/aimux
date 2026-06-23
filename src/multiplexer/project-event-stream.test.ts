@@ -111,6 +111,61 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
+  it("keeps active project SSE refresh state when input changes on the same screen", async () => {
+    let resolveProjectRefresh!: (value: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "project"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveProjectRefresh = resolve;
+          }),
+      ),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["project-observability"]);
+    await vi.advanceTimersByTimeAsync(25);
+    host.dashboardInputEpoch = 1;
+    resolveProjectRefresh(projectPayload());
+    await vi.runAllTimersAsync();
+
+    expect(host.projectObservability?.story[0]?.title).toBe("SSE project update");
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("drops active project SSE refresh state after navigation away", async () => {
+    let currentScreen = "project";
+    let resolveProjectRefresh!: (value: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === currentScreen),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      projectObservability: projectPayload("old").project,
+      projectObservabilityLoaded: true,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveProjectRefresh = resolve;
+          }),
+      ),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["project-observability"]);
+    await vi.advanceTimersByTimeAsync(25);
+    currentScreen = "library";
+    resolveProjectRefresh(projectPayload());
+    await vi.runAllTimersAsync();
+
+    expect(host.projectObservability.story[0]?.title).toBe("old");
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
   it("resyncs API-backed dashboard state when the SSE stream reconnects", async () => {
     const host: any = {
       mode: "dashboard",
@@ -240,3 +295,23 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 });
+
+function projectPayload(title = "SSE project update") {
+  return {
+    ok: true,
+    project: {
+      summary: {
+        agentsRunning: 1,
+        agentsWaiting: 0,
+        agentsOffline: 0,
+        services: 0,
+        worktrees: 1,
+        openTasks: 1,
+        doneTasks: 0,
+        unreadNotifications: 0,
+      },
+      progress: { pending: 0, assigned: 1, in_progress: 0, blocked: 0, done: 0, failed: 0, total: 1 },
+      story: [{ id: "task:1", kind: "task", title, meta: "assigned", createdAt: "now" }],
+    },
+  };
+}
