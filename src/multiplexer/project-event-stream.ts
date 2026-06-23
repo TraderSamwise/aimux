@@ -12,7 +12,7 @@ import {
 import type { AlertEvent } from "../project-events.js";
 import { refreshGraveyardEntriesFromService } from "./archives.js";
 import { resolveCurrentProjectServiceEndpointForDashboard } from "./dashboard-control.js";
-import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent, type DashboardLifecycleToken } from "./dashboard-lifecycle.js";
 import { refreshLibrary } from "./library.js";
 import { refreshProjectObservability } from "./project.js";
 import { refreshTopology } from "./topology.js";
@@ -202,6 +202,7 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
   const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
   const work: Array<Promise<unknown>> = [];
+  const renderLifecycles: DashboardLifecycleToken[] = [];
   if (
     touches(views, [
       "desktop-state",
@@ -215,32 +216,45 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
       "threads",
     ])
   ) {
+    renderLifecycles.push(lifecycle);
     work.push(host.refreshDashboardModelFromService?.(true, { lifecycle }));
   }
   if (
     host.isDashboardScreen?.("coordination") &&
     touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
   ) {
+    renderLifecycles.push(lifecycle);
     work.push(host.refreshCoordinationFromService?.({ force: true, lifecycle }));
   }
   if (
     host.isDashboardScreen?.("project") &&
     touches(views, ["project-observability", "tasks", "notifications", "worktrees", "agents", "services"])
   ) {
-    work.push(refreshProjectObservability(host, { force: true }));
+    const projectLifecycle = screenLifecycle("project");
+    renderLifecycles.push(projectLifecycle);
+    work.push(refreshProjectObservability(host, { force: true, lifecycle: projectLifecycle }));
   }
   if (host.isDashboardScreen?.("topology") && touches(views, ["topology", "agents", "services", "worktrees"])) {
-    work.push(refreshTopology(host, { force: true }));
+    const topologyLifecycle = screenLifecycle("topology");
+    renderLifecycles.push(topologyLifecycle);
+    work.push(refreshTopology(host, { force: true, lifecycle: topologyLifecycle }));
   }
   if (host.isDashboardScreen?.("library") && touches(views, ["library", "plans"])) {
-    work.push(refreshLibrary(host, { force: true }));
+    const libraryLifecycle = screenLifecycle("library");
+    renderLifecycles.push(libraryLifecycle);
+    work.push(refreshLibrary(host, { force: true, lifecycle: libraryLifecycle }));
   }
   if (host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
+    renderLifecycles.push(lifecycle);
     work.push(refreshGraveyardEntriesFromService(host, { force: true, lifecycle }));
   }
   await Promise.all(work.filter(Boolean));
-  if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+  if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(host, token))) return;
   host.renderCurrentDashboardView?.();
+}
+
+function screenLifecycle(screen: string): DashboardLifecycleToken {
+  return { mode: "dashboard", screen };
 }
 
 function touches(views: Set<ProjectApiView>, candidates: ProjectApiView[]): boolean {
