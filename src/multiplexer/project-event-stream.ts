@@ -171,8 +171,8 @@ class DashboardProjectEventAdapter {
 
   private async refreshViews(views: Set<ProjectApiView>, generation: number): Promise<void> {
     if (generation !== this.generation) return;
-    const lifecycle = captureDashboardLifecycle(this.host, { inputEpoch: true });
-    if (!isDashboardLifecycleCurrent(this.host, lifecycle)) return;
+    const dashboardLifecycle = captureDashboardLifecycle(this.host);
+    if (!isDashboardLifecycleCurrent(this.host, dashboardLifecycle)) return;
     const work: Array<Promise<unknown>> = [];
     const renderLifecycles: DashboardLifecycleToken[] = [];
     if (
@@ -188,15 +188,16 @@ class DashboardProjectEventAdapter {
         "threads",
       ])
     ) {
-      renderLifecycles.push(lifecycle);
-      work.push(refreshDashboardModelThroughApi(this.host, { force: true, lifecycle }));
+      renderLifecycles.push(dashboardLifecycle);
+      work.push(refreshDashboardModelThroughApi(this.host, { force: true, lifecycle: dashboardLifecycle }));
     }
     if (
       this.host.isDashboardScreen?.("coordination") &&
       touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
     ) {
-      renderLifecycles.push(lifecycle);
-      work.push(this.host.refreshCoordinationFromService?.({ force: true, lifecycle }));
+      const coordinationLifecycle = screenLifecycle("coordination");
+      renderLifecycles.push(coordinationLifecycle);
+      work.push(this.host.refreshCoordinationFromService?.({ force: true, lifecycle: coordinationLifecycle }));
     }
     if (
       this.host.isDashboardScreen?.("project") &&
@@ -217,15 +218,15 @@ class DashboardProjectEventAdapter {
       work.push(refreshLibrary(this.host, { force: true, lifecycle: libraryLifecycle }));
     }
     if (this.host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
-      renderLifecycles.push(lifecycle);
-      work.push(refreshGraveyardEntriesFromService(this.host, { force: true, lifecycle }));
+      const graveyardLifecycle = screenLifecycle("graveyard");
+      renderLifecycles.push(graveyardLifecycle);
+      work.push(refreshGraveyardEntriesFromService(this.host, { force: true, lifecycle: graveyardLifecycle }));
     }
     await Promise.all(work.filter(Boolean));
     if (generation !== this.generation) return;
     if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(this.host, token))) return;
     this.host.renderCurrentDashboardView?.();
   }
-
 }
 
 function getOrCreateDashboardProjectEventAdapter(host: ProjectEventStreamHost): DashboardProjectEventAdapter {

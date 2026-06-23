@@ -272,12 +272,8 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
-    host.dashboardBusyState = {
-      title: "Repairing Aimux",
-      lines: ["Another dashboard is repairing the local control plane."],
-      spinnerFrame: 0,
-      startedAt: Date.now(),
-    };
+    host.footerFlash = "Aimux repair already running";
+    host.footerFlashTicks = 3;
     renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
     return;
   }

@@ -46,13 +46,50 @@ describe("dashboard project event refresh", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
       true,
       expect.objectContaining({
-        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
     );
     expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
       force: true,
-      lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+      lifecycle: expect.objectContaining({ mode: "dashboard", screen: "coordination" }),
     });
+    expect(host.refreshCoordinationFromService.mock.calls[0]?.[0]?.lifecycle.inputEpoch).toBeUndefined();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("keeps SSE data refreshes when input changes during the request", async () => {
+    let resolveModelRefresh!: (value: boolean) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      refreshDashboardModelFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveModelRefresh = resolve;
+          }),
+      ),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["notifications", "coordination-worklist"]);
+    await vi.advanceTimersByTimeAsync(25);
+    host.dashboardInputEpoch = 1;
+    resolveModelRefresh(true);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
+      }),
+    );
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+      force: true,
+      lifecycle: expect.objectContaining({ mode: "dashboard", screen: "coordination" }),
+    });
+    expect(host.refreshCoordinationFromService.mock.calls[0]?.[0]?.lifecycle.inputEpoch).toBeUndefined();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
@@ -205,7 +242,7 @@ describe("dashboard project event refresh", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
       true,
       expect.objectContaining({
-        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
     );
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
@@ -243,7 +280,7 @@ describe("dashboard project event refresh", () => {
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
         expect.objectContaining({
-          lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+          lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
       );
       expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
@@ -272,7 +309,7 @@ describe("dashboard project event refresh", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
       true,
       expect.objectContaining({
-        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
     );
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
