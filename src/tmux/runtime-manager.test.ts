@@ -113,10 +113,17 @@ describe("TmuxRuntimeManager", () => {
       toolConfigKey: "codex",
       worktreePath: "/repo/mobile",
     };
+    let repaired = false;
     const exec = vi.fn<TmuxExec>((args: string[]) => {
       const joined = args.join(" ");
       if (joined === "list-sessions -F #{session_name}") {
-        return "aimux-mobile-7a62ea91ca\naimux-mobile-7a62ea91ca-client-12345678";
+        return repaired
+          ? "aimux-mobile-078d0ecd20ec\naimux-mobile-078d0ecd20ec-client-12345678"
+          : "aimux-mobile-7a62ea91ca\naimux-mobile-7a62ea91ca-client-12345678";
+      }
+      if (joined.startsWith("rename-session -t aimux-mobile-7a62ea91ca")) {
+        repaired = true;
+        return "";
       }
       if (joined.startsWith("list-windows -t aimux-mobile-078d0ecd20ec -F ")) {
         return `@3\t3\tcodex\t1\t100\t0\t${JSON.stringify(metadata)}`;
@@ -146,6 +153,60 @@ describe("TmuxRuntimeManager", () => {
           sessionName: "aimux-mobile-078d0ecd20ec",
           windowId: "@3",
           windowIndex: 3,
+          windowName: "codex",
+          paneDead: false,
+        },
+        metadata,
+      },
+    ]);
+  });
+
+  it("includes repaired legacy client sessions when the canonical host already exists", () => {
+    const metadata = {
+      kind: "agent",
+      sessionId: "codex-legacy-client",
+      command: "codex",
+      args: [],
+      toolConfigKey: "codex",
+      worktreePath: "/repo/mobile",
+    };
+    let repaired = false;
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "list-sessions -F #{session_name}") {
+        return repaired
+          ? "aimux-mobile-078d0ecd20ec\naimux-mobile-078d0ecd20ec-client-12345678"
+          : "aimux-mobile-078d0ecd20ec\naimux-mobile-7a62ea91ca-client-12345678";
+      }
+      if (
+        joined ===
+        "rename-session -t aimux-mobile-7a62ea91ca-client-12345678 aimux-mobile-078d0ecd20ec-client-12345678"
+      ) {
+        repaired = true;
+        return "";
+      }
+      if (joined.startsWith("list-windows -t aimux-mobile-078d0ecd20ec -F ")) return "";
+      if (joined.startsWith("list-windows -t aimux-mobile-078d0ecd20ec-client-12345678 -F ")) {
+        return `@4\t4\tcodex\t1\t100\t0\t${JSON.stringify(metadata)}`;
+      }
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    const windows = manager.listProjectManagedWindows("/repo/mobile");
+
+    expect(exec).toHaveBeenCalledWith([
+      "rename-session",
+      "-t",
+      "aimux-mobile-7a62ea91ca-client-12345678",
+      "aimux-mobile-078d0ecd20ec-client-12345678",
+    ]);
+    expect(windows).toEqual([
+      {
+        target: {
+          sessionName: "aimux-mobile-078d0ecd20ec-client-12345678",
+          windowId: "@4",
+          windowIndex: 4,
           windowName: "codex",
           paneDead: false,
         },
