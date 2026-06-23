@@ -883,6 +883,87 @@ describe("dashboardInteractionMethods", () => {
     expect(host.footerFlash).toBe("Sent handoff to codex-1");
   });
 
+  it("does not render stale worktree failure dismissal completions after later input", async () => {
+    let resolveClear!: () => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeNavOrder: ["/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          sessions: [],
+          services: [],
+          operationFailure: { operation: "create", message: "branch exists" },
+        },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      postToProjectService: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveClear = resolve;
+          }),
+      ),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    host.dashboardInputEpoch = 1;
+    resolveClear();
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not show stale orchestration completion after later input", async () => {
+    let resolveSend!: () => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      postToProjectService: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSend = resolve;
+          }),
+      ),
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    const lifecycle = { mode: "dashboard" as const, inputEpoch: 0, requiresInputEpoch: true };
+
+    const submit = dashboardInteractionMethods.submitDashboardOrchestrationAction.call(
+      host,
+      "handoff",
+      { label: "codex-1", sessionId: "codex-1", worktreePath: "/repo" },
+      "Take over this task",
+      lifecycle,
+    );
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    resolveSend();
+    await submit;
+
+    expect(host.footerFlash).toBeUndefined();
+    expect(host.clearDashboardOverlay).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("submits dashboard tasks with route-compatible descriptions", async () => {
     const host: any = {
       postToProjectService: vi.fn(async () => ({ ok: true })),

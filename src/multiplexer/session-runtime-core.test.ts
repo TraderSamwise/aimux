@@ -23,6 +23,7 @@ describe("session runtime prompt submission", () => {
   it("does not apply dashboard rename locally when project-service rename fails", async () => {
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       sessionLabels: new Map([["codex-1", "old"]]),
       offlineSessions: [],
       dashboardSessionsCache: [{ id: "codex-1", label: "old" }],
@@ -44,6 +45,58 @@ describe("session runtime prompt submission", () => {
     expect(host.footerFlash).toBe("Rename failed: boom");
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
+  });
+
+  it("does not clear newer dashboard rename pending state from a stale rename", async () => {
+    let token = 0;
+    const pending = new Map<string, { kind: string; token: number }>();
+    let rejectRename!: (error: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      sessionLabels: new Map([["codex-1", "old"]]),
+      offlineSessions: [],
+      dashboardSessionsCache: [{ id: "codex-1", label: "old" }],
+      dashboardWorktreeGroupsCache: [{ sessions: [{ id: "codex-1", label: "old" }] }],
+      dashboardState: { worktreeSessions: [{ id: "codex-1", label: "old" }] },
+      dashboardPendingActions: {
+        clearSessionActionIfToken: vi.fn((sessionId: string, clearToken: number) => {
+          if (pending.get(sessionId)?.token !== clearToken) return false;
+          pending.delete(sessionId);
+          return true;
+        }),
+      },
+      setPendingDashboardSessionAction: vi.fn((sessionId: string, kind: string | null) => {
+        if (!kind) {
+          pending.delete(sessionId);
+          return undefined;
+        }
+        token += 1;
+        pending.set(sessionId, { kind, token });
+        return token;
+      }),
+      reapplyDashboardPendingActions: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      postToProjectService: vi.fn(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRename = reject;
+          }),
+      ),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+    };
+
+    const rename = updateSessionLabel(host, "codex-1", "new");
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    host.setPendingDashboardSessionAction("codex-1", "renaming");
+    rejectRename(new Error("late failure"));
+    await rename;
+
+    expect(pending.get("codex-1")).toEqual({ kind: "renaming", token: 2 });
+    expect(host.footerFlash).toBeUndefined();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("submits tmux-backed chat input through the carriage-return prompt path", async () => {
