@@ -34,6 +34,7 @@ import { type ProjectTopology } from "../project-topology.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type { WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import {
@@ -205,7 +206,7 @@ export class Multiplexer {
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
       const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
-      void this.refreshDashboardModelFromService(true, { lifecycle })
+      void refreshDashboardModelThroughApi(this, { force: true, lifecycle })
         .then(() => {
           if (isDashboardLifecycleCurrent(this, lifecycle)) {
             this.renderCurrentDashboardView();

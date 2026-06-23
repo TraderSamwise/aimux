@@ -486,7 +486,7 @@ describe("dashboardInteractionMethods", () => {
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
     expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(
       { ...entry, status: "running", tmuxWindowId: "@agent" },
       60000,
@@ -548,7 +548,7 @@ describe("dashboardInteractionMethods", () => {
 
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
@@ -573,7 +573,7 @@ describe("dashboardInteractionMethods", () => {
     await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("opened");
 
     expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith(service);
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1", 60000);
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
@@ -598,7 +598,7 @@ describe("dashboardInteractionMethods", () => {
 
     await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("missing");
 
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.footerFlash).toBe("Service shell is not available yet");
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
@@ -630,7 +630,7 @@ describe("dashboardInteractionMethods", () => {
 
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.focusSession).not.toHaveBeenCalled();
     expect(host.noteLastUsedItem).not.toHaveBeenCalled();
     expect(host.resumeOfflineSessionWithFeedback).not.toHaveBeenCalled();
@@ -641,6 +641,8 @@ describe("dashboardInteractionMethods", () => {
   it("dismisses failed worktree rows through the project service", async () => {
     const path = "/repo/.aimux/worktrees/demo";
     const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
       dashboardState: {
         hasWorktrees: () => true,
         quickJumpDigits: "",
@@ -674,7 +676,7 @@ describe("dashboardInteractionMethods", () => {
     await vi.waitFor(() =>
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
-        expect.objectContaining({ lifecycle: expect.objectContaining({ requiresInputEpoch: true }) }),
+        expect.objectContaining({ lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }) }),
       ),
     );
 
