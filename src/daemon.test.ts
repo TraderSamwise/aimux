@@ -551,7 +551,9 @@ describe("daemon supervision", () => {
       const info = await ensureDaemonRunning();
 
       expect(info.port).toBe(44191);
-      expect(vi.mocked(requestJson)).toHaveBeenCalledWith("http://127.0.0.1:44191/health");
+      expect(vi.mocked(requestJson)).toHaveBeenCalledWith("http://127.0.0.1:44191/health", {
+        timeoutMs: 2500,
+      });
     } finally {
       if (previousPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;

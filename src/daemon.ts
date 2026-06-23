@@ -27,6 +27,7 @@ import { getAimuxCliLaunchCommand } from "./cli-launcher.js";
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
+const DAEMON_HEALTH_PROBE_TIMEOUT_MS = 2_500;
 const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
 const PROJECT_SERVICE_READY_POLL_MS = 100;
 const PROJECT_SERVICE_HEALTH_TIMEOUT_MS = 2_500;
@@ -228,7 +229,9 @@ function releaseDaemonStartLock(lockPath: string | null): void {
 
 async function probeDefaultDaemon(options: EnsureDaemonRunningOptions): Promise<AimuxDaemonInfo | null> {
   try {
-    const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`);
+    const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`, {
+      timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS,
+    });
     if (status >= 200 && status < 300 && json?.ok !== false && isAimuxDaemonHealth(json)) {
       if (options.adoptExisting === false) {
         log.warn("terminating daemon on default port instead of adopting", "daemon", { pid: json.pid });
@@ -429,7 +432,7 @@ export function loadDaemonState(): DaemonState {
   };
 }
 
-export async function requestDaemonJson(path: string, init?: RequestInit): Promise<any> {
+export async function requestDaemonJson(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<any> {
   const info = loadDaemonInfo();
   if (!info) {
     throw new Error("aimux daemon is not running");
@@ -438,6 +441,7 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
     method: init?.method,
     headers: init?.headers as Record<string, string> | undefined,
     body: init?.body,
+    timeoutMs: init?.timeoutMs,
   });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `daemon request failed: ${status}`);
@@ -449,7 +453,7 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
   const existing = loadDaemonInfo();
   if (existing) {
     try {
-      const health = await requestDaemonJson("/health");
+      const health = await requestDaemonJson("/health", { timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS });
       if (!isAimuxDaemonHealth(health)) {
         throw new Error("stored daemon health response does not identify Aimux");
       }
