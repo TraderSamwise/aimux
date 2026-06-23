@@ -154,6 +154,36 @@ describe("refreshTopology", () => {
     expect(renderTopologyScreen).not.toHaveBeenCalled();
   });
 
+  it("keeps the old topology when a pending lifecycle refresh completes after navigation", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const previous = topologyModel([
+      { kind: "agent", depth: 1, label: "old", health: "active", sessionId: "old-1" },
+    ]);
+    const next = topologyModel([
+      { kind: "agent", depth: 1, label: "new", health: "active", sessionId: "new-1" },
+    ]);
+    const host: any = {
+      dashboardInputEpoch: 1,
+      topology: previous,
+      topologyLoaded: true,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const refresh = refreshTopology(host, {
+      lifecycle: { mode: "dashboard", inputEpoch: 1, requiresInputEpoch: true },
+    });
+    host.dashboardInputEpoch = 2;
+    resolveRefresh({ ok: true, topology: next });
+
+    await expect(refresh).resolves.toBe(false);
+    expect(host.topology).toBe(previous);
+  });
+
   it("redraws topology after manual refresh when input changes but the screen stays active", async () => {
     vi.clearAllMocks();
     let resolveRefresh!: (value: unknown) => void;

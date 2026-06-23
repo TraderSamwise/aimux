@@ -154,6 +154,36 @@ describe("refreshProjectObservability", () => {
     expect(renderProjectScreen).not.toHaveBeenCalled();
   });
 
+  it("keeps the old project model when a pending lifecycle refresh completes after navigation", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const previous = projectModel([
+      { id: "task:old", kind: "task", title: "Old", meta: "assigned", createdAt: "now" },
+    ]);
+    const next = projectModel([
+      { id: "task:new", kind: "task", title: "New", meta: "assigned", createdAt: "now" },
+    ]);
+    const host: any = {
+      dashboardInputEpoch: 1,
+      projectObservability: previous,
+      projectObservabilityLoaded: true,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+    };
+
+    const refresh = refreshProjectObservability(host, {
+      lifecycle: { mode: "dashboard", inputEpoch: 1, requiresInputEpoch: true },
+    });
+    host.dashboardInputEpoch = 2;
+    resolveRefresh({ ok: true, project: next });
+
+    await expect(refresh).resolves.toBe(false);
+    expect(host.projectObservability).toBe(previous);
+  });
+
   it("redraws project after manual refresh when input changes but the screen stays active", async () => {
     vi.clearAllMocks();
     let resolveRefresh!: (value: unknown) => void;
