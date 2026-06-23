@@ -2,10 +2,23 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
+
+const dashboardApiClientMock = vi.hoisted(() => ({
+  mutateDashboardApi: vi.fn(),
+}));
+
+vi.mock("./dashboard-api-client.js", async () => {
+  const actual = await vi.importActual<typeof import("./dashboard-api-client.js")>("./dashboard-api-client.js");
+  dashboardApiClientMock.mutateDashboardApi.mockImplementation(actual.mutateDashboardApi);
+  return {
+    ...actual,
+    mutateDashboardApi: dashboardApiClientMock.mutateDashboardApi,
+  };
+});
 
 vi.mock("../team.js", async () => {
   const actual = await vi.importActual<typeof import("../team.js")>("../team.js");
@@ -16,6 +29,10 @@ vi.mock("../team.js", async () => {
 });
 
 describe("dashboardInteractionMethods", () => {
+  beforeEach(() => {
+    dashboardApiClientMock.mutateDashboardApi.mockClear();
+  });
+
   it("requests reviews through the project service", async () => {
     const host: any = {
       activeSession: { id: "codex-1", command: "codex" },
@@ -367,6 +384,51 @@ describe("dashboardInteractionMethods", () => {
     expect(host.stopSessionToOfflineWithFeedback).toHaveBeenCalledWith(entry);
     expect(host.graveyardSessionWithFeedback).not.toHaveBeenCalled();
     expect(host.isSessionRuntimeLive).not.toHaveBeenCalled();
+  });
+
+  it("routes worktree row reorders through the dashboard API adapter", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [
+          { kind: "session", id: "codex-1" },
+          { kind: "session", id: "claude-1" },
+        ],
+        sessionIndex: 0,
+      },
+      dashboardUiStateStore: {
+        moveEntryWithinWorktree: vi.fn(() => true),
+        orderWorktreeGroups: vi.fn((groups) => groups),
+      },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo" }],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\x1b[1;2B"));
+
+    expect(host.dashboardUiStateStore.moveEntryWithinWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedId: "codex-1",
+        direction: "down",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true }),
+    );
+    expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(host, "/statusline/refresh", {
+      force: true,
+    });
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
   it("waits briefly for a live agent window to become enterable", async () => {
