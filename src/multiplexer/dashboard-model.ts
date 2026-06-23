@@ -30,7 +30,11 @@ import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-
 import { assertSessionRestorable } from "../session-restorability.js";
 import { log } from "../debug.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
-import { type DashboardLifecycleToken, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import {
+  captureDashboardLifecycle,
+  type DashboardLifecycleToken,
+  isDashboardLifecycleCurrent,
+} from "./dashboard-lifecycle.js";
 
 type DashboardModelHost = any;
 export interface DashboardModelRefreshOptions {
@@ -257,13 +261,16 @@ async function settleMetadataPending<T>(
 }
 
 function scheduleDashboardModelReconcile(host: DashboardModelHost): void {
+  const lifecycle = captureDashboardLifecycle(host);
   const refresh =
     typeof host.refreshDashboardModelFromService === "function"
       ? host.refreshDashboardModelFromService.bind(host)
       : refreshDashboardModelFromService.bind(null, host);
-  void refresh(true)
+  void refresh(true, { lifecycle })
     .then((applied: boolean) => {
-      if (applied && host.isDashboardScreen?.("dashboard")) host.renderDashboard?.();
+      if (applied && isDashboardLifecycleCurrent(host, lifecycle) && host.isDashboardScreen?.("dashboard")) {
+        host.renderDashboard?.();
+      }
     })
     .catch(() => {});
 }
