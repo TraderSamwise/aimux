@@ -133,35 +133,24 @@ describe("refreshProjectObservability", () => {
   });
 
   it("does not redraw project after manual refresh when the user has navigated away", async () => {
-    let resolveRefresh!: (value: unknown) => void;
     const host: any = {
       projectObservability: { story: [] },
-      getFromProjectService: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveRefresh = resolve;
-          }),
-      ),
+      getFromProjectService: vi.fn(async () => ({ ok: true, project: projectModel([]) })),
       isDashboardScreen: vi.fn(() => false),
       handleDashboardSubscreenNavigationKey: vi.fn(() => false),
     };
 
     handleProjectKey(host, Buffer.from("r"));
-    resolveRefresh({ ok: true, project: { summary: {}, progress: {}, story: [] } });
-    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/project-observability"));
     await Promise.resolve();
 
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
     expect(renderProjectScreen).not.toHaveBeenCalled();
   });
 
   it("keeps the old project model when a pending lifecycle refresh completes after navigation", async () => {
     let resolveRefresh!: (value: unknown) => void;
-    const previous = projectModel([
-      { id: "task:old", kind: "task", title: "Old", meta: "assigned", createdAt: "now" },
-    ]);
-    const next = projectModel([
-      { id: "task:new", kind: "task", title: "New", meta: "assigned", createdAt: "now" },
-    ]);
+    const previous = projectModel([{ id: "task:old", kind: "task", title: "Old", meta: "assigned", createdAt: "now" }]);
+    const next = projectModel([{ id: "task:new", kind: "task", title: "New", meta: "assigned", createdAt: "now" }]);
     const host: any = {
       dashboardInputEpoch: 1,
       projectObservability: previous,

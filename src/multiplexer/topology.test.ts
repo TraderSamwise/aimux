@@ -130,38 +130,24 @@ describe("refreshTopology", () => {
   });
 
   it("does not redraw topology after manual refresh when the user has navigated away", async () => {
-    let resolveRefresh!: (value: unknown) => void;
     const host: any = {
       topology: { rows: [] },
-      getFromProjectService: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveRefresh = resolve;
-          }),
-      ),
+      getFromProjectService: vi.fn(async () => ({ ok: true, topology: topologyModel([]) })),
       isDashboardScreen: vi.fn(() => false),
       handleDashboardSubscreenNavigationKey: vi.fn(() => false),
     };
 
     handleTopologyKey(host, Buffer.from("r"));
-    resolveRefresh({
-      ok: true,
-      topology: { projectName: "aimux", counts: {}, worktrees: [], rows: [] },
-    });
-    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/topology"));
     await Promise.resolve();
 
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
     expect(renderTopologyScreen).not.toHaveBeenCalled();
   });
 
   it("keeps the old topology when a pending lifecycle refresh completes after navigation", async () => {
     let resolveRefresh!: (value: unknown) => void;
-    const previous = topologyModel([
-      { kind: "agent", depth: 1, label: "old", health: "active", sessionId: "old-1" },
-    ]);
-    const next = topologyModel([
-      { kind: "agent", depth: 1, label: "new", health: "active", sessionId: "new-1" },
-    ]);
+    const previous = topologyModel([{ kind: "agent", depth: 1, label: "old", health: "active", sessionId: "old-1" }]);
+    const next = topologyModel([{ kind: "agent", depth: 1, label: "new", health: "active", sessionId: "new-1" }]);
     const host: any = {
       dashboardInputEpoch: 1,
       topology: previous,

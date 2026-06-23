@@ -119,24 +119,17 @@ describe("refreshLibrary", () => {
   });
 
   it("does not redraw library after manual refresh when the user has navigated away", async () => {
-    let resolveRefresh!: (value: unknown) => void;
     const host: any = {
       libraryEntries: [],
-      getFromProjectService: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveRefresh = resolve;
-          }),
-      ),
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [] })),
       isDashboardScreen: vi.fn(() => false),
       handleDashboardSubscreenNavigationKey: vi.fn(() => false),
     };
 
     handleLibraryKey(host, Buffer.from("r"));
-    resolveRefresh({ ok: true, entries: [] });
-    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledWith("/library"));
     await Promise.resolve();
 
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
     expect(renderLibraryScreen).not.toHaveBeenCalled();
   });
 
