@@ -122,6 +122,26 @@ describe("notification target open", () => {
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
   });
 
+  it("suppresses stale activation failure UI after newer dashboard input", async () => {
+    let rejectOpen!: (error: unknown) => void;
+    host.activateDashboardService = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOpen = reject;
+        }),
+    );
+
+    const open = openCoordinationNotification(host, host.coordinationWorklist[host.coordinationIndex]);
+    await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
+    host.dashboardInputEpoch = 1;
+    rejectOpen(new Error("open failed"));
+    await expect(open).resolves.toBeUndefined();
+
+    expect(host.footerFlash).toBe("");
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.renderCoordination).not.toHaveBeenCalled();
+  });
+
   it("keeps a notification unread if service activation resolves without opening", async () => {
     host.activateDashboardService = vi.fn(async () => "missing");
 
