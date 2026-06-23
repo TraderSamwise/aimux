@@ -1770,6 +1770,57 @@ describe("runDashboard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
+  it("initializes dashboard input epoch before hydrate and priming refresh", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(() => {
+        expect(host.dashboardInputEpoch).toBe(0);
+      }),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+      }),
+    );
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+  });
+
   it("does not render or report stale startup repair after a newer dashboard run starts", async () => {
     const host: any = {
       startHeartbeat: vi.fn(),

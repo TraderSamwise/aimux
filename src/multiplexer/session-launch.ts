@@ -237,10 +237,12 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.mode = "dashboard";
   const dashboardRunGeneration = (host.dashboardRunGeneration ?? 0) + 1;
   host.dashboardRunGeneration = dashboardRunGeneration;
+  if (typeof host.dashboardInputEpoch !== "number") host.dashboardInputEpoch = 0;
   host.loadDashboardUiState();
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
-  const primed = await host.refreshDashboardModelFromService(true);
+  const startupLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const primed = await host.refreshDashboardModelFromService(true, { lifecycle: startupLifecycle });
   if (!primed) {
     const startupBusyState = {
       title: "Connecting Aimux",
@@ -249,7 +251,6 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       startedAt: Date.now(),
     };
     host.dashboardBusyState = startupBusyState;
-    if (typeof host.dashboardInputEpoch !== "number") host.dashboardInputEpoch = 0;
     const repairLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     const isRepairLifecycleCurrent = () =>
       host.dashboardRunGeneration === dashboardRunGeneration && isDashboardLifecycleCurrent(host, repairLifecycle);

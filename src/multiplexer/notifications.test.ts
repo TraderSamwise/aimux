@@ -15,7 +15,7 @@ import {
   refreshCoordinationFromService,
 } from "./notifications.js";
 import { buildCoordinationView } from "../coordination-model.js";
-import { handleCoordinationKey } from "./coordination.js";
+import { handleCoordinationKey, showCoordination } from "./coordination.js";
 
 function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
   return upsertNotification({ title: "Needs input", body, sessionId, kind: "thread" });
@@ -59,6 +59,8 @@ describe("notification target open", () => {
     await initPaths(repoRoot);
     const notification = addExchangeNotification("service-1", "Open service");
     host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
       notificationEntries: [notification],
       notificationIndex: 0,
       renderCoordination: vi.fn(),
@@ -72,7 +74,7 @@ describe("notification target open", () => {
       resumeOfflineServiceById: vi.fn(),
       waitAndOpenLiveTmuxWindowForService: vi.fn(),
       showDashboardError: vi.fn(),
-      dashboardState: { toggleDetailsSidebar: vi.fn() },
+      dashboardState: { screen: "coordination", toggleDetailsSidebar: vi.fn() },
       handleDashboardSubscreenNavigationKey: vi.fn(() => false),
       exitDashboardClientOrProcess: vi.fn(),
       setDashboardScreen: vi.fn(),
@@ -305,6 +307,39 @@ describe("coordination inbox ordering", () => {
     await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce());
     expect(host.footerFlash).toBe("Notification update failed");
   });
+
+  it("loads coordination with a dashboard lifecycle token", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      coordinationIndex: 0,
+      coordinationFilter: "all",
+      notificationEntries: [],
+      notificationRowMeta: [],
+      coordinationWorklist: [],
+      coordinationWorklistAll: [],
+      clearDashboardSubscreens: vi.fn(),
+      setDashboardScreen: vi.fn((screen: string) => {
+        host.dashboardState.screen = screen;
+      }),
+      writeStatuslineFile: vi.fn(),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      dashboardState: { screen: "dashboard" },
+      isDashboardScreen: vi.fn((screen: string) => host.dashboardState.screen === screen),
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      centerInWidth: (text: string) => text,
+      truncatePlain: (text: string) => text,
+      wrapKeyValue: (_key: string, value: string) => [value],
+      writeFrame: vi.fn(),
+    };
+
+    showCoordination(host);
+    await vi.waitFor(() =>
+      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+        lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "coordination" }),
+      }),
+    );
+  });
 });
 
 describe("coordination thread workflow keys", () => {
@@ -460,6 +495,48 @@ describe("coordination reads prefer the service", () => {
     expect(host.coordinationLoaded).toBe(true);
     expect(host.coordinationWorklist.map((item: any) => item.sessionId)).toContain("remote-1");
     expect(host.notificationEntries.map((entry: any) => entry.id)).toContain("r1");
+  });
+
+  it("does not apply stale coordination payloads after newer dashboard input", async () => {
+    const payload = buildCoordinationView({
+      sessions: [
+        { id: "remote-1", status: "running", command: "claude", semantic: { user: { label: "needs_input" } } },
+      ],
+      notifications: [
+        {
+          id: "r1",
+          title: "Remote",
+          body: "remote agent needs input",
+          sessionId: "remote-1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      threads: [],
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      coordinationFilter: "all",
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        model: payload.model,
+        worklist: payload.worklist,
+        threads: [],
+      })),
+    };
+
+    const ok = await refreshCoordinationFromService(host, {
+      lifecycle: { mode: "dashboard", inputEpoch: 0, requiresInputEpoch: true },
+    });
+
+    expect(ok).toBe(false);
+    expect(host.coordinationLoaded).toBeUndefined();
+    expect(host.coordinationWorklist).toBeUndefined();
+    expect(host.notificationEntries).toBeUndefined();
   });
 
   it("coalesces concurrent coordination refreshes through the TUI API runtime", async () => {

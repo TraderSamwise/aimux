@@ -32,6 +32,7 @@ import {
   notificationTargetState as notificationTargetStateImpl,
   refreshCoordinationFromService as refreshCoordinationFromServiceImpl,
 } from "./notifications.js";
+import { type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
 import {
   handleCoordinationKey as handleCoordinationKeyImpl,
   renderCoordination as renderCoordinationImpl,
@@ -223,7 +224,7 @@ export const dashboardActionMethods = {
   async getFromProjectService(this: any, path: string, opts?: { timeoutMs?: number }): Promise<any> {
     return getJsonWithTuiApiRuntime(this, path, opts, getFromProjectServiceImpl);
   },
-  async refreshCoordinationFromService(this: any, options?: { force?: boolean }): Promise<boolean> {
+  async refreshCoordinationFromService(this: any, options?: DashboardApiViewRefreshOptions): Promise<boolean> {
     return refreshCoordinationFromServiceImpl(this, options);
   },
   async ensureDashboardControlPlane(this: any): Promise<void> {

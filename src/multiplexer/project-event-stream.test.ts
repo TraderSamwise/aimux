@@ -33,6 +33,7 @@ describe("dashboard project event refresh", () => {
   it("refreshes dashboard model and current coordination view for notification updates", async () => {
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
       refreshDashboardModelFromService: vi.fn(async () => true),
       refreshCoordinationFromService: vi.fn(async () => true),
@@ -42,8 +43,16 @@ describe("dashboard project event refresh", () => {
     scheduleProjectViewRefresh(host, ["notifications", "coordination-worklist"]);
     await vi.runAllTimersAsync();
 
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
-    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+      }),
+    );
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+      force: true,
+      lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+    });
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
@@ -82,6 +91,7 @@ describe("dashboard project event refresh", () => {
     let resolveRefresh!: (value: boolean) => void;
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       refreshDashboardModelFromService: vi.fn(
         () =>
           new Promise<boolean>((resolve) => {
@@ -104,6 +114,7 @@ describe("dashboard project event refresh", () => {
   it("resyncs API-backed dashboard state when the SSE stream reconnects", async () => {
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       isDashboardScreen: vi.fn(() => false),
       refreshDashboardModelFromService: vi.fn(async () => true),
       renderCurrentDashboardView: vi.fn(),
@@ -112,7 +123,12 @@ describe("dashboard project event refresh", () => {
     handleProjectEvent(host, "ready", { ok: true });
     await vi.runAllTimersAsync();
 
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+      }),
+    );
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
@@ -130,6 +146,7 @@ describe("dashboard project event refresh", () => {
     });
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       ensureDashboardControlPlane: vi.fn(async () => true),
       isDashboardScreen: vi.fn(() => false),
       refreshDashboardModelFromService: vi.fn(async () => true),
@@ -144,7 +161,12 @@ describe("dashboard project event refresh", () => {
       expect(fetchMock).toHaveBeenCalledOnce();
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
       expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
-      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+        }),
+      );
       expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
     } finally {
       stopDashboardProjectEventStream(host);
@@ -156,6 +178,7 @@ describe("dashboard project event refresh", () => {
     controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockRejectedValueOnce(new Error("metadata stale"));
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       ensureDashboardControlPlane: vi.fn(async () => true),
       isDashboardScreen: vi.fn(() => false),
       refreshDashboardModelFromService: vi.fn(async () => true),
@@ -167,7 +190,12 @@ describe("dashboard project event refresh", () => {
     await vi.advanceTimersByTimeAsync(25);
 
     expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+      }),
+    );
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
 
     stopDashboardProjectEventStream(host);
