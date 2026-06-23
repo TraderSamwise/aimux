@@ -201,7 +201,10 @@ export async function markCoordinationItemRead(host: NotificationHost, item: Wor
 export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
   const note = item.notification;
   if (!note) return;
+  const actionLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+  const actionIsCurrent = () => isDashboardLifecycleCurrent(host, actionLifecycle);
+  const coordinationIsCurrent = () => isDashboardLifecycleCurrent(host, lifecycle);
   const unread = note.unreadCount > 0;
   const settle = async () => {
     if (!unread) return;
@@ -209,6 +212,7 @@ export async function openCoordinationNotification(host: NotificationHost, item:
       await markCoordinationItemRead(host, item);
       await host.refreshCoordinationFromService?.({ force: true, lifecycle });
     } catch {
+      if (!coordinationIsCurrent()) return;
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
       if (typeof host.refreshCoordinationFromService === "function") {
@@ -218,7 +222,7 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   };
   if (!item.sessionId) {
     await settle();
-    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (!coordinationIsCurrent()) return;
     host.renderCoordination();
     return;
   }
@@ -234,10 +238,11 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   // and any failure feedback — lands on the screen we actually end up on, not coordination.
   const offline = targetState === "offline";
   const failOpen = (): void => {
+    if (!actionIsCurrent()) return;
     host.footerFlash = "Failed to open notification target";
     host.footerFlashTicks = 3;
     if (offline) host.renderDashboard();
-    else host.renderCoordination();
+    else if (coordinationIsCurrent()) host.renderCoordination();
   };
   const session = findNotificationSessionTarget(host, item.sessionId);
   if (session) {
