@@ -26,88 +26,208 @@ type ProjectEventStreamHost = any;
 
 const RETRY_MS = 1_000;
 
-export function startDashboardProjectEventStream(host: ProjectEventStreamHost): void {
-  stopDashboardProjectEventStream(host);
-  const controller = new AbortController();
-  host.dashboardProjectEventStreamAbort = controller;
-  void runDashboardProjectEventLoop(host, controller.signal).catch((error) => {
-    if (!controller.signal.aborted) {
+class DashboardProjectEventAdapter {
+  private controller: AbortController | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingViews: Set<ProjectApiView> | null = null;
+  private generation = 0;
+
+  constructor(private readonly host: ProjectEventStreamHost) {}
+
+  start(): void {
+    this.stop();
+    this.generation += 1;
+    const controller = new AbortController();
+    this.controller = controller;
+    void this.runLoop(controller.signal).catch((error) => {
+      if (!controller.signal.aborted) {
+        debug(
+          `dashboard project event stream stopped: ${error instanceof Error ? error.message : String(error)}`,
+          "dashboard",
+        );
+      }
+    });
+  }
+
+  stop(): void {
+    this.controller?.abort();
+    this.controller = null;
+    this.generation += 1;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    this.pendingViews = null;
+  }
+
+  handleEvent(name: string, payload: unknown): void {
+    if (!payload || typeof payload !== "object") return;
+    if (name === PROJECT_API_EVENT_NAMES.ready) {
+      this.scheduleViewRefresh(PROJECT_API_VIEWS);
+      return;
+    }
+    if (name === PROJECT_API_EVENT_NAMES.projectUpdate) {
+      const event = payload as ProjectUpdateEvent;
+      if (Array.isArray(event.views)) {
+        this.scheduleViewRefresh(event.views);
+      }
+      return;
+    }
+    if (name === PROJECT_API_EVENT_NAMES.alert) {
+      applyDashboardAlert(this.host, payload as AlertEvent);
+    }
+  }
+
+  scheduleViewRefresh(views: readonly ProjectApiView[]): void {
+    const pending = this.pendingViews ?? new Set<ProjectApiView>();
+    for (const view of views) pending.add(view);
+    this.pendingViews = pending;
+    if (this.refreshTimer) return;
+    const generation = this.generation;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      if (generation !== this.generation) return;
+      if (this.host.mode !== "dashboard") {
+        this.pendingViews = null;
+        return;
+      }
+      const current = this.pendingViews;
+      this.pendingViews = null;
+      if (current) void this.refreshViews(current, generation).catch(() => undefined);
+    }, 25);
+  }
+
+  private async runLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted && this.host.mode === "dashboard") {
+      let endpoint: Awaited<ReturnType<typeof resolveCurrentProjectServiceEndpointForDashboard>>;
+      try {
+        endpoint = await resolveCurrentProjectServiceEndpointForDashboard(this.host, 1000);
+      } catch (error) {
+        if (signal.aborted || this.host.mode !== "dashboard") return;
+        debug(
+          `dashboard project event endpoint resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+          "dashboard",
+        );
+        await this.recover(signal);
+        await sleep(RETRY_MS, signal);
+        continue;
+      }
+      if (signal.aborted || this.host.mode !== "dashboard") return;
+      if (!endpoint) {
+        await this.recover(signal);
+        await sleep(RETRY_MS, signal);
+        continue;
+      }
+      const url = `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.events}`;
+      try {
+        const response = await fetch(url, {
+          headers: { accept: "text/event-stream" },
+          signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(`event stream request failed: ${response.status}`);
+        }
+        await readEventStream(response.body, signal, (name, payload) => this.handleEvent(name, payload));
+        if (!signal.aborted && this.host.mode === "dashboard") {
+          debug("dashboard project event stream closed; reconnecting", "dashboard");
+          await sleep(RETRY_MS, signal);
+        }
+      } catch (error) {
+        if (signal.aborted || this.host.mode !== "dashboard") return;
+        debug(
+          `dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`,
+          "dashboard",
+        );
+        removeMetadataEndpoint(process.cwd());
+        await this.recover(signal);
+        await sleep(RETRY_MS, signal);
+      }
+    }
+  }
+
+  private async recover(signal: AbortSignal): Promise<void> {
+    try {
+      await this.host.ensureDashboardControlPlane?.();
+      if (!signal.aborted && this.host.mode === "dashboard") this.scheduleViewRefresh(PROJECT_API_VIEWS);
+    } catch (error) {
       debug(
-        `dashboard project event stream stopped: ${error instanceof Error ? error.message : String(error)}`,
+        `dashboard project event recovery failed: ${error instanceof Error ? error.message : String(error)}`,
         "dashboard",
       );
     }
-  });
+  }
+
+  private async refreshViews(views: Set<ProjectApiView>, generation: number): Promise<void> {
+    if (generation !== this.generation) return;
+    const lifecycle = captureDashboardLifecycle(this.host, { inputEpoch: true });
+    if (!isDashboardLifecycleCurrent(this.host, lifecycle)) return;
+    const work: Array<Promise<unknown>> = [];
+    const renderLifecycles: DashboardLifecycleToken[] = [];
+    if (
+      touches(views, [
+        "desktop-state",
+        "agents",
+        "services",
+        "worktrees",
+        "coordination-worklist",
+        "inbox",
+        "notifications",
+        "tasks",
+        "threads",
+      ])
+    ) {
+      renderLifecycles.push(lifecycle);
+      work.push(refreshDashboardModelThroughApi(this.host, { force: true, lifecycle }));
+    }
+    if (
+      this.host.isDashboardScreen?.("coordination") &&
+      touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
+    ) {
+      renderLifecycles.push(lifecycle);
+      work.push(this.host.refreshCoordinationFromService?.({ force: true, lifecycle }));
+    }
+    if (
+      this.host.isDashboardScreen?.("project") &&
+      touches(views, ["project-observability", "tasks", "notifications", "worktrees", "agents", "services"])
+    ) {
+      const projectLifecycle = screenLifecycle("project");
+      renderLifecycles.push(projectLifecycle);
+      work.push(refreshProjectObservability(this.host, { force: true, lifecycle: projectLifecycle }));
+    }
+    if (this.host.isDashboardScreen?.("topology") && touches(views, ["topology", "agents", "services", "worktrees"])) {
+      const topologyLifecycle = screenLifecycle("topology");
+      renderLifecycles.push(topologyLifecycle);
+      work.push(refreshTopology(this.host, { force: true, lifecycle: topologyLifecycle }));
+    }
+    if (this.host.isDashboardScreen?.("library") && touches(views, ["library", "plans"])) {
+      const libraryLifecycle = screenLifecycle("library");
+      renderLifecycles.push(libraryLifecycle);
+      work.push(refreshLibrary(this.host, { force: true, lifecycle: libraryLifecycle }));
+    }
+    if (this.host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
+      renderLifecycles.push(lifecycle);
+      work.push(refreshGraveyardEntriesFromService(this.host, { force: true, lifecycle }));
+    }
+    await Promise.all(work.filter(Boolean));
+    if (generation !== this.generation) return;
+    if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(this.host, token))) return;
+    this.host.renderCurrentDashboardView?.();
+  }
+}
+
+function getOrCreateDashboardProjectEventAdapter(host: ProjectEventStreamHost): DashboardProjectEventAdapter {
+  if (host.tuiProjectEventAdapter instanceof DashboardProjectEventAdapter) return host.tuiProjectEventAdapter;
+  host.tuiProjectEventAdapter = new DashboardProjectEventAdapter(host);
+  return host.tuiProjectEventAdapter;
+}
+
+export function startDashboardProjectEventStream(host: ProjectEventStreamHost): void {
+  getOrCreateDashboardProjectEventAdapter(host).start();
 }
 
 export function stopDashboardProjectEventStream(host: ProjectEventStreamHost): void {
-  host.dashboardProjectEventStreamAbort?.abort?.();
-  host.dashboardProjectEventStreamAbort = null;
-  if (host.dashboardProjectEventRefreshTimer) {
-    clearTimeout(host.dashboardProjectEventRefreshTimer);
-    host.dashboardProjectEventRefreshTimer = null;
-  }
-  host.dashboardProjectEventPendingViews = null;
-}
-
-async function runDashboardProjectEventLoop(host: ProjectEventStreamHost, signal: AbortSignal): Promise<void> {
-  while (!signal.aborted && host.mode === "dashboard") {
-    let endpoint: Awaited<ReturnType<typeof resolveCurrentProjectServiceEndpointForDashboard>>;
-    try {
-      endpoint = await resolveCurrentProjectServiceEndpointForDashboard(host, 1000);
-    } catch (error) {
-      if (signal.aborted || host.mode !== "dashboard") return;
-      debug(
-        `dashboard project event endpoint resolution failed: ${error instanceof Error ? error.message : String(error)}`,
-        "dashboard",
-      );
-      await recoverDashboardProjectEventStream(host, signal);
-      await sleep(RETRY_MS, signal);
-      continue;
-    }
-    if (signal.aborted || host.mode !== "dashboard") return;
-    if (!endpoint) {
-      await recoverDashboardProjectEventStream(host, signal);
-      await sleep(RETRY_MS, signal);
-      continue;
-    }
-    const url = `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.events}`;
-    try {
-      const response = await fetch(url, {
-        headers: { accept: "text/event-stream" },
-        signal,
-      });
-      if (!response.ok || !response.body) {
-        throw new Error(`event stream request failed: ${response.status}`);
-      }
-      await readEventStream(response.body, signal, (name, payload) => handleProjectEvent(host, name, payload));
-      if (!signal.aborted && host.mode === "dashboard") {
-        debug("dashboard project event stream closed; reconnecting", "dashboard");
-        await sleep(RETRY_MS, signal);
-      }
-    } catch (error) {
-      if (signal.aborted || host.mode !== "dashboard") return;
-      debug(
-        `dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`,
-        "dashboard",
-      );
-      removeMetadataEndpoint(process.cwd());
-      await recoverDashboardProjectEventStream(host, signal);
-      await sleep(RETRY_MS, signal);
-    }
-  }
-}
-
-async function recoverDashboardProjectEventStream(host: ProjectEventStreamHost, signal: AbortSignal): Promise<void> {
-  try {
-    await host.ensureDashboardControlPlane?.();
-    if (!signal.aborted && host.mode === "dashboard") scheduleProjectViewRefresh(host, PROJECT_API_VIEWS);
-  } catch (error) {
-    debug(
-      `dashboard project event recovery failed: ${error instanceof Error ? error.message : String(error)}`,
-      "dashboard",
-    );
-  }
+  host.tuiProjectEventAdapter?.stop?.();
+  host.tuiProjectEventAdapter = null;
 }
 
 async function readEventStream(
@@ -169,93 +289,11 @@ function processEventStreamLine(
 }
 
 export function handleProjectEvent(host: ProjectEventStreamHost, name: string, payload: unknown): void {
-  if (!payload || typeof payload !== "object") return;
-  if (name === PROJECT_API_EVENT_NAMES.ready) {
-    scheduleProjectViewRefresh(host, PROJECT_API_VIEWS);
-    return;
-  }
-  if (name === PROJECT_API_EVENT_NAMES.projectUpdate) {
-    const event = payload as ProjectUpdateEvent;
-    if (Array.isArray(event.views)) {
-      scheduleProjectViewRefresh(host, event.views);
-    }
-    return;
-  }
-  if (name === PROJECT_API_EVENT_NAMES.alert) {
-    applyDashboardAlert(host, payload as AlertEvent);
-  }
+  getOrCreateDashboardProjectEventAdapter(host).handleEvent(name, payload);
 }
 
 export function scheduleProjectViewRefresh(host: ProjectEventStreamHost, views: readonly ProjectApiView[]): void {
-  const pending = (host.dashboardProjectEventPendingViews ?? new Set<ProjectApiView>()) as Set<ProjectApiView>;
-  for (const view of views) pending.add(view);
-  host.dashboardProjectEventPendingViews = pending;
-  if (host.dashboardProjectEventRefreshTimer) return;
-  host.dashboardProjectEventRefreshTimer = setTimeout(() => {
-    host.dashboardProjectEventRefreshTimer = null;
-    if (host.mode !== "dashboard") {
-      host.dashboardProjectEventPendingViews = null;
-      return;
-    }
-    const current = host.dashboardProjectEventPendingViews as Set<ProjectApiView> | null;
-    host.dashboardProjectEventPendingViews = null;
-    if (current) void refreshDashboardApiViews(host, current).catch(() => undefined);
-  }, 25);
-}
-
-async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set<ProjectApiView>): Promise<void> {
-  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
-  if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
-  const work: Array<Promise<unknown>> = [];
-  const renderLifecycles: DashboardLifecycleToken[] = [];
-  if (
-    touches(views, [
-      "desktop-state",
-      "agents",
-      "services",
-      "worktrees",
-      "coordination-worklist",
-      "inbox",
-      "notifications",
-      "tasks",
-      "threads",
-    ])
-  ) {
-    renderLifecycles.push(lifecycle);
-    work.push(refreshDashboardModelThroughApi(host, { force: true, lifecycle }));
-  }
-  if (
-    host.isDashboardScreen?.("coordination") &&
-    touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
-  ) {
-    renderLifecycles.push(lifecycle);
-    work.push(host.refreshCoordinationFromService?.({ force: true, lifecycle }));
-  }
-  if (
-    host.isDashboardScreen?.("project") &&
-    touches(views, ["project-observability", "tasks", "notifications", "worktrees", "agents", "services"])
-  ) {
-    const projectLifecycle = screenLifecycle("project");
-    renderLifecycles.push(projectLifecycle);
-    work.push(refreshProjectObservability(host, { force: true, lifecycle: projectLifecycle }));
-  }
-  if (host.isDashboardScreen?.("topology") && touches(views, ["topology", "agents", "services", "worktrees"])) {
-    const topologyLifecycle = screenLifecycle("topology");
-    renderLifecycles.push(topologyLifecycle);
-    work.push(refreshTopology(host, { force: true, lifecycle: topologyLifecycle }));
-  }
-  if (host.isDashboardScreen?.("library") && touches(views, ["library", "plans"])) {
-    const libraryLifecycle = screenLifecycle("library");
-    renderLifecycles.push(libraryLifecycle);
-    work.push(refreshLibrary(host, { force: true, lifecycle: libraryLifecycle }));
-  }
-  if (host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
-    renderLifecycles.push(lifecycle);
-    work.push(refreshGraveyardEntriesFromService(host, { force: true, lifecycle }));
-  }
-  await Promise.all(work.filter(Boolean));
-  if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(host, token))) return;
-  host.renderCurrentDashboardView?.();
+  getOrCreateDashboardProjectEventAdapter(host).scheduleViewRefresh(views);
 }
 
 function screenLifecycle(screen: string): DashboardLifecycleToken {

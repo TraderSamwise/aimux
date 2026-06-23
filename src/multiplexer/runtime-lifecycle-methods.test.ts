@@ -261,6 +261,7 @@ describe("runtime lifecycle state persistence", () => {
         clearDashboardBusy: vi.fn(),
         stopHeartbeat: vi.fn(),
         stopProjectServiceRefresh: vi.fn(),
+        tuiProjectEventAdapter: { stop: vi.fn() },
         tuiApiRecoveryTimer: setTimeout(refreshRuntimeGuard, 25),
         tuiApiRuntime: { dispose: vi.fn() },
         stopGraveyardCleanup: vi.fn(),
@@ -278,6 +279,7 @@ describe("runtime lifecycle state persistence", () => {
 
       expect(teardownHost.tuiApiRecoveryTimer).toBeNull();
       expect(refreshRuntimeGuard).not.toHaveBeenCalled();
+      expect(teardownHost.tuiProjectEventAdapter).toBeNull();
       expect(teardownHost.tuiApiRuntime).toBeNull();
     } finally {
       vi.useRealTimers();

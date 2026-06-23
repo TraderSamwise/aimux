@@ -111,6 +111,30 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
+  it("does not render after the event adapter stops during an in-flight refresh", async () => {
+    let resolveRefresh!: (value: boolean) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      refreshDashboardModelFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state"]);
+    await vi.advanceTimersByTimeAsync(25);
+    stopDashboardProjectEventStream(host);
+    resolveRefresh(true);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
   it("keeps active project SSE refresh state when input changes on the same screen", async () => {
     let resolveProjectRefresh!: (value: unknown) => void;
     const host: any = {
