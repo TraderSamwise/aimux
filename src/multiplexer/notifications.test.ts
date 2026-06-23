@@ -375,26 +375,38 @@ describe("coordination thread workflow keys", () => {
 
     handleCoordinationKey(host, Buffer.from("A"));
     await vi.waitFor(() =>
-      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
-        taskId: "task-1",
-        from: "user",
-      }),
+      expect(host.postToProjectService).toHaveBeenCalledWith(
+        "/tasks/accept",
+        {
+          taskId: "task-1",
+          from: "user",
+        },
+        undefined,
+      ),
     );
 
     handleCoordinationKey(host, Buffer.from("J"));
     await vi.waitFor(() =>
-      expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
-        taskId: "task-1",
-        from: "user",
-      }),
+      expect(host.postToProjectService).toHaveBeenCalledWith(
+        "/reviews/request-changes",
+        {
+          taskId: "task-1",
+          from: "user",
+        },
+        undefined,
+      ),
     );
 
     handleCoordinationKey(host, Buffer.from("E"));
     await vi.waitFor(() =>
-      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
-        taskId: "task-1",
-        from: "user",
-      }),
+      expect(host.postToProjectService).toHaveBeenCalledWith(
+        "/tasks/reopen",
+        {
+          taskId: "task-1",
+          from: "user",
+        },
+        undefined,
+      ),
     );
   });
 });

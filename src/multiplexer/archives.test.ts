@@ -125,6 +125,53 @@ describe("refreshGraveyardEntriesFromService", () => {
     expect(host.listWorktreeGraveyardEntries).not.toHaveBeenCalled();
     expect(host.graveyardViewModel).toEqual({ rows: [], selectableRows: [] });
   });
+
+  it("does not render a graveyard refresh after newer dashboard input", async () => {
+    const payload = graveyardPayload();
+    let resolveRefresh!: (value: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      graveyardIndex: -1,
+      getFromProjectService: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
+    };
+
+    const lifecycle = { mode: "dashboard" as const, inputEpoch: 0, requiresInputEpoch: true, screen: "graveyard" };
+    const refresh = refreshGraveyardEntriesFromService(host, { lifecycle });
+    host.dashboardInputEpoch = 1;
+    resolveRefresh(payload);
+
+    await expect(refresh).resolves.toBe(true);
+
+    expect(host.graveyardViewModel).toBe(payload.viewModel);
+    expect(renderGraveyardScreen).not.toHaveBeenCalled();
+  });
+
+  it("does not wipe graveyard state from a stale invalid refresh", async () => {
+    const payload = graveyardPayload();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      graveyardEntries: payload.entries,
+      worktreeGraveyardEntries: payload.worktrees,
+      graveyardViewModel: payload.viewModel,
+      getFromProjectService: vi.fn(async () => ({ ok: true, entries: [], worktrees: [] })),
+      isDashboardScreen: vi.fn((screen: string) => screen === "graveyard"),
+    };
+
+    const lifecycle = { mode: "dashboard" as const, inputEpoch: 0, requiresInputEpoch: true, screen: "graveyard" };
+
+    await expect(refreshGraveyardEntriesFromService(host, { lifecycle })).resolves.toBe(false);
+
+    expect(host.graveyardViewModel).toBe(payload.viewModel);
+    expect(renderGraveyardScreen).not.toHaveBeenCalled();
+  });
 });
 
 describe("resurrectGraveyardEntry", () => {

@@ -12,8 +12,15 @@ import {
   isDashboardLifecycleCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
+import { postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type SubscreenHost = any;
+
+function postCoordinationMutation(host: SubscreenHost, path: string, body: unknown): Promise<any> {
+  return postJsonWithTuiApiRuntime(host, path, body, undefined, (requestHost, requestPath, requestBody, opts) =>
+    requestHost.postToProjectService(requestPath, requestBody, opts),
+  );
+}
 
 export function attentionScore(host: SubscreenHost, entry: any): number {
   return navigationUrgencyScore(entry);
@@ -143,11 +150,11 @@ async function refreshCoordinationThreads(
 ): Promise<boolean> {
   const refreshed =
     typeof host.refreshCoordinationFromService === "function"
-      ? await host.refreshCoordinationFromService({ force: true })
+      ? await host.refreshCoordinationFromService({ force: true, lifecycle })
       : true;
+  if (!isDashboardLifecycleCurrent(host, lifecycle)) return refreshed;
   if (typeof host.threadIndex !== "number" || Number.isNaN(host.threadIndex)) host.threadIndex = 0;
   host.threadIndex = Math.min(host.threadIndex, Math.max(0, (host.threadEntries?.length ?? 0) - 1));
-  if (!isDashboardLifecycleCurrent(host, lifecycle)) return refreshed;
   if (!refreshed) {
     host.footerFlash = "Coordination refresh failed";
     host.footerFlashTicks = 3;
@@ -168,10 +175,10 @@ export async function runThreadHandoffAction(
   let successFlash = "";
   try {
     if (mode === "accept") {
-      await host.postToProjectService(PROJECT_API_ROUTES.handoff.accept, { threadId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.handoff.accept, { threadId, from: "user" });
       successFlash = "⇢ Handoff accepted";
     } else {
-      await host.postToProjectService(PROJECT_API_ROUTES.handoff.complete, { threadId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.handoff.complete, { threadId, from: "user" });
       successFlash = "⇢ Handoff completed";
     }
   } catch (error) {
@@ -189,7 +196,7 @@ export async function runThreadStatusAction(
 ): Promise<void> {
   const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
   try {
-    await host.postToProjectService(PROJECT_API_ROUTES.threads.status, { threadId, status });
+    await postCoordinationMutation(host, PROJECT_API_ROUTES.threads.status, { threadId, status });
   } catch (error) {
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError("Failed to update thread status", [error instanceof Error ? error.message : String(error)]);
@@ -207,16 +214,16 @@ export async function runTaskLifecycleAction(
   let successFlash = "";
   try {
     if (mode === "accept") {
-      await host.postToProjectService(PROJECT_API_ROUTES.tasks.accept, { taskId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.tasks.accept, { taskId, from: "user" });
       successFlash = "⧫ Task accepted";
     } else if (mode === "block") {
-      await host.postToProjectService(PROJECT_API_ROUTES.tasks.block, { taskId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.tasks.block, { taskId, from: "user" });
       successFlash = "⧫ Task blocked";
     } else if (mode === "reopen") {
-      await host.postToProjectService(PROJECT_API_ROUTES.tasks.reopen, { taskId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.tasks.reopen, { taskId, from: "user" });
       successFlash = "↺ Task reopened";
     } else {
-      await host.postToProjectService(PROJECT_API_ROUTES.tasks.complete, { taskId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.tasks.complete, { taskId, from: "user" });
       successFlash = "✓ Task completed";
     }
   } catch (error) {
@@ -236,10 +243,10 @@ export async function runReviewLifecycleAction(
   let successFlash = "";
   try {
     if (mode === "approve") {
-      await host.postToProjectService(PROJECT_API_ROUTES.reviews.approve, { taskId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.reviews.approve, { taskId, from: "user" });
       successFlash = "✓ Review approved";
     } else {
-      await host.postToProjectService(PROJECT_API_ROUTES.reviews.requestChanges, { taskId, from: "user" });
+      await postCoordinationMutation(host, PROJECT_API_ROUTES.reviews.requestChanges, { taskId, from: "user" });
       successFlash = "↺ Changes requested";
     }
   } catch (error) {
@@ -275,14 +282,12 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
       return;
     }
     const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
-    // Reply through the service (sole writer) rather than mutating the thread store in-process.
-    void host
-      .postToProjectService(PROJECT_API_ROUTES.threads.send, {
-        threadId: entry.thread.id,
-        from: "user",
-        kind: "reply",
-        body,
-      })
+    void postCoordinationMutation(host, PROJECT_API_ROUTES.threads.send, {
+      threadId: entry.thread.id,
+      from: "user",
+      kind: "reply",
+      body,
+    })
       .then(() => refreshCoordinationThreads(host, lifecycle))
       .catch((error: unknown) => {
         if (!isDashboardLifecycleCurrent(host, lifecycle)) return;

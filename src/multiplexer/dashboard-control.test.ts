@@ -548,6 +548,7 @@ describe("showOrchestrationRoutePicker", () => {
 
     expect(host.getFromProjectService).toHaveBeenCalledWith(
       "/orchestration/routes?mode=task&selectedSessionId=codex-1&worktreePath=%2Frepo%2F.aimux%2Fworktrees%2Fdemo",
+      undefined,
     );
     expect(host.orchestrationRouteMode).toBe("task");
     expect(host.orchestrationRouteOptions).toEqual([
