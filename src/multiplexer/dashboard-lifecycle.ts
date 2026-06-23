@@ -59,23 +59,25 @@ export function startDashboardLifecycleTask<T>(
   handlers: DashboardLifecycleTaskHandlers<T> = {},
 ): void {
   const token = captureDashboardLifecycle(host, opts);
+  const invokeIfCurrent = (callback: (() => void) | undefined): void => {
+    if (!callback || !isDashboardLifecycleCurrent(host, token)) return;
+    try {
+      callback();
+    } catch {}
+  };
   let promise: Promise<T>;
   try {
     promise = work(token);
   } catch (error) {
-    if (isDashboardLifecycleCurrent(host, token)) handlers.onError?.(error, token);
-    if (isDashboardLifecycleCurrent(host, token)) handlers.onFinally?.(token);
+    invokeIfCurrent(() => handlers.onError?.(error, token));
+    invokeIfCurrent(() => handlers.onFinally?.(token));
     return;
   }
   void promise
-    .then((value) => {
-      if (isDashboardLifecycleCurrent(host, token)) handlers.onSuccess?.(value, token);
-    })
-    .catch((error: unknown) => {
-      if (isDashboardLifecycleCurrent(host, token)) handlers.onError?.(error, token);
-    })
-    .finally(() => {
-      if (isDashboardLifecycleCurrent(host, token)) handlers.onFinally?.(token);
-    })
+    .then(
+      (value) => invokeIfCurrent(() => handlers.onSuccess?.(value, token)),
+      (error: unknown) => invokeIfCurrent(() => handlers.onError?.(error, token)),
+    )
+    .finally(() => invokeIfCurrent(() => handlers.onFinally?.(token)))
     .catch(() => undefined);
 }
