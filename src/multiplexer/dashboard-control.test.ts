@@ -881,7 +881,49 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
     expect(host.runtimeGuardState).toEqual({ kind: "ok" });
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, {
+      lifecycle: expect.objectContaining({ mode: "dashboard" }),
+    });
+  });
+
+  it("does not mark successful guarded repair failed after leaving dashboard mode", async () => {
+    let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+    mocks.spawn.mockReturnValueOnce({
+      on: vi.fn((event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+        if (event === "exit") onExit = handler;
+      }),
+      unref: vi.fn(),
+    });
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse());
+    const host = {
+      mode: "dashboard",
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      runtimeGuardState: { kind: "stale", reason: "service-mismatch" },
+      renderCurrentDashboardView: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      showDashboardError: vi.fn(),
+    };
+
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
+    host.mode = "session";
+    onExit?.(0, null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.runtimeGuardRepairFailedKey).toBeUndefined();
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("keeps guard failure visible when guarded repair exits but verification is still stale", async () => {

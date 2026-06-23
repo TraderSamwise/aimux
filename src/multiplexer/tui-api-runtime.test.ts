@@ -229,9 +229,17 @@ describe("TuiApiRuntime", () => {
       ok: true,
       value: { ok: true, body: { sessionId: "b" } },
     });
+    const opts = { timeoutMs: 10_000 };
+    await expect(
+      runtime.mutateJson("/agents/stop", { sessionId: "c" }, (value) => value, opts),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { ok: true, body: { sessionId: "c" } },
+    });
 
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "b" });
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "c" }, opts);
   });
 
   it("bootstraps direct resource refreshes through the dashboard GET wrapper", async () => {
