@@ -314,7 +314,10 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
       return;
     }
-    if (!(await refreshDashboardModelThroughApi(host, { force: true }))) {
+    if (
+      isDashboardLifecycleCurrent(host, lifecycle) &&
+      !(await refreshDashboardModelThroughApi(host, { force: true, lifecycle }))
+    ) {
       fail("aimux repair completed but dashboard data is still unavailable");
       return;
     }
