@@ -1028,7 +1028,11 @@ function hasLiveTmuxAgentWindow(host: DashboardModelHost): boolean {
     if (!Array.isArray(entries)) return false;
     return entries.some((entry: any) => {
       if (entry?.metadata?.kind !== "agent") return false;
-      if (entry?.target?.paneDead === true) return false;
+      if (typeof host.tmuxRuntimeManager?.isWindowAlive === "function") {
+        if (!host.tmuxRuntimeManager.isWindowAlive(entry.target)) return false;
+      } else if (entry?.target?.paneDead === true) {
+        return false;
+      }
       return !isDashboardWindowName(entry?.target?.windowName);
     });
   } catch {

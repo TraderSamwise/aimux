@@ -1259,6 +1259,10 @@ export class MetadataServer {
       this.desktopStateRefreshing = true;
       try {
         this.refreshDesktopStateCache();
+      } catch (error) {
+        log.warn("desktop-state refresh failed", "api", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         this.desktopStateRefreshing = false;
       }
