@@ -117,6 +117,45 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
   });
 
+  it("does not apply desktop-state when the refresh lifecycle is stale", async () => {
+    const host = hostDouble();
+    host.dashboardInputEpoch = 1;
+    host.getFromProjectService.mockResolvedValueOnce(desktopPayload("stale"));
+
+    await expect(
+      refreshDashboardModelFromService(host, true, {
+        lifecycle: { mode: "dashboard", inputEpoch: 0, requiresInputEpoch: true },
+      }),
+    ).resolves.toBe(false);
+
+    expect(host.dashboardSessionsCache).toBeUndefined();
+    expect(host.dashboardModelServiceRefreshedAt).toBeUndefined();
+    expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+  });
+
+  it("does not report stale invalid desktop-state refreshes", async () => {
+    const host = hostDouble();
+    host.dashboardInputEpoch = 1;
+    host.getFromProjectService.mockResolvedValueOnce({
+      ok: true,
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktrees: [],
+      mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+    });
+
+    await expect(
+      refreshDashboardModelFromService(host, true, {
+        lifecycle: { mode: "dashboard", inputEpoch: 0, requiresInputEpoch: true },
+      }),
+    ).resolves.toBe(false);
+
+    expect(host.dashboardSessionsCache).toBeUndefined();
+    expect(host.dashboardModelServiceRefreshError).toBeUndefined();
+    expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+  });
+
   it("rejects desktop-state payloads without service-composed worktree groups", async () => {
     const host = hostDouble();
     host.getFromProjectService.mockResolvedValueOnce({

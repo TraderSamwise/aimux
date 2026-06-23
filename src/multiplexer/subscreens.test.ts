@@ -91,6 +91,36 @@ describe("thread subscreen navigation", () => {
     expect(renderCoordinationDetails(host, 80, 20).join("\n")).toContain("Please check this thread.");
   });
 
+  it("opens relevant threads through a lifecycle-aware coordination refresh", async () => {
+    const thread = createThread({
+      id: "thread-1",
+      title: "Review",
+      kind: "review",
+      createdBy: "parent-1",
+      participants: ["codex-1", "user"],
+      owner: "codex-1",
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 4,
+      dashboardState: { screen: "dashboard" },
+      threadEntries: [{ thread, displayTitle: "Review" }],
+      refreshCoordinationFromService: vi.fn(async () => true),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      setDashboardScreen: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      renderCoordination: vi.fn(),
+    };
+
+    await openRelevantThreadForSession(host, "codex-1");
+
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+      force: true,
+      lifecycle: expect.objectContaining({ inputEpoch: 4, screen: "dashboard" }),
+    });
+    expect(host.setDashboardScreen).toHaveBeenCalledWith("coordination");
+  });
+
   it("forces coordination refresh after thread workflow mutations", async () => {
     const host: any = {
       mode: "dashboard",
@@ -103,14 +133,20 @@ describe("thread subscreen navigation", () => {
 
     await runThreadHandoffAction(host, "accept", "thread-1");
     await vi.waitFor(() => {
-      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+      expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+        force: true,
+        lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "coordination" }),
+      });
       expect(host.renderCoordination).toHaveBeenCalledOnce();
     });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/handoff/accept", {
-      threadId: "thread-1",
-      from: "user",
-    });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/handoff/accept",
+      {
+        threadId: "thread-1",
+        from: "user",
+      },
+    );
   });
 
   it("shows refresh failure instead of success when workflow mutation snapshot reload fails", async () => {
@@ -151,7 +187,10 @@ describe("thread subscreen navigation", () => {
     resolvePost({ ok: true });
     await action;
 
-    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+      force: true,
+      lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "coordination" }),
+    });
     expect(host.renderCoordination).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -242,7 +281,10 @@ describe("thread subscreen navigation", () => {
 
     await openRelevantThreadForSession(host, "claude-1");
 
-    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({ force: true });
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledWith({
+      force: true,
+      lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "dashboard" }),
+    });
     expect(host.setDashboardScreen).toHaveBeenCalledWith("coordination");
     expect(host.openDashboardOverlay).toHaveBeenCalledWith("thread-reply");
   });

@@ -50,6 +50,7 @@ import {
   stabilizeRuntimeGuardProbe,
   type RuntimeGuardState,
 } from "./runtime-guard.js";
+import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
@@ -756,7 +757,12 @@ async function showOrchestrationRoutePickerFromService(
   if (selectedSessionId) params.set("selectedSessionId", selectedSessionId);
   if (worktreePath) params.set("worktreePath", worktreePath);
   try {
-    const res = await host.getFromProjectService(`${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`);
+    const res = await getJsonWithTuiApiRuntime(
+      host,
+      `${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`,
+      undefined,
+      (requestHost, path, opts) => getFromProjectService(requestHost, path, opts),
+    );
     if (!res?.ok || !Array.isArray(res.options) || !res.options.every(validOrchestrationRouteOption)) {
       throw new Error("invalid orchestration route options payload");
     }

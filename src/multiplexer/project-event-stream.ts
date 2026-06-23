@@ -199,7 +199,7 @@ export function scheduleProjectViewRefresh(host: ProjectEventStreamHost, views: 
 }
 
 async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set<ProjectApiView>): Promise<void> {
-  const lifecycle = captureDashboardLifecycle(host);
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
   const work: Array<Promise<unknown>> = [];
   if (
@@ -215,13 +215,13 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
       "threads",
     ])
   ) {
-    work.push(host.refreshDashboardModelFromService?.(true));
+    work.push(host.refreshDashboardModelFromService?.(true, { lifecycle }));
   }
   if (
     host.isDashboardScreen?.("coordination") &&
     touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
   ) {
-    work.push(host.refreshCoordinationFromService?.({ force: true }));
+    work.push(host.refreshCoordinationFromService?.({ force: true, lifecycle }));
   }
   if (
     host.isDashboardScreen?.("project") &&
@@ -236,7 +236,7 @@ async function refreshDashboardApiViews(host: ProjectEventStreamHost, views: Set
     work.push(refreshLibrary(host, { force: true }));
   }
   if (host.isDashboardScreen?.("graveyard") && touches(views, ["graveyard", "agents", "worktrees"])) {
-    work.push(refreshGraveyardEntriesFromService(host, { force: true }));
+    work.push(refreshGraveyardEntriesFromService(host, { force: true, lifecycle }));
   }
   await Promise.all(work.filter(Boolean));
   if (!isDashboardLifecycleCurrent(host, lifecycle)) return;

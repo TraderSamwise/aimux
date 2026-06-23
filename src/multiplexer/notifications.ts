@@ -6,13 +6,15 @@ import {
   type WorklistItem,
 } from "../coordination-model.js";
 import { type WorkflowEntry } from "../workflow.js";
-import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import {
+  captureDashboardLifecycle,
+  type DashboardApiViewRefreshOptions,
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+} from "./dashboard-lifecycle.js";
 import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
-interface ApiViewRefreshOptions {
-  force?: boolean;
-}
 const COORDINATION_WORKLIST_RESOURCE = "coordination-worklist";
 
 /** Per-row reconciliation flags, index-aligned with host.notificationEntries. */
@@ -82,7 +84,7 @@ export function applyCoordinationFilter(host: NotificationHost): void {
 // failure preserve the last service payload so version skew cannot silently fork the view.
 export async function refreshCoordinationFromService(
   host: NotificationHost,
-  options: ApiViewRefreshOptions = {},
+  options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
   if (typeof host.getFromProjectService !== "function") return false;
   try {
@@ -93,6 +95,7 @@ export async function refreshCoordinationFromService(
       { supersede: options.force },
     );
     if (!result.ok || !result.value) return false;
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
     applyCoordinationModel(host, result.value);
     return true;
   } catch {
@@ -104,8 +107,8 @@ export function hydrateDashboardNotificationScreenState(host: NotificationHost):
   if (!host.isDashboardScreen?.("coordination")) return;
   startDashboardLifecycleTask(
     host,
-    { screen: "coordination" },
-    () => host.refreshCoordinationFromService?.() ?? Promise.resolve(false),
+    { inputEpoch: true, screen: "coordination" },
+    (token) => host.refreshCoordinationFromService?.({ lifecycle: token }) ?? Promise.resolve(false),
     {
       onSuccess: () => host.renderCurrentDashboardView?.(),
     },
@@ -198,22 +201,28 @@ export async function markCoordinationItemRead(host: NotificationHost, item: Wor
 export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
   const note = item.notification;
   if (!note) return;
+  const actionLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+  const actionIsCurrent = () => isDashboardLifecycleCurrent(host, actionLifecycle);
+  const coordinationIsCurrent = () => isDashboardLifecycleCurrent(host, lifecycle);
   const unread = note.unreadCount > 0;
   const settle = async () => {
     if (!unread) return;
     try {
       await markCoordinationItemRead(host, item);
-      await host.refreshCoordinationFromService?.({ force: true });
+      await host.refreshCoordinationFromService?.({ force: true, lifecycle });
     } catch {
+      if (!coordinationIsCurrent()) return;
       host.footerFlash = "Notification update failed";
       host.footerFlashTicks = 3;
       if (typeof host.refreshCoordinationFromService === "function") {
-        await host.refreshCoordinationFromService({ force: true }).catch(() => {});
+        await host.refreshCoordinationFromService({ force: true, lifecycle }).catch(() => {});
       }
     }
   };
   if (!item.sessionId) {
     await settle();
+    if (!coordinationIsCurrent()) return;
     host.renderCoordination();
     return;
   }
@@ -229,10 +238,11 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   // and any failure feedback — lands on the screen we actually end up on, not coordination.
   const offline = targetState === "offline";
   const failOpen = (): void => {
+    if (!actionIsCurrent()) return;
     host.footerFlash = "Failed to open notification target";
     host.footerFlashTicks = 3;
     if (offline) host.renderDashboard();
-    else host.renderCoordination();
+    else if (coordinationIsCurrent()) host.renderCoordination();
   };
   const session = findNotificationSessionTarget(host, item.sessionId);
   if (session) {

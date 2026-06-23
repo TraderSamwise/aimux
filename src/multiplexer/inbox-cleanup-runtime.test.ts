@@ -9,6 +9,8 @@ import { persistenceMethods } from "./persistence-methods.js";
 
 function cleanupInboxHost() {
   return {
+    mode: "dashboard",
+    dashboardInputEpoch: 0,
     notificationIndex: 0,
     threadEntries: [],
     dashboardTeammatesCache: [],

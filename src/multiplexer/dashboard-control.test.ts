@@ -514,8 +514,34 @@ describe("dashboard live target activation", () => {
 });
 
 describe("showOrchestrationRoutePicker", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("loads route options from the project service in dashboard mode", async () => {
     const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    mocks.requestJson
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({
+        status: 200,
+        json: {
+          ok: true,
+          options: [
+            {
+              label: "Role: reviewer [1: codex-1]",
+              assignee: "reviewer",
+              worktreePath: "/repo/.aimux/worktrees/demo",
+              recipientIds: ["codex-1"],
+            },
+          ],
+        },
+      });
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -527,17 +553,7 @@ describe("showOrchestrationRoutePicker", () => {
       },
       activeIndex: 0,
       getDashboardSessions: vi.fn(() => [{ id: "codex-1" }]),
-      getFromProjectService: vi.fn(async () => ({
-        ok: true,
-        options: [
-          {
-            label: "Role: reviewer [1: codex-1]",
-            assignee: "reviewer",
-            worktreePath: "/repo/.aimux/worktrees/demo",
-            recipientIds: ["codex-1"],
-          },
-        ],
-      })),
+      getFromProjectService: vi.fn(),
       openDashboardOverlay: vi.fn(),
       renderOrchestrationRoutePicker: vi.fn(),
       showDashboardError: vi.fn(),
@@ -546,7 +562,8 @@ describe("showOrchestrationRoutePicker", () => {
     showOrchestrationRoutePicker(host, "task");
     await vi.waitFor(() => expect(host.renderOrchestrationRoutePicker).toHaveBeenCalledOnce());
 
-    expect(host.getFromProjectService).toHaveBeenCalledWith(
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
+    expect(mocks.requestJson.mock.calls[1][0]).toContain(
       "/orchestration/routes?mode=task&selectedSessionId=codex-1&worktreePath=%2Frepo%2F.aimux%2Fworktrees%2Fdemo",
     );
     expect(host.orchestrationRouteMode).toBe("task");
@@ -564,13 +581,22 @@ describe("showOrchestrationRoutePicker", () => {
 
   it("rejects malformed service route option payloads before opening the picker", async () => {
     const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    mocks.requestJson
+      .mockResolvedValueOnce(healthyServiceResponse())
+      .mockResolvedValueOnce({ status: 200, json: { ok: true, options: [{ recipientIds: "codex-1" }] } });
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       dashboardState: { worktreeEntries: [], worktreeSessions: [], worktreeNavOrder: [] },
       activeIndex: 0,
       getDashboardSessions: vi.fn(() => []),
-      getFromProjectService: vi.fn(async () => ({ ok: true, options: [{ recipientIds: "codex-1" }] })),
+      getFromProjectService: vi.fn(),
       openDashboardOverlay: vi.fn(),
       renderOrchestrationRoutePicker: vi.fn(),
       showDashboardError: vi.fn(),
@@ -586,29 +612,37 @@ describe("showOrchestrationRoutePicker", () => {
   it("does not open a stale route picker after newer dashboard input", async () => {
     let resolveRoutes!: (value: unknown) => void;
     const { showOrchestrationRoutePicker } = await import("./dashboard-control.js");
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse()).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRoutes = (value) => resolve({ status: 200, json: value });
+        }),
+    );
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       dashboardState: { worktreeEntries: [], worktreeSessions: [], worktreeNavOrder: [] },
       activeIndex: 0,
       getDashboardSessions: vi.fn(() => []),
-      getFromProjectService: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveRoutes = resolve;
-          }),
-      ),
+      getFromProjectService: vi.fn(),
       openDashboardOverlay: vi.fn(),
       renderOrchestrationRoutePicker: vi.fn(),
       showDashboardError: vi.fn(),
     };
 
     showOrchestrationRoutePicker(host, "message");
+    await vi.waitFor(() => expect(mocks.requestJson).toHaveBeenCalledTimes(2));
     host.dashboardInputEpoch = 1;
     resolveRoutes({ ok: true, options: [{ label: "Agent", sessionId: "codex-1" }] });
-    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledOnce());
     await Promise.resolve();
 
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
     expect(host.openDashboardOverlay).not.toHaveBeenCalled();
     expect(host.renderOrchestrationRoutePicker).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();

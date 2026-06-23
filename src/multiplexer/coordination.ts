@@ -16,7 +16,7 @@ import {
   runThreadHandoffAction,
   runThreadStatusAction,
 } from "./subscreens.js";
-import { startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
+import { type DashboardLifecycleToken, startDashboardLifecycleTask } from "./dashboard-lifecycle.js";
 
 type CoordinationHost = any;
 
@@ -35,8 +35,8 @@ export function showCoordination(host: CoordinationHost): void {
   renderCoordination(host);
   startDashboardLifecycleTask(
     host,
-    { screen: "coordination" },
-    () => host.refreshCoordinationFromService?.() ?? Promise.resolve(false),
+    { inputEpoch: true, screen: "coordination" },
+    (token) => host.refreshCoordinationFromService?.({ lifecycle: token }) ?? Promise.resolve(false),
     {
       onSuccess: () => renderCoordination(host),
     },
@@ -50,9 +50,9 @@ export function renderCoordination(host: CoordinationHost): void {
 }
 
 // Reload the worklist after a mutation from the service, preserving last API state on failure.
-function reloadCoordination(host: CoordinationHost): Promise<void> {
+function reloadCoordination(host: CoordinationHost, lifecycle?: DashboardLifecycleToken): Promise<void> {
   if (typeof host.refreshCoordinationFromService === "function") {
-    return host.refreshCoordinationFromService({ force: true }).then(() => undefined);
+    return host.refreshCoordinationFromService({ force: true, lifecycle }).then(() => undefined);
   }
   return Promise.resolve();
 }
@@ -83,9 +83,9 @@ function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unkno
   startDashboardLifecycleTask(
     host,
     { inputEpoch: true, screen: "coordination" },
-    async () => {
+    async (token) => {
       await mutate;
-      await reloadCoordination(host);
+      await reloadCoordination(host, token);
     },
     {
       onSuccess: () => renderCoordination(host),
@@ -95,7 +95,7 @@ function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unkno
         startDashboardLifecycleTask(
           host,
           { inputEpoch: true, screen: "coordination" },
-          () => reloadCoordination(host),
+          (token) => reloadCoordination(host, token),
           {
             onSuccess: () => renderCoordination(host),
             onError: () => renderCoordination(host),
