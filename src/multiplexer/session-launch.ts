@@ -300,6 +300,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
+  host.tmuxRuntimeManager?.repairLegacyProjectSessionNames?.(process.cwd());
   reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
   host.refreshDesktopStateSnapshot();

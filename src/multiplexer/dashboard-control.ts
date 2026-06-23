@@ -914,6 +914,14 @@ async function requestProjectService(
       if (endpointState === "stale") {
         throw new Error("project service endpoint is stale");
       }
+      if (endpointState === "unknown") {
+        lastError = new Error("project service endpoint could not be verified");
+        if (Date.now() < deadline) {
+          await sleepProjectServiceRetry(attempt, deadline);
+          continue;
+        }
+        throw lastError;
+      }
     }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
@@ -923,7 +931,6 @@ async function requestProjectService(
         timeoutMs: Math.max(1, deadline - Date.now()),
       });
       if (status >= 200 && status < 300 && json?.ok !== false) {
-        markProjectServiceEndpointCurrent(host, endpoint);
         return json;
       }
       lastError = new Error(json?.error || `request failed: ${status}`);
@@ -963,13 +970,28 @@ export async function resolveCurrentProjectServiceEndpointForDashboard(
 ): Promise<{ host: string; port: number; pid?: number } | null> {
   const projectRoot = process.cwd();
   const deadline = Date.now() + timeoutMs;
-  let endpoint = loadMetadataEndpoint(projectRoot);
-  if (!endpoint) {
-    await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
-    endpoint = loadMetadataEndpoint(projectRoot);
+  for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
+    let endpoint = loadMetadataEndpoint(projectRoot);
+    if (!endpoint) {
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      endpoint = loadMetadataEndpoint(projectRoot);
+    }
+    if (!endpoint) {
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    const endpointState = await endpointStateForRequest(host, endpoint, remainingProjectServiceDeadline(deadline));
+    if (endpointState === "current") return endpoint;
+    if (endpointState === "stale" && Date.now() < deadline) {
+      clearProjectServiceEndpointHealth(host);
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
+    }
+    await sleepProjectServiceRetry(attempt, deadline);
   }
-  if (!endpoint) return null;
-  return endpoint;
+  return null;
 }
 
 async function endpointStateForRequest(

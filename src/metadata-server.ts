@@ -1173,6 +1173,7 @@ export class MetadataServer {
   private unsubscribeAlertSink: (() => void) | null = null;
   private readonly recentSlowRequests: ProjectServiceSlowRequest[] = [];
   private desktopStateCache: { ts: number; state: Record<string, unknown> } | null = null;
+  private desktopStateCacheDirty = false;
   private desktopStateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private desktopStateRefreshing = false;
 
@@ -1234,14 +1235,20 @@ export class MetadataServer {
       worktreePath?: string;
     } = {},
   ): void {
+    this.desktopStateCacheDirty = true;
     this.scheduleDesktopStateRefresh();
     this.eventBus.publishProjectUpdate(input);
     this.options.onChange?.();
   }
 
   private refreshDesktopStateCache(): Record<string, unknown> {
+    if (this.desktopStateRefreshTimer) {
+      clearTimeout(this.desktopStateRefreshTimer);
+      this.desktopStateRefreshTimer = null;
+    }
     const state = this.options.desktop?.getState?.() ?? {};
     this.desktopStateCache = { ts: Date.now(), state };
+    this.desktopStateCacheDirty = false;
     return state;
   }
 
@@ -1261,11 +1268,11 @@ export class MetadataServer {
 
   private getDesktopStateSnapshot(): Record<string, unknown> {
     const now = Date.now();
-    if (this.desktopStateCache && now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS) {
-      return this.desktopStateCache.state;
-    }
-    if (this.desktopStateCache) {
-      this.scheduleDesktopStateRefresh();
+    if (
+      this.desktopStateCache &&
+      !this.desktopStateCacheDirty &&
+      now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS
+    ) {
       return this.desktopStateCache.state;
     }
     return this.refreshDesktopStateCache();

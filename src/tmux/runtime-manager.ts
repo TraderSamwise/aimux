@@ -213,6 +213,25 @@ export class TmuxRuntimeManager {
     return `${this.getSessionPrefix()}-${slug}-${projectId}`;
   }
 
+  repairLegacyProjectSessionNames(projectRoot: string, sessionNames = this.listSessionNames()): TmuxSessionRef {
+    const session = this.getProjectSession(projectRoot);
+    const legacySessionName = this.getLegacyProjectSessionName(projectRoot);
+    if (legacySessionName === session.sessionName) return session;
+    const knownNames = new Set(sessionNames);
+    const rename = (from: string, to: string): void => {
+      if (!knownNames.has(from) || knownNames.has(to)) return;
+      this.exec(["rename-session", "-t", from, to]);
+      knownNames.delete(from);
+      knownNames.add(to);
+    };
+    rename(legacySessionName, session.sessionName);
+    for (const name of [...knownNames]) {
+      if (!name.startsWith(`${legacySessionName}-client-`)) continue;
+      rename(name, `${session.sessionName}${name.slice(legacySessionName.length)}`);
+    }
+    return session;
+  }
+
   getProjectClientSessionName(hostSessionName: string, clientSuffix: string): string {
     return `${hostSessionName}-client-${clientSuffix}`;
   }
@@ -371,11 +390,9 @@ export class TmuxRuntimeManager {
     const session = this.getProjectSession(projectRoot);
     let exists = this.hasSession(session.sessionName);
     if (!exists) {
-      const legacySessionName = this.getLegacyProjectSessionName(projectRoot);
-      if (legacySessionName !== session.sessionName && this.hasSession(legacySessionName)) {
-        this.exec(["rename-session", "-t", legacySessionName, session.sessionName]);
-        exists = true;
-      }
+      const before = this.listSessionNames();
+      this.repairLegacyProjectSessionNames(projectRoot, before);
+      exists = this.hasSession(session.sessionName);
     }
     const currentRuntimeContract = exists
       ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
@@ -774,9 +791,20 @@ export class TmuxRuntimeManager {
 
   listProjectManagedWindows(projectRoot: string): Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> {
     const hostSession = this.getProjectSession(projectRoot).sessionName;
-    const sessionNames = this.listSessionNames().filter(
-      (name) => name === hostSession || name.startsWith(`${hostSession}-client-`),
-    );
+    const legacySessionName = this.getLegacyProjectSessionName(projectRoot);
+    const allSessionNames = this.listSessionNames();
+    const hadCanonicalSession = allSessionNames.includes(hostSession);
+    const hadLegacySession = allSessionNames.includes(legacySessionName);
+    this.repairLegacyProjectSessionNames(projectRoot, allSessionNames);
+    const sessionNames = allSessionNames
+      .map((name) => {
+        if (!hadCanonicalSession && hadLegacySession && name === legacySessionName) return hostSession;
+        if (!hadCanonicalSession && hadLegacySession && name.startsWith(`${legacySessionName}-client-`)) {
+          return `${hostSession}${name.slice(legacySessionName.length)}`;
+        }
+        return name;
+      })
+      .filter((name) => name === hostSession || name.startsWith(`${hostSession}-client-`));
     const seenWindowIds = new Set<string>();
     const managed: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> = [];
     for (const sessionName of sessionNames) {

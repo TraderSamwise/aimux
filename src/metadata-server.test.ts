@@ -181,7 +181,7 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
-  it("budgets desktop-state reads and refreshes project changes off the request path", async () => {
+  it("caches desktop-state reads but refreshes immediately after project changes", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
       teammates: [],
@@ -208,7 +208,6 @@ describe("MetadataServer threads API", () => {
     expect(getState).toHaveBeenCalledTimes(1);
 
     server.notifyChange();
-    await new Promise((resolve) => setTimeout(resolve, 20));
     const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
     expect(third.seq).toBe(2);
     expect(getState).toHaveBeenCalledTimes(2);

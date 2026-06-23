@@ -29,6 +29,27 @@ function healthyServiceResponse(pid = 2, projectRoot = process.cwd()) {
   };
 }
 
+function resetDashboardControlMocks(): void {
+  vi.resetModules();
+  mocks.requestJson.mockReset();
+  mocks.loadMetadataEndpoint.mockReset();
+  mocks.removeMetadataEndpoint.mockReset();
+  mocks.ensureDaemonRunning.mockReset();
+  mocks.ensureProjectService.mockReset();
+  mocks.stopProjectService.mockReset();
+  mocks.spawn.mockReset();
+  mocks.spawn.mockReturnValue({ on: vi.fn(), unref: vi.fn() });
+  mocks.loadMetadataEndpoint.mockReturnValue({
+    host: "127.0.0.1",
+    port: 43444,
+    pid: 2,
+    updatedAt: "2026-06-21T00:00:00.000Z",
+  });
+  mocks.ensureDaemonRunning.mockResolvedValue({ pid: 1, port: 43190 });
+  mocks.ensureProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
+  mocks.stopProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
+}
+
 vi.mock("../http-client.js", () => ({
   requestJson: mocks.requestJson,
   isHttpTimeoutError: (error: unknown) => (error as { code?: string })?.code === "ETIMEDOUT",
@@ -68,16 +89,7 @@ afterEach(() => {
 
 describe("postToProjectService", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.loadMetadataEndpoint.mockReturnValue({
-      host: "127.0.0.1",
-      port: 43444,
-      pid: 2,
-      updatedAt: "2026-06-21T00:00:00.000Z",
-    });
-    mocks.ensureDaemonRunning.mockResolvedValue({ pid: 1, port: 43190 });
-    mocks.ensureProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
-    mocks.stopProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
+    resetDashboardControlMocks();
   });
 
   it("recovers from a stale refused project-service endpoint", async () => {
@@ -185,6 +197,26 @@ describe("postToProjectService", () => {
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
     expect(mocks.ensureProjectService).not.toHaveBeenCalled();
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send mutating requests when endpoint identity cannot be verified", async () => {
+    const timeout = Object.assign(new Error("request timed out after 20ms"), { code: "ETIMEDOUT" });
+    mocks.requestJson.mockRejectedValue(timeout);
+    const { postToProjectService } = await import("./dashboard-control.js");
+
+    await expect(
+      postToProjectService(
+        { dashboardServiceRecovery: null },
+        "/agents/resume",
+        { sessionId: "claude-1" },
+        { timeoutMs: 20 },
+      ),
+    ).rejects.toThrow("project service endpoint could not be verified");
+
+    expect(mocks.stopProjectService).not.toHaveBeenCalled();
+    expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
+    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expect(mocks.requestJson.mock.calls.every((call) => !String(call[0]).includes("/agents/resume"))).toBe(true);
   });
 
   it("restarts stale project-service endpoints before mutating requests", async () => {
@@ -321,16 +353,44 @@ describe("postToProjectService", () => {
     expect(mocks.ensureProjectService).toHaveBeenCalledTimes(2);
   });
 
-  it("returns metadata endpoints for raw dashboard streams without health preflight", async () => {
+  it("validates metadata endpoints before dashboard streams use them", async () => {
     const { resolveCurrentProjectServiceEndpointForDashboard } = await import("./dashboard-control.js");
     const endpoint = { host: "127.0.0.1", port: 43444, pid: 2 };
     mocks.loadMetadataEndpoint.mockReturnValue(endpoint);
+    mocks.requestJson.mockResolvedValueOnce(healthyServiceResponse());
 
     await expect(resolveCurrentProjectServiceEndpointForDashboard({ dashboardServiceRecovery: null })).resolves.toBe(
       endpoint,
     );
 
-    expect(mocks.requestJson).not.toHaveBeenCalled();
+    expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+    expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
+  });
+
+  it("repairs dashboard stream endpoints that point at another project service", async () => {
+    const { resolveCurrentProjectServiceEndpointForDashboard } = await import("./dashboard-control.js");
+    const endpoint = { host: "127.0.0.1", port: 43444, pid: 2 };
+    mocks.loadMetadataEndpoint.mockReturnValue(endpoint);
+    mocks.requestJson
+      .mockResolvedValueOnce({
+        status: 200,
+        json: {
+          ok: true,
+          projectStateDir: "/tmp/other-aimux-project",
+          pid: 2,
+          serviceInfo: getProjectServiceManifest(),
+        },
+      })
+      .mockResolvedValueOnce(healthyServiceResponse());
+
+    await expect(resolveCurrentProjectServiceEndpointForDashboard({ dashboardServiceRecovery: null })).resolves.toBe(
+      endpoint,
+    );
+
+    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -492,7 +552,7 @@ describe("dashboard live target activation", () => {
 
 describe("showOrchestrationRoutePicker", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetDashboardControlMocks();
   });
 
   it("loads route options from the project service in dashboard mode", async () => {
@@ -624,7 +684,7 @@ describe("showOrchestrationRoutePicker", () => {
 
 describe("startRuntimeGuardRepair", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetDashboardControlMocks();
   });
 
   it("does not repair transient disconnected service states", async () => {
@@ -964,13 +1024,7 @@ describe("startRuntimeGuardRepair", () => {
 
 describe("refreshRuntimeGuard", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.loadMetadataEndpoint.mockReturnValue({
-      host: "127.0.0.1",
-      port: 43444,
-      pid: 2,
-      updatedAt: "2026-06-21T00:00:00.000Z",
-    });
+    resetDashboardControlMocks();
   });
 
   function runtimeGuardHost() {

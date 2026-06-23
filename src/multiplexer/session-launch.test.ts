@@ -1429,6 +1429,9 @@ describe("runProjectService", () => {
     const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
+      tmuxRuntimeManager: {
+        repairLegacyProjectSessionNames: vi.fn(),
+      },
       syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
@@ -1447,6 +1450,10 @@ describe("runProjectService", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.mode).toBe("project-service");
+    expect(host.tmuxRuntimeManager.repairLegacyProjectSessionNames).toHaveBeenCalledWith(process.cwd());
+    expect(host.tmuxRuntimeManager.repairLegacyProjectSessionNames.mock.invocationCallOrder[0]).toBeLessThan(
+      host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0],
+    );
     expect(host.syncSessionsFromTopology.mock.invocationCallOrder[0]).toBeLessThan(
       host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0],
     );

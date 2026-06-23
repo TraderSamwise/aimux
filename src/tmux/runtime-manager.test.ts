@@ -83,9 +83,15 @@ describe("TmuxRuntimeManager", () => {
   });
 
   it("renames legacy sha1 project sessions to the canonical project id", () => {
+    let renamed = false;
     const exec = vi.fn<TmuxExec>((args: string[]) => {
       const joined = args.join(" ");
-      if (joined === "has-session -t aimux-mobile-7a62ea91ca") return "";
+      if (joined === "list-sessions -F #{session_name}") return "aimux-mobile-7a62ea91ca";
+      if (joined === "rename-session -t aimux-mobile-7a62ea91ca aimux-mobile-078d0ecd20ec") {
+        renamed = true;
+        return "";
+      }
+      if (joined === "has-session -t aimux-mobile-078d0ecd20ec" && renamed) return "";
       if (joined.startsWith("has-session -t ")) throw new Error("missing");
       if (joined.startsWith("show-options -v -t aimux-mobile-")) return "";
       if (joined.startsWith("list-windows -t aimux-mobile-")) return "";
@@ -96,6 +102,56 @@ describe("TmuxRuntimeManager", () => {
 
     expect(exec).toHaveBeenCalledWith(["rename-session", "-t", "aimux-mobile-7a62ea91ca", session.sessionName]);
     expect(exec.mock.calls.some(([args]) => args[0] === "new-session")).toBe(false);
+  });
+
+  it("repairs legacy project sessions before listing managed windows", () => {
+    const metadata = {
+      kind: "agent",
+      sessionId: "codex-legacy",
+      command: "codex",
+      args: [],
+      toolConfigKey: "codex",
+      worktreePath: "/repo/mobile",
+    };
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "list-sessions -F #{session_name}") {
+        return "aimux-mobile-7a62ea91ca\naimux-mobile-7a62ea91ca-client-12345678";
+      }
+      if (joined.startsWith("list-windows -t aimux-mobile-078d0ecd20ec -F ")) {
+        return `@3\t3\tcodex\t1\t100\t0\t${JSON.stringify(metadata)}`;
+      }
+      if (joined.startsWith("list-windows -t aimux-mobile-078d0ecd20ec-client-12345678 -F ")) return "";
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    const windows = manager.listProjectManagedWindows("/repo/mobile");
+
+    expect(exec).toHaveBeenCalledWith([
+      "rename-session",
+      "-t",
+      "aimux-mobile-7a62ea91ca",
+      "aimux-mobile-078d0ecd20ec",
+    ]);
+    expect(exec).toHaveBeenCalledWith([
+      "rename-session",
+      "-t",
+      "aimux-mobile-7a62ea91ca-client-12345678",
+      "aimux-mobile-078d0ecd20ec-client-12345678",
+    ]);
+    expect(windows).toEqual([
+      {
+        target: {
+          sessionName: "aimux-mobile-078d0ecd20ec",
+          windowId: "@3",
+          windowIndex: 3,
+          windowName: "codex",
+          paneDead: false,
+        },
+        metadata,
+      },
+    ]);
   });
 
   it("creates a detached project session when missing", () => {
