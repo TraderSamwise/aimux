@@ -82,7 +82,7 @@ async function clearNotificationItem(host: CoordinationHost, item: WorklistItem)
 function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unknown>): void {
   startDashboardLifecycleTask(
     host,
-    { screen: "coordination" },
+    { inputEpoch: true, screen: "coordination" },
     async () => {
       await mutate;
       await reloadCoordination(host);
@@ -92,10 +92,15 @@ function applyNotificationMutation(host: CoordinationHost, mutate: Promise<unkno
       onError: () => {
         host.footerFlash = "Notification update failed";
         host.footerFlashTicks = 3;
-        startDashboardLifecycleTask(host, { screen: "coordination" }, () => reloadCoordination(host), {
-          onSuccess: () => renderCoordination(host),
-          onError: () => renderCoordination(host),
-        });
+        startDashboardLifecycleTask(
+          host,
+          { inputEpoch: true, screen: "coordination" },
+          () => reloadCoordination(host),
+          {
+            onSuccess: () => renderCoordination(host),
+            onError: () => renderCoordination(host),
+          },
+        );
       },
     },
   );
