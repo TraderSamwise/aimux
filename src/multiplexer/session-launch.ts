@@ -242,8 +242,8 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.loadDashboardUiState();
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
-  const startupLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
-  const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupLifecycle });
+  const startupModelLifecycle = captureDashboardLifecycle(host);
+  const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupModelLifecycle });
   if (!primed) {
     const startupBusyState = {
       title: "Connecting Aimux",
@@ -252,9 +252,11 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       startedAt: Date.now(),
     };
     host.dashboardBusyState = startupBusyState;
-    const repairLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const repairModelLifecycle = captureDashboardLifecycle(host);
+    const repairRenderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     const isRepairLifecycleCurrent = () =>
-      host.dashboardRunGeneration === dashboardRunGeneration && isDashboardLifecycleCurrent(host, repairLifecycle);
+      host.dashboardRunGeneration === dashboardRunGeneration &&
+      isDashboardLifecycleCurrent(host, repairRenderLifecycle);
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
@@ -262,7 +264,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
           if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
           return;
         }
-        const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: repairLifecycle });
+        const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: repairModelLifecycle });
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
         if (!isRepairLifecycleCurrent()) return;
         if (refreshed || !host.dashboardModelServiceRefreshError) {

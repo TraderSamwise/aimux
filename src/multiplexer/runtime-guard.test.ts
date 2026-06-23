@@ -163,11 +163,11 @@ describe("runtimeGuardKeyDisposition", () => {
     expect(runtimeGuardKeyDisposition("r")).toBe("swallow");
     expect(runtimeGuardKeyDisposition("B")).toBe("swallow");
     expect(runtimeGuardKeyDisposition("b")).toBe("swallow");
-    for (const key of ["up", "down", "j", "k", "tab", "escape", "?"]) {
+    for (const key of ["up", "down", "j", "k", "tab", "escape", "?", "q"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("passthrough");
     }
     // Screen-switch letters mutate on their subscreens (e.g. "c" = clear-all) → swallowed.
-    for (const key of ["c", "d", "p", "l", "t", "g", "n", "x", "f", "enter", "1", "q"]) {
+    for (const key of ["c", "d", "p", "l", "t", "g", "n", "x", "f", "enter", "1"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("swallow");
     }
   });
@@ -352,10 +352,10 @@ describe("handleRuntimeGuardKey", () => {
     expect(handleRuntimeGuardKey(host, Buffer.from("k"))).toBe(false);
   });
 
-  it("swallows quit while guarded", () => {
+  it("lets quit through while guarded", () => {
     const host = stubHost({ kind: "runtime-rebuild-required" });
-    expect(handleRuntimeGuardKey(host, Buffer.from("q"))).toBe(true);
-    expect(host.footerFlash).toContain("repairing");
+    expect(handleRuntimeGuardKey(host, Buffer.from("q"))).toBe(false);
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
   it("swallows R when guarded because repair is automatic", () => {

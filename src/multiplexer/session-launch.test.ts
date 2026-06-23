@@ -1814,12 +1814,75 @@ describe("runDashboard", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
       true,
       expect.objectContaining({
-        lifecycle: expect.objectContaining({ inputEpoch: 0 }),
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
     );
     await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
     host.resolveRun(0);
     await expect(runPromise).resolves.toBe(0);
+  });
+
+  it("does not discard startup priming data after later dashboard input", async () => {
+    let resolvePriming!: () => void;
+    const primingSettled = new Promise<void>((resolve) => {
+      resolvePriming = resolve;
+    });
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
+        await primingSettled;
+        return opts?.lifecycle?.requiresInputEpoch ? false : true;
+      }),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    resolvePriming();
+    await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
+      }),
+    );
+    expect(host.dashboardBusyState).toBeUndefined();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("does not render or report stale startup repair after a newer dashboard run starts", async () => {
