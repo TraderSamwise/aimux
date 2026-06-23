@@ -2,12 +2,8 @@ import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { buildProjectTopology, type ProjectTopology } from "../project-topology.js";
 import { renderTopologyScreen } from "../tui/screens/subscreen-renderers.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
-import {
-  isDashboardLifecycleCurrent,
-  startDashboardLifecycleTask,
-  type DashboardApiViewRefreshOptions,
-} from "./dashboard-lifecycle.js";
+import { refreshDashboardApiResource } from "./dashboard-api-client.js";
+import { startDashboardLifecycleTask, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
 
 type TopologyHost = any;
 const TOPOLOGY_RESOURCE = "topology";
@@ -82,31 +78,21 @@ function validateTopologyPayload(value: unknown): ProjectTopology {
   return res.topology;
 }
 
-export async function refreshTopology(host: TopologyHost, options: DashboardApiViewRefreshOptions = {}): Promise<boolean> {
-  if (typeof host.getFromProjectService !== "function") {
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    ensureTopology(host);
-    return false;
-  }
-  try {
-    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
-      TOPOLOGY_RESOURCE,
-      PROJECT_API_ROUTES.topology,
-      validateTopologyPayload,
-      { supersede: options.force },
-    );
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    if (!result.ok || !result.value) {
-      ensureTopology(host);
-      return false;
-    }
-    applyTopology(host, result.value);
-    return true;
-  } catch {
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    ensureTopology(host);
-    return false;
-  }
+export async function refreshTopology(
+  host: TopologyHost,
+  options: DashboardApiViewRefreshOptions = {},
+): Promise<boolean> {
+  return refreshDashboardApiResource(
+    host,
+    {
+      resource: TOPOLOGY_RESOURCE,
+      path: PROJECT_API_ROUTES.topology,
+      validate: validateTopologyPayload,
+      apply: (topology) => applyTopology(host, topology),
+      ensure: () => ensureTopology(host),
+    },
+    options,
+  );
 }
 
 export function showTopology(host: TopologyHost): void {

@@ -2,12 +2,8 @@ import { buildProjectObservability, type ProjectObservability } from "../project
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderProjectScreen } from "../tui/screens/subscreen-renderers.js";
 import { commandKey, parseKeys } from "../key-parser.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
-import {
-  isDashboardLifecycleCurrent,
-  startDashboardLifecycleTask,
-  type DashboardApiViewRefreshOptions,
-} from "./dashboard-lifecycle.js";
+import { refreshDashboardApiResource } from "./dashboard-api-client.js";
+import { startDashboardLifecycleTask, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
 
 type ProjectHost = any;
 const PROJECT_OBSERVABILITY_RESOURCE = "project-observability";
@@ -89,30 +85,17 @@ export async function refreshProjectObservability(
   host: ProjectHost,
   options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
-  if (typeof host.getFromProjectService !== "function") {
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    ensureProjectObservability(host);
-    return false;
-  }
-  try {
-    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
-      PROJECT_OBSERVABILITY_RESOURCE,
-      PROJECT_API_ROUTES.projectObservability,
-      validateProjectPayload,
-      { supersede: options.force },
-    );
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    if (!result.ok || !result.value) {
-      ensureProjectObservability(host);
-      return false;
-    }
-    applyProjectObservability(host, result.value);
-    return true;
-  } catch {
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    ensureProjectObservability(host);
-    return false;
-  }
+  return refreshDashboardApiResource(
+    host,
+    {
+      resource: PROJECT_OBSERVABILITY_RESOURCE,
+      path: PROJECT_API_ROUTES.projectObservability,
+      validate: validateProjectPayload,
+      apply: (project) => applyProjectObservability(host, project),
+      ensure: () => ensureProjectObservability(host),
+    },
+    options,
+  );
 }
 
 export function showProject(host: ProjectHost): void {
@@ -121,11 +104,16 @@ export function showProject(host: ProjectHost): void {
   host.setDashboardScreen("project");
   host.writeStatuslineFile();
   renderProject(host);
-  startDashboardLifecycleTask(host, { screen: "project" }, (lifecycle) => refreshProjectObservability(host, { lifecycle }), {
-    onSuccess: (refreshed) => {
-      if (refreshed) renderProject(host);
+  startDashboardLifecycleTask(
+    host,
+    { screen: "project" },
+    (lifecycle) => refreshProjectObservability(host, { lifecycle }),
+    {
+      onSuccess: (refreshed) => {
+        if (refreshed) renderProject(host);
+      },
     },
-  });
+  );
 }
 
 export function renderProject(host: ProjectHost): void {

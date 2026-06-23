@@ -3,12 +3,8 @@ import { commandKey, parseKeys } from "../key-parser.js";
 import type { LibraryEntry } from "../library.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderLibraryScreen } from "../tui/screens/subscreen-renderers.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
-import {
-  isDashboardLifecycleCurrent,
-  startDashboardLifecycleTask,
-  type DashboardApiViewRefreshOptions,
-} from "./dashboard-lifecycle.js";
+import { refreshDashboardApiResource } from "./dashboard-api-client.js";
+import { startDashboardLifecycleTask, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
 
 type LibraryHost = any;
 const LIBRARY_RESOURCE = "library";
@@ -49,31 +45,21 @@ function validateLibraryPayload(value: unknown): LibraryEntry[] {
   return res.entries;
 }
 
-export async function refreshLibrary(host: LibraryHost, options: DashboardApiViewRefreshOptions = {}): Promise<boolean> {
-  if (typeof host.getFromProjectService !== "function") {
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    ensureLibraryEntries(host);
-    return false;
-  }
-  try {
-    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
-      LIBRARY_RESOURCE,
-      PROJECT_API_ROUTES.library,
-      validateLibraryPayload,
-      { supersede: options.force },
-    );
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    if (!result.ok || !result.value) {
-      ensureLibraryEntries(host);
-      return false;
-    }
-    applyLibraryEntries(host, result.value);
-    return true;
-  } catch {
-    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
-    ensureLibraryEntries(host);
-    return false;
-  }
+export async function refreshLibrary(
+  host: LibraryHost,
+  options: DashboardApiViewRefreshOptions = {},
+): Promise<boolean> {
+  return refreshDashboardApiResource(
+    host,
+    {
+      resource: LIBRARY_RESOURCE,
+      path: PROJECT_API_ROUTES.library,
+      validate: validateLibraryPayload,
+      apply: (entries) => applyLibraryEntries(host, entries),
+      ensure: () => ensureLibraryEntries(host),
+    },
+    options,
+  );
 }
 
 export function showLibrary(host: LibraryHost): void {
