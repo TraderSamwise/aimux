@@ -22,6 +22,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -460,17 +461,18 @@ export const dashboardInteractionMethods = {
             return;
           }
           if (isFailedDashboardWorktree(focusedGroup)) {
+            const modelLifecycle = captureDashboardLifecycle(this);
             const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
             this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
             this.footerFlashTicks = 3;
             this.renderDashboard();
-            void this.postToProjectService(PROJECT_API_ROUTES.operationFailuresClear, {
+            void mutateDashboardApi(this, PROJECT_API_ROUTES.operationFailuresClear, {
               targetKind: "worktree",
               operation: focusedGroup.operationFailure.operation,
               worktreePath: this.dashboardState.focusedWorktreePath,
             })
               .then(async () => {
-                await this.refreshDashboardModelFromService(true, { lifecycle });
+                await refreshDashboardModelThroughApi(this, { force: true, lifecycle: modelLifecycle });
                 renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
               })
               .catch((error: unknown) => {
@@ -723,7 +725,7 @@ export const dashboardInteractionMethods = {
     if (service.status !== "running") {
       await this.resumeOfflineServiceWithFeedback(service);
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      await this.refreshDashboardModelFromService?.(true);
+      await refreshDashboardModelThroughApi(this, { force: true });
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       const result = await this.waitAndOpenLiveTmuxWindowForService(service.id, 60_000);
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
@@ -737,7 +739,7 @@ export const dashboardInteractionMethods = {
     const openResult = await this.waitAndOpenLiveTmuxWindowForService(service.id);
     if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
     if (openResult !== "opened") {
-      await this.refreshDashboardModelFromService?.(true);
+      await refreshDashboardModelThroughApi(this, { force: true });
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       if (openResult === "missing") {
         this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
@@ -777,7 +779,7 @@ export const dashboardInteractionMethods = {
         this.offlineSessions?.find((session: any) => session.id === entry.id) ?? entry,
       );
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      await this.refreshDashboardModelFromService?.(true);
+      await refreshDashboardModelThroughApi(this, { force: true });
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       const refreshed =
         this.getDashboardSessions?.().find((session: DashboardSession) => session.id === entry.id) ?? entry;
@@ -795,7 +797,7 @@ export const dashboardInteractionMethods = {
     if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
     if (openResult !== "missing") {
       if (entry.status === "offline" || entry.status === "exited") {
-        await this.refreshDashboardModelFromService?.(true);
+        await refreshDashboardModelThroughApi(this, { force: true });
         if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
         this.renderDashboard();
       }
@@ -803,7 +805,7 @@ export const dashboardInteractionMethods = {
     }
 
     if (this.mode === "dashboard") {
-      await this.refreshDashboardModelFromService?.(true);
+      await refreshDashboardModelThroughApi(this, { force: true });
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
       this.footerFlashTicks = 3;
@@ -1015,7 +1017,7 @@ export const dashboardInteractionMethods = {
     } catch {}
 
     try {
-      const result = await this.postToProjectService(PROJECT_API_ROUTES.tasks.assign, {
+      const result = await mutateDashboardApi(this, PROJECT_API_ROUTES.tasks.assign, {
         from: session.id,
         assignee: reviewerRole,
         description: `Review: Review ${session.command} agent's recent work`,
@@ -1062,7 +1064,7 @@ export const dashboardInteractionMethods = {
         worktreePath: target.worktreePath,
       };
       if (mode === "message") {
-        await this.postToProjectService(PROJECT_API_ROUTES.threads.send, {
+        await mutateDashboardApi(this, PROJECT_API_ROUTES.threads.send, {
           kind: "request",
           ...requestBody,
           body,
@@ -1070,13 +1072,13 @@ export const dashboardInteractionMethods = {
         const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
         successFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
       } else if (mode === "handoff") {
-        await this.postToProjectService(PROJECT_API_ROUTES.handoff.send, {
+        await mutateDashboardApi(this, PROJECT_API_ROUTES.handoff.send, {
           ...requestBody,
           body,
         });
         successFlash = `Sent handoff to ${target.label}`;
       } else {
-        await this.postToProjectService(PROJECT_API_ROUTES.tasks.assign, {
+        await mutateDashboardApi(this, PROJECT_API_ROUTES.tasks.assign, {
           ...requestBody,
           description: body,
         });

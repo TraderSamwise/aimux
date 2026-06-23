@@ -24,6 +24,7 @@ import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionLaunchHost = any;
 
@@ -242,7 +243,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
   const startupLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
-  const primed = await host.refreshDashboardModelFromService(true, { lifecycle: startupLifecycle });
+  const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupLifecycle });
   if (!primed) {
     const startupBusyState = {
       title: "Connecting Aimux",
@@ -261,13 +262,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
           if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
           return;
         }
-        const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
-        const refreshed = await host.refreshDashboardModelFromService(true, { lifecycle: repairLifecycle });
-        const fresh =
-          !host.dashboardModelServiceRefreshError && (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
+        const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: repairLifecycle });
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
         if (!isRepairLifecycleCurrent()) return;
-        if (refreshed || fresh || !host.dashboardModelServiceRefreshError) {
+        if (refreshed || !host.dashboardModelServiceRefreshError) {
           host.renderCurrentDashboardView();
           return;
         }

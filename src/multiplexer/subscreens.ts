@@ -7,6 +7,7 @@ import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { hints } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { style } from "../tui/render/theme.js";
+import { mutateDashboardApi } from "./dashboard-api-client.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -16,7 +17,7 @@ import {
 type SubscreenHost = any;
 
 function postCoordinationMutation(host: SubscreenHost, path: string, body: unknown): Promise<any> {
-  return host.postToProjectService(path, body);
+  return mutateDashboardApi(host, path, body);
 }
 
 export function attentionScore(host: SubscreenHost, entry: any): number {

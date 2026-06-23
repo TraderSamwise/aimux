@@ -9,6 +9,7 @@ import {
   markCoordinationItemRead,
   openCoordinationNotification,
 } from "./notifications.js";
+import { mutateDashboardApi } from "./dashboard-api-client.js";
 import {
   renderThreadReply,
   runReviewLifecycleAction,
@@ -70,10 +71,10 @@ async function clearNotificationItem(host: CoordinationHost, item: WorklistItem)
   const note = item.notification;
   if (!note) return;
   if (item.sessionId) {
-    await host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, { sessionId: item.sessionId });
+    await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.clear, { sessionId: item.sessionId });
   } else {
     for (const record of note.notifications) {
-      await host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, { id: record.id });
+      await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.clear, { id: record.id });
     }
   }
 }
@@ -170,12 +171,10 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
   if (key === "enter" || key === "return") {
     const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
     if (!targetSessionId) return;
-    void host
-      .postToProjectService(PROJECT_API_ROUTES.threads.markSeen, {
-        threadId: entry.thread.id,
-        sessionId: targetSessionId,
-      })
-      .catch(() => {});
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.threads.markSeen, {
+      threadId: entry.thread.id,
+      sessionId: targetSessionId,
+    }).catch(() => {});
     const dashEntry = findNotificationSessionTarget(host, targetSessionId);
     if (dashEntry) {
       void host.activateDashboardEntry(dashEntry, { preserveDashboardSelection: Boolean(dashEntry.team) });
@@ -237,11 +236,11 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
     return;
   }
   if (rawKey === "R") {
-    applyNotificationMutation(host, host.postToProjectService(PROJECT_API_ROUTES.notifications.read, {}));
+    applyNotificationMutation(host, mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, {}));
     return;
   }
   if (rawKey === "C") {
-    applyNotificationMutation(host, host.postToProjectService(PROJECT_API_ROUTES.notifications.clear, {}));
+    applyNotificationMutation(host, mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.clear, {}));
     return;
   }
 
