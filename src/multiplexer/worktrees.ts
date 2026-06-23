@@ -72,11 +72,9 @@ async function waitForRenderedDashboardWorktreeState(
   path: string,
   predicate: (group: any | undefined) => boolean,
   timeoutMs = 10_000,
-  lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (lifecycle && !isDashboardLifecycleCurrent(host, lifecycle)) return false;
     if (!(await refreshDashboardModelForWorktreeSettlement(host))) return false;
     const group = findRenderedWorktreeForSettlement(host, path);
     if (predicate(group)) return true;
@@ -201,9 +199,6 @@ async function waitForRenderedDashboardWorktreeCreate(
 ): Promise<{ ok: true } | { ok: false; error: Error }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (lifecycle && !isDashboardLifecycleCurrent(host, lifecycle)) {
-      return { ok: false, error: new Error("dashboard no longer active") };
-    }
     if (typeof host.refreshDashboardModelFromService === "function") {
       if (!(await refreshDashboardModelForWorktreeSettlement(host))) {
         return { ok: false, error: new Error("project service snapshot unavailable") };
@@ -285,13 +280,12 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
         return;
       }
       const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
-      const settleLifecycle = captureDashboardLifecycle(host);
-      const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+      const lifecycle = captureDashboardLifecycle(host);
       host.renderDashboard();
       void (async () => {
         try {
           await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
-          const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath, 180_000, settleLifecycle);
+          const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath, 180_000, lifecycle);
           if (!result.ok) {
             throw result.error;
           }
@@ -300,7 +294,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.reapplyDashboardPendingActions?.();
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           await host.refreshDashboardModelFromService?.(true);
-          if (!isDashboardLifecycleCurrent(host, uiLifecycle)) return;
+          if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
           host.dashboardState.focusedWorktreePath = targetPath;
           host.dashboardUiStateStore.markSelectionDirty();
           host.renderDashboard();
@@ -310,7 +304,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
           await refreshDashboardWorktreeCreateFailure(host, targetPath);
-          if (!isDashboardLifecycleCurrent(host, uiLifecycle)) return;
+          if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
           showDashboardWorktreeCreateFailure(host, name, targetPath, err);
         }
       })();
@@ -381,7 +375,6 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     finishWorktreeRemoval(host, 1);
     return;
   }
-  const settleLifecycle = captureDashboardLifecycle(host);
   const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
   void runDashboardWorktreeMutation(host, {
     pendingPath: path,
@@ -390,7 +383,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     request: async () => {
       await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
     },
-    settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group, 10_000, settleLifecycle),
+    settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group, 10_000),
     onSuccess: () => {
       debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
       finishWorktreeRemoval(host, 0);

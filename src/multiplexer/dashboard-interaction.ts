@@ -16,6 +16,12 @@ import {
   loadTeamConfig,
   type TeamConfig,
 } from "../team.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  renderDashboardIfCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -454,6 +460,7 @@ export const dashboardInteractionMethods = {
             return;
           }
           if (isFailedDashboardWorktree(focusedGroup)) {
+            const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
             this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
             this.footerFlashTicks = 3;
             this.renderDashboard();
@@ -464,9 +471,10 @@ export const dashboardInteractionMethods = {
             })
               .then(async () => {
                 await this.refreshDashboardModelFromService(true);
-                this.renderDashboard();
+                renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
               })
               .catch((error: unknown) => {
+                if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
                 this.showDashboardError("Failed to dismiss worktree failure", [
                   error instanceof Error ? error.message : String(error),
                 ]);
@@ -1042,8 +1050,10 @@ export const dashboardInteractionMethods = {
     mode: "message" | "handoff" | "task",
     target: any,
     body: string,
+    lifecycle: DashboardLifecycleToken = captureDashboardLifecycle(this),
   ): Promise<void> {
     try {
+      let successFlash = "";
       const requestBody = {
         from: "user",
         to: target.sessionId ? [target.sessionId] : undefined,
@@ -1058,26 +1068,29 @@ export const dashboardInteractionMethods = {
           body,
         });
         const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
-        this.footerFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
+        successFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
       } else if (mode === "handoff") {
         await this.postToProjectService(PROJECT_API_ROUTES.handoff.send, {
           ...requestBody,
           body,
         });
-        this.footerFlash = `Sent handoff to ${target.label}`;
+        successFlash = `Sent handoff to ${target.label}`;
       } else {
         await this.postToProjectService(PROJECT_API_ROUTES.tasks.assign, {
           ...requestBody,
           description: body,
         });
-        this.footerFlash = `Assigned task to ${target.label}`;
+        successFlash = `Assigned task to ${target.label}`;
       }
+      if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+      this.footerFlash = successFlash;
       this.footerFlashTicks = 3;
       this.clearDashboardOverlay();
       this.orchestrationInputBuffer = "";
       this.orchestrationInputTarget = null;
       this.orchestrationInputMode = null;
     } catch (error) {
+      if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
       this.clearDashboardOverlay();
       this.orchestrationInputBuffer = "";
       this.orchestrationInputTarget = null;
@@ -1088,7 +1101,7 @@ export const dashboardInteractionMethods = {
       );
       return;
     }
-    this.renderDashboard();
+    renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
   },
 };
 

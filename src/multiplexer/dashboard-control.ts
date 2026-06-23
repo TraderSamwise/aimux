@@ -587,7 +587,7 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
     const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
-        ? await openProjectServiceNotificationTarget(host, entry.id, "agent", remainingMs)
+        ? await openProjectServiceNotificationTarget(host, entry.id, "agent", remainingMs, activationToken)
         : openLiveTmuxWindowForEntry(host, entry);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -627,7 +627,7 @@ export async function waitAndOpenLiveTmuxWindowForService(
     const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
-        ? await openProjectServiceNotificationTarget(host, serviceId, "service", remainingMs)
+        ? await openProjectServiceNotificationTarget(host, serviceId, "service", remainingMs, activationToken)
         : openLiveTmuxWindowForService(host, serviceId);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -645,6 +645,7 @@ async function openProjectServiceNotificationTarget(
   sessionId: string,
   kind: "agent" | "service",
   timeoutMs: number,
+  activationToken: any | undefined,
 ): Promise<"opened" | "missing" | "error"> {
   try {
     await host.postToProjectService(
@@ -662,6 +663,7 @@ async function openProjectServiceNotificationTarget(
     if (message.includes("not found") || message.includes("no longer available") || message.includes("is offline")) {
       return "missing";
     }
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
     host.showDashboardError(`Failed to open ${kind}`, [
       message,
       "The tmux window may still be starting. Try again in a moment.",
@@ -1131,6 +1133,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
   }
 
   if (key === "enter" || key === "return") {
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     const mode = host.orchestrationInputMode;
     const target = host.orchestrationInputTarget;
     const body = host.orchestrationInputBuffer.trim();
@@ -1142,7 +1145,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
       host.renderDashboard();
       return;
     }
-    void host.submitDashboardOrchestrationAction(mode, target, body);
+    void host.submitDashboardOrchestrationAction(mode, target, body, lifecycle);
     return;
   }
 

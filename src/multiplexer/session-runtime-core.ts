@@ -18,6 +18,7 @@ import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prom
 import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 
 type SessionRuntimeHost = any;
 
@@ -60,9 +61,24 @@ export function applyDashboardSessionLabel(host: SessionRuntimeHost, sessionId: 
 
 export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: string, label?: string): Promise<void> {
   if (host.mode === "dashboard") {
-    host.setPendingDashboardSessionAction(sessionId, "renaming");
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const token = host.setPendingDashboardSessionAction(sessionId, "renaming");
     host.writeStatuslineFile();
     host.renderCurrentDashboardView();
+    const clearPending = () => {
+      if (typeof token === "number") {
+        const clearIfToken = host.dashboardPendingActions?.clearSessionActionIfToken;
+        if (typeof clearIfToken === "function") {
+          if (clearIfToken.call(host.dashboardPendingActions, sessionId, token)) {
+            host.reapplyDashboardPendingActions?.();
+          }
+          return;
+        }
+        host.setPendingDashboardSessionAction(sessionId, null);
+        return;
+      }
+      host.setPendingDashboardSessionAction(sessionId, null);
+    };
     try {
       await host.postToProjectService(PROJECT_API_ROUTES.agents.rename, { sessionId, label });
       host.invalidateDesktopStateSnapshot();
@@ -70,15 +86,18 @@ export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: st
         await host.refreshDashboardModelFromService(true);
       }
     } catch (err: unknown) {
-      host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
-      host.footerFlashTicks = 4;
       if (typeof host.refreshDashboardModelFromService === "function") {
         await host.refreshDashboardModelFromService(true);
       }
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
+      host.footerFlashTicks = 4;
     } finally {
-      host.setPendingDashboardSessionAction(sessionId, null);
+      clearPending();
       host.writeStatuslineFile();
-      host.renderCurrentDashboardView();
+      if (isDashboardLifecycleCurrent(host, lifecycle)) {
+        host.renderCurrentDashboardView();
+      }
     }
     return;
   }

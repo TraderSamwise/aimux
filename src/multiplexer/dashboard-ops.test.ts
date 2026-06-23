@@ -303,6 +303,51 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("settles dashboard restore without rendering stale progress after newer input", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
+    const request = deferred();
+    let refreshCount = 0;
+    let waitForStartCalled = false;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => {
+        waitForStartCalled = true;
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        waitForStartCalled && refreshCount >= 2
+          ? [{ ...session, status: "waiting", tmuxWindowId: "@21" }]
+          : [{ ...session, status: "offline", pendingAction: "starting" }],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    const action = resumeOfflineSessionWithFeedback(host, session);
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    request.resolve();
+    await action;
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restoring claude");
+    expect(host.renderDashboard).toHaveBeenCalledTimes(2);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
