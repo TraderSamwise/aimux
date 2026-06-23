@@ -671,7 +671,12 @@ describe("dashboardInteractionMethods", () => {
     };
 
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
-    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true));
+    await vi.waitFor(() =>
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ lifecycle: expect.objectContaining({ requiresInputEpoch: true }) }),
+      ),
+    );
 
     expect(host.postToProjectService).toHaveBeenCalledWith("/operation-failures/clear", {
       targetKind: "worktree",

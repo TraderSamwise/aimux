@@ -43,7 +43,10 @@ describe("session runtime prompt submission", () => {
     expect(host.sessionLabels.get("codex-1")).toBe("old");
     expect(host.dashboardSessionsCache[0].label).toBe("old");
     expect(host.footerFlash).toBe("Rename failed: boom");
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }) }),
+    );
     expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
   });
 

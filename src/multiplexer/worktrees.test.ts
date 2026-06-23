@@ -111,7 +111,10 @@ describe("worktrees dashboard mutation protocol", () => {
       { name: "demo" },
       { timeoutMs: 180_000 },
     );
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }) }),
+    );
     expect(host.settleDashboardCreatePending).not.toHaveBeenCalled();
     expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -186,7 +189,8 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
-      refreshDashboardModelFromService: vi.fn(async () => {
+      refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
+        expect(opts?.lifecycle?.requiresInputEpoch).not.toBe(true);
         refreshCount += 1;
         if (refreshCount === 1) {
           applyRawWorktrees(host, pending, []);
@@ -651,7 +655,8 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, sessions: [], services: [] }],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
       refreshLocalDashboardModel: vi.fn(),
-      refreshDashboardModelFromService: vi.fn(async () => {
+      refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
+        expect(opts?.lifecycle?.requiresInputEpoch).not.toBe(true);
         host.dashboardWorktreeGroupsCache = [];
         return true;
       }),
