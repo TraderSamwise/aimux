@@ -1064,15 +1064,15 @@ describe("metadata pending actions", () => {
 
     settled.resolve(true);
 
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard" }),
         }),
-      ),
-    );
-    expect(host.renderDashboard).toHaveBeenCalled();
+      );
+      expect(host.renderDashboard).toHaveBeenCalled();
+    });
   });
 
   it("does not render a pending-action model reconcile after dashboard exit", async () => {
@@ -1103,8 +1103,10 @@ describe("metadata pending actions", () => {
 
     settled.resolve(true);
 
-    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalled());
-    expect(host.renderDashboard).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
+      expect(host.renderDashboard).not.toHaveBeenCalled();
+    });
   });
 
   it("does not let an older session settle clear a newer pending action", async () => {

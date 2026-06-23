@@ -2,10 +2,23 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
+
+const dashboardApiClientMock = vi.hoisted(() => ({
+  mutateDashboardApi: vi.fn(),
+}));
+
+vi.mock("./dashboard-api-client.js", async () => {
+  const actual = await vi.importActual<typeof import("./dashboard-api-client.js")>("./dashboard-api-client.js");
+  dashboardApiClientMock.mutateDashboardApi.mockImplementation(actual.mutateDashboardApi);
+  return {
+    ...actual,
+    mutateDashboardApi: dashboardApiClientMock.mutateDashboardApi,
+  };
+});
 
 vi.mock("../team.js", async () => {
   const actual = await vi.importActual<typeof import("../team.js")>("../team.js");
@@ -16,6 +29,10 @@ vi.mock("../team.js", async () => {
 });
 
 describe("dashboardInteractionMethods", () => {
+  beforeEach(() => {
+    dashboardApiClientMock.mutateDashboardApi.mockClear();
+  });
+
   it("requests reviews through the project service", async () => {
     const host: any = {
       activeSession: { id: "codex-1", command: "codex" },
@@ -408,6 +425,9 @@ describe("dashboardInteractionMethods", () => {
     await vi.waitFor(() =>
       expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true }),
     );
+    expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(host, "/statusline/refresh", {
+      force: true,
+    });
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
