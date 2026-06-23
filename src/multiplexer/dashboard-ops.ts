@@ -304,8 +304,8 @@ async function runDashboardSessionMutation(
     await opts.request();
     assertDashboardMutationSettled(await opts.settle(lifecycle), opts.pendingAction);
     clearPending();
-    opts.onAfterSettle?.();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
       host.footerFlashTicks = opts.successFlash.ticks ?? 3;
@@ -342,8 +342,8 @@ async function runDashboardServiceMutation(
     await opts.request();
     assertDashboardMutationSettled(await opts.settle(lifecycle), opts.pendingAction);
     clearPending();
-    opts.onAfterSettle?.();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
       host.footerFlashTicks = opts.successFlash.ticks ?? 3;
@@ -661,6 +661,7 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
+    const warningLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     if (
       host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
       queuedAgentRestoresFor(host).has(session.id)
@@ -707,7 +708,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
       });
     });
     const warningLines = restoreWarningLines(resumeResult);
-    if (warningLines.length > 0) {
+    if (warningLines.length > 0 && isDashboardLifecycleCurrent(host, warningLifecycle)) {
       host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
     }
     return;
