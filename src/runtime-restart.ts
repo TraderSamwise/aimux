@@ -149,7 +149,10 @@ function tryAcquireRuntimeRestartStealLock(): string | null {
   const stealPath = runtimeRestartStealLockPath();
   try {
     mkdirSync(stealPath, { recursive: false });
-    writeFileSync(joinLockOwnerPath(stealPath), `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
+    writeFileSync(
+      joinLockOwnerPath(stealPath),
+      `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+    );
     return stealPath;
   } catch {
     try {
@@ -276,9 +279,6 @@ function relinkDashboardToClientSessions(
   const errors: string[] = [];
   for (const sessionName of tmux.listSessionNames()) {
     if (!isTmuxClientSessionForHost(sessionName, hostSession)) continue;
-    const windows = tmux.listWindows(sessionName);
-    const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
-    if (alreadyLinked) continue;
     try {
       tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
     } catch (indexedError) {

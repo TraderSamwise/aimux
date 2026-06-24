@@ -373,10 +373,11 @@ export class TmuxRuntimeManager {
       if (!linked) {
         throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
       }
-      if (occupyingDashboard && windowIndex !== undefined && linked.windowIndex !== windowIndex) {
+      if (windowIndex !== undefined && linked.windowIndex !== windowIndex) {
         try {
+          const moveCommand = occupyingDashboard ? "swap-window" : "move-window";
           this.exec([
-            "swap-window",
+            moveCommand,
             "-s",
             `${clientSessionName}:${linked.windowIndex}`,
             "-t",
@@ -392,8 +393,10 @@ export class TmuxRuntimeManager {
         if (!replaced || replaced.windowIndex !== windowIndex) {
           throw new Error(`Failed to replace dashboard slot ${clientSessionName}:${windowIndex}`);
         }
-        const staleDashboard = this.getTargetByWindowId(clientSessionName, occupyingDashboard.id);
-        if (staleDashboard) {
+        const staleDashboard = occupyingDashboard
+          ? this.getTargetByWindowId(clientSessionName, occupyingDashboard.id)
+          : undefined;
+        if (occupyingDashboard && staleDashboard) {
           try {
             this.unlinkWindow(staleDashboard);
           } catch (error) {
@@ -698,9 +701,9 @@ export class TmuxRuntimeManager {
   }
 
   getAttachedClientForTarget(target: TmuxTarget): TmuxClientInfo | null {
-    const clientPrefix = `${target.sessionName}-client-`;
     const clients = this.listClients().filter(
-      (client) => client.sessionName === target.sessionName || client.sessionName.startsWith(clientPrefix),
+      (client) =>
+        client.sessionName === target.sessionName || isTmuxClientSessionForHost(client.sessionName, target.sessionName),
     );
     if (clients.length === 0) return null;
     return clients.find((client) => client.windowId === target.windowId) ?? clients[0] ?? null;
