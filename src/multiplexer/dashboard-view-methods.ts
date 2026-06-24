@@ -27,6 +27,23 @@ import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashbo
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
+function buildStaticDashboardRenderErrorFrame(message: string, cols: number, rows: number): string {
+  const width = Math.max(24, Math.min(cols, 120));
+  const height = Math.max(8, rows);
+  const lines = [
+    "Dashboard render failed",
+    "",
+    message,
+    "",
+    "Aimux kept the dashboard alive so you can restart or report this failure.",
+  ];
+  const body = lines
+    .slice(0, height - 1)
+    .map((line) => line.slice(0, width))
+    .join("\n");
+  return `\x1b[2J\x1b[H${body}`;
+}
+
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
     return serviceLabelForCommandImpl(commandLine);
@@ -178,7 +195,8 @@ export const dashboardViewMethods = {
         title: "Dashboard render failed",
         lines: [message],
       };
-      this.writeFrame("\x1b[2J\x1b[H", true);
+      const { cols, rows } = this.getViewportSize?.() ?? { cols: 120, rows: 40 };
+      this.writeFrame(buildStaticDashboardRenderErrorFrame(message, cols, rows), true);
     }
   },
 

@@ -176,7 +176,7 @@ describe("runtimeGuardKeyDisposition", () => {
     expect(runtimeGuardKeyDisposition("r")).toBe("swallow");
     expect(runtimeGuardKeyDisposition("B")).toBe("swallow");
     expect(runtimeGuardKeyDisposition("b")).toBe("swallow");
-    for (const key of ["up", "down", "j", "k", "tab", "escape", "?", "q"]) {
+    for (const key of ["up", "down", "j", "k", "tab", "?", "q"]) {
       expect(runtimeGuardKeyDisposition(key)).toBe("passthrough");
     }
     // Screen-switch letters mutate on their subscreens (e.g. "c" = clear-all) → swallowed.
@@ -230,7 +230,7 @@ describe("probeRuntimeGuard", () => {
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
-  it("reports disconnected when health comes from a different pid", async () => {
+  it("reports stale when health comes from a different pid", async () => {
     loadMetadataEndpointMock.mockReturnValue({
       host: "127.0.0.1",
       port: 45123,
@@ -242,7 +242,22 @@ describe("probeRuntimeGuard", () => {
       json: { ok: true, pid: 9999, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
-    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
+  });
+
+  it("reports stale when health omits service info", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
   it("reports runtime rebuild required from tmux marker", async () => {
@@ -411,6 +426,12 @@ describe("handleRuntimeGuardKey", () => {
     const host = stubHost({ kind: "runtime-rebuild-required" });
     expect(handleRuntimeGuardKey(host, Buffer.from("q"))).toBe(false);
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("swallows Escape while guarded because it can focus a session", () => {
+    const host = stubHost({ kind: "disconnected" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("\x1b"))).toBe(true);
+    expect(host.footerFlash).toContain("reconnecting");
   });
 
   it("swallows R when guarded because repair is automatic", () => {

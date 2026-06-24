@@ -234,21 +234,7 @@ validate_dashboard_target() {
   return 0
 }
 
-switch_fast_current_session_dashboard() {
-  [ -n "$current_client_session" ] || return 1
-  dashboard_index=$(tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
-  [ -n "$dashboard_index" ] || return 1
-  validate_dashboard_target "$current_client_session" "$dashboard_index" || return 1
-  dashboard_switch_target="${current_client_session}:${dashboard_index}"
-  switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
-  refresh_navigation_client "$client_tty"
-  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
-  exit 0
-}
-
-focus_local_dashboard_target() {
-  resolve_live_client || true
-
+find_dashboard_candidate() {
   dashboard_session=""
   dashboard_index=""
 
@@ -280,8 +266,51 @@ focus_local_dashboard_target() {
     fi
   fi
 
-  [ -n "$dashboard_session" ] || return 1
+  [ -n "$dashboard_session" ] && [ -n "$dashboard_index" ]
+}
+
+dashboard_candidate_needs_reload() {
+  find_dashboard_candidate || return 0
+  dashboard_row=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print; exit }')
+  dashboard_window_id=$(printf '%s' "$dashboard_row" | cut -d '|' -f2)
+  dashboard_pane_dead=$(printf '%s' "$dashboard_row" | cut -d '|' -f4)
+  [ -n "$dashboard_window_id" ] || return 0
+  [ "$dashboard_pane_dead" != "1" ] && [ -n "$dashboard_pane_dead" ] || return 0
+
+  validate_host_session="$dashboard_session"
+  case "$validate_host_session" in
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      validate_host_session=${validate_host_session%-client-????????}
+      ;;
+  esac
+  expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
+  dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
+  [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] && [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
+
+  dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
+  case "$dashboard_preview" in
+    *"aimux dashboard failed to start."*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+switch_fast_current_session_dashboard() {
+  [ -n "$current_client_session" ] || return 1
+  dashboard_index=$(tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
   [ -n "$dashboard_index" ] || return 1
+  validate_dashboard_target "$current_client_session" "$dashboard_index" || return 1
+  dashboard_switch_target="${current_client_session}:${dashboard_index}"
+  switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
+  refresh_navigation_client "$client_tty"
+  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  exit 0
+}
+
+focus_local_dashboard_target() {
+  resolve_live_client || true
+  find_dashboard_candidate || return 1
   dashboard_switch_target="${dashboard_session}:${dashboard_index}"
   validate_dashboard_target "$dashboard_session" "$dashboard_index" || return 1
 
@@ -941,7 +970,7 @@ fallback_local_control() {
   case "$action" in
     dashboard)
       printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
-      switch_local_dashboard || { reload_local_dashboard && return 0; }
+      switch_local_dashboard || { dashboard_candidate_needs_reload && reload_local_dashboard && return 0; }
       ;;
     inbox)
       show_local_inbox_popup
