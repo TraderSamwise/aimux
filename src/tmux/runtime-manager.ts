@@ -290,7 +290,7 @@ export class TmuxRuntimeManager {
       ? this.getSessionOption(clientSessionName, "@aimux-runtime-build")
       : null;
     const dashboardAtZero = clientWindows.find((window) => window.index === 0);
-    const needsRecreate =
+    const needsRepair =
       clientSessionExists &&
       (!existingDashboard ||
         existingDashboard.index !== 0 ||
@@ -299,11 +299,7 @@ export class TmuxRuntimeManager {
         currentProjectRoot !== projectRoot ||
         currentRuntimeBuild !== runtimeBuildStamp);
 
-    if (needsRecreate) {
-      this.exec(["kill-session", "-t", clientSessionName]);
-    }
-
-    if (!clientSessionExists || needsRecreate) {
+    if (!clientSessionExists) {
       this.exec(
         [
           "new-session",
@@ -325,6 +321,18 @@ export class TmuxRuntimeManager {
       this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
       return;
+    }
+
+    if (needsRepair) {
+      if (existingDashboard && existingDashboard.index !== 0 && !dashboardAtZero) {
+        this.exec(["move-window", "-s", existingDashboard.id, "-t", `${clientSessionName}:0`]);
+      } else if (!existingDashboard) {
+        const target = dashboardAtZero ? clientSessionName : `${clientSessionName}:0`;
+        this.exec(
+          ["new-window", "-d", "-t", target, "-c", projectRoot, "-n", dashboardName, "sh", "-lc", "tail -f /dev/null"],
+          { cwd: projectRoot },
+        );
+      }
     }
 
     this.configureSession(clientSessionName, projectRoot);
@@ -378,12 +386,15 @@ export class TmuxRuntimeManager {
       }
       return linked;
     } finally {
-      if (keepaliveWindowId) {
-        const keepalive = this.getTargetByWindowId(clientSessionName, keepaliveWindowId);
-        if (keepalive) this.killWindow(keepalive);
-      }
-      if (originalRenumberWindows !== null) {
-        this.exec(["set-option", "-t", clientSessionName, "renumber-windows", originalRenumberWindows]);
+      try {
+        if (keepaliveWindowId) {
+          const keepalive = this.getTargetByWindowId(clientSessionName, keepaliveWindowId);
+          if (keepalive) this.killWindow(keepalive);
+        }
+      } finally {
+        if (originalRenumberWindows !== null) {
+          this.exec(["set-option", "-t", clientSessionName, "renumber-windows", originalRenumberWindows]);
+        }
       }
     }
   }
