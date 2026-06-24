@@ -8,6 +8,7 @@ import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
 import { loadNotificationContexts } from "./notification-context.js";
 import { listNotifications, upsertNotification } from "./notifications.js";
 import { addDashboardOperationFailure, listDashboardOperationFailures } from "./dashboard/operation-failures.js";
+import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
@@ -17,7 +18,7 @@ import {
   saveRuntimeTopologySessions,
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -1433,6 +1434,10 @@ describe("MetadataServer threads API", () => {
     const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
     const listWindows = TmuxRuntimeManager.prototype.listWindows;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
+    const getSessionOption = TmuxRuntimeManager.prototype.getSessionOption;
+    const displayMessage = TmuxRuntimeManager.prototype.displayMessage;
+    const captureTarget = TmuxRuntimeManager.prototype.captureTarget;
     const ensureProjectSession = TmuxRuntimeManager.prototype.ensureProjectSession;
     const ensureDashboardWindow = TmuxRuntimeManager.prototype.ensureDashboardWindow;
     const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
@@ -1446,6 +1451,16 @@ describe("MetadataServer threads API", () => {
         ? [{ id: target.windowId, index: target.windowIndex, name: target.windowName, active: true }]
         : [];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
+      key === TMUX_DASHBOARD_OWNER_OPTION
+        ? getRuntimeOwnerId()
+        : key === "@aimux-dashboard-build"
+          ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+          : "";
+    TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
+      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
+    TmuxRuntimeManager.prototype.displayMessage = () => "bash";
+    TmuxRuntimeManager.prototype.captureTarget = () => "";
     TmuxRuntimeManager.prototype.ensureProjectSession = vi.fn();
     TmuxRuntimeManager.prototype.ensureDashboardWindow = vi.fn();
     TmuxRuntimeManager.prototype.respawnWindow = vi.fn();
@@ -1489,6 +1504,10 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
       TmuxRuntimeManager.prototype.listWindows = listWindows;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
+      TmuxRuntimeManager.prototype.getSessionOption = getSessionOption;
+      TmuxRuntimeManager.prototype.displayMessage = displayMessage;
+      TmuxRuntimeManager.prototype.captureTarget = captureTarget;
       TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
       TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
       TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
@@ -1502,6 +1521,10 @@ describe("MetadataServer threads API", () => {
     const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
     const listWindows = TmuxRuntimeManager.prototype.listWindows;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
+    const getSessionOption = TmuxRuntimeManager.prototype.getSessionOption;
+    const displayMessage = TmuxRuntimeManager.prototype.displayMessage;
+    const captureTarget = TmuxRuntimeManager.prototype.captureTarget;
     const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
@@ -1512,6 +1535,16 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
       sessionName === "aimux-test-client-123" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
+      key === TMUX_DASHBOARD_OWNER_OPTION
+        ? getRuntimeOwnerId()
+        : key === "@aimux-dashboard-build"
+          ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+          : "";
+    TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
+      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
+    TmuxRuntimeManager.prototype.displayMessage = () => "bash";
+    TmuxRuntimeManager.prototype.captureTarget = () => "";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
       tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
     TmuxRuntimeManager.prototype.listManagedWindows = vi.fn(() => {
@@ -1631,6 +1664,10 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
       TmuxRuntimeManager.prototype.listWindows = listWindows;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
+      TmuxRuntimeManager.prototype.getSessionOption = getSessionOption;
+      TmuxRuntimeManager.prototype.displayMessage = displayMessage;
+      TmuxRuntimeManager.prototype.captureTarget = captureTarget;
       TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;

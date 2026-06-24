@@ -344,16 +344,12 @@ export class TmuxRuntimeManager {
             `Cannot replace non-dashboard tmux window ${occupying.id} at ${clientSessionName}:${windowIndex}`,
           );
         }
-        this.killWindow({
-          sessionName: clientSessionName,
-          windowId: occupying.id,
-          windowIndex: occupying.index,
-          windowName: occupying.name,
-        });
       }
     }
     const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
-    this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
+    const args = ["link-window", "-d"];
+    if (windowIndex !== undefined) args.push("-k");
+    this.exec([...args, "-s", target.windowId, "-t", destination]);
     const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (!linked) {
       throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
