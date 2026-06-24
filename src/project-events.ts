@@ -129,7 +129,8 @@ export class ProjectEventBus {
       reasonLabel: alert.reasonLabel,
       dedupeKey,
       createdAt: ts,
-      unread: !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId),
+      unread:
+        !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId, alert.projectRoot),
       interaction: alert.interaction,
     });
 
@@ -158,7 +159,7 @@ export class ProjectEventBus {
 
     this.publish(event);
     this.publishProjectUpdate({
-      views: ["coordination-worklist", "inbox", "notifications"],
+      views: ["coordination-worklist", "notifications"],
       reason: "alert",
       sessionId: alert.sessionId,
       worktreePath: alert.worktreePath,

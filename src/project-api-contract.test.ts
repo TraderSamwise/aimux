@@ -40,6 +40,8 @@ describe("project api contract", () => {
     expect(PROJECT_API_VIEWS).toContain("coordination-worklist");
     expect(PROJECT_API_VIEWS).toContain("desktop-state");
     expect(PROJECT_API_VIEWS).toContain("notifications");
+    expect(PROJECT_API_VIEWS).not.toContain("inbox");
+    expect(PROJECT_API_VIEWS).not.toContain("plans");
   });
 
   it("requires live pane attach dimensions to be both or neither", () => {

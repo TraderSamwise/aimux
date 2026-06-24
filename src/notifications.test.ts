@@ -170,9 +170,11 @@ describe("notifications store", () => {
       expect.objectContaining({
         type: "project_update",
         sessionId: "codex-1",
-        views: expect.arrayContaining(["coordination-worklist", "inbox", "notifications"]),
+        views: expect.arrayContaining(["coordination-worklist", "notifications"]),
       }),
     ]);
+    const projectUpdate = events[1] as { views?: string[] };
+    expect(projectUpdate.views ?? []).not.toContain("inbox");
   });
 
   it("does not treat dashboard row selection as direct session focus", () => {
