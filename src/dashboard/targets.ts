@@ -8,7 +8,7 @@ export interface DashboardTargetRef {
   dashboardTarget: TmuxTarget;
 }
 
-function isUsableDashboardTarget(
+export function isUsableDashboardTarget(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
   dashboardBuildStamp: string,
