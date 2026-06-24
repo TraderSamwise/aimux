@@ -7,6 +7,7 @@ import {
   ensureNotificationState,
   findNotificationSessionTarget,
   markCoordinationItemRead,
+  notificationMutationInputForItem,
   openCoordinationNotification,
 } from "./notifications.js";
 import { mutateDashboardApi } from "./dashboard-api-client.js";
@@ -66,17 +67,10 @@ function syncThreadIndex(host: CoordinationHost, item: WorklistItem): void {
   if (idx >= 0) host.threadIndex = idx;
 }
 
-// Clear an agent's whole rollup (by sessionId) or each sessionless record — via the service.
 async function clearNotificationItem(host: CoordinationHost, item: WorklistItem): Promise<void> {
-  const note = item.notification;
-  if (!note) return;
-  if (item.sessionId) {
-    await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.clear, { sessionId: item.sessionId });
-  } else {
-    for (const record of note.notifications) {
-      await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.clear, { id: record.id });
-    }
-  }
+  const input = notificationMutationInputForItem(item);
+  if (!input) return;
+  await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.clear, input);
 }
 
 // Run a notification mutation through the service, then refresh + re-render. Failures flash.

@@ -274,10 +274,12 @@ export function listNotifications(opts?: {
   });
 }
 
-export function markNotificationsRead(opts?: { id?: string; sessionId?: string }): number {
+export function markNotificationsRead(opts?: { id?: string; ids?: string[]; sessionId?: string }): number {
   const store = createRuntimeExchangeStore();
+  const ids = opts?.ids ? new Set(opts.ids) : undefined;
   const records = notificationRecords(store.read()).filter((record) => {
     if (record.cleared || !record.unread) return false;
+    if (ids && !ids.has(record.id)) return false;
     if (opts?.id && record.id !== opts.id) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
     return true;
@@ -303,10 +305,12 @@ export function markNotificationsRead(opts?: { id?: string; sessionId?: string }
   return records.length;
 }
 
-export function clearNotifications(opts?: { id?: string; sessionId?: string }): number {
+export function clearNotifications(opts?: { id?: string; ids?: string[]; sessionId?: string }): number {
   const store = createRuntimeExchangeStore();
+  const ids = opts?.ids ? new Set(opts.ids) : undefined;
   const records = notificationRecords(store.read()).filter((record) => {
     if (record.cleared) return false;
+    if (ids && !ids.has(record.id)) return false;
     if (opts?.id && record.id !== opts.id) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
     return true;

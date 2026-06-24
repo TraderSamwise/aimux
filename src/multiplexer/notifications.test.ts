@@ -9,6 +9,7 @@ import { clearNotifications, listNotifications, markNotificationsRead, upsertNot
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import {
   applyCoordinationModel,
+  markCoordinationItemRead,
   notificationTargetLabel,
   notificationTargetState,
   openCoordinationNotification,
@@ -24,7 +25,7 @@ function addExchangeNotification(sessionId: string, body: string): NotificationR
 // Faithful stand-in for the project service: applies the notification mutation to the local
 // store synchronously (so store assertions hold) the way the real service would.
 function notificationServiceDouble() {
-  return vi.fn(async (path: string, body: { id?: string; sessionId?: string }) => {
+  return vi.fn(async (path: string, body: { id?: string; ids?: string[]; sessionId?: string }) => {
     if (path === "/notifications/read") markNotificationsRead(body);
     else if (path === "/notifications/clear") clearNotifications(body);
     return { ok: true };
@@ -293,6 +294,28 @@ describe("coordination inbox ordering", () => {
     expect(unreadInboxEntries("live-1")).toHaveLength(0);
   });
 
+  it("batches sessionless notification rollups through one service request", async () => {
+    const first = upsertNotification({ title: "First", body: "sessionless first", kind: "thread" });
+    const second = upsertNotification({ title: "Second", body: "sessionless second", kind: "thread" });
+    const host: any = {
+      postToProjectService: notificationServiceDouble(),
+    };
+    const item = {
+      key: "notification:sessionless",
+      kind: "notification",
+      notification: {
+        unreadCount: 2,
+        notifications: [first, second],
+      },
+    } as any;
+
+    await markCoordinationItemRead(host, item);
+    expect(host.postToProjectService).toHaveBeenCalledTimes(1);
+    expect(host.postToProjectService).toHaveBeenCalledWith("/notifications/read", {
+      ids: expect.arrayContaining([first.id, second.id]),
+    });
+  });
+
   it("refreshes coordination after notification mutation failures", async () => {
     addExchangeNotification("live-1", "live agent needs input");
     const host: any = {
@@ -430,35 +453,26 @@ describe("coordination thread workflow keys", () => {
 
     handleCoordinationKey(host, Buffer.from("A"));
     await vi.waitFor(() =>
-      expect(host.postToProjectService).toHaveBeenCalledWith(
-        "/tasks/accept",
-        {
-          taskId: "task-1",
-          from: "user",
-        },
-      ),
+      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/accept", {
+        taskId: "task-1",
+        from: "user",
+      }),
     );
 
     handleCoordinationKey(host, Buffer.from("J"));
     await vi.waitFor(() =>
-      expect(host.postToProjectService).toHaveBeenCalledWith(
-        "/reviews/request-changes",
-        {
-          taskId: "task-1",
-          from: "user",
-        },
-      ),
+      expect(host.postToProjectService).toHaveBeenCalledWith("/reviews/request-changes", {
+        taskId: "task-1",
+        from: "user",
+      }),
     );
 
     handleCoordinationKey(host, Buffer.from("E"));
     await vi.waitFor(() =>
-      expect(host.postToProjectService).toHaveBeenCalledWith(
-        "/tasks/reopen",
-        {
-          taskId: "task-1",
-          from: "user",
-        },
-      ),
+      expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/reopen", {
+        taskId: "task-1",
+        from: "user",
+      }),
     );
   });
 });

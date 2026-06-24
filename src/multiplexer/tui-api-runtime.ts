@@ -9,6 +9,7 @@ export interface TuiApiRuntimeOptions {
   mutate?: TuiApiMutationTransport;
   onConnectionStateChange?: (state: TuiApiConnectionState) => void;
   onRequestFailure?: (error: unknown) => void;
+  shouldRecoverFromError?: (error: unknown) => boolean;
 }
 
 interface TuiApiRecoveryOptions {
@@ -112,7 +113,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      if (this.lastSuccessfulRequestGeneration <= generation) {
+      if (this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error)) {
         this.setConnectionState("degraded");
         this.options.onRequestFailure?.(error);
       }
@@ -147,7 +148,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      if (this.lastSuccessfulRequestGeneration <= generation) {
+      if (this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error)) {
         this.setConnectionState("degraded");
         this.options.onRequestFailure?.(error);
       }
@@ -197,7 +198,7 @@ export class TuiApiRuntime {
           state.pending = false;
           state.stale = state.value !== undefined;
           state.pendingPromise = undefined;
-          if (this.lastSuccessfulRequestGeneration <= requestGeneration) {
+          if (this.lastSuccessfulRequestGeneration <= requestGeneration && this.shouldRecoverFromError(error)) {
             this.setConnectionState(state.value === undefined ? "reconnecting" : "degraded");
             this.options.onRequestFailure?.(error);
           }
@@ -237,6 +238,25 @@ export class TuiApiRuntime {
     this.state = next;
     this.options.onConnectionStateChange?.(next);
   }
+
+  private shouldRecoverFromError(error: unknown): boolean {
+    return this.options.shouldRecoverFromError?.(error) ?? isRecoverableTuiApiError(error);
+  }
+}
+
+export function isRecoverableTuiApiError(error: unknown): boolean {
+  const recoverable = (error as { tuiApiRecoverable?: unknown })?.tuiApiRecoverable;
+  if (recoverable === true) return true;
+  if (recoverable === false) return false;
+  const status = (error as { status?: unknown })?.status;
+  if (typeof status === "number") {
+    if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+    if (status >= 500) return true;
+    if (status >= 400 && status < 500) return false;
+  }
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  if (code === "ETIMEDOUT" || code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EPIPE") return true;
+  return true;
 }
 
 export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {

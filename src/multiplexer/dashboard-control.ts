@@ -62,6 +62,20 @@ const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
+export class DashboardProjectServiceHttpError extends Error {
+  readonly tuiApiRecoverable: boolean;
+
+  constructor(
+    readonly status: number,
+    readonly response: unknown,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DashboardProjectServiceHttpError";
+    this.tuiApiRecoverable = isProjectServiceRetryableStatus(status) || status >= 500;
+  }
+}
+
 function writeStatuslineTextFile(name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
   // unique-temp atomic write (never a shared ".tmp"), and never fatal.
@@ -1068,7 +1082,7 @@ async function requestProjectService(
       if (status >= 200 && status < 300 && json?.ok !== false) {
         return json;
       }
-      lastError = new Error(json?.error || `request failed: ${status}`);
+      lastError = new DashboardProjectServiceHttpError(status, json, json?.error || `request failed: ${status}`);
       if (isProjectServiceRetryableStatus(status) && Date.now() < deadline) {
         clearProjectServiceEndpointHealth(host);
         await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
