@@ -586,7 +586,7 @@ export interface TaskLifecycleInput {
 
 export interface ThreadSummaryResponse {
   thread: { id: string; title?: string; status?: string; kind?: string };
-  lastMessage?: { body?: string; createdAt?: string };
+  latestMessage?: { body?: string; ts?: string; from?: string; kind?: string };
   [k: string]: unknown;
 }
 

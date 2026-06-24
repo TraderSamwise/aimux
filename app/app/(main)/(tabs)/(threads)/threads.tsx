@@ -92,9 +92,9 @@ export default function ThreadsScreen() {
               <Text className="text-xs text-muted-foreground">
                 {t.thread.kind ?? "thread"} · {t.thread.status ?? ""}
               </Text>
-              {t.lastMessage?.body ? (
+              {t.latestMessage?.body ? (
                 <Text className="mt-1 text-sm text-foreground" numberOfLines={2}>
-                  {t.lastMessage.body}
+                  {t.latestMessage.body}
                 </Text>
               ) : null}
             </View>

@@ -228,7 +228,11 @@ describe("api relay routing", () => {
     await resizeLivePane(endpoint, "agent-1", 100, 32);
     await attachLivePane(endpoint, { sessionId: "agent-1", startLine: -90, cols: 100, rows: 32 });
     await openDashboard(endpoint, { currentClientSession: "client-1", focus: false });
-    await openDashboard(endpoint, { currentClientSession: "client-1", focus: false, screen: "coordination" });
+    await openDashboard(endpoint, {
+      currentClientSession: "client-1",
+      focus: false,
+      screen: "coordination",
+    });
     await openNotificationTarget(endpoint, { sessionId: "agent-1", focus: false });
     await focusWindow(endpoint, { windowId: "@7", focus: false });
     await markActiveWindow(endpoint, {
