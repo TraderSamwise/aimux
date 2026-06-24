@@ -38,7 +38,6 @@ import {
   markNotificationsRead,
   markActiveWindow,
   openDashboard,
-  openInbox,
   openNotificationTarget,
   openThread,
   removeService,
@@ -229,7 +228,11 @@ describe("api relay routing", () => {
     await resizeLivePane(endpoint, "agent-1", 100, 32);
     await attachLivePane(endpoint, { sessionId: "agent-1", startLine: -90, cols: 100, rows: 32 });
     await openDashboard(endpoint, { currentClientSession: "client-1", focus: false });
-    await openInbox(endpoint, { currentClientSession: "client-1", focus: false });
+    await openDashboard(endpoint, {
+      currentClientSession: "client-1",
+      focus: false,
+      screen: "coordination",
+    });
     await openNotificationTarget(endpoint, { sessionId: "agent-1", focus: false });
     await focusWindow(endpoint, { windowId: "@7", focus: false });
     await markActiveWindow(endpoint, {
@@ -372,10 +375,11 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(
       17,
       "POST",
-      "/proxy/127.0.0.1/43210/control/open-inbox",
+      "/proxy/127.0.0.1/43210/control/open-dashboard",
       {
         currentClientSession: "client-1",
         focus: false,
+        screen: "coordination",
       },
     );
     expect(request).toHaveBeenNthCalledWith(
@@ -525,7 +529,7 @@ describe("api relay routing", () => {
     const request = installRelayMock({ ok: true });
 
     await openDashboard(endpoint, { currentClientSession: "client-1" });
-    await openInbox(endpoint, { currentClientSession: "client-1" });
+    await openDashboard(endpoint, { currentClientSession: "client-1", screen: "coordination" });
     await openNotificationTarget(endpoint, { sessionId: "agent-1" });
     await focusWindow(endpoint, { windowId: "@7" });
     await switchNextAgent(endpoint, { currentClientSession: "client-1" });
@@ -551,10 +555,11 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(
       2,
       "POST",
-      "/proxy/127.0.0.1/43210/control/open-inbox",
+      "/proxy/127.0.0.1/43210/control/open-dashboard",
       {
         currentClientSession: "client-1",
         focus: false,
+        screen: "coordination",
       },
     );
     expect(request).toHaveBeenNthCalledWith(

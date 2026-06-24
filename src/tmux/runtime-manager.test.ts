@@ -502,6 +502,18 @@ describe("TmuxRuntimeManager", () => {
     }
   });
 
+  it("binds prefix i to the coordination control path", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+
+    manager.ensureProjectSession("/repo/mobile");
+
+    const binding = exec.calls.find(
+      (call) => call.args[0] === "bind-key" && call.args[2] === "prefix" && call.args[3] === "i",
+    );
+    expect(binding?.args.join(" ")).toContain("tmux-control.sh' coordination");
+  });
+
   it("routes wheel-up to tmux copy-mode for managed agent windows", () => {
     const config = buildDefaultRootMouseBindingsConfig({
       openPaneLinkCommand: "open-pane-link",

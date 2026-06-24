@@ -38,7 +38,6 @@ import {
   type NotificationReadResponse,
   type FocusWindowRequest,
   type OpenDashboardRequest,
-  type OpenInboxRequest,
   type OpenNotificationTargetRequest,
   type OrchestrationRouteMode,
   type OrchestrationRouteOptionsResponse,
@@ -159,8 +158,14 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
       throw new ApiError(res.status, body, `${msg} (${url})`);
     }
     const body = await res.json();
-    if (body && typeof body === "object" && "ok" in body && (body as { ok?: unknown }).ok === false) {
-      const message = "error" in body ? String((body as { error: unknown }).error) : "Request failed";
+    if (
+      body &&
+      typeof body === "object" &&
+      "ok" in body &&
+      (body as { ok?: unknown }).ok === false
+    ) {
+      const message =
+        "error" in body ? String((body as { error: unknown }).error) : "Request failed";
       throw new ApiError(res.status, body, `${message} (${url})`);
     }
     return body as T;
@@ -370,17 +375,6 @@ export async function openDashboard(
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, {
-    focus: false,
-    ...input,
-  });
-}
-
-export async function openInbox(
-  endpoint: ServiceEndpoint,
-  input: OpenInboxRequest = {},
-  opts?: ApiOpts,
-): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openInbox, opts, {
     focus: false,
     ...input,
   });
