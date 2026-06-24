@@ -33,53 +33,8 @@ export function isUsableDashboardTarget(
   );
 }
 
-export function pruneDashboardArtifacts(
-  projectRoot: string,
-  dashboardBuildStamp: string,
-  tmux: TmuxRuntimeManager,
-): void {
-  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
-  const sessions = tmux
-    .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`));
-  for (const sessionName of sessions) {
-    const windows = tmux.listWindows(sessionName);
-    const dashboardWindows = windows.filter((window) => isDashboardWindowName(window.name));
-    for (const window of dashboardWindows) {
-      const target: TmuxTarget = {
-        sessionName,
-        windowId: window.id,
-        windowIndex: window.index,
-        windowName: window.name,
-      };
-      const paneCommand = tmux.displayMessage("#{pane_current_command}", window.id);
-      const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-      const invalid =
-        !tmux.isWindowAlive(target) ||
-        paneCommand === "cat" ||
-        paneCommand === "tail" ||
-        !currentBuildStamp ||
-        currentBuildStamp !== dashboardBuildStamp;
-      if (!invalid) continue;
-      try {
-        tmux.killWindow(target);
-      } catch {}
-    }
-    if (sessionName === hostSession || !tmux.hasSession(sessionName)) continue;
-    const remaining = tmux.listWindows(sessionName);
-    const hasValidDashboard = remaining.some((window) => isDashboardWindowName(window.name));
-    if (hasValidDashboard) continue;
-    const hasNonDashboardWindows = remaining.some((window) => !isDashboardWindowName(window.name));
-    if (hasNonDashboardWindows) continue;
-    try {
-      tmux.killSession(sessionName);
-    } catch {}
-  }
-}
-
 export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeManager): DashboardTargetRef | null {
   const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
   const dashboardSession = tmux.getProjectSession(projectRoot);
   const preferredOpenSession = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
   const currentClientSession = tmux.currentClientSession();
@@ -122,7 +77,6 @@ export function resolveDashboardTarget(
   options: { forceReload?: boolean; openInHostSession?: boolean } = {},
 ): DashboardTargetRef {
   const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
 
   if (!options.forceReload) {
     const live = findLiveDashboardTarget(projectRoot, tmux);
