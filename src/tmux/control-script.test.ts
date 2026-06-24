@@ -677,6 +677,69 @@ describe("tmux-control.sh", () => {
     ]);
   });
 
+  it("does not reload dashboard for ordinary validation misses", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-stale",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-owner": "owner-stale",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "dashboard",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--project-root",
+      "/repo/project",
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    expect(readLog(envRoot)).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(readAimuxLog(envRoot)).toEqual([]);
+  });
+
   it("hydrates project context from the host session for global prefix bindings", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],

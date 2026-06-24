@@ -782,15 +782,23 @@ async function openProjectServiceNotificationTarget(
   activationToken: any | undefined,
 ): Promise<"opened" | "missing" | "error"> {
   try {
+    const context = dashboardControlClientContext(host);
+    const startedAt = Date.now();
     await mutateDashboardApi(
       host,
       PROJECT_API_ROUTES.controls.openNotificationTarget,
+      { sessionId, focus: false },
       {
-        sessionId,
-        focus: true,
-        ...dashboardControlClientContext(host),
+        timeoutMs,
       },
-      { timeoutMs },
+    );
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
+    const focusTimeoutMs = Math.max(100, timeoutMs - (Date.now() - startedAt));
+    await mutateDashboardApi(
+      host,
+      PROJECT_API_ROUTES.controls.openNotificationTarget,
+      { sessionId, focus: true, ...context },
+      { timeoutMs: focusTimeoutMs },
     );
     return "opened";
   } catch (error) {

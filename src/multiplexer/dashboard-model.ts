@@ -1022,26 +1022,35 @@ function isDesktopStateDashboardModel(value: any): value is {
   );
 }
 
-function hasLiveTmuxAgentWindow(host: DashboardModelHost): boolean {
+function listLiveTmuxAgentIds(host: DashboardModelHost): string[] {
   try {
     const entries = host.tmuxRuntimeManager?.listProjectManagedWindows?.(process.cwd());
-    if (!Array.isArray(entries)) return false;
-    return entries.some((entry: any) => {
-      if (entry?.metadata?.kind !== "agent") return false;
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap((entry: any) => {
+      if (entry?.metadata?.kind !== "agent") return [];
       if (typeof host.tmuxRuntimeManager?.isWindowAlive === "function") {
-        if (!host.tmuxRuntimeManager.isWindowAlive(entry.target)) return false;
+        if (!host.tmuxRuntimeManager.isWindowAlive(entry.target)) return [];
       } else if (entry?.target?.paneDead === true) {
-        return false;
+        return [];
       }
-      return !isDashboardWindowName(entry?.target?.windowName);
+      if (isDashboardWindowName(entry?.target?.windowName)) return [];
+      return typeof entry?.metadata?.sessionId === "string" && entry.metadata.sessionId
+        ? [entry.metadata.sessionId]
+        : [];
     });
   } catch {
-    return false;
+    return [];
   }
 }
 
-function isContradictoryEmptyDesktopState(host: DashboardModelHost, json: { sessions: unknown[] }): boolean {
-  return json.sessions.length === 0 && hasLiveTmuxAgentWindow(host);
+function isContradictoryDesktopState(
+  host: DashboardModelHost,
+  json: { sessions: DashboardSession[]; teammates: DashboardSession[] },
+): boolean {
+  const liveIds = listLiveTmuxAgentIds(host);
+  if (liveIds.length === 0) return false;
+  const payloadIds = new Set([...json.sessions, ...json.teammates].map((entry) => entry.id).filter(Boolean));
+  return liveIds.some((id) => !payloadIds.has(id));
 }
 
 function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, error?: unknown): false {
@@ -1091,11 +1100,11 @@ export async function refreshDashboardModelFromService(
     }
     if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
     const json = result.value;
-    if (isContradictoryEmptyDesktopState(host, json)) {
+    if (isContradictoryDesktopState(host, json)) {
       return failDashboardServiceRefresh(
         host,
         force,
-        "project service returned empty state while tmux has live agents",
+        "project service returned incomplete state while tmux has live agents",
       );
     }
     (host as any).dashboardModelServiceRefreshedAt = Date.now();

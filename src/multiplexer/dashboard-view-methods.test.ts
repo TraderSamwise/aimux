@@ -107,6 +107,42 @@ describe("dashboardViewMethods.renderDashboard", () => {
     expect(host.writeFrame).toHaveBeenCalledTimes(1);
     expect(host.writeFrame).toHaveBeenCalledWith("base-frame");
   });
+
+  it("writes a visible static error frame if dashboard rendering throws", () => {
+    const host: any = {
+      dashboardRenderOptions: null,
+      writeStatuslineFile: vi.fn(),
+      getViewportSize: () => ({ cols: 80, rows: 24 }),
+      dashboardSessionsCache: [],
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      dashboardState: {
+        focusedWorktreePath: undefined,
+        level: "sessions",
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboard: {
+        update: vi.fn(),
+        render: vi.fn(() => {
+          throw new Error("render boom");
+        }),
+      },
+      dashboardFeedback: {
+        clearBusy: vi.fn(),
+        errorState: null,
+      },
+      syncTuiNotificationContext: vi.fn(),
+      writeFrame: vi.fn(),
+    };
+
+    dashboardViewMethods.renderDashboard.call(host);
+
+    expect(host.writeFrame).toHaveBeenCalledWith(expect.stringContaining("Dashboard render failed"), true);
+    expect(host.writeFrame).toHaveBeenCalledWith(expect.stringContaining("render boom"), true);
+  });
 });
 
 describe("dashboardViewMethods.settleDashboardCreatePending", () => {
