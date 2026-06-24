@@ -670,6 +670,7 @@ describe("TmuxRuntimeManager", () => {
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
       if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
       if (
         joined ===
         `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
@@ -701,9 +702,15 @@ describe("TmuxRuntimeManager", () => {
           `new-window -d -t ${clientSessionName} -n aimux-keepalive-10 sh -lc tail -f /dev/null`,
       ),
     ).toBe(true);
+    expect(
+      calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows off`),
+    ).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @placeholder")).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}:0`)).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @keepalive")).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows on`)).toBe(
+      true,
+    );
     expect(interactiveCalls.at(-1)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:0`]);
   });
 

@@ -338,6 +338,7 @@ export class TmuxRuntimeManager {
     if (existing) return existing;
     let occupyingDashboard: TmuxWindowInfo | undefined;
     let keepaliveWindowId: string | null = null;
+    let originalRenumberWindows: string | null = null;
     if (windowIndex !== undefined) {
       const windows = this.listWindows(clientSessionName);
       const occupying = windows.find((window) => window.index === windowIndex);
@@ -350,6 +351,8 @@ export class TmuxRuntimeManager {
         occupyingDashboard = occupying;
         if (windows.length === 1) {
           const keepaliveName = `aimux-keepalive-${target.windowId.replace(/[^a-zA-Z0-9]/g, "")}`;
+          originalRenumberWindows = this.getSessionOption(clientSessionName, "renumber-windows") || "off";
+          this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
           this.exec([
             "new-window",
             "-d",
@@ -367,28 +370,30 @@ export class TmuxRuntimeManager {
       }
     }
     const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
-    if (occupyingDashboard) {
-      this.killWindow({
-        sessionName: clientSessionName,
-        windowId: occupyingDashboard.id,
-        windowIndex: occupyingDashboard.index,
-        windowName: occupyingDashboard.name,
-      });
+    try {
+      if (occupyingDashboard) {
+        this.killWindow({
+          sessionName: clientSessionName,
+          windowId: occupyingDashboard.id,
+          windowIndex: occupyingDashboard.index,
+          windowName: occupyingDashboard.name,
+        });
+      }
+      this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
+      const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
+      if (!linked) {
+        throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
+      }
+      return linked;
+    } finally {
+      if (keepaliveWindowId) {
+        const keepalive = this.getTargetByWindowId(clientSessionName, keepaliveWindowId);
+        if (keepalive) this.killWindow(keepalive);
+      }
+      if (originalRenumberWindows !== null) {
+        this.exec(["set-option", "-t", clientSessionName, "renumber-windows", originalRenumberWindows]);
+      }
     }
-    this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
-    const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
-    if (!linked) {
-      throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
-    }
-    if (keepaliveWindowId) {
-      this.killWindow({
-        sessionName: clientSessionName,
-        windowId: keepaliveWindowId,
-        windowIndex: -1,
-        windowName: "aimux-keepalive",
-      });
-    }
-    return linked;
   }
 
   linkWindowToSession(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
