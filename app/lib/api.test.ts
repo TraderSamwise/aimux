@@ -154,6 +154,39 @@ describe("api relay routing", () => {
     }
   });
 
+  it("keeps request timeouts active while reading JSON bodies", async () => {
+    vi.useFakeTimers();
+    try {
+      let requestSignal: AbortSignal | undefined;
+      globalThis.fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        requestSignal = init?.signal ?? undefined;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_, reject) => {
+              requestSignal?.addEventListener(
+                "abort",
+                () => reject(requestSignal?.reason ?? new Error("aborted")),
+                {
+                  once: true,
+                },
+              );
+            }),
+        } as Response);
+      }) as unknown as typeof fetch;
+
+      const request = getProjectTopology(endpoint, { timeoutMs: 25 }).catch((error) => error);
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(requestSignal?.aborted).toBe(true);
+      const error = await request;
+      expect(error).toBeInstanceOf(Error);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("routes project GET requests through the relay proxy when connected", async () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ sessionId: "s/1", output: "hello" });

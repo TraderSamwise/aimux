@@ -148,26 +148,25 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
     headers.set("content-type", "application/json");
   }
   const { signal, cleanup } = requestSignal(opts);
-  let res: Response;
   try {
-    res = await fetch(url, { ...init, headers, signal });
+    const res = await fetch(url, { ...init, headers, signal });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const msg =
+        body && typeof body === "object" && "error" in body
+          ? String((body as { error: unknown }).error)
+          : `HTTP ${res.status}`;
+      throw new ApiError(res.status, body, `${msg} (${url})`);
+    }
+    const body = await res.json();
+    if (body && typeof body === "object" && "ok" in body && (body as { ok?: unknown }).ok === false) {
+      const message = "error" in body ? String((body as { error: unknown }).error) : "Request failed";
+      throw new ApiError(res.status, body, `${message} (${url})`);
+    }
+    return body as T;
   } finally {
     cleanup();
   }
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const msg =
-      body && typeof body === "object" && "error" in body
-        ? String((body as { error: unknown }).error)
-        : `HTTP ${res.status}`;
-    throw new ApiError(res.status, body, `${msg} (${url})`);
-  }
-  const body = await res.json();
-  if (body && typeof body === "object" && "ok" in body && (body as { ok?: unknown }).ok === false) {
-    const message = "error" in body ? String((body as { error: unknown }).error) : "Request failed";
-    throw new ApiError(res.status, body, `${message} (${url})`);
-  }
-  return body as T;
 }
 
 async function callDaemonViaRelay<T>(method: string, path: string, body?: unknown): Promise<T> {
