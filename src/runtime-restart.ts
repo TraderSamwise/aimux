@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import {
   ensureDaemonRunning,
@@ -150,8 +150,6 @@ function tryAcquireRuntimeRestartLock(): string | null {
   if (acquired) return acquired;
   try {
     if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
-      const ownerPid = readRuntimeRestartLockPid(lockPath);
-      if (ownerPid && defaultIsPidAlive(ownerPid)) return null;
       rmSync(lockPath, { recursive: true, force: true });
       return acquire();
     }
@@ -163,15 +161,6 @@ function tryAcquireRuntimeRestartLock(): string | null {
 
 function joinLockOwnerPath(lockPath: string): string {
   return pathResolve(lockPath, "owner.json");
-}
-
-function readRuntimeRestartLockPid(lockPath: string): number | null {
-  try {
-    const parsed = JSON.parse(readFileSync(joinLockOwnerPath(lockPath), "utf8")) as { pid?: unknown };
-    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
-  } catch {
-    return null;
-  }
 }
 
 function releaseRuntimeRestartLock(lockPath: string | null): void {

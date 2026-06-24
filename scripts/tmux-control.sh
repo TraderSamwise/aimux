@@ -198,7 +198,9 @@ validate_dashboard_target() {
 
   validate_host_session="$validate_session"
   case "$validate_host_session" in
-    *-client-*) validate_host_session=${validate_host_session%-client-*} ;;
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      validate_host_session=${validate_host_session%-client-????????}
+      ;;
   esac
 
   target_project_root=$(tmux show-options -v -t "$validate_session" @aimux-project-root 2>/dev/null || true)
@@ -267,7 +269,9 @@ focus_local_dashboard_target() {
   if [ -z "$dashboard_session" ]; then
     session_prefix="$current_client_session"
     case "$session_prefix" in
-      *-client-*) session_prefix=${session_prefix%-client-*} ;;
+      *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+        session_prefix=${session_prefix%-client-????????}
+        ;;
     esac
     dashboard_target=$(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' -v prefix="$session_prefix" '$1 ~ ("^" prefix "(-client-[a-f0-9]{8})?$") && $3 ~ /^dashboard/ { print $1 "|" $2; exit }')
     if [ -n "$dashboard_target" ]; then

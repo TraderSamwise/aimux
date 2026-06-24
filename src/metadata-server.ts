@@ -2272,6 +2272,7 @@ export class MetadataServer {
         ) {
           tmux.respawnWindow(target, dashboardCommand);
         }
+        tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
@@ -2335,6 +2336,7 @@ export class MetadataServer {
         ) {
           tmux.respawnWindow(target, dashboardCommand);
         }
+        tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
