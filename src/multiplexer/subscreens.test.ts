@@ -58,7 +58,7 @@ describe("thread subscreen navigation", () => {
 
     expect(host.postToProjectService).toHaveBeenCalledWith("/threads/mark-seen", {
       threadId: "thread-1",
-      sessionId: "user",
+      session: "user",
     });
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(teammate, { preserveDashboardSelection: true });
   });
