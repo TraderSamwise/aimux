@@ -744,6 +744,76 @@ describe("tmux-control.sh", () => {
     ]);
   });
 
+  it("opens coordination by switching to the dashboard instead of showing a popup", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-control-project-"));
+    tempRoots.push(projectRoot);
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": projectRoot,
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": projectRoot,
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: projectRoot,
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), `${projectRoot}\n`);
+
+    runControl(envRoot, [
+      "coordination",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--project-root",
+      projectRoot,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      projectRoot,
+    ]);
+
+    const log = readLog(envRoot);
+    const clientState = JSON.parse(
+      readFileSync(join(envRoot.projectStateDir, "dashboard-ui-client-aimux-proj-client-1234abcd.json"), "utf8"),
+    ) as { screen?: string };
+    expect(clientState.screen).toBe("coordination");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(log.some((entry) => entry.startsWith("display-popup"))).toBe(false);
+  });
+
   it("does not reload dashboard for ordinary validation misses", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],

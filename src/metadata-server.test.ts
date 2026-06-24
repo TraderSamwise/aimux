@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
@@ -1482,22 +1482,33 @@ describe("MetadataServer threads API", () => {
       });
       const dashboardBody = (await dashboardRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
 
-      const inboxRes = await fetch(`${base}/control/open-inbox`, {
+      const coordinationResolveRes = await fetch(`${base}/control/open-dashboard`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ currentClientSession: "aimux-repo-abc-client-12345678", focus: false }),
+        body: JSON.stringify({
+          currentClientSession: "aimux-repo-abc-client-12345678",
+          focus: false,
+          screen: "coordination",
+        }),
       });
-      const inboxBody = (await inboxRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
+      const coordinationResolveBody = (await coordinationResolveRes.json()) as {
+        ok: boolean;
+        focused: boolean;
+        target?: unknown;
+      };
 
       expect(dashboardRes.ok).toBe(true);
       expect(dashboardBody).toMatchObject({ ok: true, focused: false, target });
-      expect(inboxRes.ok).toBe(true);
-      expect(inboxBody).toMatchObject({ ok: true, focused: false, target });
+      expect(coordinationResolveRes.ok).toBe(true);
+      expect(coordinationResolveBody).toMatchObject({ ok: true, focused: false, target });
+      const coordinationResolveSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(coordinationResolveSnapshot.screen).toBe("coordination");
       expect(TmuxRuntimeManager.prototype.ensureProjectSession).not.toHaveBeenCalled();
       expect(TmuxRuntimeManager.prototype.ensureDashboardWindow).not.toHaveBeenCalled();
       expect(TmuxRuntimeManager.prototype.respawnWindow).not.toHaveBeenCalled();
       expect(TmuxRuntimeManager.prototype.setWindowOption).not.toHaveBeenCalled();
-      expect(existsSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"))).toBe(false);
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
@@ -1533,7 +1544,9 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
     TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test", "aimux-test-client-12345678"];
     TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
-      sessionName === "aimux-test-client-12345678" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
+      sessionName === "aimux-test-client-12345678"
+        ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }]
+        : [];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
       key === TMUX_DASHBOARD_OWNER_OPTION
@@ -1628,7 +1641,9 @@ describe("MetadataServer threads API", () => {
       expect(deadManagedBody).toEqual({ ok: false, error: "window not found" });
       expect(loadNotificationContexts().contexts.tui).toBeUndefined();
       TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
-        sessionName === "aimux-test-client-12345678" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
+        sessionName === "aimux-test-client-12345678"
+          ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }]
+          : [];
       TmuxRuntimeManager.prototype.isWindowAlive = () => true;
 
       const spoofedDashboardRes = await fetch(`${base}/control/active-window`, {
@@ -2661,11 +2676,7 @@ describe("MetadataServer threads API", () => {
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
-      expect(setSessionOptionMock).toHaveBeenCalledWith(
-        "aimux-repo-abc",
-        "@aimux-dashboard-build",
-        expect.any(String),
-      );
+      expect(setSessionOptionMock).toHaveBeenCalledWith("aimux-repo-abc", "@aimux-dashboard-build", expect.any(String));
       expect(setWindowOptionMock).toHaveBeenCalledWith(
         expect.objectContaining({ windowId: "@99" }),
         "@aimux-dashboard-build",
@@ -2688,19 +2699,17 @@ describe("MetadataServer threads API", () => {
         selectedEntryId: "codex-1",
       });
 
-      const inboxRes = await fetch(`${base}/control/open-inbox?clientTty=%2Fdev%2Fttys001&focus=true`);
-      const inboxBody = (await inboxRes.json()) as { ok: boolean };
-      expect(inboxRes.ok).toBe(true);
-      expect(inboxBody.ok).toBe(true);
-      expect(setSessionOptionMock).toHaveBeenCalledWith(
-        "aimux-repo-abc",
-        "@aimux-dashboard-build",
-        expect.any(String),
+      const coordinationRes = await fetch(
+        `${base}/control/open-dashboard?clientTty=%2Fdev%2Fttys001&focus=true&screen=coordination`,
       );
-      const inboxSnapshot = JSON.parse(
+      const coordinationBody = (await coordinationRes.json()) as { ok: boolean };
+      expect(coordinationRes.ok).toBe(true);
+      expect(coordinationBody.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith("aimux-repo-abc", "@aimux-dashboard-build", expect.any(String));
+      const coordinationSnapshot = JSON.parse(
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
-      expect(inboxSnapshot.screen).toBe("coordination");
+      expect(coordinationSnapshot.screen).toBe("coordination");
 
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
       const deadRes = await fetch(

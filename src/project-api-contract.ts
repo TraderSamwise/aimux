@@ -107,7 +107,6 @@ export const PROJECT_API_ROUTES = {
   controls: {
     switchableAgents: "/control/switchable-agents",
     openDashboard: "/control/open-dashboard",
-    openInbox: "/control/open-inbox",
     openNotificationTarget: "/control/open-notification-target",
     focusWindow: "/control/focus-window",
     activeWindow: "/control/active-window",
@@ -277,8 +276,11 @@ export interface ControlActionResponse extends ProjectApiOk {
   itemId?: string;
 }
 
-export type OpenDashboardRequest = ControlClientContext;
-export type OpenInboxRequest = ControlClientContext;
+export type DashboardControlScreen = "dashboard" | "coordination" | "project" | "library" | "topology" | "graveyard";
+
+export type OpenDashboardRequest = ControlClientContext & {
+  screen?: DashboardControlScreen;
+};
 
 export type OpenNotificationTargetRequest = ControlClientContext & {
   sessionId: string;
@@ -584,7 +586,7 @@ export interface TaskLifecycleInput {
 
 export interface ThreadSummaryResponse {
   thread: { id: string; title?: string; status?: string; kind?: string };
-  lastMessage?: { body?: string; createdAt?: string };
+  latestMessage?: { body?: string; ts?: string; from?: string; kind?: string };
   [k: string]: unknown;
 }
 
