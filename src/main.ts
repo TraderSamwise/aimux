@@ -19,6 +19,7 @@ import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js"
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import {
   buildTmuxDoctorReport,
   renderTmuxDoctorReport,
@@ -656,7 +657,7 @@ function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: s
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   return tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession))
     .sort((a, b) => {
       const aIsHost = a === hostSession ? 1 : 0;
       const bIsHost = b === hostSession ? 1 : 0;
@@ -982,7 +983,9 @@ program
   .command("dashboard-reload")
   .description("Recreate and optionally reopen the dashboard window only")
   .option("--open", "Open the dashboard after reloading")
-  .action(async (opts: { open?: boolean }) => {
+  .option("--client-tty <tty>", "tmux client tty to switch after reloading")
+  .option("--current-client-session <name>", "Current client session to reopen")
+  .action(async (opts: { open?: boolean; clientTty?: string; currentClientSession?: string }) => {
     try {
       const originalCwd = process.cwd();
       const projectRoot = resolveProjectRoot(originalCwd);
@@ -1001,7 +1004,16 @@ program
       rewriteLocalStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
 
       if (opts.open) {
-        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+        const clientTty = opts.clientTty?.trim() || undefined;
+        const returnSessionName = opts.currentClientSession?.trim() || undefined;
+        const clientSuffix = returnSessionName?.match(/-client-([0-9a-f]{8})$/)?.[1];
+        tmux.openTarget(dashboardTarget, {
+          insideTmux: tmux.isInsideTmux() || Boolean(clientTty || clientSuffix),
+          alreadyResolved: true,
+          clientTty,
+          clientSuffix,
+          returnSessionName,
+        });
         exitAfterOpen();
       }
 

@@ -6,6 +6,7 @@ import {
   TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
 } from "../runtime-owner.js";
 import { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "../tmux/session-names.js";
 import {
   getProjectServiceManifest,
   hasProjectServiceBuildDrift,
@@ -123,7 +124,7 @@ function readRuntimeRebuildRequired(projectRoot: string): boolean {
       return true;
     }
     return sessionNames
-      .filter((name) => name.startsWith(`${sessionName}-client-`))
+      .filter((name) => isTmuxClientSessionForHost(name, sessionName))
       .some(
         (name) => tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
       );

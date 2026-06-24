@@ -282,6 +282,33 @@ describe("probeRuntimeGuard", () => {
     expect(tmuxMock.getSessionOption).toHaveBeenCalledWith("aimux-repo-111-client-deadbeef", "@aimux-runtime-contract");
   });
 
+  it("ignores malformed client-like sessions for runtime rebuild checks", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111", "aimux-repo-111-client-stale"]);
+    tmuxMock.getSessionOption.mockImplementation((sessionName: string, key: string) => {
+      if (key === "@aimux-runtime-rebuild-required") return "0";
+      if (key === "@aimux-runtime-contract" && sessionName === "aimux-repo-111-client-stale") return null;
+      if (key === "@aimux-runtime-contract") return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
+      return null;
+    });
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+    expect(tmuxMock.getSessionOption).not.toHaveBeenCalledWith(
+      "aimux-repo-111-client-stale",
+      "@aimux-runtime-contract",
+    );
+  });
+
   it("does not require runtime rebuild when the tmux host session is absent", async () => {
     tmuxMock.isAvailable.mockReturnValue(true);
     tmuxMock.listSessionNames.mockReturnValue([]);

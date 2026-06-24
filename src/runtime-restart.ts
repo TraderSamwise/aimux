@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import {
   ensureDaemonRunning,
@@ -20,10 +21,13 @@ import {
   TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
 } from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
+import { getGlobalAimuxDir } from "./paths.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
+const RUNTIME_RESTART_LOCK_STALE_MS = 120_000;
 
 export interface RuntimeRestartProjectResult {
   projectRoot: string;
@@ -75,7 +79,6 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       TmuxRuntimeManager,
       | "getProjectSession"
       | "hasWindow"
-      | "killWindow"
       | "listSessionNames"
       | "listWindows"
       | "linkWindowToSession"
@@ -84,6 +87,11 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       | "configureManagedSession"
     >
   >;
+
+interface RuntimeRestartDashboardTarget {
+  dashboardSession: { sessionName: string };
+  dashboardTarget: TmuxTarget;
+}
 
 export interface RestartAimuxControlPlaneOptions {
   projectRoot?: string;
@@ -98,10 +106,7 @@ export interface RestartAimuxControlPlaneOptions {
     projectRoot: string,
     tmux: RuntimeRestartTmux,
     options: { forceReload: true; openInHostSession: true },
-  ) => {
-    dashboardSession: { sessionName: string };
-    dashboardTarget: TmuxTarget;
-  };
+  ) => RuntimeRestartDashboardTarget;
   isPidAlive?: (pid: number) => boolean;
   isAimuxProjectServiceProcess?: (pid: number, expected?: ProjectServiceIdentity) => boolean;
   sleep?: (ms: number) => Promise<void>;
@@ -121,6 +126,109 @@ function uniqueSorted(values: string[]): string[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function runtimeRestartLockPath(): string {
+  return pathResolve(getGlobalAimuxDir(), "locks", "restart");
+}
+
+function runtimeRestartStealLockPath(): string {
+  return pathResolve(getGlobalAimuxDir(), "locks", "restart.steal");
+}
+
+function readRuntimeRestartLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(joinLockOwnerPath(lockPath), "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryAcquireRuntimeRestartStealLock(): string | null {
+  const stealPath = runtimeRestartStealLockPath();
+  const writeOwner = (): boolean => {
+    try {
+      writeFileSync(
+        joinLockOwnerPath(stealPath),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return true;
+    } catch {
+      rmSync(stealPath, { recursive: true, force: true });
+      return false;
+    }
+  };
+  try {
+    mkdirSync(stealPath, { recursive: false });
+    if (!writeOwner()) return null;
+    return stealPath;
+  } catch {
+    try {
+      if (Date.now() - statSync(stealPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
+        rmSync(stealPath, { recursive: true, force: true });
+        mkdirSync(stealPath, { recursive: false });
+        if (!writeOwner()) return null;
+        return stealPath;
+      }
+    } catch {
+      if (!existsSync(stealPath)) return tryAcquireRuntimeRestartStealLock();
+    }
+    return null;
+  }
+}
+
+function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): string | null {
+  const lockPath = runtimeRestartLockPath();
+  const acquire = (): string | null => {
+    try {
+      mkdirSync(pathResolve(getGlobalAimuxDir(), "locks"), { recursive: true });
+      mkdirSync(lockPath, { recursive: false });
+      try {
+        writeFileSync(
+          joinLockOwnerPath(lockPath),
+          `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+        );
+      } catch (error) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+      return lockPath;
+    } catch {
+      return null;
+    }
+  };
+  const acquired = acquire();
+  if (acquired) return acquired;
+  try {
+    if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
+      const stealPath = tryAcquireRuntimeRestartStealLock();
+      if (!stealPath) return null;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs <= RUNTIME_RESTART_LOCK_STALE_MS) return null;
+        const ownerPid = readRuntimeRestartLockPid(lockPath);
+        if (ownerPid !== null && isPidAlive(ownerPid)) return null;
+        rmSync(lockPath, { recursive: true, force: true });
+        return acquire();
+      } finally {
+        rmSync(stealPath, { recursive: true, force: true });
+      }
+    }
+  } catch {
+    if (!existsSync(lockPath)) return acquire();
+  }
+  return null;
+}
+
+function joinLockOwnerPath(lockPath: string): string {
+  return pathResolve(lockPath, "owner.json");
+}
+
+function releaseRuntimeRestartLock(lockPath: string | null): void {
+  if (!lockPath) return;
+  try {
+    rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
 }
 
 function emptyProjectResult(projectRoot: string): RuntimeRestartProjectResult {
@@ -164,35 +272,11 @@ function selectRuntimeRepairProjectRoots(before: RuntimeCoherenceReport): Set<st
   );
 }
 
-function stopPreRestartDashboards(
-  before: RuntimeCoherenceReport,
-  tmux: RuntimeRestartTmux,
-  dashboardProjectRoots: Set<string>,
-): void {
-  if (!tmux.isAvailable() || !tmux.killWindow || !tmux.hasWindow) return;
-  const seen = new Set<string>();
-  for (const dashboard of before.projects
-    .filter((project) => dashboardProjectRoots.has(project.projectRoot))
-    .flatMap((project) => project.dashboards)) {
-    if (seen.has(dashboard.windowId)) continue;
-    seen.add(dashboard.windowId);
-    const target: TmuxTarget = {
-      sessionName: dashboard.sessionName,
-      windowId: dashboard.windowId,
-      windowIndex: dashboard.windowIndex,
-      windowName: dashboard.windowName,
-    };
-    try {
-      if (tmux.hasWindow(target)) tmux.killWindow(target);
-    } catch {}
-  }
-}
-
 function relinkDashboardToClientSessions(
   projectRoot: string,
   tmux: RuntimeRestartTmux,
   dashboardTarget: TmuxTarget,
-): void {
+): string[] {
   if (
     !tmux.isAvailable() ||
     !tmux.getProjectSession ||
@@ -200,20 +284,22 @@ function relinkDashboardToClientSessions(
     !tmux.listWindows ||
     !tmux.linkWindowToSession
   ) {
-    return;
+    return [];
   }
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  const errors: string[] = [];
   for (const sessionName of tmux.listSessionNames()) {
-    if (!sessionName.startsWith(`${hostSession}-client-`)) continue;
-    const windows = tmux.listWindows(sessionName);
-    const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
-    if (alreadyLinked) continue;
+    if (!isTmuxClientSessionForHost(sessionName, hostSession)) continue;
     try {
-      tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
-    } catch {
-      tmux.linkWindowToSession(sessionName, dashboardTarget);
+      const linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
+      if (linked.windowIndex !== 0) {
+        throw new Error(`dashboard linked at index ${linked.windowIndex}, expected 0`);
+      }
+    } catch (indexedError) {
+      errors.push(`${sessionName}: indexed=${errorMessage(indexedError)}`);
     }
   }
+  return errors;
 }
 
 function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRestartTmux): TmuxTarget[] {
@@ -221,7 +307,7 @@ function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRest
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   return tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession))
     .map((sessionName) => {
       const active = tmux.listWindows!(sessionName).find(
         (window) => window.active && !window.name.startsWith("dashboard"),
@@ -268,7 +354,7 @@ function repairRuntimeContract(input: {
       input.tmux.configureManagedSession(hostSession, input.projectRoot);
       if (input.tmux.listSessionNames) {
         for (const sessionName of input.tmux.listSessionNames()) {
-          if (sessionName.startsWith(`${hostSession}-client-`)) {
+          if (isTmuxClientSessionForHost(sessionName, hostSession)) {
             input.tmux.configureManagedSession(sessionName, input.projectRoot);
             repairedSessions.push(sessionName);
           }
@@ -462,6 +548,20 @@ async function verifyPostRestartCoherence(input: {
 export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
+  const lockPath = tryAcquireRuntimeRestartLock(options.isPidAlive ?? defaultIsPidAlive);
+  if (!lockPath) {
+    throw new Error("aimux restart is already running");
+  }
+  try {
+    return await restartAimuxControlPlaneUnlocked(options);
+  } finally {
+    releaseRuntimeRestartLock(lockPath);
+  }
+}
+
+async function restartAimuxControlPlaneUnlocked(
+  options: RestartAimuxControlPlaneOptions = {},
+): Promise<RuntimeRestartResult> {
   const now = options.now ?? (() => new Date());
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
@@ -480,7 +580,6 @@ export async function restartAimuxControlPlane(
     ];
   });
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
-  stopPreRestartDashboards(before, tmux, dashboardProjectRoots);
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
@@ -551,9 +650,21 @@ export async function restartAimuxControlPlane(
     } else {
       try {
         const activeWindows = captureActiveNonDashboardWindows(projectRoot, tmux);
-        const resolved = resolveDashboard(projectRoot, tmux, { forceReload: true, openInHostSession: true });
-        relinkDashboardToClientSessions(projectRoot, tmux, resolved.dashboardTarget);
-        restoreActiveWindows(tmux, activeWindows);
+        let resolved: RuntimeRestartDashboardTarget | null = null;
+        let relinkErrors: string[] = [];
+        try {
+          const resolvedTarget = resolveDashboard(projectRoot, tmux, { forceReload: true, openInHostSession: true });
+          resolved = resolvedTarget;
+          relinkErrors = relinkDashboardToClientSessions(projectRoot, tmux, resolvedTarget.dashboardTarget);
+        } finally {
+          restoreActiveWindows(tmux, activeWindows);
+        }
+        if (!resolved) {
+          throw new Error("dashboard target was not resolved");
+        }
+        if (relinkErrors.length > 0) {
+          throw new Error(`dashboard relink failed for ${relinkErrors.join("; ")}`);
+        }
         result.dashboard.status = "reloaded";
         result.dashboard.sessionName = resolved.dashboardSession.sessionName;
         result.dashboard.target = resolved.dashboardTarget;
