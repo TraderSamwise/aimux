@@ -5,14 +5,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
-import { updateNotificationContext } from "../notification-context.js";
-import { markSessionViewed } from "../session-viewed.js";
 import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
-import { getGlobalAimuxDir, getProjectStateDir, getProjectStateDirFor } from "../paths.js";
+import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
@@ -62,6 +60,11 @@ const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
+function dashboardProjectRoot(host: DashboardControlHost): string {
+  const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  return projectRoot || process.cwd();
+}
+
 export class DashboardProjectServiceHttpError extends Error {
   readonly tuiApiRecoverable: boolean;
 
@@ -76,11 +79,11 @@ export class DashboardProjectServiceHttpError extends Error {
   }
 }
 
-function writeStatuslineTextFile(name: string, content: string): void {
+function writeStatuslineTextFile(projectRoot: string, name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
   // unique-temp atomic write (never a shared ".tmp"), and never fatal.
   try {
-    writeTextAtomic(join(getProjectStateDir(), "tmux-statusline", name), `${content}\n`);
+    writeTextAtomic(join(getProjectStateDirFor(projectRoot), "tmux-statusline", name), `${content}\n`);
   } catch (error) {
     debug(
       `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -91,22 +94,23 @@ function writeStatuslineTextFile(name: string, content: string): void {
 
 function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: string; windowName: string }): void {
   try {
-    const data = loadStatusline(process.cwd());
+    const projectRoot = dashboardProjectRoot(host);
+    const data = loadStatusline(projectRoot);
     if (!data) return;
     const currentPath =
-      host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? process.cwd();
-    const top = renderTmuxStatuslineFromData(data, process.cwd(), "top", {
+      host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? projectRoot;
+    const top = renderTmuxStatuslineFromData(data, projectRoot, "top", {
       currentWindow: target.windowName,
       currentWindowId: target.windowId,
       currentPath,
     });
-    const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+    const bottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", {
       currentWindow: target.windowName,
       currentWindowId: target.windowId,
       currentPath,
     });
-    writeStatuslineTextFile(`top-${target.windowId}.txt`, top);
-    writeStatuslineTextFile(`bottom-${target.windowId}.txt`, bottom);
+    writeStatuslineTextFile(projectRoot, `top-${target.windowId}.txt`, top);
+    writeStatuslineTextFile(projectRoot, `bottom-${target.windowId}.txt`, bottom);
   } catch {}
 }
 
@@ -144,8 +148,7 @@ export function syncTuiNotificationContext(host: DashboardControlHost, panelOpen
         ? host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex]?.id
         : undefined
       : host.getDashboardSessions()[host.activeIndex]?.id;
-  updateNotificationContext("tui", {
-    focused: true,
+  noteTuiNotificationContext(host, {
     screen: host.dashboardState.screen,
     sessionId: selected,
     panelOpen,
@@ -366,7 +369,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lifecycle = captureDashboardLifecycle(host);
   const repairKey = runtimeGuardRepairKey(state);
   if (!runtimeGuardRepairRetryReady(host, repairKey)) return;
-  const projectRoot = host.projectRoot ?? process.cwd();
+  const projectRoot = dashboardProjectRoot(host);
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
@@ -504,7 +507,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
   host.runtimeGuardProbing = true;
   try {
     const current = host.runtimeGuardState ?? { kind: "ok" };
-    const probed = await probeRuntimeGuard(host.projectRoot ?? process.cwd());
+    const probed = await probeRuntimeGuard(dashboardProjectRoot(host));
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     const next = stabilizeRuntimeGuardProbe(current, probed, host.runtimeGuardDisconnectProbeCount ?? 0);
     host.runtimeGuardDisconnectProbeCount = next.disconnectedProbeCount;
@@ -701,16 +704,12 @@ export function openLiveTmuxWindowForEntry(
   entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
 ): "opened" | "missing" | "error" {
   try {
-    const target = openManagedSessionWindow(host.tmuxRuntimeManager, process.cwd(), entry);
+    const target = openManagedSessionWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), entry);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
-    updateNotificationContext("tui", {
-      focused: true,
-      sessionId: entry.id,
-      panelOpen: false,
-    });
-    markSessionViewed(entry.id);
+    noteTuiNotificationContext(host, { sessionId: entry.id, panelOpen: false });
+    markTuiSessionSeen(host, entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
   } catch (error) {
@@ -720,6 +719,21 @@ export function openLiveTmuxWindowForEntry(
     ]);
     return "error";
   }
+}
+
+function noteTuiNotificationContext(
+  host: DashboardControlHost,
+  patch: { screen?: string; sessionId?: string; panelOpen?: boolean },
+): void {
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, {
+    source: "tui",
+    focused: true,
+    ...patch,
+  }).catch(() => {});
+}
+
+function markTuiSessionSeen(host: DashboardControlHost, sessionId: string): void {
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.markSeen, { session: sessionId }).catch(() => {});
 }
 
 export async function waitAndOpenLiveTmuxWindowForEntry(
@@ -748,7 +762,7 @@ export function openLiveTmuxWindowForService(
   serviceId: string,
 ): "opened" | "missing" | "error" {
   try {
-    const target = openManagedServiceWindow(host.tmuxRuntimeManager, process.cwd(), serviceId);
+    const target = openManagedServiceWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), serviceId);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
@@ -846,7 +860,7 @@ function dashboardControlClientContext(host: DashboardControlHost): {
 }
 
 export function noteLastUsedItem(host: DashboardControlHost, itemId: string): void {
-  markLastUsed(process.cwd(), {
+  markLastUsed(dashboardProjectRoot(host), {
     itemId,
     clientSession: host.tmuxRuntimeManager.currentClientSession() ?? undefined,
   });
@@ -1036,7 +1050,7 @@ async function requestProjectService(
   path: string,
   opts: { method: "GET" | "POST"; body?: unknown; timeoutMs?: number },
 ): Promise<any> {
-  const projectRoot = process.cwd();
+  const projectRoot = dashboardProjectRoot(host);
   const timeoutMs = opts.timeoutMs ?? 1000;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
@@ -1117,7 +1131,7 @@ export async function resolveCurrentProjectServiceEndpointForDashboard(
   host: DashboardControlHost,
   timeoutMs = 1000,
 ): Promise<{ host: string; port: number; pid?: number } | null> {
-  const projectRoot = process.cwd();
+  const projectRoot = dashboardProjectRoot(host);
   const deadline = Date.now() + timeoutMs;
   for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
     let endpoint = loadMetadataEndpoint(projectRoot);
@@ -1129,7 +1143,12 @@ export async function resolveCurrentProjectServiceEndpointForDashboard(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
-    const endpointState = await endpointStateForRequest(host, endpoint, remainingProjectServiceDeadline(deadline));
+    const endpointState = await endpointStateForRequest(
+      host,
+      endpoint,
+      remainingProjectServiceDeadline(deadline),
+      projectRoot,
+    );
     if (endpointState === "current") return endpoint;
     if (endpointState === "stale" && Date.now() < deadline) {
       clearProjectServiceEndpointHealth(host);
@@ -1147,28 +1166,33 @@ async function endpointStateForRequest(
   host: DashboardControlHost,
   endpoint: { host: string; port: number; pid?: number },
   timeoutMs: number,
+  projectRoot = dashboardProjectRoot(host),
 ): Promise<ProjectServiceEndpointState> {
-  const key = projectServiceEndpointHealthKey(endpoint);
+  const key = projectServiceEndpointHealthKey(endpoint, projectRoot);
   const cached = host.dashboardProjectServiceEndpointHealth as { key?: string; checkedAt?: number } | undefined;
   if (cached?.key === key && typeof cached.checkedAt === "number") {
     if (Date.now() - cached.checkedAt <= PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS) return "current";
   }
-  const current = await endpointMatchesCurrentProjectService(endpoint, timeoutMs);
-  if (current === "current") markProjectServiceEndpointCurrent(host, endpoint);
+  const current = await endpointMatchesCurrentProjectService(endpoint, timeoutMs, projectRoot);
+  if (current === "current") markProjectServiceEndpointCurrent(host, endpoint, projectRoot);
   else clearProjectServiceEndpointHealth(host);
   return current;
 }
 
-function projectServiceEndpointHealthKey(endpoint: { host: string; port: number; pid?: number }): string {
-  return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}`;
+function projectServiceEndpointHealthKey(
+  endpoint: { host: string; port: number; pid?: number },
+  projectRoot: string,
+): string {
+  return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}:${getProjectStateDirFor(projectRoot)}`;
 }
 
 function markProjectServiceEndpointCurrent(
   host: DashboardControlHost,
   endpoint: { host: string; port: number; pid?: number },
+  projectRoot: string,
 ): void {
   host.dashboardProjectServiceEndpointHealth = {
-    key: projectServiceEndpointHealthKey(endpoint),
+    key: projectServiceEndpointHealthKey(endpoint, projectRoot),
     checkedAt: Date.now(),
   };
 }
@@ -1180,6 +1204,7 @@ function clearProjectServiceEndpointHealth(host: DashboardControlHost): void {
 async function endpointMatchesCurrentProjectService(
   endpoint: { host: string; port: number; pid?: number },
   timeoutMs: number,
+  projectRoot: string,
 ): Promise<ProjectServiceEndpointState> {
   try {
     const { status, json } = await requestJson<{
@@ -1189,7 +1214,7 @@ async function endpointMatchesCurrentProjectService(
     }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
     if (status < 200 || status >= 300) return "unknown";
     return json?.pid === endpoint.pid &&
-      json?.projectStateDir === getProjectStateDirFor(process.cwd()) &&
+      json?.projectStateDir === getProjectStateDirFor(projectRoot) &&
       manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
       ? "current"
       : "stale";
@@ -1279,12 +1304,13 @@ export async function ensureDashboardControlPlane(
     return;
   }
   const recovery = (async () => {
+    const projectRoot = dashboardProjectRoot(host);
     await ensureDaemonRunning();
     if (opts.restartProjectService) {
-      await stopProjectService(process.cwd());
-      removeMetadataEndpoint(process.cwd());
+      await stopProjectService(projectRoot);
+      removeMetadataEndpoint(projectRoot);
     }
-    await ensureProjectService(process.cwd());
+    await ensureProjectService(projectRoot);
   })();
   host.dashboardServiceRecovery = recovery;
   try {

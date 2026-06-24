@@ -479,29 +479,12 @@ describe("MetadataServer threads API", () => {
       kind: "needs_input",
     });
 
-    const inboxRes = await fetch(`${base}/inbox?participant=reviewer`);
-    const inbox = (await inboxRes.json()) as { inbox: Array<{ id: string; subjectId: string; title: string }> };
-    expect(inboxRes.ok).toBe(true);
-    expect(inbox.inbox).toEqual([expect.objectContaining({ subjectId: roleHandoff.thread.id })]);
-
-    const inboxWithNotificationsRes = await fetch(`${base}/inbox?participant=reviewer&includeNotifications=1`);
-    const inboxWithNotifications = (await inboxWithNotificationsRes.json()) as {
-      inbox: Array<{ title: string; subjectId: string }>;
-    };
-    expect(inboxWithNotifications.inbox.map((entry) => entry.title)).toContain("Reviewer alert");
-
-    const readInboxRes = await fetch(`${base}/inbox/read`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ participant: "reviewer" }),
-    });
-    expect(readInboxRes.ok).toBe(true);
-    const readInboxAgainRes = await fetch(`${base}/inbox?participant=reviewer&unread=1`);
-    const readInboxAgain = (await readInboxAgainRes.json()) as { inbox: unknown[] };
-    expect(readInboxAgain.inbox).toEqual([]);
     const notificationStillUnreadRes = await fetch(`${base}/notifications?sessionId=reviewer&unread=1`);
-    const notificationStillUnread = (await notificationStillUnreadRes.json()) as { notifications: unknown[] };
+    const notificationStillUnread = (await notificationStillUnreadRes.json()) as {
+      notifications: Array<{ title: string }>;
+    };
     expect(notificationStillUnread.notifications).toHaveLength(1);
+    expect(notificationStillUnread.notifications[0]?.title).toBe("Reviewer alert");
 
     const taskRes = await fetch(`${base}/tasks/assign`, {
       method: "POST",
@@ -3352,22 +3335,17 @@ describe("MetadataServer threads API", () => {
     expect(listed.unreadCount).toBe(2);
   });
 
-  it("streams project_update invalidations after inbox mutations", async () => {
+  it("streams project_update invalidations after notification mutations", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
-    for (const pathname of ["/inbox/read", "/inbox/clear"]) {
-      const handoffRes = await fetch(`${base}/handoff`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          from: "lead",
-          assignee: "codex-1",
-          body: `Please inspect ${pathname}.`,
-        }),
+    for (const pathname of ["/notifications/read", "/notifications/clear"]) {
+      upsertNotification({
+        title: `Please inspect ${pathname}.`,
+        body: "notification mutation",
+        sessionId: "codex-1",
       });
-      expect(handoffRes.ok).toBe(true);
 
       const streamRes = await fetch(`${base}/events`);
       expect(streamRes.ok).toBe(true);
@@ -3377,14 +3355,15 @@ describe("MetadataServer threads API", () => {
       const readRes = await fetch(`${base}${pathname}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ participant: "codex-1" }),
+        body: JSON.stringify({ sessionId: "codex-1" }),
       });
       expect(readRes.ok).toBe(true);
 
       const text = await streamRead;
       expect(text).toContain("event: project_update");
       expect(text).toContain('"coordination-worklist"');
-      expect(text).toContain('"inbox"');
+      expect(text).toContain('"notifications"');
+      expect(text).not.toContain('"inbox"');
     }
   });
 

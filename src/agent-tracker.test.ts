@@ -96,4 +96,30 @@ describe("AgentTracker", () => {
     expect(derived?.activity).toBe("idle");
     expect(derived?.unseenCount).toBe(0);
   });
+
+  it("uses the explicit project root when suppressing unseen events", () => {
+    const otherRoot = mkdtempSync(join(tmpdir(), "aimux-agent-tracker-other-"));
+    mkdirSync(join(otherRoot, ".git"), { recursive: true });
+    try {
+      const tracker = new AgentTracker();
+      updateNotificationContext(
+        "tui",
+        {
+          focused: true,
+          sessionId: "s1",
+          panelOpen: false,
+        },
+        otherRoot,
+      );
+
+      tracker.emit("s1", { kind: "needs_input", message: "Need your reply" }, otherRoot);
+
+      const derived = loadMetadataState(otherRoot).sessions.s1?.derived;
+      expect(derived?.activity).toBe("waiting");
+      expect(derived?.unseenCount).toBe(0);
+      expect(loadMetadataState(repoRoot).sessions.s1).toBeUndefined();
+    } finally {
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
+  });
 });

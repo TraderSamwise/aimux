@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
+import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir, getRepoRoot } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import {
   type MetadataTone,
@@ -112,13 +112,6 @@ import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { isUsableDashboardTarget } from "./dashboard/targets.js";
 import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
-import {
-  createRuntimeExchangeStore,
-  type RuntimeExchangeInboxEntry,
-  type RuntimeExchangeMessage,
-  type RuntimeExchangeTask,
-  type RuntimeExchangeThread,
-} from "./runtime-core/exchange-store.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
@@ -264,6 +257,14 @@ function listLibraryDocuments(projectRoot = process.cwd()) {
       return [];
     }
   });
+}
+
+function metadataProjectRoot(): string | undefined {
+  try {
+    return getRepoRoot();
+  } catch {
+    return undefined;
+  }
 }
 
 interface MetadataServerOptions {
@@ -642,25 +643,33 @@ function markActiveWindowFocused(
     if (!currentWindowId) return false;
     const dashboardTarget = findExistingDashboardTarget(tmux, projectRoot, currentClientSession);
     if (dashboardTarget?.windowId !== currentWindowId) return false;
-    updateNotificationContext("tui", {
-      focused: true,
-      screen: "dashboard",
-      panelOpen: false,
-      sessionId: undefined,
-    });
+    updateNotificationContext(
+      "tui",
+      {
+        focused: true,
+        screen: "dashboard",
+        panelOpen: false,
+        sessionId: undefined,
+      },
+      metadataProjectRoot() ?? projectRoot,
+    );
     return true;
   }
   if (!currentWindowId) return false;
   const match = findProjectManagedWindow(tmux, projectRoot, { windowId: currentWindowId });
   if (!match) return false;
-  updateNotificationContext("tui", {
-    focused: true,
-    screen: match.metadata.kind === "service" ? "service" : "agent",
-    sessionId: match.metadata.sessionId,
-    panelOpen: false,
-  });
+  updateNotificationContext(
+    "tui",
+    {
+      focused: true,
+      screen: match.metadata.kind === "service" ? "service" : "agent",
+      sessionId: match.metadata.sessionId,
+      panelOpen: false,
+    },
+    metadataProjectRoot() ?? projectRoot,
+  );
   if (match.metadata.kind === "agent") {
-    markSessionViewed(match.metadata.sessionId);
+    markSessionViewed(match.metadata.sessionId, metadataProjectRoot() ?? projectRoot);
   }
   markTargetUsed(tmux, projectRoot, match.target, currentClientSession, match.metadata.sessionId);
   return true;
@@ -1062,105 +1071,6 @@ function routeRecipients(input: { to?: unknown; assignee?: unknown; tool?: unkno
   return [optionalString(input.assignee), optionalString(input.tool)].filter((entry): entry is string =>
     Boolean(entry),
   );
-}
-
-function runtimeInboxEntries(
-  input: { unreadOnly?: boolean; participantId?: string; includeDone?: boolean; includeNotifications?: boolean } = {},
-): Array<Record<string, unknown>> {
-  const exchange = createRuntimeExchangeStore().read();
-  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
-  const taskById = new Map(exchange.tasks.map((task) => [task.id, task] as const));
-  const latestMessageByThread = new Map<string, (typeof exchange.messages)[number]>();
-  for (const message of exchange.messages) {
-    const existing = latestMessageByThread.get(message.threadId);
-    if (!existing || existing.ts < message.ts) latestMessageByThread.set(message.threadId, message);
-  }
-  const entries = exchange.inbox
-    .filter((entry) => !input.participantId || entry.participantId === input.participantId)
-    .filter(
-      (entry) => input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true,
-    )
-    .filter((entry) => input.includeDone || entry.state !== "done")
-    .filter((entry) => !input.unreadOnly || entry.state !== "done")
-    .map((entry) => runtimeInboxEntry(entry, threadById, taskById, latestMessageByThread))
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
-  return entries.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-}
-
-function runtimeInboxEntry(
-  entry: RuntimeExchangeInboxEntry,
-  threadById: Map<string, RuntimeExchangeThread>,
-  taskById: Map<string, RuntimeExchangeTask>,
-  latestMessageByThread: Map<string, RuntimeExchangeMessage>,
-): Record<string, unknown> | undefined {
-  if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-    const thread = threadById.get(entry.subjectId);
-    if (!thread) return undefined;
-    const message = latestMessageByThread.get(thread.id);
-    return {
-      id: entry.id,
-      subjectKind: entry.subjectKind,
-      subjectId: entry.subjectId,
-      participantId: entry.participantId,
-      sessionId: entry.participantId,
-      title: thread.title,
-      subtitle: `${thread.kind} · ${thread.status}`,
-      body: message?.body ?? thread.title,
-      createdAt: entry.updatedAt,
-      unread: entry.state !== "done",
-      state: entry.state,
-      urgency: entry.urgency,
-    };
-  }
-  const task = taskById.get(entry.subjectId);
-  if (!task) return undefined;
-  return {
-    id: entry.id,
-    subjectKind: entry.subjectKind,
-    subjectId: entry.subjectId,
-    participantId: entry.participantId,
-    sessionId: entry.participantId,
-    title: task.description,
-    subtitle: `${task.type ?? "task"} · ${task.status}`,
-    body: task.result ?? task.error ?? task.prompt,
-    createdAt: entry.updatedAt,
-    unread: entry.state !== "done",
-    state: entry.state,
-    urgency: entry.urgency,
-  };
-}
-
-function markRuntimeInboxRead(
-  input: { id?: string; participantId?: string; includeNotifications?: boolean } = {},
-): number {
-  const store = createRuntimeExchangeStore();
-  const exchange = store.read();
-  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
-  const entries = store
-    .read()
-    .inbox.filter((entry) => !input.id || entry.id === input.id)
-    .filter((entry) => !input.participantId || entry.participantId === input.participantId)
-    .filter(
-      (entry) => input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true,
-    );
-  let updated = 0;
-  for (const entry of entries) {
-    if (entry.state !== "done") updated += 1;
-    if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-      markThreadSeen(entry.subjectId, entry.participantId);
-    }
-  }
-  store.update((exchange) => ({
-    ...exchange,
-    inbox: exchange.inbox.map((entry) =>
-      (!input.id || entry.id === input.id) &&
-      (!input.participantId || entry.participantId === input.participantId) &&
-      (input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true)
-        ? { ...entry, state: "done" }
-        : entry,
-    ),
-  }));
-  return updated;
 }
 
 function teammateApiRecord(session: DesktopSessionRecord): Record<string, unknown> {
@@ -1793,20 +1703,6 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.inbox) {
-      const unreadOnly = url.searchParams.get("unread") === "1";
-      const participantId = url.searchParams.get("participant")?.trim() || undefined;
-      const includeDone = url.searchParams.get("includeDone") === "1";
-      const includeNotifications = url.searchParams.get("includeNotifications") === "1";
-      const inbox = runtimeInboxEntries({ unreadOnly, participantId, includeDone, includeNotifications });
-      send(res, 200, {
-        ok: true,
-        inbox,
-        unreadCount: inbox.filter((entry) => entry.unread).length,
-      });
-      return;
-    }
-
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.health) {
       send(res, 200, {
         ok: true,
@@ -2362,7 +2258,7 @@ export class MetadataServer {
           }
           const focusResult = focusControlTarget(tmux, match.target, focusClientSession, clientTty, focus);
           if (focus && itemId && session?.id === itemId) {
-            markSessionViewed(itemId);
+            markSessionViewed(itemId, metadataProjectRoot());
           }
           if (focus) {
             markTargetUsed(tmux, process.cwd(), match.target, focusClientSession, itemId);
@@ -2426,7 +2322,7 @@ export class MetadataServer {
         const itemId =
           match?.metadata.kind === "agent" || match?.metadata.kind === "service" ? match.metadata.sessionId : undefined;
         if (focus && match?.metadata.kind === "agent") {
-          markSessionViewed(match.metadata.sessionId);
+          markSessionViewed(match.metadata.sessionId, metadataProjectRoot());
         }
         if (focus) {
           markTargetUsed(tmux, process.cwd(), match.target, focusClientSession, itemId);
@@ -2539,7 +2435,7 @@ export class MetadataServer {
         }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         if (focus) {
-          markSessionViewed(item.metadata.sessionId);
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
           this.notifyChange();
         }
@@ -2591,7 +2487,7 @@ export class MetadataServer {
         }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         if (focus) {
-          markSessionViewed(item.metadata.sessionId);
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
           this.notifyChange();
         }
@@ -2646,7 +2542,7 @@ export class MetadataServer {
         }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         if (focus) {
-          markSessionViewed(item.metadata.sessionId);
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
           this.notifyChange();
         }
@@ -2773,7 +2669,7 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.markSeen) {
         const body = (await readJson(req)) as { session: string };
-        markSessionViewed(body.session);
+        markSessionViewed(body.session, metadataProjectRoot());
         this.notifyChange();
         send(res, 200, { ok: true });
         return;
@@ -3118,12 +3014,16 @@ export class MetadataServer {
           panelOpen?: boolean;
         };
         const source = body.source === "desktop" ? "desktop" : "tui";
-        const context = updateNotificationContext(source, {
-          focused: Boolean(body.focused),
-          screen: body.screen?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
-          panelOpen: Boolean(body.panelOpen),
-        });
+        const context = updateNotificationContext(
+          source,
+          {
+            focused: Boolean(body.focused),
+            screen: body.screen?.trim() || undefined,
+            sessionId: body.sessionId?.trim() || undefined,
+            panelOpen: Boolean(body.panelOpen),
+          },
+          metadataProjectRoot(),
+        );
         send(res, 200, { ok: true, context });
         return;
       }
@@ -3136,9 +3036,10 @@ export class MetadataServer {
           id: body.id?.trim() || undefined,
           ids,
           sessionId,
+          projectRoot: metadataProjectRoot(),
         });
         this.notifyProjectChanged({
-          views: ["coordination-worklist", "inbox", "notifications"],
+          views: ["coordination-worklist", "notifications"],
           reason: "notifications-read",
           sessionId,
         });
@@ -3154,9 +3055,10 @@ export class MetadataServer {
           id: body.id?.trim() || undefined,
           ids,
           sessionId,
+          projectRoot: metadataProjectRoot(),
         });
         this.notifyProjectChanged({
-          views: ["coordination-worklist", "inbox", "notifications"],
+          views: ["coordination-worklist", "notifications"],
           reason: "notifications-clear",
           sessionId,
         });
@@ -3179,32 +3081,6 @@ export class MetadataServer {
         });
         this.notifyChange();
         send(res, 200, { ok: true, cleared });
-        return;
-      }
-
-      if (
-        req.method === "POST" &&
-        (url.pathname === PROJECT_API_ROUTES.runtime.inboxRead ||
-          url.pathname === PROJECT_API_ROUTES.runtime.inboxClear)
-      ) {
-        const body = (await readJson(req)) as {
-          id?: string;
-          sessionId?: string;
-          participant?: string;
-          includeNotifications?: boolean;
-        };
-        const participantId = body.participant?.trim() || body.sessionId?.trim() || undefined;
-        const updated = markRuntimeInboxRead({
-          id: body.id?.trim() || undefined,
-          participantId,
-          includeNotifications: body.includeNotifications === true,
-        });
-        this.notifyProjectChanged({
-          views: ["coordination-worklist", "inbox"],
-          reason: url.pathname === PROJECT_API_ROUTES.runtime.inboxClear ? "inbox-clear" : "inbox-read",
-          sessionId: participantId,
-        });
-        send(res, 200, { ok: true, updated });
         return;
       }
 

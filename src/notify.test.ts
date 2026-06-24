@@ -73,7 +73,9 @@ describe("notifyAlert mobile choke point", () => {
 
   it("does not forward when the alert is focus-suppressed", () => {
     suppress.mockReturnValue(true);
-    expect(notifyAlert(alert())).toBe(false);
+    const event = alert({ projectRoot: "/tmp/project" });
+    expect(notifyAlert(event)).toBe(false);
+    expect(suppress).toHaveBeenCalledWith(event, "/tmp/project");
     expect(forward).not.toHaveBeenCalled();
   });
 
