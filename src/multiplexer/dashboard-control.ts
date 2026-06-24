@@ -304,11 +304,11 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     clearTimeout(repairTimeout);
     repairTimeout = null;
   };
-  const fail = (message: string) => {
+  const fail = (message: string, options: { keepRepairLock?: boolean } = {}) => {
     if (settled) return;
     settled = true;
     clearRepairTimeout();
-    releaseRuntimeGuardRepairLock(lockPath);
+    if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
     if (host.runtimeGuardRepairBusy) {
@@ -358,7 +358,9 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
           child.kill?.("SIGTERM");
         } catch {}
       }
-      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
+      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
+        keepRepairLock: !childExited,
+      });
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));

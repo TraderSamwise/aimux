@@ -70,6 +70,35 @@ describe("TmuxRuntimeManager", () => {
     expect(manager.listWindows("aimux-mobile-abc")).toEqual([]);
   });
 
+  it("ignores malformed client sessions when finding the attached client for a target", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === "list-clients -F #{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}") {
+        return [
+          "/dev/ttys100\taimux-mobile-abc-client-live\t@3\tbad",
+          "/dev/ttys101\taimux-mobile-abc-client-deadbeef\t@9\tgood",
+        ].join("\n");
+      }
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    expect(
+      manager.getAttachedClientForTarget({
+        sessionName: "aimux-mobile-abc",
+        windowId: "@3",
+        windowIndex: 3,
+        windowName: "codex",
+      }),
+    ).toEqual({
+      tty: "/dev/ttys101",
+      sessionName: "aimux-mobile-abc-client-deadbeef",
+      windowId: "@9",
+      name: "good",
+    });
+  });
+
   it("derives deterministic per-project session names", () => {
     const manager = new TmuxRuntimeManager(createExecMock());
     const a = manager.getProjectSession("/repo/mobile");
@@ -750,6 +779,47 @@ describe("TmuxRuntimeManager", () => {
       calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
     ).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:1`)).toBe(true);
+    expect(interactiveCalls.at(-1)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:0`]);
+  });
+
+  it("moves an already linked dashboard into an empty requested client slot", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      const moved = calls.some(
+        (call) => call.args.join(" ") === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`,
+      );
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) return "";
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        return moved ? "@10\t0\tdashboard\t1\t100" : "@10\t1\tdashboard\t1\t100";
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const manager = new TmuxRuntimeManager(exec, (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    });
+
+    manager.openTarget(
+      { sessionName: hostSessionName, windowId: "@10", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: true, clientSuffix: "268eff9c" },
+    );
+
+    expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`)).toBe(false);
+    expect(
+      calls.some((call) => call.args.join(" ") === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+    ).toBe(true);
+    expect(calls.some((call) => call.args[0] === "unlink-window")).toBe(false);
     expect(interactiveCalls.at(-1)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:0`]);
   });
 

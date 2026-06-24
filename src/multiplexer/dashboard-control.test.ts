@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -864,7 +864,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["spawn failed"]);
   });
 
-  it("fails and releases the busy overlay when guarded repair hangs", async () => {
+  it("fails locally and keeps the repair lock when guarded repair hangs", async () => {
     vi.useFakeTimers();
     const child = {
       pid: 7654,
@@ -892,6 +892,7 @@ describe("startRuntimeGuardRepair", () => {
     }
 
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(existsSync(join(testAimuxHome!, "locks", "dashboard-control-plane-repair"))).toBe(true);
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.runtimeGuardRepairBusy).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
@@ -1108,10 +1109,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(child.kill).not.toHaveBeenCalled();
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
-    expect(host.showDashboardError).toHaveBeenCalledWith(
-      "Aimux repair failed",
-      ["aimux repair timed out after 45s"],
-    );
+    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
   });
 
   it("does not mark successful guarded repair failed after leaving dashboard mode", async () => {
