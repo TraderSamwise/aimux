@@ -30,6 +30,7 @@ class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingViews: Set<ProjectApiView> | null = null;
+  private refreshInFlightGeneration: number | null = null;
   private generation = 0;
   private disposed = false;
 
@@ -60,6 +61,7 @@ class DashboardProjectEventAdapter {
       this.refreshTimer = null;
     }
     this.pendingViews = null;
+    this.refreshInFlightGeneration = null;
   }
 
   dispose(): void {
@@ -91,7 +93,11 @@ class DashboardProjectEventAdapter {
     const pending = this.pendingViews ?? new Set<ProjectApiView>();
     for (const view of views) pending.add(view);
     this.pendingViews = pending;
-    if (this.refreshTimer) return;
+    if (this.refreshTimer || this.refreshInFlightGeneration !== null) return;
+    this.armRefreshTimer();
+  }
+
+  private armRefreshTimer(): void {
     const generation = this.generation;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
@@ -102,8 +108,32 @@ class DashboardProjectEventAdapter {
       }
       const current = this.pendingViews;
       this.pendingViews = null;
-      if (current) void this.refreshViews(current, generation).catch(() => undefined);
+      if (current) void this.runRefresh(current, generation);
     }, 25);
+  }
+
+  private async runRefresh(views: Set<ProjectApiView>, generation: number): Promise<void> {
+    if (generation !== this.generation || this.refreshInFlightGeneration !== null) return;
+    this.refreshInFlightGeneration = generation;
+    try {
+      await this.refreshViews(views, generation);
+    } catch (error) {
+      debug(
+        `dashboard project event refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        "dashboard",
+      );
+    } finally {
+      if (this.refreshInFlightGeneration === generation) this.refreshInFlightGeneration = null;
+      if (
+        generation === this.generation &&
+        !this.disposed &&
+        this.host.mode === "dashboard" &&
+        this.pendingViews &&
+        !this.refreshTimer
+      ) {
+        this.armRefreshTimer();
+      }
+    }
   }
 
   private async runLoop(signal: AbortSignal): Promise<void> {
@@ -222,7 +252,19 @@ class DashboardProjectEventAdapter {
       renderLifecycles.push(graveyardLifecycle);
       work.push(refreshGraveyardEntriesFromService(this.host, { force: true, lifecycle: graveyardLifecycle }));
     }
-    await Promise.all(work.filter(Boolean));
+    const tasks = work.filter((task): task is Promise<unknown> => Boolean(task));
+    const results = await Promise.allSettled(tasks);
+    for (const result of results) {
+      if (result.status === "rejected") {
+        debug(
+          `dashboard project event view refresh failed: ${
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
+          }`,
+          "dashboard",
+        );
+      }
+    }
+    if (tasks.length > 0 && results.every((result) => result.status === "rejected")) return;
     if (generation !== this.generation) return;
     if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(this.host, token))) return;
     this.host.renderCurrentDashboardView?.();
