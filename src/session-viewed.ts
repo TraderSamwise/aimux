@@ -19,7 +19,7 @@ function shouldClearAttention(
 
 export function markSessionViewed(sessionId: string, projectRoot?: string): MarkSessionViewedResult {
   const notifications = loadConfig({ projectRoot }).notifications;
-  const notificationsRead = notifications.markReadOnView ? markNotificationsRead({ sessionId }) : 0;
+  const notificationsRead = notifications.markReadOnView ? markNotificationsRead({ sessionId, projectRoot }) : 0;
   let attentionCleared = false;
 
   updateSessionMetadata(

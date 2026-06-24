@@ -513,6 +513,11 @@ describe("dashboard live target activation", () => {
     const bottomPath = join(stateDir, "tmux-statusline", "bottom-@agent.txt");
     expect(readFileSync(topPath, "utf8")).toContain("aimux-dashboard-project-");
     expect(readFileSync(bottomPath, "utf8").length).toBeGreaterThan(0);
+    const { loadNotificationContexts } = await import("../notification-context.js");
+    expect(loadNotificationContexts(projectRoot).contexts.tui).toMatchObject({
+      focused: true,
+      sessionId: "codex-1",
+    });
     expect(existsSync(join(getProjectStateDirFor(process.cwd()), "tmux-statusline", "top-@agent.txt"))).toBe(false);
     rmSync(projectRoot, { recursive: true, force: true });
   });

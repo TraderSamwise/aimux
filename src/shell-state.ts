@@ -65,7 +65,7 @@ export function applyShellStateTransition(input: ApplyShellStateInput): ApplyShe
       );
     }
     if (previousActivity !== "running") {
-      clearNotifications({ sessionId });
+      clearNotifications({ sessionId, projectRoot: input.projectRoot });
       input.tracker.setActivity(sessionId, "running", input.projectRoot);
       input.tracker.setAttention(sessionId, "normal", input.projectRoot);
       input.tracker.markSeen(sessionId, input.projectRoot);

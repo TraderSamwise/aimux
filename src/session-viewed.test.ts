@@ -65,6 +65,36 @@ describe("markSessionViewed", () => {
     expect(listNotifications({ sessionId: "claude-1" })[0]?.unread).toBe(false);
   });
 
+  it("marks notifications read in the explicit project root", () => {
+    const otherRoot = mkdtempSync(join(tmpdir(), "aimux-session-viewed-other-"));
+    mkdirSync(join(otherRoot, ".git"), { recursive: true });
+    try {
+      updateSessionMetadata(
+        "claude-other",
+        (current) => ({
+          ...current,
+          derived: { ...(current.derived ?? {}), activity: "waiting", attention: "needs_input", unseenCount: 2 },
+        }),
+        otherRoot,
+      );
+      addNotification({
+        title: "Other project",
+        body: "Agent is waiting",
+        sessionId: "claude-other",
+        kind: "needs_input",
+        projectRoot: otherRoot,
+      });
+
+      const result = markSessionViewed("claude-other", otherRoot);
+
+      expect(result).toEqual({ notificationsRead: 1, attentionCleared: true });
+      expect(listNotifications({ sessionId: "claude-other", projectRoot: otherRoot })[0]?.unread).toBe(false);
+      expect(listNotifications({ sessionId: "claude-other" })).toHaveLength(0);
+    } finally {
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
+  });
+
   it("leaves a genuinely working agent's activity untouched", () => {
     updateSessionMetadata(
       "claude-busy",

@@ -779,14 +779,18 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   const session = host.sessions[index];
   const sid = session.id;
   host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
-  updateNotificationContext("tui", {
-    focused: true,
-    screen: "agent",
-    sessionId: sid,
-    panelOpen: false,
-  });
+  updateNotificationContext(
+    "tui",
+    {
+      focused: true,
+      screen: "agent",
+      sessionId: sid,
+      panelOpen: false,
+    },
+    host.projectRoot,
+  );
   host.noteLastUsedItem(sid);
-  markSessionViewed(sid);
+  markSessionViewed(sid, host.projectRoot);
   host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {

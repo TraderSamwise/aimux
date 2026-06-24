@@ -129,7 +129,8 @@ export class ProjectEventBus {
       reasonLabel: alert.reasonLabel,
       dedupeKey,
       createdAt: ts,
-      unread: !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId),
+      unread:
+        !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId, alert.projectRoot),
       interaction: alert.interaction,
     });
 
