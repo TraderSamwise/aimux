@@ -173,6 +173,8 @@ describe("notifications store", () => {
         views: expect.arrayContaining(["coordination-worklist", "notifications"]),
       }),
     ]);
+    const projectUpdate = events[1] as { views?: string[] };
+    expect(projectUpdate.views ?? []).not.toContain("inbox");
   });
 
   it("does not treat dashboard row selection as direct session focus", () => {
