@@ -108,6 +108,7 @@ import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux/runtime-manage
 import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
+import { isUsableDashboardTarget } from "./dashboard/targets.js";
 import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import {
   createRuntimeExchangeStore,
@@ -826,6 +827,7 @@ function findExistingDashboardTarget(
   projectRoot: string,
   currentClientSession: string | undefined,
 ): TmuxTarget | null {
+  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   const sessionNames = tmux
     .listSessionNames()
@@ -844,7 +846,7 @@ function findExistingDashboardTarget(
         windowIndex: window.index,
         windowName: window.name,
       };
-      if (!tmux.isWindowAlive(target)) continue;
+      if (!isUsableDashboardTarget(tmux, projectRoot, dashboardBuildStamp, target)) continue;
       return target;
     }
   }
