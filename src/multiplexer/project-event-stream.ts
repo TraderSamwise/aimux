@@ -29,6 +29,10 @@ export const PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS = 35_000;
 export const PROJECT_EVENT_STREAM_RETRY_BASE_MS = 1_000;
 export const PROJECT_EVENT_STREAM_RETRY_MAX_MS = 15_000;
 
+function projectEventStreamProjectRoot(host: ProjectEventStreamHost): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+}
+
 class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -194,7 +198,7 @@ class DashboardProjectEventAdapter {
           `dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`,
           "dashboard",
         );
-        removeMetadataEndpoint(process.cwd());
+        removeMetadataEndpoint(projectEventStreamProjectRoot(this.host));
         await this.recover(signal);
         await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
       } finally {
@@ -230,7 +234,6 @@ class DashboardProjectEventAdapter {
         "services",
         "worktrees",
         "coordination-worklist",
-        "inbox",
         "notifications",
         "tasks",
         "threads",
@@ -241,7 +244,7 @@ class DashboardProjectEventAdapter {
     }
     if (
       this.host.isDashboardScreen?.("coordination") &&
-      touches(views, ["coordination-worklist", "inbox", "notifications", "tasks", "threads"])
+      touches(views, ["coordination-worklist", "notifications", "tasks", "threads"])
     ) {
       const coordinationLifecycle = screenLifecycle("coordination");
       renderLifecycles.push(coordinationLifecycle);
@@ -260,7 +263,7 @@ class DashboardProjectEventAdapter {
       renderLifecycles.push(topologyLifecycle);
       work.push(refreshTopology(this.host, { force: true, lifecycle: topologyLifecycle }));
     }
-    if (this.host.isDashboardScreen?.("library") && touches(views, ["library", "plans"])) {
+    if (this.host.isDashboardScreen?.("library") && touches(views, ["library"])) {
       const libraryLifecycle = screenLifecycle("library");
       renderLifecycles.push(libraryLifecycle);
       work.push(refreshLibrary(this.host, { force: true, lifecycle: libraryLifecycle }));

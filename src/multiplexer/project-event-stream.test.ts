@@ -315,6 +315,7 @@ describe("dashboard project event refresh", () => {
     });
     const host: any = {
       mode: "dashboard",
+      projectRoot: "/repo/project",
       dashboardInputEpoch: 0,
       ensureDashboardControlPlane: vi.fn(async () => true),
       isDashboardScreen: vi.fn(() => false),
@@ -328,7 +329,7 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(25);
 
       expect(fetchMock).toHaveBeenCalledOnce();
-      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
       expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
@@ -358,6 +359,7 @@ describe("dashboard project event refresh", () => {
     });
     const host: any = {
       mode: "dashboard",
+      projectRoot: "/repo/project",
       dashboardInputEpoch: 0,
       ensureDashboardControlPlane: vi.fn(async () => true),
       isDashboardScreen: vi.fn(() => false),
@@ -371,7 +373,7 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS);
       await vi.advanceTimersByTimeAsync(25);
 
-      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
       expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
