@@ -261,7 +261,7 @@ describe("tmux-control.sh", () => {
         ],
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {
         "@dash": {
@@ -290,7 +290,7 @@ describe("tmux-control.sh", () => {
       "--project-root",
       projectRoot,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/stale",
       "--current-window",
@@ -302,7 +302,7 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
     expect(readAimuxLog(envRoot)).toEqual([
       `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
@@ -320,7 +320,7 @@ describe("tmux-control.sh", () => {
       },
       panes: {
         "@dash": {
-          sessionName: "aimux-proj-client-live",
+          sessionName: "aimux-proj-client-1234abcd",
           windowId: "@dash",
           windowName: "dashboard-live",
           clientTty: "/dev/live",
@@ -357,7 +357,7 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
     expect(readAimuxLog(envRoot)).toEqual([
       `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
@@ -429,6 +429,54 @@ describe("tmux-control.sh", () => {
     expect(log).toContain("show-options -v -t aimux-client-api-1234567890 @aimux-project-root");
     expect(log).not.toContain("show-options -v -t aimux @aimux-project-root");
     expect(log).toContain("switch-client -c /dev/live -t aimux-client-api-1234567890:0");
+  });
+
+  it("keeps metadata navigation on project sessions that merely contain client", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-client-api-1234567890", windowId: "@shell" }],
+      windows: {
+        "aimux-client-api-1234567890": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@codex", index: 1, name: "codex" },
+        ],
+      },
+      windowMetadata: {
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project" },
+      },
+      sessionOptions: {
+        "aimux-client-api-1234567890": {
+          "@aimux-project-root": "/repo/project",
+          "@aimux-project-state-dir": "/state/project",
+        },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-client-api-1234567890",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("list-windows -t aimux-client-api-1234567890 -F #{window_id}|#{window_index}|#{window_name}|#{pane_dead}");
+    expect(log).not.toContain("list-windows -t aimux -F #{window_id}|#{window_index}|#{window_name}|#{pane_dead}");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-client-api-1234567890:1");
   });
 
   it("switches dashboard locally before trying the control API", () => {
@@ -526,7 +574,7 @@ describe("tmux-control.sh", () => {
       },
       panes: {
         "@dash": {
-          sessionName: "aimux-proj-client-live",
+          sessionName: "aimux-proj-client-1234abcd",
           windowId: "@dash",
           windowName: "dashboard-live",
           clientTty: "/dev/live",
@@ -672,7 +720,7 @@ describe("tmux-control.sh", () => {
 
   it("fails fast locally instead of falling through to the control API", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {},
       panes: {},
     });
@@ -684,7 +732,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/stale",
       "--current-window",
@@ -703,14 +751,14 @@ describe("tmux-control.sh", () => {
 
   it("falls back to host tmux metadata for next when statusline is empty", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -721,7 +769,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -735,7 +783,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -748,17 +796,17 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
     expect(curlLog).toEqual([]);
   });
 
   it("does not match sibling worktree path prefixes in host tmux metadata fallback", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@current" }],
       windows: {
         "aimux-proj": [{ id: "@wrong", index: 2, name: "wrong" }],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@current", index: 1, name: "current" },
         ],
@@ -767,7 +815,7 @@ describe("tmux-control.sh", () => {
         "@wrong": { sessionId: "wrong-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -781,7 +829,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -795,20 +843,20 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     expect(curlLog).toEqual([]);
-    expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-1234abcd");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("skips dead host tmux metadata candidates for next", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -820,7 +868,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -834,7 +882,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -846,22 +894,22 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
-    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
     expect(existsSync(join(envRoot.projectStateDir, "last-used.json"))).toBe(false);
   });
 
   it("uses a dead current host window only for next ordering", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@codex" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@codex" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@codex", index: 6, name: "codex" },
         ],
@@ -873,7 +921,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -887,7 +935,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -902,17 +950,17 @@ describe("tmux-control.sh", () => {
     const state = JSON.parse(readFileSync(envRoot.statePath, "utf8")) as {
       clients: Array<{ windowId: string }>;
     };
-    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
     expect(state.clients[0]?.windowId).toBe("@shell");
-    expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
   });
 
   it("uses a dead current statusline window only for next/prev ordering", () => {
     const buildEnv = () => {
       const envRoot = createFakeEnvironment({
-        clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@codex" }],
+        clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@codex" }],
         windows: {
-          "aimux-proj-client-live": [
+          "aimux-proj-client-1234abcd": [
             { id: "@dash", index: 0, name: "dashboard-live" },
             { id: "@codex", index: 6, name: "codex" },
           ],
@@ -924,7 +972,7 @@ describe("tmux-control.sh", () => {
         },
         deadWindows: ["@codex"],
         sessionOptions: {
-          "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+          "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
         },
         panes: {},
       });
@@ -950,7 +998,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       nextEnv.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -965,9 +1013,9 @@ describe("tmux-control.sh", () => {
     const nextState = JSON.parse(readFileSync(nextEnv.statePath, "utf8")) as {
       clients: Array<{ windowId: string }>;
     };
-    expect(nextLog).toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(nextLog).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
     expect(nextState.clients[0]?.windowId).toBe("@shell");
-    expect(nextLog).not.toContain("link-window -d -s @claude -t aimux-proj-client-live");
+    expect(nextLog).not.toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
 
     const prevEnv = buildEnv();
     runControl(prevEnv, [
@@ -975,7 +1023,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       prevEnv.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -990,16 +1038,16 @@ describe("tmux-control.sh", () => {
     const prevState = JSON.parse(readFileSync(prevEnv.statePath, "utf8")) as {
       clients: Array<{ windowId: string }>;
     };
-    expect(prevLog).toContain("link-window -d -s @claude -t aimux-proj-client-live");
+    expect(prevLog).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
     expect(prevState.clients[0]?.windowId).toBe("@claude");
-    expect(prevLog).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(prevLog).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
   });
 
   it("skips dead statusline attention candidates", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
-        "aimux-proj-client-live": [{ id: "@shell", index: 0, name: "shell" }],
+        "aimux-proj-client-1234abcd": [{ id: "@shell", index: 0, name: "shell" }],
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
@@ -1008,7 +1056,7 @@ describe("tmux-control.sh", () => {
       },
       deadWindows: ["@codex"],
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1042,7 +1090,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1054,16 +1102,16 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-live");
-    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
     expect(readCurlLog(envRoot)).toEqual([]);
   });
 
   it("indexes only live statusline window candidates", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
-        "aimux-proj-client-live": [{ id: "@shell", index: 0, name: "shell" }],
+        "aimux-proj-client-1234abcd": [{ id: "@shell", index: 0, name: "shell" }],
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
@@ -1072,7 +1120,7 @@ describe("tmux-control.sh", () => {
       },
       deadWindows: ["@codex"],
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1097,7 +1145,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1109,20 +1157,20 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-live");
-    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
     expect(readCurlLog(envRoot)).toEqual([]);
   });
 
   it("falls through to the control API for dead explicit local targets", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -1133,7 +1181,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1147,7 +1195,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1162,21 +1210,21 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
-    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
     expect(curlLog).toEqual([]);
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("hydrates current context from explicit pane id", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -1186,11 +1234,11 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {
         "%42": {
-          sessionName: "aimux-proj-client-live",
+          sessionName: "aimux-proj-client-1234abcd",
           windowId: "@claude",
           windowName: "claude",
           clientTty: "/dev/live",
@@ -1208,7 +1256,7 @@ describe("tmux-control.sh", () => {
         "--project-state-dir",
         envRoot.projectStateDir,
         "--current-client-session",
-        "aimux-proj-client-stale",
+        "aimux-proj-client-deadbeef",
         "--client-tty",
         "/dev/stale",
         "--current-window",
@@ -1227,25 +1275,25 @@ describe("tmux-control.sh", () => {
     expect(log).toContain(
       "display-message -p -t %42 #{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}",
     );
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
   });
 
   it("prefers the pane-owned live client when multiple clients share the same window", () => {
     const envRoot = createFakeEnvironment({
       clients: [
-        { tty: "/dev/right", sessionName: "aimux-proj-client-right", windowId: "@claude" },
-        { tty: "/dev/wrong", sessionName: "aimux-proj-client-wrong", windowId: "@claude" },
+        { tty: "/dev/right", sessionName: "aimux-proj-client-11111111", windowId: "@claude" },
+        { tty: "/dev/wrong", sessionName: "aimux-proj-client-22222222", windowId: "@claude" },
       ],
       windows: {
         "aimux-proj": [
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-right": [
+        "aimux-proj-client-11111111": [
           { id: "@dash-right", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
-        "aimux-proj-client-wrong": [
+        "aimux-proj-client-22222222": [
           { id: "@dash-wrong", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -1255,12 +1303,12 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-right": { "@aimux-project-root": "/repo/project" },
-        "aimux-proj-client-wrong": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-11111111": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-22222222": { "@aimux-project-root": "/repo/project" },
       },
       panes: {
         "%42": {
-          sessionName: "aimux-proj-client-right",
+          sessionName: "aimux-proj-client-11111111",
           windowId: "@claude",
           windowName: "claude",
           clientTty: "/dev/right",
@@ -1278,7 +1326,7 @@ describe("tmux-control.sh", () => {
         "--project-state-dir",
         envRoot.projectStateDir,
         "--current-client-session",
-        "aimux-proj-client-stale",
+        "aimux-proj-client-deadbeef",
         "--client-tty",
         "/dev/wrong",
         "--current-window",
@@ -1297,21 +1345,21 @@ describe("tmux-control.sh", () => {
     expect(log).toContain(
       "display-message -p -t %42 #{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}",
     );
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-right");
-    expect(log).toContain("switch-client -c /dev/right -t aimux-proj-client-right:2");
-    expect(log).not.toContain("switch-client -c /dev/wrong -t aimux-proj-client-wrong:2");
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-11111111");
+    expect(log).toContain("switch-client -c /dev/right -t aimux-proj-client-11111111:2");
+    expect(log).not.toContain("switch-client -c /dev/wrong -t aimux-proj-client-22222222:2");
   });
 
   it("uses current window worktree when cwd is outside the worktree", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -1322,7 +1370,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1345,7 +1393,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1358,21 +1406,21 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
     expect(curlLog).toEqual([]);
   });
 
   it("prefers live tmux metadata order over stale statusline order for next/prev", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -1383,7 +1431,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1406,7 +1454,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1418,20 +1466,20 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
-    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
   });
 
   it("jumps to the rendered chip index using live tmux metadata order", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -1442,7 +1490,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1467,7 +1515,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1479,26 +1527,26 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
-    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
   });
 
   it("rejects out-of-range window index jumps with a friendly message, not a raw error", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [{ id: "@claude", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [{ id: "@claude", index: 1, name: "claude" }],
       },
       windowMetadata: {
         "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
         "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1517,7 +1565,7 @@ describe("tmux-control.sh", () => {
         "--project-state-dir",
         envRoot.projectStateDir,
         "--current-client-session",
-        "aimux-proj-client-stale",
+        "aimux-proj-client-deadbeef",
         "--client-tty",
         "/dev/live",
         "--current-window",
@@ -1554,7 +1602,7 @@ describe("tmux-control.sh", () => {
         "--project-state-dir",
         envRoot.projectStateDir,
         "--current-client-session",
-        "aimux-proj-client-live",
+        "aimux-proj-client-1234abcd",
         "--client-tty",
         "/dev/live",
         "--current-window",
@@ -1592,7 +1640,7 @@ describe("tmux-control.sh", () => {
         "--project-state-dir",
         envRoot.projectStateDir,
         "--current-client-session",
-        "aimux-proj-client-live",
+        "aimux-proj-client-1234abcd",
         "--client-tty",
         "/dev/live",
         "--current-window",
@@ -1612,7 +1660,7 @@ describe("tmux-control.sh", () => {
 
   it("keeps next scoped to main checkout items when current window has no explicit worktree path", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@main-agent" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@main-agent" }],
       windows: {
         "aimux-proj": [
           { id: "@dash", index: 0, name: "dashboard" },
@@ -1620,7 +1668,7 @@ describe("tmux-control.sh", () => {
           { id: "@main-shell", index: 2, name: "shell" },
           { id: "@other-agent", index: 3, name: "claude" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@main-agent", index: 1, name: "codex" },
         ],
@@ -1635,7 +1683,7 @@ describe("tmux-control.sh", () => {
         },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1665,7 +1713,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1677,23 +1725,23 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @main-shell -t aimux-proj-client-live");
-    expect(log).not.toContain("link-window -d -s @other-agent -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @main-shell -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @other-agent -t aimux-proj-client-1234abcd");
   });
 
   it("does not match sibling worktree path prefixes in statusline fallback", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@current" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@current" }],
       windows: {
         "aimux-proj": [{ id: "@wrong", index: 2, name: "wrong" }],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@current", index: 1, name: "current" },
         ],
       },
       windowMetadata: {},
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1716,7 +1764,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1730,13 +1778,13 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     expect(curlLog).toEqual([]);
-    expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @wrong -t aimux-proj-client-1234abcd");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
   });
 
   it("switches from a focused parent agent to its first teammate in statusline order", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
       windows: {
         "aimux-proj": [
           { id: "@parent", index: 1, name: "claude" },
@@ -1744,7 +1792,7 @@ describe("tmux-control.sh", () => {
           { id: "@coder", index: 8, name: "claude" },
           { id: "@other", index: 9, name: "codex" },
         ],
-        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
       },
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
@@ -1753,7 +1801,7 @@ describe("tmux-control.sh", () => {
         "@other": { sessionId: "other", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1794,7 +1842,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1807,22 +1855,22 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
-    expect(log).not.toContain("link-window -d -s @other -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @reviewer -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
+    expect(log).not.toContain("link-window -d -s @other -t aimux-proj-client-1234abcd");
     expect(curlLog).toEqual([]);
   });
 
   it("skips dead statusline teammates in team order", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
       windows: {
         "aimux-proj": [
           { id: "@parent", index: 1, name: "claude" },
           { id: "@reviewer", index: 7, name: "codex" },
           { id: "@coder", index: 8, name: "claude" },
         ],
-        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
       },
       deadWindows: ["@reviewer"],
       windowMetadata: {
@@ -1831,7 +1879,7 @@ describe("tmux-control.sh", () => {
         "@coder": { sessionId: "coder", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1866,7 +1914,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1878,21 +1926,21 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @coder -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
-    expect(log).not.toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @coder -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
+    expect(log).not.toContain("link-window -d -s @reviewer -t aimux-proj-client-1234abcd");
   });
 
   it("switches from a focused parent agent to its first live teammate from tmux metadata", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
       windows: {
         "aimux-proj": [
           { id: "@parent", index: 1, name: "claude" },
           { id: "@reviewer", index: 7, name: "codex" },
           { id: "@coder", index: 8, name: "codex" },
         ],
-        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
       },
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
@@ -1910,7 +1958,7 @@ describe("tmux-control.sh", () => {
         },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1941,7 +1989,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -1953,20 +2001,20 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).toContain("link-window -d -s @reviewer -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
   });
 
   it("keeps next/prev in the parent plane instead of entering live teammates", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
       windows: {
         "aimux-proj": [
           { id: "@parent", index: 1, name: "claude" },
           { id: "@teammate", index: 2, name: "codex" },
           { id: "@shell", index: 3, name: "shell" },
         ],
-        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
       },
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
@@ -1979,7 +2027,7 @@ describe("tmux-control.sh", () => {
         "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -1993,7 +2041,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -2005,19 +2053,19 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-live");
-    expect(log).not.toContain("link-window -d -s @teammate -t aimux-proj-client-live");
+    expect(log).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @teammate -t aimux-proj-client-1234abcd");
   });
 
   it("switches from a focused teammate back to its recorded parent", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@teammate" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@teammate" }],
       windows: {
         "aimux-proj": [
           { id: "@parent", index: 1, name: "claude" },
           { id: "@teammate", index: 7, name: "codex" },
         ],
-        "aimux-proj-client-live": [{ id: "@teammate", index: 1, name: "codex" }],
+        "aimux-proj-client-1234abcd": [{ id: "@teammate", index: 1, name: "codex" }],
       },
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
@@ -2029,7 +2077,7 @@ describe("tmux-control.sh", () => {
         },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -2056,7 +2104,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -2069,27 +2117,27 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("link-window -d -s @parent -t aimux-proj-client-live");
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).toContain("link-window -d -s @parent -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
     expect(curlLog).toEqual([]);
   });
 
   it("does not fail when the resolved teammate has no tmux window", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
       windows: {
         "aimux-proj": [{ id: "@parent", index: 1, name: "claude" }],
-        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
       },
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {
         "%42": {
-          sessionName: "aimux-proj-client-live",
+          sessionName: "aimux-proj-client-1234abcd",
           windowId: "@parent",
           windowName: "claude",
           clientTty: "/dev/live",
@@ -2120,7 +2168,7 @@ describe("tmux-control.sh", () => {
         "--project-state-dir",
         envRoot.projectStateDir,
         "--current-client-session",
-        "aimux-proj-client-live",
+        "aimux-proj-client-1234abcd",
         "--client-tty",
         "/dev/live",
         "--current-window",
@@ -2136,21 +2184,21 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).not.toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @reviewer -t aimux-proj-client-1234abcd");
     expect(log).toContain("display-message -t %42 aimux: no live teammate target");
     expect(curlLog).toEqual([]);
   });
 
   it("shows the switch menu locally when the endpoint is stale", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@shell", index: 0, name: "shell" },
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -2178,7 +2226,7 @@ describe("tmux-control.sh", () => {
         },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -2192,7 +2240,7 @@ describe("tmux-control.sh", () => {
           "claude-1": { lastUsedAt: "2026-04-04T00:00:00.000Z" },
         },
         clients: {
-          "aimux-proj-client-live": {
+          "aimux-proj-client-1234abcd": {
             recentIds: ["codex-1", "claude-1"],
             updatedAt: "2026-04-04T00:01:00.000Z",
           },
@@ -2208,7 +2256,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -2221,7 +2269,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
     expect(
       log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux -x P -y P -w 56 -h 10 -E exec")),
     ).toBe(true);
@@ -2230,13 +2278,13 @@ describe("tmux-control.sh", () => {
 
   it("opens the exposé grid popup locally", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
         "aimux-proj": [
           { id: "@claude", index: 1, name: "claude" },
           { id: "@codex", index: 6, name: "codex" },
         ],
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
@@ -2246,7 +2294,7 @@ describe("tmux-control.sh", () => {
         "@codex": { sessionId: "codex-1", kind: "agent", command: "codex", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -2259,7 +2307,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -2291,15 +2339,15 @@ describe("tmux-control.sh", () => {
 
   it("opens a meta-dashboard window locally", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
       },
       sessionOptions: {
-        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
       panes: {},
     });
@@ -2312,7 +2360,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -2326,7 +2374,7 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-live -n meta-dashboard"))).toBe(true);
+    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-1234abcd -n meta-dashboard"))).toBe(true);
     expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(true);
     expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
       true,

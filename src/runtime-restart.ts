@@ -163,6 +163,12 @@ function joinLockOwnerPath(lockPath: string): string {
   return pathResolve(lockPath, "owner.json");
 }
 
+function isClientSessionForHost(sessionName: string, hostSession: string): boolean {
+  const prefix = `${hostSession}-client-`;
+  if (!sessionName.startsWith(prefix)) return false;
+  return /^[a-f0-9]{8}$/.test(sessionName.slice(prefix.length));
+}
+
 function releaseRuntimeRestartLock(lockPath: string | null): void {
   if (!lockPath) return;
   try {
@@ -228,7 +234,7 @@ function relinkDashboardToClientSessions(
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   const errors: string[] = [];
   for (const sessionName of tmux.listSessionNames()) {
-    if (!sessionName.startsWith(`${hostSession}-client-`)) continue;
+    if (!isClientSessionForHost(sessionName, hostSession)) continue;
     const windows = tmux.listWindows(sessionName);
     const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
     if (alreadyLinked) continue;
@@ -250,7 +256,7 @@ function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRest
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   return tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .filter((sessionName) => sessionName === hostSession || isClientSessionForHost(sessionName, hostSession))
     .map((sessionName) => {
       const active = tmux.listWindows!(sessionName).find(
         (window) => window.active && !window.name.startsWith("dashboard"),
@@ -297,7 +303,7 @@ function repairRuntimeContract(input: {
       input.tmux.configureManagedSession(hostSession, input.projectRoot);
       if (input.tmux.listSessionNames) {
         for (const sessionName of input.tmux.listSessionNames()) {
-          if (sessionName.startsWith(`${hostSession}-client-`)) {
+          if (isClientSessionForHost(sessionName, hostSession)) {
             input.tmux.configureManagedSession(sessionName, input.projectRoot);
             repairedSessions.push(sessionName);
           }

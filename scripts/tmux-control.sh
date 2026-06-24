@@ -720,7 +720,9 @@ resolve_host_session_name() {
   fi
   [ -n "$session_name" ] || return 1
   case "$session_name" in
-    *-client-*) printf '%s' "${session_name%-client-*}" ;;
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      printf '%s' "${session_name%-client-????????}"
+      ;;
     *) printf '%s' "$session_name" ;;
   esac
 }
