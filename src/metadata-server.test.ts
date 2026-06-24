@@ -2603,6 +2603,7 @@ describe("MetadataServer threads API", () => {
     const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
     const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const setSessionOption = TmuxRuntimeManager.prototype.setSessionOption;
     const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     const listClients = TmuxRuntimeManager.prototype.listClients;
@@ -2611,6 +2612,7 @@ describe("MetadataServer threads API", () => {
     const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
+    const setSessionOptionMock = vi.fn();
     const setWindowOptionMock = vi.fn();
 
     TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
@@ -2626,6 +2628,7 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
+    TmuxRuntimeManager.prototype.setSessionOption = setSessionOptionMock;
     TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
@@ -2658,6 +2661,11 @@ describe("MetadataServer threads API", () => {
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith(
+        "aimux-repo-abc",
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
       expect(setWindowOptionMock).toHaveBeenCalledWith(
         expect.objectContaining({ windowId: "@99" }),
         "@aimux-dashboard-build",
@@ -2684,6 +2692,11 @@ describe("MetadataServer threads API", () => {
       const inboxBody = (await inboxRes.json()) as { ok: boolean };
       expect(inboxRes.ok).toBe(true);
       expect(inboxBody.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith(
+        "aimux-repo-abc",
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
       const inboxSnapshot = JSON.parse(
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
       ) as Record<string, unknown>;
@@ -2733,6 +2746,7 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.setSessionOption = setSessionOption;
       TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.listClients = listClients;

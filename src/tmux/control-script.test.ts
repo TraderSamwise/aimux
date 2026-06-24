@@ -265,7 +265,7 @@ describe("tmux-control.sh", () => {
       },
       panes: {
         "@dash": {
-          sessionName: "aimux-proj-client-live",
+          sessionName: "aimux-proj-client-1234abcd",
           windowId: "@dash",
           windowName: "dashboard-live",
           clientTty: "/dev/live",
@@ -368,9 +368,20 @@ describe("tmux-control.sh", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-client-api-1234567890", windowId: "@shell" }],
       windows: {
-        "aimux-client-api-1234567890": [{ id: "@shell", index: 3, name: "shell" }],
+        "aimux-client-api-1234567890": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
       },
       panes: {
+        "@dash": {
+          sessionName: "aimux-client-api-1234567890",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+          currentCommand: "bash",
+        },
         "@shell": {
           sessionName: "aimux-client-api-1234567890",
           windowId: "@shell",
@@ -381,8 +392,16 @@ describe("tmux-control.sh", () => {
       },
       sessionOptions: {
         "aimux-client-api-1234567890": {
+          "@aimux-dashboard-build": "build-current",
           "@aimux-project-root": "/repo/project",
           "@aimux-project-state-dir": "/state/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-owner": "owner-current",
         },
       },
     });
@@ -409,13 +428,14 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     expect(log).toContain("show-options -v -t aimux-client-api-1234567890 @aimux-project-root");
     expect(log).not.toContain("show-options -v -t aimux @aimux-project-root");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-client-api-1234567890:0");
   });
 
   it("switches dashboard locally before trying the control API", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@shell", index: 3, name: "shell" },
         ],
@@ -426,7 +446,7 @@ describe("tmux-control.sh", () => {
           "@aimux-project-root": "/repo/project",
           "@aimux-runtime-owner": "owner-current",
         },
-        "aimux-proj-client-live": {
+        "aimux-proj-client-1234abcd": {
           "@aimux-project-root": "/repo/project",
           "@aimux-runtime-owner": "owner-current",
         },
@@ -439,7 +459,7 @@ describe("tmux-control.sh", () => {
       },
       panes: {
         "@dash": {
-          sessionName: "aimux-proj-client-live",
+          sessionName: "aimux-proj-client-1234abcd",
           windowId: "@dash",
           windowName: "dashboard-live",
           clientTty: "/dev/live",
@@ -459,7 +479,7 @@ describe("tmux-control.sh", () => {
       "--project-root",
       "/repo/project",
       "--current-client-session",
-      "aimux-proj-client-stale",
+      "aimux-proj-client-deadbeef",
       "--client-tty",
       "/dev/stale",
       "--current-window",
@@ -472,7 +492,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(curlLog).toEqual([]);
   });
 
@@ -480,9 +500,9 @@ describe("tmux-control.sh", () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "aimux-control-project-"));
     tempRoots.push(projectRoot);
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@shell", index: 3, name: "shell" },
         ],
@@ -493,7 +513,7 @@ describe("tmux-control.sh", () => {
           "@aimux-project-root": "/repo/project",
           "@aimux-runtime-owner": "owner-current",
         },
-        "aimux-proj-client-live": {
+        "aimux-proj-client-1234abcd": {
           "@aimux-project-root": projectRoot,
           "@aimux-runtime-owner": "owner-current",
         },
@@ -526,7 +546,7 @@ describe("tmux-control.sh", () => {
       "--project-root",
       projectRoot,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -538,9 +558,9 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-live`,
+      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
     ]);
   });
 
@@ -599,9 +619,9 @@ describe("tmux-control.sh", () => {
 
   it("keeps dashboard switching local when no endpoint is available", () => {
     const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
-        "aimux-proj-client-live": [
+        "aimux-proj-client-1234abcd": [
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@shell", index: 3, name: "shell" },
         ],
@@ -609,9 +629,10 @@ describe("tmux-control.sh", () => {
       sessionOptions: {
         "aimux-proj": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
           "@aimux-runtime-owner": "owner-current",
         },
-        "aimux-proj-client-live": {
+        "aimux-proj-client-1234abcd": {
           "@aimux-project-root": "/repo/project",
           "@aimux-runtime-owner": "owner-current",
         },
@@ -632,7 +653,7 @@ describe("tmux-control.sh", () => {
       "--project-state-dir",
       envRoot.projectStateDir,
       "--current-client-session",
-      "aimux-proj-client-live",
+      "aimux-proj-client-1234abcd",
       "--client-tty",
       "/dev/live",
       "--current-window",
@@ -645,7 +666,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(curlLog).toEqual([]);
   });
 
