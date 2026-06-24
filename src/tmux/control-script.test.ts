@@ -811,7 +811,7 @@ describe("tmux-control.sh", () => {
     ) as { screen?: string };
     expect(clientState.screen).toBe("coordination");
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(log).not.toContain("display-popup");
+    expect(log.some((entry) => entry.startsWith("display-popup"))).toBe(false);
   });
 
   it("does not reload dashboard for ordinary validation misses", () => {

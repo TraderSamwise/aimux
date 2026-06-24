@@ -117,6 +117,19 @@ class ProjectServiceVersionError extends Error {
   }
 }
 
+class ProjectServiceHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: any,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectServiceHttpError";
+  }
+}
+
+const PROJECT_SERVICE_READ_TIMEOUT_MS = 15_000;
+
 function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): string {
   const lines = [
     "aimux: the running project service is from a different local build.",
@@ -355,18 +368,35 @@ async function postProjectServiceJson(path: string, body: unknown, options?: { t
   return json;
 }
 
-async function getProjectServiceJson(path: string): Promise<any> {
-  let endpoint = await resolveProjectServiceEndpoint();
-  if (!endpoint) {
-    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
-    endpoint = await resolveProjectServiceEndpoint();
-  }
+async function getProjectServiceJson(path: string, opts?: { notFound?: "null" }): Promise<any> {
+  const projectRoot = resolveProjectRoot(process.cwd());
+  await ensureDaemonProjectReady(projectRoot);
+  let endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`);
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
+    }));
+  } catch {
+    removeMetadataEndpoint(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
+    endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    if (!endpoint) {
+      throw new Error("no live project service metadata endpoint");
+    }
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
+    }));
+  }
+  if (status === 404 && opts?.notFound === "null") {
+    return null;
+  }
   if (status < 200 || status >= 300 || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${status}`);
+    throw new ProjectServiceHttpError(status, json, json?.error || `request failed: ${status}`);
   }
   return json;
 }
@@ -484,6 +514,7 @@ async function getLiveProjectServiceJson(projectRoot: string, path: string): Pro
   }
   const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
     method: "GET",
+    timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
   });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
@@ -1940,7 +1971,7 @@ threadCmd
   .argument("<threadId>")
   .option("--json", "Emit JSON")
   .action(async (threadId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJson(`/threads/${encodeURIComponent(threadId)}`);
+    const detail = await getProjectServiceJson(`/threads/${encodeURIComponent(threadId)}`, { notFound: "null" });
     if (!detail?.thread) {
       console.error(`aimux: thread not found: ${threadId}`);
       process.exit(1);
@@ -2340,7 +2371,7 @@ taskCmd
   .argument("<taskId>")
   .option("--json", "Emit JSON")
   .action(async (taskId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJson(`/tasks/${encodeURIComponent(taskId)}`);
+    const detail = await getProjectServiceJson(`/tasks/${encodeURIComponent(taskId)}`, { notFound: "null" });
     if (!detail?.task) {
       console.error(`aimux: task not found: ${taskId}`);
       process.exit(1);
