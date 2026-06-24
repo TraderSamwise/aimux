@@ -366,6 +366,7 @@ export class TmuxRuntimeManager {
       if (originalRenumberWindows !== null) {
         this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
       }
+      const linkedInThisCall = !existing;
       if (!existing) {
         this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
       }
@@ -384,9 +385,11 @@ export class TmuxRuntimeManager {
             `${clientSessionName}:${windowIndex}`,
           ]);
         } catch (error) {
-          try {
-            this.unlinkWindow(linked);
-          } catch {}
+          if (linkedInThisCall) {
+            try {
+              this.unlinkWindow(linked);
+            } catch {}
+          }
           throw error;
         }
         const replaced = this.getTargetByWindowId(clientSessionName, target.windowId);

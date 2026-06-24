@@ -1112,6 +1112,63 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
   });
 
+  it("does not refresh dashboard data after guarded repair times out during probing", async () => {
+    vi.useFakeTimers();
+    let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+    let finishProbe: ((value: ReturnType<typeof healthyServiceResponse>) => void) | undefined;
+    const child = {
+      kill: vi.fn(),
+      on: vi.fn((event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+        if (event === "exit") onExit = handler;
+      }),
+      unref: vi.fn(),
+    };
+    mocks.spawn.mockReturnValueOnce(child);
+    mocks.loadMetadataEndpoint.mockReturnValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 2,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    mocks.requestJson.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishProbe = resolve;
+        }),
+    );
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      runtimeGuardState: { kind: "stale", reason: "service-mismatch" },
+      renderCurrentDashboardView: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+      startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
+      onExit?.(0, null);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      vi.advanceTimersByTime(45_001);
+      await Promise.resolve();
+      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
+      const renderCallsAfterTimeout = host.renderCurrentDashboardView.mock.calls.length;
+      expect(finishProbe).toBeDefined();
+      finishProbe?.(healthyServiceResponse(2, "/repo/app"));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(renderCallsAfterTimeout);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+  });
+
   it("does not mark successful guarded repair failed after leaving dashboard mode", async () => {
     let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
     mocks.spawn.mockReturnValueOnce({

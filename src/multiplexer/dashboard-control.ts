@@ -321,16 +321,18 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const succeed = async () => {
     if (settled) return;
     const probed = await probeRuntimeGuard(projectRoot);
+    if (settled) return;
     if (probed.kind !== "ok") {
       fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
       return;
     }
-    if (
-      isDashboardLifecycleCurrent(host, lifecycle) &&
-      !(await refreshDashboardModelThroughApi(host, { force: true, lifecycle }))
-    ) {
-      fail("aimux repair completed but dashboard data is still unavailable");
-      return;
+    if (isDashboardLifecycleCurrent(host, lifecycle)) {
+      const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+      if (settled) return;
+      if (!refreshed) {
+        fail("aimux repair completed but dashboard data is still unavailable");
+        return;
+      }
     }
     if (settled) return;
     settled = true;

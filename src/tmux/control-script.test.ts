@@ -474,7 +474,9 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("list-windows -t aimux-client-api-1234567890 -F #{window_id}|#{window_index}|#{window_name}|#{pane_dead}");
+    expect(log).toContain(
+      "list-windows -t aimux-client-api-1234567890 -F #{window_id}|#{window_index}|#{window_name}|#{pane_dead}",
+    );
     expect(log).not.toContain("list-windows -t aimux -F #{window_id}|#{window_index}|#{window_name}|#{pane_dead}");
     expect(log).toContain("switch-client -c /dev/live -t aimux-client-api-1234567890:1");
   });
@@ -542,6 +544,69 @@ describe("tmux-control.sh", () => {
     const curlLog = readCurlLog(envRoot);
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(curlLog).toEqual([]);
+  });
+
+  it("validates client dashboard project root from the host session", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "dashboard",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("show-options -v -t aimux-proj @aimux-project-root");
+    expect(log).not.toContain("show-options -v -t aimux-proj-client-1234abcd @aimux-project-root");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(readAimuxLog(envRoot)).toEqual([]);
   });
 
   it("reloads instead of switching to a stale-build dashboard", () => {
@@ -2374,7 +2439,9 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-1234abcd -n meta-dashboard"))).toBe(true);
+    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-1234abcd -n meta-dashboard"))).toBe(
+      true,
+    );
     expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(true);
     expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
       true,

@@ -203,7 +203,7 @@ validate_dashboard_target() {
       ;;
   esac
 
-  target_project_root=$(tmux show-options -v -t "$validate_session" @aimux-project-root 2>/dev/null || true)
+  target_project_root=$(tmux show-options -v -t "$validate_host_session" @aimux-project-root 2>/dev/null || true)
   [ -n "$project_root" ] && [ "$target_project_root" = "$project_root" ] || return 1
 
   expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)

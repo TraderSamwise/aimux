@@ -81,7 +81,10 @@ export function resolveDashboardTarget(
 
   if (!options.forceReload) {
     const live = findLiveDashboardTarget(projectRoot, tmux);
-    if (live) return live;
+    if (live) {
+      tmux.setSessionOption(live.dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
+      return live;
+    }
   }
 
   const dashboardSession = tmux.ensureProjectSession(projectRoot, {
