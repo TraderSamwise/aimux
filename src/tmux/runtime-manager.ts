@@ -13,6 +13,7 @@ import {
   TMUX_RUNTIME_CONTRACT_OPTION,
   TMUX_RUNTIME_OWNER_OPTION,
 } from "../runtime-owner.js";
+import { isTmuxClientSessionForHost, isTmuxClientSessionName } from "./session-names.js";
 import type { SessionUserLabel } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -226,7 +227,7 @@ export class TmuxRuntimeManager {
     };
     rename(legacySessionName, session.sessionName);
     for (const name of [...knownNames]) {
-      if (!name.startsWith(`${legacySessionName}-client-`)) continue;
+      if (!isTmuxClientSessionForHost(name, legacySessionName)) continue;
       rename(name, `${session.sessionName}${name.slice(legacySessionName.length)}`);
     }
     return session;
@@ -237,7 +238,7 @@ export class TmuxRuntimeManager {
   }
 
   isClientSessionName(sessionName: string): boolean {
-    return /-client-[a-f0-9]{8}$/.test(sessionName);
+    return isTmuxClientSessionName(sessionName);
   }
 
   getOpenSessionName(sessionName: string, insideTmux = this.isInsideTmux()): string {
@@ -343,7 +344,7 @@ export class TmuxRuntimeManager {
 
   private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
-    if (existing) return existing;
+    if (existing && (windowIndex === undefined || existing.windowIndex === windowIndex)) return existing;
     let occupyingDashboard: TmuxWindowInfo | undefined;
     let originalRenumberWindows: string | null = null;
     if (windowIndex !== undefined) {
@@ -365,7 +366,9 @@ export class TmuxRuntimeManager {
       if (originalRenumberWindows !== null) {
         this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
       }
-      this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
+      if (!existing) {
+        this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
+      }
       const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
       if (!linked) {
         throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
@@ -845,7 +848,7 @@ export class TmuxRuntimeManager {
     const allSessionNames = this.listSessionNames();
     this.repairLegacyProjectSessionNames(projectRoot, allSessionNames);
     const sessionNames = this.listSessionNames().filter(
-      (name) => name === hostSession || name.startsWith(`${hostSession}-client-`),
+      (name) => name === hostSession || isTmuxClientSessionForHost(name, hostSession),
     );
     const seenWindowIds = new Set<string>();
     const managed: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> = [];

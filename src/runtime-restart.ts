@@ -21,6 +21,7 @@ import {
   TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
 } from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
 import { getGlobalAimuxDir } from "./paths.js";
@@ -131,11 +132,39 @@ function runtimeRestartLockPath(): string {
   return pathResolve(getGlobalAimuxDir(), "locks", "restart");
 }
 
+function runtimeRestartStealLockPath(): string {
+  return pathResolve(getGlobalAimuxDir(), "locks", "restart.steal");
+}
+
 function readRuntimeRestartLockPid(lockPath: string): number | null {
   try {
     const parsed = JSON.parse(readFileSync(joinLockOwnerPath(lockPath), "utf8")) as { pid?: unknown };
     return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
   } catch {
+    return null;
+  }
+}
+
+function tryAcquireRuntimeRestartStealLock(): string | null {
+  const stealPath = runtimeRestartStealLockPath();
+  try {
+    mkdirSync(stealPath, { recursive: false });
+    writeFileSync(joinLockOwnerPath(stealPath), `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
+    return stealPath;
+  } catch {
+    try {
+      if (Date.now() - statSync(stealPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
+        rmSync(stealPath, { recursive: true, force: true });
+        mkdirSync(stealPath, { recursive: false });
+        writeFileSync(
+          joinLockOwnerPath(stealPath),
+          `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+        );
+        return stealPath;
+      }
+    } catch {
+      if (!existsSync(stealPath)) return tryAcquireRuntimeRestartStealLock();
+    }
     return null;
   }
 }
@@ -159,10 +188,17 @@ function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): str
   if (acquired) return acquired;
   try {
     if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
-      const ownerPid = readRuntimeRestartLockPid(lockPath);
-      if (ownerPid !== null && isPidAlive(ownerPid)) return null;
-      rmSync(lockPath, { recursive: true, force: true });
-      return acquire();
+      const stealPath = tryAcquireRuntimeRestartStealLock();
+      if (!stealPath) return null;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs <= RUNTIME_RESTART_LOCK_STALE_MS) return null;
+        const ownerPid = readRuntimeRestartLockPid(lockPath);
+        if (ownerPid !== null && isPidAlive(ownerPid)) return null;
+        rmSync(lockPath, { recursive: true, force: true });
+        return acquire();
+      } finally {
+        rmSync(stealPath, { recursive: true, force: true });
+      }
     }
   } catch {
     if (!existsSync(lockPath)) return acquire();
@@ -172,12 +208,6 @@ function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): str
 
 function joinLockOwnerPath(lockPath: string): string {
   return pathResolve(lockPath, "owner.json");
-}
-
-function isClientSessionForHost(sessionName: string, hostSession: string): boolean {
-  const prefix = `${hostSession}-client-`;
-  if (!sessionName.startsWith(prefix)) return false;
-  return /^[a-f0-9]{8}$/.test(sessionName.slice(prefix.length));
 }
 
 function releaseRuntimeRestartLock(lockPath: string | null): void {
@@ -245,7 +275,7 @@ function relinkDashboardToClientSessions(
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   const errors: string[] = [];
   for (const sessionName of tmux.listSessionNames()) {
-    if (!isClientSessionForHost(sessionName, hostSession)) continue;
+    if (!isTmuxClientSessionForHost(sessionName, hostSession)) continue;
     const windows = tmux.listWindows(sessionName);
     const alreadyLinked = windows.some((window) => window.id === dashboardTarget.windowId);
     if (alreadyLinked) continue;
@@ -267,7 +297,7 @@ function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRest
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   return tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || isClientSessionForHost(sessionName, hostSession))
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession))
     .map((sessionName) => {
       const active = tmux.listWindows!(sessionName).find(
         (window) => window.active && !window.name.startsWith("dashboard"),
@@ -314,7 +344,7 @@ function repairRuntimeContract(input: {
       input.tmux.configureManagedSession(hostSession, input.projectRoot);
       if (input.tmux.listSessionNames) {
         for (const sessionName of input.tmux.listSessionNames()) {
-          if (isClientSessionForHost(sessionName, hostSession)) {
+          if (isTmuxClientSessionForHost(sessionName, hostSession)) {
             input.tmux.configureManagedSession(sessionName, input.projectRoot);
             repairedSessions.push(sessionName);
           }

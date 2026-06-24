@@ -106,6 +106,7 @@ import {
 } from "./fast-control.js";
 import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { isUsableDashboardTarget } from "./dashboard/targets.js";
@@ -780,7 +781,7 @@ function controlFocusRequested(body: Record<string, unknown>, url: URL): boolean
 
 function isProjectClientSession(tmux: TmuxRuntimeManager, projectRoot: string, sessionName: string): boolean {
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
-  return sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`);
+  return sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession);
 }
 
 function validateProjectClientSession(
@@ -831,7 +832,7 @@ function findExistingDashboardTarget(
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   const sessionNames = tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`));
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession));
   const orderedSessionNames = [
     ...(currentClientSession && sessionNames.includes(currentClientSession) ? [currentClientSession] : []),
     ...sessionNames,
