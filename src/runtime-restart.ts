@@ -291,10 +291,18 @@ function relinkDashboardToClientSessions(
   for (const sessionName of tmux.listSessionNames()) {
     if (!isTmuxClientSessionForHost(sessionName, hostSession)) continue;
     try {
-      tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
+      const linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
+      if (linked.windowIndex !== 0) {
+        throw new Error(`dashboard linked at index ${linked.windowIndex}, expected 0`);
+      }
     } catch (indexedError) {
       try {
-        tmux.linkWindowToSession(sessionName, dashboardTarget);
+        const linked = tmux.linkWindowToSession(sessionName, dashboardTarget);
+        if (linked.windowIndex !== 0) {
+          errors.push(
+            `${sessionName}: indexed=${errorMessage(indexedError)}; append=dashboard linked at index ${linked.windowIndex}, expected 0`,
+          );
+        }
       } catch (appendError) {
         errors.push(`${sessionName}: indexed=${errorMessage(indexedError)}; append=${errorMessage(appendError)}`);
       }

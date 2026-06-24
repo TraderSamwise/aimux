@@ -57,6 +57,7 @@ type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
+const RUNTIME_GUARD_REPAIR_KILL_GRACE_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
@@ -298,6 +299,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   let settled = false;
   let repairTimeout: ReturnType<typeof setTimeout> | null = null;
+  let repairKillTimeout: ReturnType<typeof setTimeout> | null = null;
   let childExited = false;
   let releaseLockWhenChildExits = false;
   const clearRepairTimeout = () => {
@@ -305,10 +307,16 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     clearTimeout(repairTimeout);
     repairTimeout = null;
   };
+  const clearRepairKillTimeout = () => {
+    if (!repairKillTimeout) return;
+    clearTimeout(repairKillTimeout);
+    repairKillTimeout = null;
+  };
   const fail = (message: string, options: { keepRepairLock?: boolean } = {}) => {
     if (settled) return;
     settled = true;
     clearRepairTimeout();
+    if (!options.keepRepairLock) clearRepairKillTimeout();
     if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
@@ -338,6 +346,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (settled) return;
     settled = true;
     clearRepairTimeout();
+    clearRepairKillTimeout();
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
@@ -357,19 +366,30 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     }
     repairTimeout = setTimeout(() => {
       if (!childExited) {
+        releaseLockWhenChildExits = true;
         try {
           child.kill?.("SIGTERM");
         } catch {}
+        repairKillTimeout = setTimeout(() => {
+          repairKillTimeout = null;
+          if (childExited) return;
+          try {
+            child.kill?.("SIGKILL");
+          } catch {}
+          releaseRuntimeGuardRepairLock(lockPath);
+          releaseLockWhenChildExits = false;
+        }, RUNTIME_GUARD_REPAIR_KILL_GRACE_MS);
+        repairKillTimeout.unref?.();
       }
       fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
         keepRepairLock: !childExited,
       });
-      releaseLockWhenChildExits = !childExited;
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
       childExited = true;
+      clearRepairKillTimeout();
       if (releaseLockWhenChildExits) {
         releaseRuntimeGuardRepairLock(lockPath);
         releaseLockWhenChildExits = false;

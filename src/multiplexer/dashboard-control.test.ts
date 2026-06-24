@@ -962,11 +962,49 @@ describe("startRuntimeGuardRepair", () => {
       expect(existsSync(lockPath)).toBe(true);
       onExit?.(1, null);
       expect(existsSync(lockPath)).toBe(false);
+      vi.advanceTimersByTime(5_001);
+      expect(child.kill).not.toHaveBeenCalledWith("SIGKILL");
     } finally {
       vi.useRealTimers();
     }
 
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(host.showDashboardError).toHaveBeenCalledTimes(1);
+  });
+
+  it("force-kills and releases the repair lock when the timed-out child does not exit", async () => {
+    vi.useFakeTimers();
+    const child = {
+      pid: 7654,
+      kill: vi.fn(),
+      on: vi.fn(),
+      unref: vi.fn(),
+    };
+    mocks.spawn.mockReturnValueOnce(child);
+    const lockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+      startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
+      vi.advanceTimersByTime(45_000);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(existsSync(lockPath)).toBe(true);
+      vi.advanceTimersByTime(5_001);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+
     expect(host.showDashboardError).toHaveBeenCalledTimes(1);
   });
 
