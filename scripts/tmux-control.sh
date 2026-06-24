@@ -642,19 +642,14 @@ for item in items:
         current_worktree = item.get("worktreePath")
         break
 
-if current_worktree:
-    items = [item for item in items if item.get("worktreePath") == current_worktree]
-else:
-    items = [item for item in items if is_same_or_child_path(current_path, item.get("worktreePath") or "")]
 items = [item for item in items if item.get("alive") or item.get("windowId") == current_window_id]
 log("items=" + repr([
     f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}:{'live' if item.get('alive') else 'dead'}"
     for item in items
 ]))
 
-items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 if not items:
-    log("no metadata candidates in current worktree")
+    log("no live metadata candidates")
     raise SystemExit(1)
 
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
@@ -701,6 +696,16 @@ if action == "team":
     log(f"target teammate window={direct[0]['windowId']!r} id={direct[0].get('sessionId')!r}")
     print(direct[0]["windowId"])
     raise SystemExit(0)
+
+if current_worktree:
+    items = [item for item in items if item.get("worktreePath") == current_worktree]
+else:
+    items = [item for item in items if is_same_or_child_path(current_path, item.get("worktreePath") or "")]
+items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
+if not items:
+    log("no metadata candidates in current worktree")
+    raise SystemExit(1)
+current = next((item for item in items if item.get("windowId") == current_window_id), None)
 
 if current and (current.get("team") or {}).get("parentSessionId"):
     parent_id = (current.get("team") or {}).get("parentSessionId")

@@ -201,7 +201,7 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     if (!targetSessionId) return;
     void mutateDashboardApi(host, PROJECT_API_ROUTES.threads.markSeen, {
       threadId: entry.thread.id,
-      sessionId: "user",
+      session: "user",
     }).catch(() => {});
     const dashEntry = findNotificationSessionTarget(host, targetSessionId);
     if (dashEntry) {

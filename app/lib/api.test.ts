@@ -248,7 +248,7 @@ describe("api relay routing", () => {
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
     });
-    await markThreadSeen(endpoint, { threadId: "thread-1", sessionId: "agent-1" });
+    await markThreadSeen(endpoint, { threadId: "thread-1", session: "agent-1" });
     await openThread(endpoint, {
       title: "Discuss launch",
       from: "user",
@@ -449,7 +449,7 @@ describe("api relay routing", () => {
       "/proxy/127.0.0.1/43210/threads/mark-seen",
       {
         threadId: "thread-1",
-        sessionId: "agent-1",
+        session: "agent-1",
       },
     );
     expect(request).toHaveBeenNthCalledWith(26, "POST", "/proxy/127.0.0.1/43210/threads/open", {

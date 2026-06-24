@@ -485,7 +485,7 @@ describe("coordination thread workflow keys", () => {
     await vi.waitFor(() =>
       expect(host.postToProjectService).toHaveBeenCalledWith("/threads/mark-seen", {
         threadId: "thread-1",
-        sessionId: "user",
+        session: "user",
       }),
     );
   });

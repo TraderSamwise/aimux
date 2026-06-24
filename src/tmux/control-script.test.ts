@@ -2352,6 +2352,56 @@ describe("tmux-control.sh", () => {
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
   });
 
+  it("switches to live teammates across worktree paths", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@reviewer", index: 7, name: "codex" },
+        ],
+        "aimux-proj-client-1234abcd": [{ id: "@parent", index: 1, name: "claude" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree-a" },
+        "@reviewer": {
+          sessionId: "reviewer",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree-b",
+          team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", order: 1 },
+        },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(envRoot, [
+      "team",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@parent",
+      "--current-path",
+      "/repo/project/worktree-a",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @reviewer -t aimux-proj-client-1234abcd");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2");
+  });
+
   it("keeps next/prev in the parent plane instead of entering live teammates", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@parent" }],

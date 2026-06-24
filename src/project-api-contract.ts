@@ -497,7 +497,7 @@ export interface NotificationClearResponse extends ProjectApiOk {
 
 export interface ThreadMarkSeenInput {
   threadId: string;
-  sessionId: string;
+  session: string;
 }
 
 export interface ThreadMarkSeenResponse extends ProjectApiOk {
