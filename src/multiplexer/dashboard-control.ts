@@ -56,6 +56,7 @@ import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
+const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
@@ -296,9 +297,16 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
 
   let settled = false;
+  let repairTimeout: ReturnType<typeof setTimeout> | null = null;
+  const clearRepairTimeout = () => {
+    if (!repairTimeout) return;
+    clearTimeout(repairTimeout);
+    repairTimeout = null;
+  };
   const fail = (message: string) => {
     if (settled) return;
     settled = true;
+    clearRepairTimeout();
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
@@ -325,6 +333,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     }
     if (settled) return;
     settled = true;
+    clearRepairTimeout();
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
@@ -342,6 +351,13 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (typeof child.pid === "number" && child.pid > 0) {
       writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
     }
+    repairTimeout = setTimeout(() => {
+      try {
+        child.kill?.("SIGTERM");
+      } catch {}
+      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
+    }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
+    repairTimeout.unref?.();
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
       if (code === 0) {
@@ -1037,11 +1053,9 @@ async function endpointMatchesCurrentProjectService(
       serviceInfo?: ProjectServiceManifest;
     }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
     if (status < 200 || status >= 300) return "unknown";
-    return (
-      json?.pid === endpoint.pid &&
+    return json?.pid === endpoint.pid &&
       json?.projectStateDir === getProjectStateDirFor(process.cwd()) &&
       manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
-    )
       ? "current"
       : "stale";
   } catch (error) {
