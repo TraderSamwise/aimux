@@ -1,5 +1,6 @@
 import { requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
+import { getProjectStateDirFor } from "../paths.js";
 import {
   AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
   TMUX_RUNTIME_CONTRACT_OPTION,
@@ -32,6 +33,7 @@ export interface RuntimeGuardInput {
   runtimeRebuildRequired?: boolean;
   endpointPresent: boolean;
   serviceManifest: ProjectServiceManifest | null | "unreachable";
+  serviceIdentityMismatch?: boolean;
 }
 
 /**
@@ -45,6 +47,7 @@ export function evaluateRuntimeGuard(input: RuntimeGuardInput): RuntimeGuardStat
   if (!input.endpointPresent || input.serviceManifest === "unreachable" || input.serviceManifest === null) {
     return { kind: "disconnected" };
   }
+  if (input.serviceIdentityMismatch) return { kind: "stale", reason: "service-mismatch" };
   if (!manifestsMatch(getProjectServiceManifest(), input.serviceManifest)) {
     return { kind: "stale", reason: "service-mismatch" };
   }
@@ -139,19 +142,23 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
   const runtimeRebuildRequired = readRuntimeRebuildRequired(projectRoot);
   let endpointPresent = false;
   let serviceManifest: ProjectServiceManifest | null | "unreachable" = null;
+  let serviceIdentityMismatch = false;
   try {
     const endpoint = loadMetadataEndpoint(projectRoot);
     endpointPresent = Boolean(endpoint);
     if (endpoint) {
       try {
-        const { status, json } = await requestJson<{ pid?: number; serviceInfo?: ProjectServiceManifest }>(
-          `http://${endpoint.host}:${endpoint.port}/health`,
-          { timeoutMs: HEALTH_TIMEOUT_MS },
-        );
-        serviceManifest =
-          status >= 200 && status < 300 && json?.pid === endpoint.pid && json?.serviceInfo
-            ? json.serviceInfo
-            : "unreachable";
+        const { status, json } = await requestJson<{
+          pid?: number;
+          projectStateDir?: string;
+          serviceInfo?: ProjectServiceManifest;
+        }>(`http://${endpoint.host}:${endpoint.port}/health`, { timeoutMs: HEALTH_TIMEOUT_MS });
+        if (status >= 200 && status < 300 && json?.pid === endpoint.pid && json?.serviceInfo) {
+          serviceManifest = json.serviceInfo;
+          serviceIdentityMismatch = json.projectStateDir !== getProjectStateDirFor(projectRoot);
+        } else {
+          serviceManifest = "unreachable";
+        }
       } catch {
         serviceManifest = "unreachable";
       }
@@ -160,5 +167,11 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
     endpointPresent = false;
     serviceManifest = null;
   }
-  return evaluateRuntimeGuard({ selfDrift, runtimeRebuildRequired, endpointPresent, serviceManifest });
+  return evaluateRuntimeGuard({
+    selfDrift,
+    runtimeRebuildRequired,
+    endpointPresent,
+    serviceManifest,
+    serviceIdentityMismatch,
+  });
 }

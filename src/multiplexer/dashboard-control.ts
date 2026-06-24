@@ -58,6 +58,7 @@ type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
 const RUNTIME_GUARD_REPAIR_KILL_GRACE_MS = 5_000;
+const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
@@ -330,11 +331,21 @@ function describeRuntimeGuardState(state: RuntimeGuardState): string {
   return "project service unreachable";
 }
 
+function runtimeGuardRepairRetryReady(host: DashboardControlHost, repairKey: string): boolean {
+  const failedKey = host.runtimeGuardRepairFailedKey;
+  if (failedKey !== repairKey) return true;
+  const retryAt = host.runtimeGuardRepairRetryAt;
+  if (typeof retryAt !== "number" || Date.now() < retryAt) return false;
+  host.runtimeGuardRepairFailedKey = undefined;
+  host.runtimeGuardRepairRetryAt = undefined;
+  return true;
+}
+
 export function startRuntimeGuardRepair(host: DashboardControlHost, state: RuntimeGuardState): void {
   if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing) return;
   const lifecycle = captureDashboardLifecycle(host);
   const repairKey = runtimeGuardRepairKey(state);
-  if (host.runtimeGuardRepairFailedKey === repairKey) return;
+  if (!runtimeGuardRepairRetryReady(host, repairKey)) return;
   const projectRoot = host.projectRoot ?? process.cwd();
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
@@ -378,6 +389,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
+    host.runtimeGuardRepairRetryAt = Date.now() + RUNTIME_GUARD_REPAIR_RETRY_MS;
     if (host.runtimeGuardRepairBusy) {
       host.dashboardBusyState = null;
       host.runtimeGuardRepairBusy = false;
@@ -408,6 +420,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
+    host.runtimeGuardRepairRetryAt = undefined;
     if (host.runtimeGuardRepairBusy) {
       host.dashboardBusyState = null;
       host.runtimeGuardRepairBusy = false;
@@ -477,6 +490,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       host.runtimeGuardState = next.state;
       if (next.state.kind === "ok") {
         host.runtimeGuardRepairFailedKey = undefined;
+        host.runtimeGuardRepairRetryAt = undefined;
         if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
           host.dashboardBusyState = null;
           host.runtimeGuardRepairBusy = false;

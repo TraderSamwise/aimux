@@ -231,6 +231,7 @@ describe("postToProjectService", () => {
         status: 200,
         json: {
           ok: true,
+          projectStateDir: getProjectStateDirFor(process.cwd()),
           pid: 2,
           serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
         },
@@ -1078,14 +1079,16 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("does not repeatedly spawn repair for the same guarded state after failure", async () => {
+  it("retries the same guarded repair after a failure cooldown", async () => {
+    vi.useFakeTimers();
     let onError: ((error: Error) => void) | undefined;
-    mocks.spawn.mockReturnValueOnce({
+    const makeChild = () => ({
       on: vi.fn((event: string, handler: (error: Error) => void) => {
         if (event === "error") onError = handler;
       }),
       unref: vi.fn(),
     });
+    mocks.spawn.mockReturnValueOnce(makeChild()).mockReturnValueOnce(makeChild());
     const host = {
       projectRoot: "/repo/app",
       runtimeGuardRepairing: false,
@@ -1097,12 +1100,19 @@ describe("startRuntimeGuardRepair", () => {
     };
     const state = { kind: "stale", reason: "self-drift" } as const;
 
-    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
-    startRuntimeGuardRepair(host as never, state);
-    onError?.(new Error("spawn failed"));
-    startRuntimeGuardRepair(host as never, state);
+    try {
+      const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+      startRuntimeGuardRepair(host as never, state);
+      onError?.(new Error("spawn failed"));
+      startRuntimeGuardRepair(host as never, state);
+      expect(mocks.spawn).toHaveBeenCalledTimes(1);
 
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(5000);
+      startRuntimeGuardRepair(host as never, state);
+      expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("clears busy state only after guarded repair verifies the runtime", async () => {
@@ -1375,6 +1385,7 @@ describe("startRuntimeGuardRepair", () => {
       status: 200,
       json: {
         ok: true,
+        projectStateDir: getProjectStateDirFor("/repo/app"),
         pid: 2,
         serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
       },
@@ -1457,6 +1468,7 @@ describe("refreshRuntimeGuard", () => {
       status: 200,
       json: {
         ok: true,
+        projectStateDir: getProjectStateDirFor("/repo/app"),
         pid: 2,
         serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
       },
@@ -1475,10 +1487,7 @@ describe("refreshRuntimeGuard", () => {
   });
 
   it("keeps the repair overlay while a spawned repair is still running", async () => {
-    mocks.requestJson.mockResolvedValue({
-      status: 200,
-      json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() },
-    });
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = runtimeGuardHost();
     host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
     host.runtimeGuardRepairing = true;
@@ -1493,10 +1502,7 @@ describe("refreshRuntimeGuard", () => {
   });
 
   it("clears a competing-repair overlay after the guard recovers", async () => {
-    mocks.requestJson.mockResolvedValue({
-      status: 200,
-      json: { ok: true, pid: 2, serviceInfo: getProjectServiceManifest() },
-    });
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = runtimeGuardHost();
     host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
     host.runtimeGuardRepairBusy = true;
