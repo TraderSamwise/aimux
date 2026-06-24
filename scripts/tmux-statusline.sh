@@ -11,13 +11,14 @@ log_dir=""
 log_file=""
 
 log_error() {
+  [ -n "$log_file" ] || return 0
   mkdir -p "$log_dir" 2>/dev/null || true
   printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$log_file" 2>/dev/null || true
 }
 
-fail_visible() {
+fail_silent() {
   log_error "$*"
-  printf '%s\n' 'status err'
+  printf '\n'
   exit 0
 }
 
@@ -49,8 +50,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ -n "$line" ] || fail_visible "missing --line"
-[ -n "$project_state_dir" ] || fail_visible "missing --project-state-dir"
+[ -n "$line" ] || fail_silent "missing --line"
+[ -n "$project_state_dir" ] || fail_silent "missing --project-state-dir"
 
 status_dir="$project_state_dir/tmux-statusline"
 log_dir="$project_state_dir/logs"
@@ -70,7 +71,8 @@ case "$line" in
       cat_if_exists "$status_dir/top-$current_window_id.txt"
     fi
     cat_if_exists "$status_dir/top-dashboard.txt"
-    fail_visible "top render missing file current_window_id=$current_window_id current_window=$current_window current_session=$current_session"
+    printf '\n'
+    log_error "top render missing file current_window_id=$current_window_id current_window=$current_window current_session=$current_session"
     ;;
   bottom)
     case "$current_window" in
@@ -79,18 +81,20 @@ case "$line" in
           cat_if_exists "$status_dir/bottom-dashboard-$current_session.txt"
         fi
         cat_if_exists "$status_dir/bottom-dashboard.txt"
-        fail_visible "dashboard bottom render missing file current_session=$current_session current_window_id=$current_window_id"
+        printf '\n'
+        log_error "dashboard bottom render missing file current_session=$current_session current_window_id=$current_window_id"
         ;;
       *)
         if [ -n "$current_window_id" ]; then
           cat_if_exists "$status_dir/bottom-$current_window_id.txt"
         fi
-        fail_visible "window bottom render missing file current_window_id=$current_window_id current_window=$current_window current_session=$current_session"
+        printf '\n'
+        log_error "window bottom render missing file current_window_id=$current_window_id current_window=$current_window current_session=$current_session"
         ;;
     esac
     ;;
   *)
-    fail_visible "unsupported line=$line"
+    fail_silent "unsupported line=$line"
     ;;
 esac
 

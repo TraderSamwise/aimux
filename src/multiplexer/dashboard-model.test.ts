@@ -15,6 +15,7 @@ import {
   composeDashboardWorktreeGroups,
   computeDashboardServices,
   computeDashboardSessions,
+  refreshDashboardModelFromService,
   startProjectServices,
   withMetadataServicePending,
   withMetadataSessionPending,
@@ -1345,5 +1346,64 @@ describe("computeDashboardSessions thread stats", () => {
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("refreshDashboardModelFromService", () => {
+  it("rejects incomplete desktop-state snapshots when tmux has live agents", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardModelRefreshedAt: 0,
+      dashboardSessionsCache: [{ id: "codex-1", command: "codex", status: "running" }],
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "main" },
+      dashboardMainCheckoutPathCache: "/repo",
+      dashboardPendingActions: {
+        applyToSessions: (sessions: any[]) => sessions,
+        applyToServices: (services: any[]) => services,
+      },
+      dashboardUiStateStore: { reconcile: vi.fn() },
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined, level: "sessions", worktreeEntries: [] },
+      activeIndex: 0,
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshRuntimeGuard: vi.fn(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: { windowId: "@1", windowName: "codex", windowIndex: 1 },
+            metadata: { kind: "agent", sessionId: "codex-1" },
+          },
+          {
+            target: { windowId: "@2", windowName: "claude", windowIndex: 2 },
+            metadata: { kind: "agent", sessionId: "claude-1" },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => true),
+      },
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        sessions: [{ id: "codex-1", command: "codex", status: "running", index: 1, active: false }],
+        teammates: [],
+        services: [],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "main",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+      })),
+    };
+
+    await expect(refreshDashboardModelFromService(host)).resolves.toBe(false);
+
+    expect(host.dashboardSessionsCache).toEqual([{ id: "codex-1", command: "codex", status: "running" }]);
+    expect(host.dashboardModelServiceRefreshError?.message).toContain("incomplete state");
   });
 });

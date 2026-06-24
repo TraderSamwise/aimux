@@ -448,7 +448,17 @@ describe("dashboard live target activation", () => {
 
     await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1200)).resolves.toBe("opened");
 
-    expect(host.postToProjectService).toHaveBeenCalledWith(
+    expect(host.postToProjectService).toHaveBeenNthCalledWith(
+      1,
+      "/control/open-notification-target",
+      {
+        sessionId: "codex-1",
+        focus: false,
+      },
+      { timeoutMs: expect.any(Number) },
+    );
+    expect(host.postToProjectService).toHaveBeenNthCalledWith(
+      2,
       "/control/open-notification-target",
       {
         sessionId: "codex-1",
@@ -498,7 +508,35 @@ describe("dashboard live target activation", () => {
       "opened",
     );
 
-    expect(host.postToProjectService).toHaveBeenCalledTimes(2);
+    expect(host.postToProjectService).toHaveBeenCalledTimes(3);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not focus a stale agent after activation invalidates during resolve", async () => {
+    const token = { targetKind: "session", targetId: "codex-1", inputEpoch: 0 };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardActivationToken: token,
+      postToProjectService: vi.fn(async (_path, body) => {
+        if (body.focus === false) {
+          host.dashboardInputEpoch = 1;
+          return { ok: true };
+        }
+        return { ok: true };
+      }),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+      },
+      showDashboardError: vi.fn(),
+    };
+    const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1000)).resolves.toBe("missing");
+
+    expect(host.postToProjectService).toHaveBeenCalledTimes(1);
+    expect(host.postToProjectService.mock.calls[0]?.[1]).toMatchObject({ focus: false });
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -574,7 +612,17 @@ describe("dashboard live target activation", () => {
 
     await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1", 1200)).resolves.toBe("opened");
 
-    expect(host.postToProjectService).toHaveBeenCalledWith(
+    expect(host.postToProjectService).toHaveBeenNthCalledWith(
+      1,
+      "/control/open-notification-target",
+      {
+        sessionId: "service-1",
+        focus: false,
+      },
+      { timeoutMs: expect.any(Number) },
+    );
+    expect(host.postToProjectService).toHaveBeenNthCalledWith(
+      2,
       "/control/open-notification-target",
       {
         sessionId: "service-1",
