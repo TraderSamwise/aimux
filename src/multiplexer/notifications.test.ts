@@ -402,7 +402,8 @@ describe("coordination thread workflow keys", () => {
           id: "thread-1",
           kind: "task",
           title: "Task",
-          participants: ["user"],
+          participants: ["agent-1", "user"],
+          owner: "agent-1",
           waitingOn: ["user"],
           unreadBy: [],
           status: "open",
@@ -434,6 +435,7 @@ describe("coordination thread workflow keys", () => {
       renderDashboard: vi.fn(),
       showHelp: vi.fn(),
       showDashboardError: vi.fn(),
+      activateDashboardEntry: vi.fn(async () => undefined),
       dashboardState: {},
       getViewportSize: () => ({ cols: 120, rows: 40 }),
       centerInWidth: (text: string) => text,
@@ -474,6 +476,39 @@ describe("coordination thread workflow keys", () => {
         from: "user",
       }),
     );
+  });
+
+  it("marks coordination threads seen as the dashboard user, not the target agent", async () => {
+    const host: any = workflowHost();
+
+    handleCoordinationKey(host, Buffer.from("\r"));
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/threads/mark-seen", {
+        threadId: "thread-1",
+        sessionId: "user",
+      }),
+    );
+  });
+
+  it("suppresses duplicate lifecycle mutations while a thread action is in flight", async () => {
+    let resolvePost!: (value: unknown) => void;
+    const host: any = workflowHost();
+    host.postToProjectService = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolvePost = resolve;
+        }),
+    );
+
+    handleCoordinationKey(host, Buffer.from("A"));
+    handleCoordinationKey(host, Buffer.from("A"));
+
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    resolvePost({ ok: true });
+    await vi.waitFor(() => expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce());
+
+    handleCoordinationKey(host, Buffer.from("A"));
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledTimes(2));
   });
 });
 
