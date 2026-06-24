@@ -1578,6 +1578,19 @@ describe("refreshRuntimeGuard", () => {
     expect(host.dashboardBusyState).toBeNull();
     expect(host.runtimeGuardRepairBusy).toBe(false);
   });
+
+  it("clears a stale repair error after external guard recovery", async () => {
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
+    host.dashboardErrorState = { title: "Aimux repair failed", lines: ["previous failure"] };
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "ok" });
+    expect(host.dashboardErrorState).toBeNull();
+  });
 });
 
 describe("handleDashboardSubscreenNavigationKey", () => {
