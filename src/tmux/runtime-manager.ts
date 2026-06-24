@@ -1123,7 +1123,7 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", metaHomeArg.trim())]);
     this.exec(["bind-key", "-T", "prefix", "e", "run-shell", "-b", controlCommand("team")]);
     this.exec(["bind-key", "-T", "prefix", "d", "run-shell", "-b", controlCommand("dashboard")]);
-    this.exec(["bind-key", "-T", "prefix", "i", "run-shell", "-b", controlCommand("inbox")]);
+    this.exec(["bind-key", "-T", "prefix", "i", "run-shell", "-b", controlCommand("coordination")]);
     this.exec(["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"]);
     this.exec(["bind-key", "-T", "prefix", "L", "clear-history", "\\;", "send-keys", "C-l"]);
     this.exec([

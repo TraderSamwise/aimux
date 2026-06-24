@@ -82,7 +82,6 @@ import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { registerExposeCommand } from "./popup-expose.js";
 import { runTmuxMetaDashboard } from "./tmux/meta-dashboard.js";
-import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
@@ -3154,42 +3153,6 @@ program
         currentPath: opts.currentPath,
         paneId: opts.paneId,
         aimuxHome: opts.aimuxHome,
-      });
-      process.exit(code);
-    },
-  );
-
-program
-  .command("inbox-popup")
-  .description("Internal tmux popup inbox")
-  .requiredOption("--project-root <path>", "Project root")
-  .requiredOption("--project-state-dir <path>", "Project state dir")
-  .option("--current-client-session <name>", "Current client session")
-  .option("--client-tty <tty>", "Client tty")
-  .option("--current-window <name>", "Current window name")
-  .option("--current-window-id <id>", "Current window id")
-  .option("--current-path <path>", "Current path")
-  .option("--pane-id <id>", "Current pane id")
-  .action(
-    async (opts: {
-      projectRoot: string;
-      projectStateDir: string;
-      currentClientSession?: string;
-      clientTty?: string;
-      currentWindow?: string;
-      currentWindowId?: string;
-      currentPath?: string;
-      paneId?: string;
-    }) => {
-      const code = await runTmuxInboxPopup({
-        projectRoot: pathResolve(opts.projectRoot),
-        projectStateDir: pathResolve(opts.projectStateDir),
-        currentClientSession: opts.currentClientSession,
-        clientTty: opts.clientTty,
-        currentWindow: opts.currentWindow,
-        currentWindowId: opts.currentWindowId,
-        currentPath: opts.currentPath,
-        paneId: opts.paneId,
       });
       process.exit(code);
     },

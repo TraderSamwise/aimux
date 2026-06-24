@@ -38,7 +38,6 @@ import {
   type NotificationReadResponse,
   type FocusWindowRequest,
   type OpenDashboardRequest,
-  type OpenInboxRequest,
   type OpenNotificationTargetRequest,
   type OrchestrationRouteMode,
   type OrchestrationRouteOptionsResponse,
@@ -370,17 +369,6 @@ export async function openDashboard(
   opts?: ApiOpts,
 ): Promise<ControlActionResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, {
-    focus: false,
-    ...input,
-  });
-}
-
-export async function openInbox(
-  endpoint: ServiceEndpoint,
-  input: OpenInboxRequest = {},
-  opts?: ApiOpts,
-): Promise<ControlActionResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openInbox, opts, {
     focus: false,
     ...input,
   });
