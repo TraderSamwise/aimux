@@ -29,6 +29,7 @@ import { listTopologySessionStates } from "../runtime-core/topology-sessions.js"
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
 import { log } from "../debug.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { getOrCreateTuiApiRuntime, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
 import {
   captureDashboardLifecycle,
@@ -1083,7 +1084,7 @@ export async function refreshDashboardModelFromService(
     }
     const result = await getOrCreateTuiApiRuntime(host).refreshJson(
       "desktop-state",
-      "/desktop-state",
+      PROJECT_API_ROUTES.desktopState,
       (json) => {
         if (!isDesktopStateDashboardModel(json)) throw new Error("invalid desktop-state payload");
         return json;

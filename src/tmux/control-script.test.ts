@@ -1220,7 +1220,7 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
   });
 
-  it("uses a dead current statusline window only for next/prev ordering", () => {
+  it("does not use stale statusline windows for next/prev ordering", () => {
     const buildEnv = () => {
       const envRoot = createFakeEnvironment({
         clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@codex" }],
@@ -1278,8 +1278,8 @@ describe("tmux-control.sh", () => {
     const nextState = JSON.parse(readFileSync(nextEnv.statePath, "utf8")) as {
       clients: Array<{ windowId: string }>;
     };
-    expect(nextLog).toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
-    expect(nextState.clients[0]?.windowId).toBe("@shell");
+    expect(nextLog.some((line) => line.includes("no local tmux target available"))).toBe(true);
+    expect(nextState.clients[0]?.windowId).toBe("@codex");
     expect(nextLog).not.toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
 
     const prevEnv = buildEnv();
@@ -1303,12 +1303,12 @@ describe("tmux-control.sh", () => {
     const prevState = JSON.parse(readFileSync(prevEnv.statePath, "utf8")) as {
       clients: Array<{ windowId: string }>;
     };
-    expect(prevLog).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
-    expect(prevState.clients[0]?.windowId).toBe("@claude");
+    expect(prevLog.some((line) => line.includes("no local tmux target available"))).toBe(true);
+    expect(prevState.clients[0]?.windowId).toBe("@codex");
     expect(prevLog).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
   });
 
-  it("skips dead statusline attention candidates", () => {
+  it("does not use stale statusline attention candidates", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
@@ -1367,12 +1367,13 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
     expect(readCurlLog(envRoot)).toEqual([]);
   });
 
-  it("indexes only live statusline window candidates", () => {
+  it("does not jump to statusline-only window candidates", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
       windows: {
@@ -1422,8 +1423,9 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
+    expect(log.some((line) => line.includes("no local tmux target available"))).toBe(true);
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
     expect(readCurlLog(envRoot)).toEqual([]);
   });
 
@@ -1994,7 +1996,7 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @other-agent -t aimux-proj-client-1234abcd");
   });
 
-  it("does not match sibling worktree path prefixes in statusline fallback", () => {
+  it("does not match sibling worktree path prefixes from stale statusline data", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@current" }],
       windows: {
@@ -2061,9 +2063,24 @@ describe("tmux-control.sh", () => {
       },
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
-        "@reviewer": { sessionId: "reviewer", kind: "agent", worktreePath: "/repo/project/worktree" },
-        "@coder": { sessionId: "coder", kind: "agent", worktreePath: "/repo/project/worktree" },
-        "@other": { sessionId: "other", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@reviewer": {
+          sessionId: "reviewer",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", order: 1 },
+        },
+        "@coder": {
+          sessionId: "coder",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          team: { teamId: "team-1", parentSessionId: "parent", role: "coder", order: 2 },
+        },
+        "@other": {
+          sessionId: "other",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          team: { teamId: "team-2", parentSessionId: "other-parent", role: "coder", order: 0 },
+        },
       },
       sessionOptions: {
         "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
@@ -2140,8 +2157,18 @@ describe("tmux-control.sh", () => {
       deadWindows: ["@reviewer"],
       windowMetadata: {
         "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
-        "@reviewer": { sessionId: "reviewer", kind: "agent", worktreePath: "/repo/project/worktree" },
-        "@coder": { sessionId: "coder", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@reviewer": {
+          sessionId: "reviewer",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", order: 1 },
+        },
+        "@coder": {
+          sessionId: "coder",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          team: { teamId: "team-1", parentSessionId: "parent", role: "coder", order: 2 },
+        },
       },
       sessionOptions: {
         "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
