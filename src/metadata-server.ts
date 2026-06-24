@@ -72,6 +72,7 @@ import { buildCoordinationView } from "./coordination-model.js";
 import { buildProjectObservability } from "./project-observability.js";
 import { buildProjectTopology } from "./project-topology.js";
 import {
+  type DashboardControlScreen,
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
   type OrchestrationRouteOption,
@@ -585,6 +586,22 @@ function persistDashboardClientPreference(
   } catch {}
   update(snapshot);
   writeJsonAtomic(path, snapshot);
+}
+
+function parseDashboardControlScreen(input: unknown): DashboardControlScreen | undefined {
+  if (typeof input !== "string") return undefined;
+  const screen = input.trim();
+  if (
+    screen === "dashboard" ||
+    screen === "coordination" ||
+    screen === "project" ||
+    screen === "library" ||
+    screen === "topology" ||
+    screen === "graveyard"
+  ) {
+    return screen;
+  }
+  return undefined;
 }
 
 function persistDashboardReturnSelection(
@@ -2224,6 +2241,7 @@ export class MetadataServer {
                 clientTty?: string;
                 currentWindowId?: string;
                 focus?: boolean;
+                screen?: string;
               })
             : {};
         const currentClientSession =
@@ -2231,6 +2249,12 @@ export class MetadataServer {
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
+        const rawScreen = body.screen ?? url.searchParams.get("screen") ?? undefined;
+        const screen = parseDashboardControlScreen(rawScreen);
+        if (rawScreen != null && !screen) {
+          send(res, 400, { ok: false, error: "invalid dashboard screen" });
+          return;
+        }
         const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const tmux = new TmuxRuntimeManager();
         if (!focus) {
@@ -2244,6 +2268,11 @@ export class MetadataServer {
             send(res, 404, { ok: false, error: "dashboard window not found" });
             return;
           }
+          if (screen && currentClientSession) {
+            persistDashboardClientPreference(currentClientSession, (snapshot) => {
+              snapshot.screen = screen;
+            });
+          }
           sendControlAction(res, "open-dashboard", target, { focused: false });
           return;
         }
@@ -2255,6 +2284,11 @@ export class MetadataServer {
         const focusClientSession = resolveControlFocusClientSession(tmux, currentClientSession, clientTty, focus);
         if (focusClientSession) {
           persistDashboardReturnSelection(tmux, process.cwd(), focusClientSession, currentWindowId);
+          if (screen) {
+            persistDashboardClientPreference(focusClientSession, (snapshot) => {
+              snapshot.screen = screen;
+            });
+          }
         }
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
@@ -2278,70 +2312,6 @@ export class MetadataServer {
         tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
-        return;
-      }
-
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.openInbox) {
-        const body =
-          req.method === "POST"
-            ? ((await readJson(req)) as {
-                currentClientSession?: string;
-                clientTty?: string;
-                focus?: boolean;
-              })
-            : {};
-        const currentClientSession =
-          body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
-        const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
-        const focus = controlFocusRequested(body as Record<string, unknown>, url);
-        const tmux = new TmuxRuntimeManager();
-        if (!focus) {
-          const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
-          if (sessionError) {
-            send(res, 400, { ok: false, error: sessionError });
-            return;
-          }
-          const target = findExistingDashboardTarget(tmux, process.cwd(), currentClientSession);
-          if (!target) {
-            send(res, 404, { ok: false, error: "dashboard window not found" });
-            return;
-          }
-          sendControlAction(res, "open-inbox", target, { focused: false });
-          return;
-        }
-        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
-        if (focusError) {
-          send(res, 400, { ok: false, error: focusError });
-          return;
-        }
-        const focusClientSession = resolveControlFocusClientSession(tmux, currentClientSession, clientTty, focus);
-        if (focusClientSession) {
-          persistDashboardClientPreference(focusClientSession, (snapshot) => {
-            snapshot.screen = "coordination";
-          });
-        }
-        const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
-        const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
-        const openSessionName =
-          focusClientSession && tmux.hasSession(focusClientSession)
-            ? focusClientSession
-            : tmux.getOpenSessionName(dashboardSession.sessionName);
-        const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
-        const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
-        const currentOwner = getRuntimeOwnerId();
-        if (
-          !tmux.isWindowAlive(target) ||
-          currentBuildStamp !== dashboardBuildStamp ||
-          currentDashboardOwner !== currentOwner
-        ) {
-          tmux.respawnWindow(target, dashboardCommand);
-        }
-        tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
-        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
-        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
-        const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
-        sendControlAction(res, "open-inbox", target, focusResult);
         return;
       }
 
