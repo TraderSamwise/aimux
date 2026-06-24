@@ -317,7 +317,31 @@ describe("restartAimuxControlPlane", () => {
     await firstRestart;
   });
 
-  it("replaces stale restart locks even when the recorded pid is alive", async () => {
+  it("does not replace stale restart locks while the recorded owner is alive", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const lockPath = join(testAimuxHome!, "locks", "restart");
+    mkdirSync(lockPath, { recursive: true });
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 12345, acquiredAt: "2026-06-20T00:00:00.000Z" }));
+    const old = new Date("2000-01-01T00:00:00.000Z");
+    utimesSync(lockPath, old, old);
+
+    const stopDaemon = vi.fn(async () => stoppedDaemon());
+    await expect(
+      restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:01.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon,
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+        ensureProjectService: vi.fn(),
+        createTmux: () => ({ isAvailable: () => true }),
+        isPidAlive: (pid) => pid === 12345,
+      }),
+    ).rejects.toThrow("aimux restart is already running");
+
+    expect(stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it("replaces stale restart locks when the recorded owner is gone", async () => {
     expect(testAimuxHome).toBeTruthy();
     const lockPath = join(testAimuxHome!, "locks", "restart");
     mkdirSync(lockPath, { recursive: true });
@@ -343,7 +367,7 @@ describe("restartAimuxControlPlane", () => {
         dashboardSession: { sessionName: "aimux-alpha-111" },
         dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
       })),
-      isPidAlive: (pid) => pid === 12345,
+      isPidAlive: () => false,
     });
 
     expect(stopDaemon).toHaveBeenCalledOnce();

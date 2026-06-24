@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import {
   ensureDaemonRunning,
@@ -131,7 +131,16 @@ function runtimeRestartLockPath(): string {
   return pathResolve(getGlobalAimuxDir(), "locks", "restart");
 }
 
-function tryAcquireRuntimeRestartLock(): string | null {
+function readRuntimeRestartLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(joinLockOwnerPath(lockPath), "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): string | null {
   const lockPath = runtimeRestartLockPath();
   const acquire = (): string | null => {
     try {
@@ -150,6 +159,8 @@ function tryAcquireRuntimeRestartLock(): string | null {
   if (acquired) return acquired;
   try {
     if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
+      const ownerPid = readRuntimeRestartLockPid(lockPath);
+      if (ownerPid !== null && isPidAlive(ownerPid)) return null;
       rmSync(lockPath, { recursive: true, force: true });
       return acquire();
     }
@@ -497,7 +508,7 @@ async function verifyPostRestartCoherence(input: {
 export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
-  const lockPath = tryAcquireRuntimeRestartLock();
+  const lockPath = tryAcquireRuntimeRestartLock(options.isPidAlive ?? defaultIsPidAlive);
   if (!lockPath) {
     throw new Error("aimux restart is already running");
   }
