@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isExitedProcessState, restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
 import type { RuntimeCoherenceReport } from "./runtime-coherence.js";
 
@@ -215,9 +218,22 @@ function stoppedDaemon(
 }
 
 describe("restartAimuxControlPlane", () => {
+  let previousAimuxHome: string | undefined;
+  let testAimuxHome: string | null = null;
+
+  beforeEach(() => {
+    previousAimuxHome = process.env.AIMUX_HOME;
+    testAimuxHome = mkdtempSync(join(tmpdir(), "aimux-runtime-restart-"));
+    process.env.AIMUX_HOME = testAimuxHome;
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     execFileSyncMock.mockReset();
+    if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+    else process.env.AIMUX_HOME = previousAimuxHome;
+    if (testAimuxHome) rmSync(testAimuxHome, { recursive: true, force: true });
+    testAimuxHome = null;
   });
 
   it("treats zombie ps states as exited", () => {
@@ -256,6 +272,49 @@ describe("restartAimuxControlPlane", () => {
       stdio: ["ignore", "pipe", "ignore"],
     });
     expect(processKill).not.toHaveBeenCalledWith(9001, "SIGKILL");
+  });
+
+  it("serializes concurrent control-plane restarts with a global lock", async () => {
+    let releaseStopDaemon: ((value: ReturnType<typeof stoppedDaemon>) => void) | undefined;
+    const stopDaemon = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof stoppedDaemon>>((resolve) => {
+          releaseStopDaemon = resolve;
+        }),
+    );
+    const firstRestart = restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon,
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+    await vi.waitFor(() => expect(stopDaemon).toHaveBeenCalled());
+
+    await expect(
+      restartAimuxControlPlane({
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon: vi.fn(async () => stoppedDaemon()),
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9003, port: 43190, startedAt: "after", updatedAt: "after" })),
+        ensureProjectService: vi.fn(),
+        createTmux: () => ({ isAvailable: () => true }),
+      }),
+    ).rejects.toThrow("aimux restart is already running");
+
+    releaseStopDaemon?.(stoppedDaemon());
+    await firstRestart;
   });
 
   it("treats live pids as alive when ps state probing fails", async () => {

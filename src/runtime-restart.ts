@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import {
   ensureDaemonRunning,
@@ -22,8 +23,10 @@ import {
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
+import { getGlobalAimuxDir } from "./paths.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
+const RUNTIME_RESTART_LOCK_STALE_MS = 120_000;
 
 export interface RuntimeRestartProjectResult {
   projectRoot: string;
@@ -122,6 +125,60 @@ function uniqueSorted(values: string[]): string[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function runtimeRestartLockPath(): string {
+  return pathResolve(getGlobalAimuxDir(), "locks", "restart");
+}
+
+function tryAcquireRuntimeRestartLock(): string | null {
+  const lockPath = runtimeRestartLockPath();
+  const acquire = (): string | null => {
+    try {
+      mkdirSync(pathResolve(getGlobalAimuxDir(), "locks"), { recursive: true });
+      mkdirSync(lockPath, { recursive: false });
+      writeFileSync(
+        joinLockOwnerPath(lockPath),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return lockPath;
+    } catch {
+      return null;
+    }
+  };
+  const acquired = acquire();
+  if (acquired) return acquired;
+  try {
+    if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
+      const ownerPid = readRuntimeRestartLockPid(lockPath);
+      if (ownerPid && defaultIsPidAlive(ownerPid)) return null;
+      rmSync(lockPath, { recursive: true, force: true });
+      return acquire();
+    }
+  } catch {
+    if (!existsSync(lockPath)) return acquire();
+  }
+  return null;
+}
+
+function joinLockOwnerPath(lockPath: string): string {
+  return pathResolve(lockPath, "owner.json");
+}
+
+function readRuntimeRestartLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(joinLockOwnerPath(lockPath), "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function releaseRuntimeRestartLock(lockPath: string | null): void {
+  if (!lockPath) return;
+  try {
+    rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
 }
 
 function emptyProjectResult(projectRoot: string): RuntimeRestartProjectResult {
@@ -443,6 +500,20 @@ async function verifyPostRestartCoherence(input: {
 }
 
 export async function restartAimuxControlPlane(
+  options: RestartAimuxControlPlaneOptions = {},
+): Promise<RuntimeRestartResult> {
+  const lockPath = tryAcquireRuntimeRestartLock();
+  if (!lockPath) {
+    throw new Error("aimux restart is already running");
+  }
+  try {
+    return await restartAimuxControlPlaneUnlocked(options);
+  } finally {
+    releaseRuntimeRestartLock(lockPath);
+  }
+}
+
+async function restartAimuxControlPlaneUnlocked(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
   const now = options.now ?? (() => new Date());
