@@ -380,7 +380,7 @@ export class TmuxRuntimeManager {
           this.exec([
             moveCommand,
             "-s",
-            `${clientSessionName}:${linked.windowIndex}`,
+            `${clientSessionName}:${linked.windowId}`,
             "-t",
             `${clientSessionName}:${windowIndex}`,
           ]);
@@ -394,6 +394,14 @@ export class TmuxRuntimeManager {
         }
         const replaced = this.getTargetByWindowId(clientSessionName, target.windowId);
         if (!replaced || replaced.windowIndex !== windowIndex) {
+          if (linkedInThisCall) {
+            const linkedAfterFailure = this.getTargetByWindowId(clientSessionName, target.windowId);
+            if (linkedAfterFailure) {
+              try {
+                this.unlinkWindow(linkedAfterFailure);
+              } catch {}
+            }
+          }
           throw new Error(`Failed to replace dashboard slot ${clientSessionName}:${windowIndex}`);
         }
         const staleDashboard = occupyingDashboard
