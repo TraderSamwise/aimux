@@ -1,5 +1,6 @@
 import type { TmuxRuntimeManager, TmuxTarget, TmuxSessionRef } from "../tmux/runtime-manager.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "../tmux/session-names.js";
 import { getDashboardCommandSpec } from "./command-spec.js";
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "../runtime-owner.js";
 
@@ -41,7 +42,7 @@ export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeMa
   const sameProjectCurrentClientSession =
     currentClientSession &&
     (currentClientSession === dashboardSession.sessionName ||
-      currentClientSession.startsWith(`${dashboardSession.sessionName}-client-`))
+      isTmuxClientSessionForHost(currentClientSession, dashboardSession.sessionName))
       ? currentClientSession
       : null;
   const candidateSessions = [
@@ -50,7 +51,7 @@ export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeMa
     dashboardSession.sessionName,
     ...tmux
       .listSessionNames()
-      .filter((sessionName) => sessionName.startsWith(`${dashboardSession.sessionName}-client-`)),
+      .filter((sessionName) => isTmuxClientSessionForHost(sessionName, dashboardSession.sessionName)),
   ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index);
 
   for (const sessionName of candidateSessions) {

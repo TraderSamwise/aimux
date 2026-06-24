@@ -133,7 +133,7 @@ describe("buildMetaDashboardModel", () => {
 
   it("does not treat derived session names as running without project-root metadata", () => {
     const localDeps = deps();
-    localDeps.tmux = fakeTmux(["aimux-alpha-id", "aimux-alpha-id-client-live"]);
+    localDeps.tmux = fakeTmux(["aimux-alpha-id", "aimux-alpha-id-client-abcdef12"]);
     const model = buildMetaDashboardModel(localDeps);
     expect(model.projects.find((project) => project.name === "alpha")?.running).toBe(false);
   });

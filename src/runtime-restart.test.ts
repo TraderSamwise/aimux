@@ -373,6 +373,32 @@ describe("restartAimuxControlPlane", () => {
     expect(stopDaemon).toHaveBeenCalledOnce();
   });
 
+  it("does not steal stale restart locks while another cleanup is in progress", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const lockPath = join(testAimuxHome!, "locks", "restart");
+    const stealPath = join(testAimuxHome!, "locks", "restart.steal");
+    mkdirSync(lockPath, { recursive: true });
+    mkdirSync(stealPath, { recursive: true });
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 12345, acquiredAt: "2026-06-20T00:00:00.000Z" }));
+    const old = new Date("2000-01-01T00:00:00.000Z");
+    utimesSync(lockPath, old, old);
+
+    const stopDaemon = vi.fn(async () => stoppedDaemon());
+    await expect(
+      restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:01.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon,
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+        ensureProjectService: vi.fn(),
+        createTmux: () => ({ isAvailable: () => true }),
+        isPidAlive: () => false,
+      }),
+    ).rejects.toThrow("aimux restart is already running");
+
+    expect(stopDaemon).not.toHaveBeenCalled();
+  });
+
   it("treats live pids as alive when ps state probing fails", async () => {
     const processKill = vi.spyOn(process, "kill").mockImplementation(() => true);
     execFileSyncMock.mockImplementation(() => {

@@ -12,6 +12,7 @@ import {
   TMUX_RUNTIME_OWNER_OPTION,
 } from "./runtime-owner.js";
 import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { AIMUX_VERSION } from "./version.js";
 import { getAimuxCliLaunchCommand, type AimuxCliLaunchCommand } from "./cli-launcher.js";
 
@@ -246,7 +247,7 @@ function listDashboardReports(input: {
 
   const hostSession = input.tmux.getProjectSession(input.projectRoot).sessionName;
   const candidates = input.sessionNames.filter((sessionName) => {
-    if (sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`)) return true;
+    if (sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession)) return true;
     return input.tmux.getSessionOption(sessionName, "@aimux-project-root") === input.projectRoot;
   });
   const seen = new Set<string>();
@@ -324,7 +325,7 @@ function readProjectRuntimeReport(input: {
   }
   const contract = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
   const clientSessions = sessionNames
-    .filter((name) => name.startsWith(`${sessionName}-client-`))
+    .filter((name) => isTmuxClientSessionForHost(name, sessionName))
     .map((name) => {
       const clientContract = input.tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION);
       return {

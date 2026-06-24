@@ -19,6 +19,7 @@ import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js"
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import {
   buildTmuxDoctorReport,
   renderTmuxDoctorReport,
@@ -656,7 +657,7 @@ function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: s
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   return tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession))
     .sort((a, b) => {
       const aIsHost = a === hostSession ? 1 : 0;
       const bIsHost = b === hostSession ? 1 : 0;

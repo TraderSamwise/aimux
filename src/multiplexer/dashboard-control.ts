@@ -298,6 +298,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   let settled = false;
   let repairTimeout: ReturnType<typeof setTimeout> | null = null;
+  let childExited = false;
   const clearRepairTimeout = () => {
     if (!repairTimeout) return;
     clearTimeout(repairTimeout);
@@ -352,16 +353,18 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
     }
     repairTimeout = setTimeout(() => {
-      try {
-        child.kill?.("SIGTERM");
-      } catch {}
+      if (!childExited) {
+        try {
+          child.kill?.("SIGTERM");
+        } catch {}
+      }
       fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
+      childExited = true;
       if (code === 0) {
-        clearRepairTimeout();
         void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
         return;
       }
