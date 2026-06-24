@@ -336,23 +336,57 @@ export class TmuxRuntimeManager {
   private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget, windowIndex?: number): TmuxTarget {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (existing) return existing;
+    let occupyingDashboard: TmuxWindowInfo | undefined;
+    let keepaliveWindowId: string | null = null;
     if (windowIndex !== undefined) {
-      const occupying = this.listWindows(clientSessionName).find((window) => window.index === windowIndex);
+      const windows = this.listWindows(clientSessionName);
+      const occupying = windows.find((window) => window.index === windowIndex);
       if (occupying && occupying.id !== target.windowId) {
         if (!isDashboardWindowName(occupying.name)) {
           throw new Error(
             `Cannot replace non-dashboard tmux window ${occupying.id} at ${clientSessionName}:${windowIndex}`,
           );
         }
+        occupyingDashboard = occupying;
+        if (windows.length === 1) {
+          const keepaliveName = `aimux-keepalive-${target.windowId.replace(/[^a-zA-Z0-9]/g, "")}`;
+          this.exec([
+            "new-window",
+            "-d",
+            "-t",
+            clientSessionName,
+            "-n",
+            keepaliveName,
+            "sh",
+            "-lc",
+            "tail -f /dev/null",
+          ]);
+          keepaliveWindowId =
+            this.listWindows(clientSessionName).find((window) => window.name === keepaliveName)?.id ?? null;
+        }
       }
     }
     const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
-    const args = ["link-window", "-d"];
-    if (windowIndex !== undefined) args.push("-k");
-    this.exec([...args, "-s", target.windowId, "-t", destination]);
+    if (occupyingDashboard) {
+      this.killWindow({
+        sessionName: clientSessionName,
+        windowId: occupyingDashboard.id,
+        windowIndex: occupyingDashboard.index,
+        windowName: occupyingDashboard.name,
+      });
+    }
+    this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
     const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (!linked) {
       throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
+    }
+    if (keepaliveWindowId) {
+      this.killWindow({
+        sessionName: clientSessionName,
+        windowId: keepaliveWindowId,
+        windowIndex: -1,
+        windowName: "aimux-keepalive",
+      });
     }
     return linked;
   }
