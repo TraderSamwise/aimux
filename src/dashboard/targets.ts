@@ -103,6 +103,7 @@ export function resolveDashboardTarget(
   if (shouldRespawn) {
     tmux.respawnWindow(dashboardTarget, dashboardCommand);
   }
+  tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
   tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
   tmux.setWindowOption(dashboardTarget, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
   return { dashboardSession, dashboardTarget };
