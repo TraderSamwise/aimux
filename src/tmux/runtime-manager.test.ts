@@ -732,7 +732,9 @@ describe("TmuxRuntimeManager", () => {
     expect(
       calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
     ).toBe(true);
-    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:1`)).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`)).toBe(
+      true,
+    );
     expect(calls.some((call) => call.args[0] === "kill-window")).toBe(false);
     expect(calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows on`)).toBe(
       true,
@@ -778,7 +780,9 @@ describe("TmuxRuntimeManager", () => {
     expect(
       calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
     ).toBe(true);
-    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:1`)).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`)).toBe(
+      true,
+    );
     expect(interactiveCalls.at(-1)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:0`]);
   });
 
@@ -894,7 +898,9 @@ describe("TmuxRuntimeManager", () => {
     ).toThrow("link failed");
 
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @placeholder")).toBe(false);
-    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:0`)).toBe(false);
+    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`)).toBe(
+      false,
+    );
     expect(calls.some((call) => call.args.includes("-k"))).toBe(false);
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @codex")).toBe(false);
   });
@@ -932,7 +938,9 @@ describe("TmuxRuntimeManager", () => {
       { insideTmux: true, clientSuffix: "268eff9c" },
     );
 
-    const unlinkIndex = calls.findIndex((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:2`);
+    const unlinkIndex = calls.findIndex(
+      (call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`,
+    );
     const disableIndex = calls.findIndex(
       (call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows off`,
     );
@@ -1000,7 +1008,7 @@ describe("TmuxRuntimeManager", () => {
       if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
       if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
       if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
-      if (joined === `unlink-window -t ${clientSessionName}:1`) throw new Error("unlink failed");
+      if (joined === `unlink-window -t ${clientSessionName}:@placeholder`) throw new Error("unlink failed");
       if (
         joined ===
         `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
@@ -1019,7 +1027,9 @@ describe("TmuxRuntimeManager", () => {
       { insideTmux: true, clientSuffix: "268eff9c" },
     );
 
-    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:1`)).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`)).toBe(
+      true,
+    );
     expect(calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows on`)).toBe(
       true,
     );
@@ -1246,7 +1256,7 @@ describe("TmuxRuntimeManager", () => {
     expect(
       calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
     ).toBe(true);
-    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:1`)).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@125`)).toBe(true);
     expect(interactiveCalls.at(-1)?.args).toEqual([
       "switch-client",
       "-c",

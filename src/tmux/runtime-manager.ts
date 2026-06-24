@@ -637,7 +637,7 @@ export class TmuxRuntimeManager {
   }
 
   unlinkWindow(target: TmuxTarget): void {
-    this.exec(["unlink-window", "-t", `${target.sessionName}:${target.windowIndex}`]);
+    this.exec(["unlink-window", "-t", `${target.sessionName}:${target.windowId}`]);
   }
 
   killSession(sessionName: string): void {
