@@ -359,14 +359,16 @@ export class TmuxRuntimeManager {
         }
         occupyingDashboard = occupying;
         requiresKeepalive = windows.length === 1;
+        originalRenumberWindows = this.getSessionOption(clientSessionName, "renumber-windows") || "off";
       }
     }
     const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
     try {
+      if (originalRenumberWindows !== null) {
+        this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
+      }
       if (requiresKeepalive) {
         const keepaliveName = `aimux-keepalive-${target.windowId.replace(/[^a-zA-Z0-9]/g, "")}`;
-        originalRenumberWindows = this.getSessionOption(clientSessionName, "renumber-windows") || "off";
-        this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
         this.exec(["new-window", "-d", "-t", clientSessionName, "-n", keepaliveName, "sh", "-lc", "tail -f /dev/null"]);
         keepaliveWindowId =
           this.listWindows(clientSessionName).find((window) => window.name === keepaliveName)?.id ?? null;
