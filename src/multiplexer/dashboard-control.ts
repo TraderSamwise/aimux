@@ -56,6 +56,8 @@ import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
+const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
+const RUNTIME_GUARD_REPAIR_KILL_GRACE_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
@@ -189,6 +191,10 @@ function runtimeGuardRepairLockPath(): string {
   return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
 }
 
+function runtimeGuardRepairStealLockPath(): string {
+  return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair.steal");
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -214,12 +220,50 @@ function writeRuntimeGuardRepairLockOwner(lockPath: string, pid: number, project
   );
 }
 
+function tryAcquireRuntimeGuardRepairStealLock(): string | null {
+  const stealPath = runtimeGuardRepairStealLockPath();
+  const writeOwner = (): boolean => {
+    try {
+      writeFileSync(
+        join(stealPath, "owner.json"),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return true;
+    } catch {
+      rmSync(stealPath, { recursive: true, force: true });
+      return false;
+    }
+  };
+  try {
+    mkdirSync(stealPath, { recursive: false });
+    if (!writeOwner()) return null;
+    return stealPath;
+  } catch {
+    try {
+      if (Date.now() - statSync(stealPath).mtimeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
+        rmSync(stealPath, { recursive: true, force: true });
+        mkdirSync(stealPath, { recursive: false });
+        if (!writeOwner()) return null;
+        return stealPath;
+      }
+    } catch {
+      if (!existsSync(stealPath)) return tryAcquireRuntimeGuardRepairStealLock();
+    }
+    return null;
+  }
+}
+
 function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   const lockPath = runtimeGuardRepairLockPath();
   const acquire = (): string | null => {
     try {
       mkdirSync(lockPath);
-      writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+      try {
+        writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+      } catch (error) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
       return lockPath;
     } catch (error) {
       if ((error as { code?: string }).code !== "EEXIST") throw error;
@@ -233,9 +277,25 @@ function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   try {
     const ownerPid = readRuntimeGuardRepairLockPid(lockPath);
     const ageMs = Date.now() - statSync(lockPath).mtimeMs;
-    if ((ownerPid && !isPidAlive(ownerPid)) || ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
-      rmSync(lockPath, { recursive: true, force: true });
-      return acquire();
+    if ((ownerPid && !isPidAlive(ownerPid)) || (!ownerPid && ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)) {
+      const stealPath = tryAcquireRuntimeGuardRepairStealLock();
+      if (!stealPath) return null;
+      try {
+        const currentOwnerPid = readRuntimeGuardRepairLockPid(lockPath);
+        const currentAgeMs = Date.now() - statSync(lockPath).mtimeMs;
+        if (
+          !(
+            (currentOwnerPid && !isPidAlive(currentOwnerPid)) ||
+            (!currentOwnerPid && currentAgeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)
+          )
+        ) {
+          return null;
+        }
+        rmSync(lockPath, { recursive: true, force: true });
+        return acquire();
+      } finally {
+        rmSync(stealPath, { recursive: true, force: true });
+      }
     }
   } catch {
     if (!existsSync(lockPath)) return acquire();
@@ -296,10 +356,26 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
 
   let settled = false;
-  const fail = (message: string) => {
+  let repairTimeout: ReturnType<typeof setTimeout> | null = null;
+  let repairKillTimeout: ReturnType<typeof setTimeout> | null = null;
+  let childExited = false;
+  let releaseLockWhenChildExits = false;
+  const clearRepairTimeout = () => {
+    if (!repairTimeout) return;
+    clearTimeout(repairTimeout);
+    repairTimeout = null;
+  };
+  const clearRepairKillTimeout = () => {
+    if (!repairKillTimeout) return;
+    clearTimeout(repairKillTimeout);
+    repairKillTimeout = null;
+  };
+  const fail = (message: string, options: { keepRepairLock?: boolean } = {}) => {
     if (settled) return;
     settled = true;
-    releaseRuntimeGuardRepairLock(lockPath);
+    clearRepairTimeout();
+    if (!options.keepRepairLock) clearRepairKillTimeout();
+    if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
     if (host.runtimeGuardRepairBusy) {
@@ -312,19 +388,23 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const succeed = async () => {
     if (settled) return;
     const probed = await probeRuntimeGuard(projectRoot);
+    if (settled) return;
     if (probed.kind !== "ok") {
       fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
       return;
     }
-    if (
-      isDashboardLifecycleCurrent(host, lifecycle) &&
-      !(await refreshDashboardModelThroughApi(host, { force: true, lifecycle }))
-    ) {
-      fail("aimux repair completed but dashboard data is still unavailable");
-      return;
+    if (isDashboardLifecycleCurrent(host, lifecycle)) {
+      const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+      if (settled) return;
+      if (!refreshed) {
+        fail("aimux repair completed but dashboard data is still unavailable");
+        return;
+      }
     }
     if (settled) return;
     settled = true;
+    clearRepairTimeout();
+    clearRepairKillTimeout();
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
@@ -342,8 +422,34 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (typeof child.pid === "number" && child.pid > 0) {
       writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
     }
+    repairTimeout = setTimeout(() => {
+      if (!childExited) {
+        releaseLockWhenChildExits = true;
+        try {
+          child.kill?.("SIGTERM");
+        } catch {}
+        repairKillTimeout = setTimeout(() => {
+          repairKillTimeout = null;
+          if (childExited) return;
+          try {
+            child.kill?.("SIGKILL");
+          } catch {}
+        }, RUNTIME_GUARD_REPAIR_KILL_GRACE_MS);
+        repairKillTimeout.unref?.();
+      }
+      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
+        keepRepairLock: !childExited,
+      });
+    }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
+    repairTimeout.unref?.();
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
+      childExited = true;
+      clearRepairKillTimeout();
+      if (releaseLockWhenChildExits) {
+        releaseRuntimeGuardRepairLock(lockPath);
+        releaseLockWhenChildExits = false;
+      }
       if (code === 0) {
         void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
         return;
@@ -1037,11 +1143,9 @@ async function endpointMatchesCurrentProjectService(
       serviceInfo?: ProjectServiceManifest;
     }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
     if (status < 200 || status >= 300) return "unknown";
-    return (
-      json?.pid === endpoint.pid &&
+    return json?.pid === endpoint.pid &&
       json?.projectStateDir === getProjectStateDirFor(process.cwd()) &&
       manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
-    )
       ? "current"
       : "stale";
   } catch (error) {

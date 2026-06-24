@@ -857,7 +857,7 @@ describe("MetadataServer threads API", () => {
     const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
     TmuxRuntimeManager.prototype.getTargetByWindowId = (_sessionName, windowId) =>
       windowId === "@7" ? target : undefined;
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
@@ -875,7 +875,7 @@ describe("MetadataServer threads API", () => {
         },
       ] as any;
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
-      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
     TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
     TmuxRuntimeManager.prototype.openTarget = vi.fn();
     TmuxRuntimeManager.prototype.switchClientToTarget = (tty, nextTarget) => {
@@ -908,7 +908,7 @@ describe("MetadataServer threads API", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sessionId: "teammate-1",
-          currentClientSession: "aimux-test-client-123",
+          currentClientSession: "aimux-test-client-12345678",
           clientTty: "/dev/ttys001",
           focus: true,
         }),
@@ -1072,9 +1072,9 @@ describe("MetadataServer threads API", () => {
       onChange,
     });
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
-      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
       throw new Error("offline service open should not resolve tmux windows");
     });
@@ -1089,7 +1089,7 @@ describe("MetadataServer threads API", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sessionId: "svc-1",
-          currentClientSession: "aimux-test-client-123",
+          currentClientSession: "aimux-test-client-12345678",
           clientTty: "/dev/ttys001",
           focus: true,
         }),
@@ -1129,9 +1129,9 @@ describe("MetadataServer threads API", () => {
       onChange,
     });
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
-      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
       throw new Error("offline agent open should not resolve tmux windows");
     });
@@ -1146,7 +1146,7 @@ describe("MetadataServer threads API", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sessionId: "agent-1",
-          currentClientSession: "aimux-test-client-123",
+          currentClientSession: "aimux-test-client-12345678",
           clientTty: "/dev/ttys001",
           focus: true,
         }),
@@ -1306,7 +1306,7 @@ describe("MetadataServer threads API", () => {
     const openTarget = TmuxRuntimeManager.prototype.openTarget;
 
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
@@ -1333,7 +1333,7 @@ describe("MetadataServer threads API", () => {
       const res = await fetch(`${base}/control/focus-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ windowId: "@7", currentClientSession: "aimux-test-client-123", focus: true }),
+        body: JSON.stringify({ windowId: "@7", currentClientSession: "aimux-test-client-12345678", focus: true }),
       });
       const body = (await res.json()) as { ok: boolean; error?: string };
 
@@ -1366,9 +1366,9 @@ describe("MetadataServer threads API", () => {
     const openTarget = TmuxRuntimeManager.prototype.openTarget;
 
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-live";
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-abcdef12";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
-      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-live" } as any) : null;
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-abcdef12" } as any) : null;
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
@@ -1399,7 +1399,7 @@ describe("MetadataServer threads API", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           windowId: "@7",
-          currentClientSession: "aimux-test-client-stale",
+          currentClientSession: "aimux-test-client-deadbeef",
           clientTty: "/dev/ttys001",
           focus: true,
         }),
@@ -1424,7 +1424,7 @@ describe("MetadataServer threads API", () => {
 
   it("resolves dashboard locations without mutating tmux state when focus is false", async () => {
     const target = {
-      sessionName: "aimux-repo-abc-client-123",
+      sessionName: "aimux-repo-abc-client-12345678",
       windowId: "@99",
       windowIndex: 0,
       windowName: "dashboard-123",
@@ -1444,10 +1444,10 @@ describe("MetadataServer threads API", () => {
     const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
 
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-repo-abc-client-123";
-    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-repo-abc", "aimux-repo-abc-client-123"];
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-repo-abc-client-12345678";
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-repo-abc", "aimux-repo-abc-client-12345678"];
     TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
-      sessionName === "aimux-repo-abc-client-123"
+      sessionName === "aimux-repo-abc-client-12345678"
         ? [{ id: target.windowId, index: target.windowIndex, name: target.windowName, active: true }]
         : [];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
@@ -1475,7 +1475,7 @@ describe("MetadataServer threads API", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          currentClientSession: "aimux-repo-abc-client-123",
+          currentClientSession: "aimux-repo-abc-client-12345678",
           currentWindowId: "@42",
           focus: false,
         }),
@@ -1485,7 +1485,7 @@ describe("MetadataServer threads API", () => {
       const inboxRes = await fetch(`${base}/control/open-inbox`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ currentClientSession: "aimux-repo-abc-client-123", focus: false }),
+        body: JSON.stringify({ currentClientSession: "aimux-repo-abc-client-12345678", focus: false }),
       });
       const inboxBody = (await inboxRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
 
@@ -1497,7 +1497,7 @@ describe("MetadataServer threads API", () => {
       expect(TmuxRuntimeManager.prototype.ensureDashboardWindow).not.toHaveBeenCalled();
       expect(TmuxRuntimeManager.prototype.respawnWindow).not.toHaveBeenCalled();
       expect(TmuxRuntimeManager.prototype.setWindowOption).not.toHaveBeenCalled();
-      expect(existsSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"))).toBe(false);
+      expect(existsSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"))).toBe(false);
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
@@ -1530,10 +1530,10 @@ describe("MetadataServer threads API", () => {
     const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
 
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
-    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-123";
-    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test", "aimux-test-client-123"];
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test", "aimux-test-client-12345678"];
     TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
-      sessionName === "aimux-test-client-123" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
+      sessionName === "aimux-test-client-12345678" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
       key === TMUX_DASHBOARD_OWNER_OPTION
@@ -1546,7 +1546,7 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";
     TmuxRuntimeManager.prototype.captureTarget = () => "";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
-      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-123" } as any) : null;
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
     TmuxRuntimeManager.prototype.listManagedWindows = vi.fn(() => {
       throw new Error("switch resolver should not run for invalid client sessions");
     });
@@ -1581,7 +1581,7 @@ describe("MetadataServer threads API", () => {
       const missingTtyRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ currentClientSession: "aimux-test-client-123", currentWindowId: "@99" }),
+        body: JSON.stringify({ currentClientSession: "aimux-test-client-12345678", currentWindowId: "@99" }),
       });
       const missingTtyBody = (await missingTtyRes.json()) as { ok: boolean; error?: string };
       expect(missingTtyRes.status).toBe(400);
@@ -1611,13 +1611,13 @@ describe("MetadataServer threads API", () => {
       expect(TmuxRuntimeManager.prototype.listManagedWindows).not.toHaveBeenCalled();
 
       TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
-        sessionName === "aimux-test-client-123" ? [{ id: "@7", index: 7, name: "codex", active: true }] : [];
+        sessionName === "aimux-test-client-12345678" ? [{ id: "@7", index: 7, name: "codex", active: true }] : [];
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
       const deadManagedRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          currentClientSession: "aimux-test-client-123",
+          currentClientSession: "aimux-test-client-12345678",
           clientTty: "/dev/ttys001",
           currentWindow: "codex",
           currentWindowId: "@7",
@@ -1628,14 +1628,14 @@ describe("MetadataServer threads API", () => {
       expect(deadManagedBody).toEqual({ ok: false, error: "window not found" });
       expect(loadNotificationContexts().contexts.tui).toBeUndefined();
       TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
-        sessionName === "aimux-test-client-123" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
+        sessionName === "aimux-test-client-12345678" ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }] : [];
       TmuxRuntimeManager.prototype.isWindowAlive = () => true;
 
       const spoofedDashboardRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          currentClientSession: "aimux-test-client-123",
+          currentClientSession: "aimux-test-client-12345678",
           clientTty: "/dev/ttys001",
           currentWindow: "dashboard-123",
           currentWindowId: "@7",
@@ -1650,7 +1650,7 @@ describe("MetadataServer threads API", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          currentClientSession: "aimux-test-client-123",
+          currentClientSession: "aimux-test-client-12345678",
           clientTty: "/dev/ttys001",
           currentWindow: "dashboard-123",
           currentWindowId: "@99",
@@ -2603,6 +2603,7 @@ describe("MetadataServer threads API", () => {
     const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
     const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const setSessionOption = TmuxRuntimeManager.prototype.setSessionOption;
     const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     const listClients = TmuxRuntimeManager.prototype.listClients;
@@ -2611,6 +2612,7 @@ describe("MetadataServer threads API", () => {
     const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
+    const setSessionOptionMock = vi.fn();
     const setWindowOptionMock = vi.fn();
 
     TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
@@ -2618,7 +2620,7 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.hasSession = () => true;
     TmuxRuntimeManager.prototype.ensureDashboardWindow = () =>
       ({
-        sessionName: "aimux-repo-abc-client-123",
+        sessionName: "aimux-repo-abc-client-12345678",
         windowId: "@99",
         windowIndex: 0,
         windowName: "dashboard-123",
@@ -2626,6 +2628,7 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
+    TmuxRuntimeManager.prototype.setSessionOption = setSessionOptionMock;
     TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
@@ -2639,9 +2642,9 @@ describe("MetadataServer threads API", () => {
         },
       ] as any;
     TmuxRuntimeManager.prototype.listClients = () =>
-      [{ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-123" }] as any;
+      [{ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-12345678" }] as any;
     TmuxRuntimeManager.prototype.findClientByTty = () =>
-      ({ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-123" }) as any;
+      ({ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-12345678" }) as any;
     TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
     TmuxRuntimeManager.prototype.switchClientToTarget = () => undefined as any;
     TmuxRuntimeManager.prototype.refreshStatus = () => undefined as any;
@@ -2653,11 +2656,16 @@ describe("MetadataServer threads API", () => {
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
       const res = await fetch(
-        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith(
+        "aimux-repo-abc",
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
       expect(setWindowOptionMock).toHaveBeenCalledWith(
         expect.objectContaining({ windowId: "@99" }),
         "@aimux-dashboard-build",
@@ -2670,7 +2678,7 @@ describe("MetadataServer threads API", () => {
       );
 
       const snapshot = JSON.parse(
-        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
       expect(snapshot).toMatchObject({
         screen: "dashboard",
@@ -2684,20 +2692,25 @@ describe("MetadataServer threads API", () => {
       const inboxBody = (await inboxRes.json()) as { ok: boolean };
       expect(inboxRes.ok).toBe(true);
       expect(inboxBody.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith(
+        "aimux-repo-abc",
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
       const inboxSnapshot = JSON.parse(
-        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
       expect(inboxSnapshot.screen).toBe("coordination");
 
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
       const deadRes = await fetch(
-        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       const deadBody = (await deadRes.json()) as { ok: boolean };
       expect(deadRes.ok).toBe(true);
       expect(deadBody.ok).toBe(true);
       const deadSnapshot = JSON.parse(
-        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
       expect(deadSnapshot).toMatchObject({ screen: "dashboard" });
       expect(deadSnapshot.focusedWorktreePath).toBeUndefined();
@@ -2707,16 +2720,16 @@ describe("MetadataServer threads API", () => {
 
       TmuxRuntimeManager.prototype.isWindowAlive = () => true;
       const liveAgainRes = await fetch(
-        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       expect(liveAgainRes.ok).toBe(true);
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
       const dashboardWindowRes = await fetch(
-        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4099&focus=true`,
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4099&focus=true`,
       );
       expect(dashboardWindowRes.ok).toBe(true);
       const dashboardWindowSnapshot = JSON.parse(
-        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
       expect(dashboardWindowSnapshot).toMatchObject({
         screen: "dashboard",
@@ -2733,6 +2746,7 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.setSessionOption = setSessionOption;
       TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.listClients = listClients;
