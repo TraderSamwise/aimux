@@ -5,8 +5,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
-import { updateNotificationContext } from "../notification-context.js";
-import { markSessionViewed } from "../session-viewed.js";
 import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
@@ -63,7 +61,8 @@ const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
 function dashboardProjectRoot(host: DashboardControlHost): string {
-  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+  const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  return projectRoot || process.cwd();
 }
 
 export class DashboardProjectServiceHttpError extends Error {
@@ -149,16 +148,11 @@ export function syncTuiNotificationContext(host: DashboardControlHost, panelOpen
         ? host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex]?.id
         : undefined
       : host.getDashboardSessions()[host.activeIndex]?.id;
-  updateNotificationContext(
-    "tui",
-    {
-      focused: true,
-      screen: host.dashboardState.screen,
-      sessionId: selected,
-      panelOpen,
-    },
-    dashboardProjectRoot(host),
-  );
+  noteTuiNotificationContext(host, {
+    screen: host.dashboardState.screen,
+    sessionId: selected,
+    panelOpen,
+  });
 }
 
 export function isDashboardScreen(host: DashboardControlHost, screen: DashboardScreen): boolean {
@@ -714,16 +708,8 @@ export function openLiveTmuxWindowForEntry(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
-    updateNotificationContext(
-      "tui",
-      {
-        focused: true,
-        sessionId: entry.id,
-        panelOpen: false,
-      },
-      dashboardProjectRoot(host),
-    );
-    markSessionViewed(entry.id, dashboardProjectRoot(host));
+    noteTuiNotificationContext(host, { sessionId: entry.id, panelOpen: false });
+    markTuiSessionSeen(host, entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
   } catch (error) {
@@ -733,6 +719,21 @@ export function openLiveTmuxWindowForEntry(
     ]);
     return "error";
   }
+}
+
+function noteTuiNotificationContext(
+  host: DashboardControlHost,
+  patch: { screen?: string; sessionId?: string; panelOpen?: boolean },
+): void {
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, {
+    source: "tui",
+    focused: true,
+    ...patch,
+  }).catch(() => {});
+}
+
+function markTuiSessionSeen(host: DashboardControlHost, sessionId: string): void {
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.markSeen, { session: sessionId }).catch(() => {});
 }
 
 export async function waitAndOpenLiveTmuxWindowForEntry(
@@ -1167,27 +1168,31 @@ async function endpointStateForRequest(
   timeoutMs: number,
   projectRoot = dashboardProjectRoot(host),
 ): Promise<ProjectServiceEndpointState> {
-  const key = projectServiceEndpointHealthKey(endpoint);
+  const key = projectServiceEndpointHealthKey(endpoint, projectRoot);
   const cached = host.dashboardProjectServiceEndpointHealth as { key?: string; checkedAt?: number } | undefined;
   if (cached?.key === key && typeof cached.checkedAt === "number") {
     if (Date.now() - cached.checkedAt <= PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS) return "current";
   }
   const current = await endpointMatchesCurrentProjectService(endpoint, timeoutMs, projectRoot);
-  if (current === "current") markProjectServiceEndpointCurrent(host, endpoint);
+  if (current === "current") markProjectServiceEndpointCurrent(host, endpoint, projectRoot);
   else clearProjectServiceEndpointHealth(host);
   return current;
 }
 
-function projectServiceEndpointHealthKey(endpoint: { host: string; port: number; pid?: number }): string {
-  return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}`;
+function projectServiceEndpointHealthKey(
+  endpoint: { host: string; port: number; pid?: number },
+  projectRoot: string,
+): string {
+  return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}:${getProjectStateDirFor(projectRoot)}`;
 }
 
 function markProjectServiceEndpointCurrent(
   host: DashboardControlHost,
   endpoint: { host: string; port: number; pid?: number },
+  projectRoot: string,
 ): void {
   host.dashboardProjectServiceEndpointHealth = {
-    key: projectServiceEndpointHealthKey(endpoint),
+    key: projectServiceEndpointHealthKey(endpoint, projectRoot),
     checkedAt: Date.now(),
   };
 }

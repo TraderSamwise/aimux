@@ -15,16 +15,15 @@ import { codexLaunchHookArgs, installCodexHooks } from "../codex-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
-import { updateNotificationContext } from "../notification-context.js";
-import { markSessionViewed } from "../session-viewed.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionLaunchHost = any;
 
@@ -779,18 +778,15 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   const session = host.sessions[index];
   const sid = session.id;
   host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
-  updateNotificationContext(
-    "tui",
-    {
-      focused: true,
-      screen: "agent",
-      sessionId: sid,
-      panelOpen: false,
-    },
-    host.projectRoot,
-  );
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, {
+    source: "tui",
+    focused: true,
+    screen: "agent",
+    sessionId: sid,
+    panelOpen: false,
+  }).catch(() => {});
   host.noteLastUsedItem(sid);
-  markSessionViewed(sid, host.projectRoot);
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.markSeen, { session: sid }).catch(() => {});
   host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
