@@ -196,6 +196,23 @@ validate_dashboard_target() {
   [ -n "$dashboard_window_id" ] || return 1
   [ "$dashboard_pane_dead" != "1" ] && [ -n "$dashboard_pane_dead" ] || return 1
 
+  validate_host_session="$validate_session"
+  case "$validate_host_session" in
+    *-client-*) validate_host_session=${validate_host_session%-client-*} ;;
+  esac
+
+  target_project_root=$(tmux show-options -v -t "$validate_session" @aimux-project-root 2>/dev/null || true)
+  [ -n "$project_root" ] && [ "$target_project_root" = "$project_root" ] || return 1
+
+  expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
+  dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
+  [ -n "$expected_dashboard_build" ] && [ "$dashboard_build" = "$expected_dashboard_build" ] || return 1
+
+  expected_runtime_owner=$(tmux show-options -v -t "$validate_host_session" @aimux-runtime-owner 2>/dev/null || true)
+  target_runtime_owner=$(tmux show-options -v -t "$validate_session" @aimux-runtime-owner 2>/dev/null || true)
+  dashboard_owner=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-owner 2>/dev/null || true)
+  [ -n "$expected_runtime_owner" ] && [ "$target_runtime_owner" = "$expected_runtime_owner" ] && [ "$dashboard_owner" = "$expected_runtime_owner" ] || return 1
+
   if [ "$(tmux display-message -p -t "$dashboard_window_id" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
     tmux send-keys -t "$dashboard_window_id" -X cancel >/dev/null 2>&1 || true
   fi
@@ -295,7 +312,12 @@ reload_local_dashboard() {
   show_local_message "#[fg=colour220,bold]aimux#[default] reloading dashboard"
   (
     cd "$project_root" || exit 1
-    "$aimux_bin" dashboard-reload --open
+    reload_client_tty="${live_client_tty-${client_tty-}}"
+    reload_client_session="${live_client_session-${current_client_session-}}"
+    set -- dashboard-reload --open
+    [ -n "$reload_client_tty" ] && set -- "$@" --client-tty "$reload_client_tty"
+    [ -n "$reload_client_session" ] && set -- "$@" --current-client-session "$reload_client_session"
+    "$aimux_bin" "$@"
   ) >/dev/null 2>&1 &
   return 0
 }

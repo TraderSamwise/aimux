@@ -86,6 +86,7 @@ describe("findLiveDashboardTarget", () => {
       captureTarget: vi.fn(() => ""),
       killWindow: vi.fn(),
       respawnWindow: vi.fn(),
+      setSessionOption: vi.fn(),
       setWindowOption: vi.fn(),
     } as unknown as TmuxRuntimeManager;
 
@@ -94,6 +95,11 @@ describe("findLiveDashboardTarget", () => {
     resolveDashboardTarget("/Users/sam/cs/glyde-frontend", tmux);
 
     expect(tmux.respawnWindow).toHaveBeenCalledWith(dashboardTarget, expect.any(Object));
+    expect(tmux.setSessionOption).toHaveBeenCalledWith(
+      "aimux-glyde-frontend-abc123",
+      "@aimux-dashboard-build",
+      dashboardBuildStamp,
+    );
     expect(tmux.setWindowOption).toHaveBeenCalledWith(
       dashboardTarget,
       TMUX_DASHBOARD_OWNER_OPTION,
