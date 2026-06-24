@@ -191,6 +191,10 @@ function runtimeGuardRepairLockPath(): string {
   return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
 }
 
+function runtimeGuardRepairStealLockPath(): string {
+  return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair.steal");
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -216,12 +220,50 @@ function writeRuntimeGuardRepairLockOwner(lockPath: string, pid: number, project
   );
 }
 
+function tryAcquireRuntimeGuardRepairStealLock(): string | null {
+  const stealPath = runtimeGuardRepairStealLockPath();
+  const writeOwner = (): boolean => {
+    try {
+      writeFileSync(
+        join(stealPath, "owner.json"),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return true;
+    } catch {
+      rmSync(stealPath, { recursive: true, force: true });
+      return false;
+    }
+  };
+  try {
+    mkdirSync(stealPath, { recursive: false });
+    if (!writeOwner()) return null;
+    return stealPath;
+  } catch {
+    try {
+      if (Date.now() - statSync(stealPath).mtimeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
+        rmSync(stealPath, { recursive: true, force: true });
+        mkdirSync(stealPath, { recursive: false });
+        if (!writeOwner()) return null;
+        return stealPath;
+      }
+    } catch {
+      if (!existsSync(stealPath)) return tryAcquireRuntimeGuardRepairStealLock();
+    }
+    return null;
+  }
+}
+
 function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   const lockPath = runtimeGuardRepairLockPath();
   const acquire = (): string | null => {
     try {
       mkdirSync(lockPath);
-      writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+      try {
+        writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+      } catch (error) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
       return lockPath;
     } catch (error) {
       if ((error as { code?: string }).code !== "EEXIST") throw error;
@@ -236,8 +278,24 @@ function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
     const ownerPid = readRuntimeGuardRepairLockPid(lockPath);
     const ageMs = Date.now() - statSync(lockPath).mtimeMs;
     if ((ownerPid && !isPidAlive(ownerPid)) || (!ownerPid && ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)) {
-      rmSync(lockPath, { recursive: true, force: true });
-      return acquire();
+      const stealPath = tryAcquireRuntimeGuardRepairStealLock();
+      if (!stealPath) return null;
+      try {
+        const currentOwnerPid = readRuntimeGuardRepairLockPid(lockPath);
+        const currentAgeMs = Date.now() - statSync(lockPath).mtimeMs;
+        if (
+          !(
+            (currentOwnerPid && !isPidAlive(currentOwnerPid)) ||
+            (!currentOwnerPid && currentAgeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)
+          )
+        ) {
+          return null;
+        }
+        rmSync(lockPath, { recursive: true, force: true });
+        return acquire();
+      } finally {
+        rmSync(stealPath, { recursive: true, force: true });
+      }
     }
   } catch {
     if (!existsSync(lockPath)) return acquire();
