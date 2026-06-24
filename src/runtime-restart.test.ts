@@ -751,7 +751,7 @@ describe("restartAimuxControlPlane", () => {
       windowName: "dashboard",
     };
     const activeAgent = {
-      sessionName: "aimux-alpha-111-client-healthy",
+      sessionName: "aimux-alpha-111-client-bbbbbbbb",
       windowId: "@3",
       windowIndex: 1,
       windowName: "codex",
@@ -762,22 +762,22 @@ describe("restartAimuxControlPlane", () => {
       getProjectSession: vi.fn(() => ({ sessionName: "aimux-alpha-111" })),
       listSessionNames: vi.fn(() => [
         "aimux-alpha-111",
-        "aimux-alpha-111-client-stale",
-        "aimux-alpha-111-client-healthy",
+        "aimux-alpha-111-client-aaaaaaaa",
+        "aimux-alpha-111-client-bbbbbbbb",
       ]),
       listWindows: vi.fn((sessionName: string) => {
-        if (sessionName.endsWith("client-healthy")) {
+        if (sessionName.endsWith("client-bbbbbbbb")) {
           return [
             { id: activeAgent.windowId, index: activeAgent.windowIndex, name: activeAgent.windowName, active: true },
           ];
         }
-        if (sessionName.endsWith("client-stale")) {
+        if (sessionName.endsWith("client-aaaaaaaa")) {
           return [{ id: "@stale", index: 0, name: "dashboard", active: true }];
         }
         return [{ id: "@10", index: 0, name: "dashboard", active: true }];
       }),
       linkWindowToSession: vi.fn((sessionName, target, windowIndex) => {
-        if (sessionName.endsWith("client-stale")) throw new Error("stale client missing");
+        if (sessionName.endsWith("client-aaaaaaaa")) throw new Error("stale client missing");
         return {
           ...target,
           sessionName,
@@ -810,6 +810,55 @@ describe("restartAimuxControlPlane", () => {
     expect(result.projects[0]?.dashboard.status).toBe("failed");
     expect(result.projects[0]?.dashboard.error).toContain("stale client missing");
     expect(tmux.selectWindow).toHaveBeenCalledWith(activeAgent);
+  });
+
+  it("ignores malformed client-session suffixes during dashboard relink and active-window restore", async () => {
+    const dashboardTarget = {
+      sessionName: "aimux-alpha-111",
+      windowId: "@10",
+      windowIndex: 0,
+      windowName: "dashboard",
+    };
+    const tmux = {
+      isAvailable: () => true,
+      hasWindow: vi.fn(() => true),
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-alpha-111" })),
+      listSessionNames: vi.fn(() => ["aimux-alpha-111", "aimux-alpha-111-client-stale"]),
+      listWindows: vi.fn((sessionName: string) =>
+        sessionName.endsWith("client-stale")
+          ? [{ id: "@stale", index: 1, name: "codex", active: true }]
+          : [{ id: "@10", index: 0, name: "dashboard", active: true }],
+      ),
+      linkWindowToSession: vi.fn(),
+      selectWindow: vi.fn(),
+    };
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => tmux,
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget,
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(tmux.linkWindowToSession).not.toHaveBeenCalledWith(
+      "aimux-alpha-111-client-stale",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(tmux.selectWindow).not.toHaveBeenCalledWith(expect.objectContaining({ sessionName: "aimux-alpha-111-client-stale" }));
   });
 
   it("fails restart when post-restart coherence still needs restart", async () => {
