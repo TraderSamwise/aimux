@@ -750,6 +750,45 @@ describe("TmuxRuntimeManager", () => {
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @codex")).toBe(false);
   });
 
+  it("restores window renumbering when keepalive creation fails", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
+      if (joined.startsWith(`new-window -d -t ${clientSessionName} `)) throw new Error("new-window failed");
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        return "@placeholder\t0\tdashboard\t1\t100";
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec, () => {});
+
+    expect(() =>
+      manager.openTarget(
+        { sessionName: hostSessionName, windowId: "@10", windowIndex: 0, windowName: "dashboard" },
+        { insideTmux: true, clientSuffix: "268eff9c" },
+      ),
+    ).toThrow("new-window failed");
+
+    expect(
+      calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows off`),
+    ).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows on`)).toBe(
+      true,
+    );
+    expect(calls.some((call) => call.args[0] === "kill-window")).toBe(false);
+  });
+
   it("switches an explicit client tty + suffix for cross-project openTarget", () => {
     const exec = createExecMock();
     const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
