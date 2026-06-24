@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -838,6 +838,38 @@ describe("startRuntimeGuardRepair", () => {
     expect(mocks.spawn).toHaveBeenCalledTimes(2);
   });
 
+  it("does not reclaim an aged repair lock while its owner is still alive", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const lockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
+    mkdirSync(lockPath, { recursive: true });
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 987654, projectRoot: "/repo/app" }));
+    const old = new Date("2000-01-01T00:00:00.000Z");
+    utimesSync(lockPath, old, old);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
+      if (pid === 987654) return true;
+      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+    }) as typeof process.kill);
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/other",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
+    } finally {
+      killSpy.mockRestore();
+    }
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Aimux repair already running");
+    expect(existsSync(lockPath)).toBe(true);
+  });
+
   it("shows a dashboard error when guarded repair fails to spawn", async () => {
     let onError: ((error: Error) => void) | undefined;
     mocks.spawn.mockReturnValueOnce({
@@ -898,6 +930,44 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.dashboardBusyState).toBeNull();
     expect(host.runtimeGuardRepairFailedKey).toBe("runtime-rebuild-required");
     expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
+  });
+
+  it("releases a retained repair lock after the timed-out child exits", async () => {
+    vi.useFakeTimers();
+    let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+    const child = {
+      pid: 7654,
+      kill: vi.fn(),
+      on: vi.fn((event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+        if (event === "exit") onExit = handler;
+      }),
+      unref: vi.fn(),
+    };
+    mocks.spawn.mockReturnValueOnce(child);
+    const lockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+      startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
+      vi.advanceTimersByTime(45_000);
+      expect(existsSync(lockPath)).toBe(true);
+      onExit?.(1, null);
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(host.showDashboardError).toHaveBeenCalledTimes(1);
   });
 
   it("does not show stale guarded repair failures after leaving dashboard mode", async () => {

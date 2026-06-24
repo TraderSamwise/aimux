@@ -234,7 +234,7 @@ function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   try {
     const ownerPid = readRuntimeGuardRepairLockPid(lockPath);
     const ageMs = Date.now() - statSync(lockPath).mtimeMs;
-    if ((ownerPid && !isPidAlive(ownerPid)) || ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
+    if ((ownerPid && !isPidAlive(ownerPid)) || (!ownerPid && ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)) {
       rmSync(lockPath, { recursive: true, force: true });
       return acquire();
     }
@@ -299,6 +299,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   let settled = false;
   let repairTimeout: ReturnType<typeof setTimeout> | null = null;
   let childExited = false;
+  let releaseLockWhenChildExits = false;
   const clearRepairTimeout = () => {
     if (!repairTimeout) return;
     clearTimeout(repairTimeout);
@@ -363,11 +364,16 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
         keepRepairLock: !childExited,
       });
+      releaseLockWhenChildExits = !childExited;
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
       childExited = true;
+      if (releaseLockWhenChildExits) {
+        releaseRuntimeGuardRepairLock(lockPath);
+        releaseLockWhenChildExits = false;
+      }
       if (code === 0) {
         void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
         return;
