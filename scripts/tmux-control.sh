@@ -741,8 +741,15 @@ if action == "prev":
     raise SystemExit(1)
 if action == "attention":
     def rank(item):
+        attention = item.get("attention")
+        attention_score = {
+            "error": 5,
+            "needs_input": 4,
+            "needs_response": 4,
+            "blocked": 3,
+        }.get(attention, 0)
         return (
-            1 if item.get("attention") == "needs-input" else 0,
+            attention_score,
             item.get("unseenCount", 0),
             1 if item.get("statusText") == "blocked" else 0,
         )
