@@ -58,7 +58,7 @@ describe("thread subscreen navigation", () => {
 
     expect(host.postToProjectService).toHaveBeenCalledWith("/threads/mark-seen", {
       threadId: "thread-1",
-      sessionId: "teammate-1",
+      session: "user",
     });
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(teammate, { preserveDashboardSelection: true });
   });
@@ -140,13 +140,10 @@ describe("thread subscreen navigation", () => {
       expect(host.renderCoordination).toHaveBeenCalledOnce();
     });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith(
-      "/handoff/accept",
-      {
-        threadId: "thread-1",
-        from: "user",
-      },
-    );
+    expect(host.postToProjectService).toHaveBeenCalledWith("/handoff/accept", {
+      threadId: "thread-1",
+      from: "user",
+    });
   });
 
   it("shows refresh failure instead of success when workflow mutation snapshot reload fails", async () => {
