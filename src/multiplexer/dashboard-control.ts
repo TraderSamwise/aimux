@@ -361,6 +361,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     child.on("exit", (code, signal) => {
       if (code === 0) {
+        clearRepairTimeout();
         void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
         return;
       }

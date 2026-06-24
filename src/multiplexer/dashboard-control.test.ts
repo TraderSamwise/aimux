@@ -1002,6 +1002,7 @@ describe("startRuntimeGuardRepair", () => {
   it("clears the guarded repair timeout after successful verification", async () => {
     vi.useFakeTimers();
     let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+    let finishRefresh: ((value: boolean) => void) | undefined;
     const child = {
       kill: vi.fn(),
       on: vi.fn((event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
@@ -1028,8 +1029,11 @@ describe("startRuntimeGuardRepair", () => {
       dashboardModelServiceRefreshedAt: 0,
       showDashboardError: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
+        const result = await new Promise<boolean>((resolve) => {
+          finishRefresh = resolve;
+        });
         host.dashboardModelServiceRefreshedAt += 1;
-        return false;
+        return result;
       }),
     };
 
@@ -1037,11 +1041,14 @@ describe("startRuntimeGuardRepair", () => {
       const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
       startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
       onExit?.(0, null);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      expect(finishRefresh).toBeDefined();
       vi.advanceTimersByTime(45_000);
+      await Promise.resolve();
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+      finishRefresh?.(true);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
     } finally {
       vi.useRealTimers();
     }
