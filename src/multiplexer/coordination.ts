@@ -115,10 +115,22 @@ function dispatchNotificationItem(host: CoordinationHost, key: string, item: Wor
   }
 }
 
+function runThreadWorkflowAction(host: CoordinationHost, key: string, action: () => Promise<void>): void {
+  const pending: Set<string> = host.coordinationPendingThreadActions ?? new Set<string>();
+  host.coordinationPendingThreadActions = pending;
+  if (pending.has(key)) return;
+  pending.add(key);
+  void Promise.resolve()
+    .then(action)
+    .catch(() => {})
+    .finally(() => pending.delete(key));
+}
+
 function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistItem): void {
   const lowerKey = key.length === 1 ? key.toLowerCase() : key;
   const entry = item.thread;
   if (!entry) return;
+  const workflowKey = `thread:${entry.thread.id}`;
   if (lowerKey === "s") {
     syncThreadIndex(host, item);
     host.openDashboardOverlay("thread-reply");
@@ -127,39 +139,61 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     return;
   }
   if (key === "A") {
-    if (entry.task) void runTaskLifecycleAction(host, "accept", entry.task.id);
-    else if (entry.thread.kind === "handoff") void runThreadHandoffAction(host, "accept", entry.thread.id);
+    if (entry.task) {
+      const taskId = entry.task.id;
+      runThreadWorkflowAction(host, workflowKey, () => runTaskLifecycleAction(host, "accept", taskId));
+    } else if (entry.thread.kind === "handoff") {
+      runThreadWorkflowAction(host, workflowKey, () => runThreadHandoffAction(host, "accept", entry.thread.id));
+    }
     return;
   }
   if (lowerKey === "c") {
-    if (entry.task) void runTaskLifecycleAction(host, "complete", entry.task.id);
-    else if (entry.thread.kind === "handoff") void runThreadHandoffAction(host, "complete", entry.thread.id);
-    else void runThreadStatusAction(host, entry.thread.id, "done");
+    if (entry.task) {
+      const taskId = entry.task.id;
+      runThreadWorkflowAction(host, workflowKey, () => runTaskLifecycleAction(host, "complete", taskId));
+    } else if (entry.thread.kind === "handoff") {
+      runThreadWorkflowAction(host, workflowKey, () => runThreadHandoffAction(host, "complete", entry.thread.id));
+    } else {
+      runThreadWorkflowAction(host, workflowKey, () => runThreadStatusAction(host, entry.thread.id, "done"));
+    }
     return;
   }
   if (lowerKey === "b") {
-    if (entry.task) void runTaskLifecycleAction(host, "block", entry.task.id);
-    else void runThreadStatusAction(host, entry.thread.id, "blocked");
+    if (entry.task) {
+      const taskId = entry.task.id;
+      runThreadWorkflowAction(host, workflowKey, () => runTaskLifecycleAction(host, "block", taskId));
+    } else {
+      runThreadWorkflowAction(host, workflowKey, () => runThreadStatusAction(host, entry.thread.id, "blocked"));
+    }
     return;
   }
   if (lowerKey === "o") {
-    void runThreadStatusAction(host, entry.thread.id, "open");
+    runThreadWorkflowAction(host, workflowKey, () => runThreadStatusAction(host, entry.thread.id, "open"));
     return;
   }
   if (lowerKey === "x") {
-    void runThreadStatusAction(host, entry.thread.id, "done");
+    runThreadWorkflowAction(host, workflowKey, () => runThreadStatusAction(host, entry.thread.id, "done"));
     return;
   }
   if (key === "P") {
-    if (entry.task) void runReviewLifecycleAction(host, "approve", entry.task.id);
+    if (entry.task) {
+      const taskId = entry.task.id;
+      runThreadWorkflowAction(host, workflowKey, () => runReviewLifecycleAction(host, "approve", taskId));
+    }
     return;
   }
   if (key === "J") {
-    if (entry.task) void runReviewLifecycleAction(host, "request_changes", entry.task.id);
+    if (entry.task) {
+      const taskId = entry.task.id;
+      runThreadWorkflowAction(host, workflowKey, () => runReviewLifecycleAction(host, "request_changes", taskId));
+    }
     return;
   }
   if (key === "E") {
-    if (entry.task) void runTaskLifecycleAction(host, "reopen", entry.task.id);
+    if (entry.task) {
+      const taskId = entry.task.id;
+      runThreadWorkflowAction(host, workflowKey, () => runTaskLifecycleAction(host, "reopen", taskId));
+    }
     return;
   }
   if (key === "enter" || key === "return") {
@@ -167,7 +201,7 @@ function dispatchThreadItem(host: CoordinationHost, key: string, item: WorklistI
     if (!targetSessionId) return;
     void mutateDashboardApi(host, PROJECT_API_ROUTES.threads.markSeen, {
       threadId: entry.thread.id,
-      sessionId: targetSessionId,
+      session: "user",
     }).catch(() => {});
     const dashEntry = findNotificationSessionTarget(host, targetSessionId);
     if (dashEntry) {

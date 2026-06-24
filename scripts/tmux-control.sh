@@ -125,8 +125,6 @@ hydrate_project_context || true
 
 [ -n "$project_state_dir" ] || exit 1
 
-statusline_json="$project_state_dir/statusline.json"
-
 debug_log_line() {
   printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
 }
@@ -551,218 +549,6 @@ show_local_meta() {
   exit 0
 }
 
-resolve_local_target_from_statusline() {
-  [ -f "$statusline_json" ] || return 1
-  resolved_target=$(
-    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
-import json, subprocess, sys
-path, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
-
-def log(message):
-    if action != "team":
-        return
-    try:
-        with open(debug_log, "a") as handle:
-            handle.write(f"aimux-control team statusline: {message}\n")
-    except Exception:
-        pass
-
-def is_live_window(window_id):
-    if not window_id:
-        return False
-    try:
-        pane_dead = subprocess.check_output(
-            ["tmux", "display-message", "-p", "-t", window_id, "#{pane_dead}"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return False
-    return bool(pane_dead) and pane_dead != "1"
-
-def is_same_or_child_path(path, parent):
-    if not path or not parent:
-        return False
-    path = path.rstrip("/")
-    parent = parent.rstrip("/")
-    return path == parent or path.startswith(parent + "/")
-
-try:
-    data = json.load(open(path))
-except Exception as error:
-    log(f"read failed path={path!r} error={error}")
-    raise SystemExit(1)
-sessions = list(data.get("sessions") or [])
-teammates = list(data.get("teammates") or [])
-if explicit_window_id:
-    log(f"explicit target {explicit_window_id}")
-    print(explicit_window_id)
-    raise SystemExit(0)
-if action == "team":
-    log(f"start currentWindowId={current_window_id!r} sessions={len(sessions)} teammates={len(teammates)}")
-    all_sessions = sessions + teammates
-    current = None
-    for session in all_sessions:
-        if session.get("tmuxWindowId") == current_window_id:
-            current = session
-            break
-    if not current:
-        live_ids = [
-            f"{session.get('id')}:{session.get('tmuxWindowId') or '-'}:{(session.get('team') or {}).get('parentSessionId') or '-'}"
-            for session in all_sessions
-        ]
-        log(f"current not found candidates={live_ids}")
-        raise SystemExit(1)
-
-    current_team = current.get("team") or {}
-    parent_id = current_team.get("parentSessionId")
-    log(f"current id={current.get('id')!r} parentId={parent_id!r} window={current.get('tmuxWindowId')!r}")
-    if parent_id:
-        parent = next((session for session in sessions if session.get("id") == parent_id), None)
-        target = (parent or {}).get("tmuxWindowId") or ""
-        if not is_live_window(target):
-            log(f"parent target missing parentId={parent_id!r} parentFound={bool(parent)}")
-            raise SystemExit(1)
-        log(f"target parent window={target!r}")
-        print(target)
-        raise SystemExit(0)
-
-    current_id = current.get("id")
-    if not current_id:
-        raise SystemExit(1)
-
-    def parse_time(value):
-        if not value:
-            return float("inf")
-        try:
-            from datetime import datetime
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-        except Exception:
-            return float("inf")
-
-    direct = [
-        session
-        for session in teammates
-        if (session.get("team") or {}).get("parentSessionId") == current_id
-    ]
-    log("direct candidates=" + repr([
-        f"{session.get('id')}:{session.get('tmuxWindowId') or '-'}:{session.get('status') or '-'}"
-        for session in direct
-    ]))
-    def teammate_order(session):
-        order = (session.get("team") or {}).get("order")
-        if isinstance(order, bool):
-            return float("inf")
-        return order if isinstance(order, (int, float)) else float("inf")
-
-    direct.sort(key=lambda session: (
-        teammate_order(session),
-        parse_time(session.get("createdAt")),
-        session.get("id") or "",
-    ))
-    direct = [session for session in direct if is_live_window(session.get("tmuxWindowId"))]
-    if not direct:
-        log(f"no direct live teammates for currentId={current_id!r}")
-        raise SystemExit(1)
-    target = direct[0].get("tmuxWindowId")
-    log(f"target teammate window={target!r} id={direct[0].get('id')!r}")
-    print(target)
-    raise SystemExit(0)
-if not sessions:
-    raise SystemExit(1)
-current_worktree = None
-for session in sessions:
-    if session.get("tmuxWindowId") == current_window_id:
-        current_worktree = session.get("worktreePath") or project_root
-        break
-matched = []
-best_len = -1
-for session in sessions:
-    worktree = session.get("worktreePath") or project_root
-    if not worktree:
-        continue
-    if current_worktree:
-        if worktree != current_worktree:
-            continue
-    elif not is_same_or_child_path(current_path, worktree):
-        continue
-    length = len(worktree)
-    if length > best_len:
-        matched = [session]
-        best_len = length
-    elif length == best_len:
-        matched.append(session)
-items = []
-if matched:
-    candidate_sessions = matched
-elif current_worktree or current_path:
-    log("no statusline candidates after worktree filtering")
-    raise SystemExit(1)
-else:
-    candidate_sessions = sessions
-for session in candidate_sessions:
-    alive = is_live_window(session.get("tmuxWindowId"))
-    if not alive and session.get("tmuxWindowId") != current_window_id:
-        continue
-    item = dict(session)
-    item["alive"] = alive
-    items.append(item)
-items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, int(s.get("tmuxWindowIndex") or 1_000_000)))
-if not items:
-    raise SystemExit(1)
-current_index = 0
-for idx, item in enumerate(items):
-    if item.get("tmuxWindowId") == current_window_id:
-        current_index = idx
-        break
-if action == "next":
-    for offset in range(1, len(items) + 1):
-        target = items[(current_index + offset) % len(items)]
-        if target.get("alive"):
-            print(target.get("tmuxWindowId", ""))
-            raise SystemExit(0)
-    raise SystemExit(1)
-if action == "prev":
-    for offset in range(1, len(items) + 1):
-        target = items[(current_index - offset) % len(items)]
-        if target.get("alive"):
-            print(target.get("tmuxWindowId", ""))
-            raise SystemExit(0)
-    raise SystemExit(1)
-if action == "attention":
-    def rank(item):
-        semantic = item.get("semantic") or {}
-        return (
-            int(semantic.get("waitingOnMeCount") or 0),
-            int(semantic.get("unreadCount") or 0),
-            int(semantic.get("blockedCount") or 0),
-            int(semantic.get("pendingDeliveryCount") or 0),
-        )
-    ranked = sorted([item for item in items if item.get("alive")], key=rank, reverse=True)
-    if not ranked:
-        raise SystemExit(1)
-    target = ranked[0]
-    if rank(target) == (0, 0, 0, 0):
-        raise SystemExit(1)
-    print(target.get("tmuxWindowId", ""))
-    raise SystemExit(0)
-if action == "window":
-    try:
-        index = int(item_index)
-    except Exception:
-        raise SystemExit(1)
-    live_items = [item for item in items if item.get("alive")]
-    if index < 1 or index > len(live_items):
-        raise SystemExit(1)
-    print(live_items[index - 1].get("tmuxWindowId", ""))
-    raise SystemExit(0)
-raise SystemExit(1)
-PY
-  ) || return 1
-  [ -n "$resolved_target" ] || return 1
-  printf '%s' "$resolved_target"
-}
-
 resolve_host_session_name() {
   session_name="${live_client_session-}"
   if [ -z "$session_name" ]; then
@@ -830,9 +616,6 @@ for line in windows:
         log(f"skip window={window_id!r} name={name!r} no/invalid meta error={error}")
         continue
     worktree = meta.get("worktreePath") or project_root
-    if not is_same_or_child_path(current_path, worktree):
-        log(f"skip window={window_id!r} session={meta.get('sessionId')!r} worktree mismatch worktree={worktree!r}")
-        continue
     kind = meta.get("kind") or "agent"
     team = meta.get("team") or {}
     items.append({
@@ -859,19 +642,14 @@ for item in items:
         current_worktree = item.get("worktreePath")
         break
 
-if current_worktree:
-    items = [item for item in items if item.get("worktreePath") == current_worktree]
-else:
-    items = [item for item in items if is_same_or_child_path(current_path, item.get("worktreePath") or "")]
 items = [item for item in items if item.get("alive") or item.get("windowId") == current_window_id]
 log("items=" + repr([
     f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}:{'live' if item.get('alive') else 'dead'}"
     for item in items
 ]))
 
-items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 if not items:
-    log("no metadata candidates in current worktree")
+    log("no live metadata candidates")
     raise SystemExit(1)
 
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
@@ -919,6 +697,16 @@ if action == "team":
     print(direct[0]["windowId"])
     raise SystemExit(0)
 
+if current_worktree:
+    items = [item for item in items if item.get("worktreePath") == current_worktree]
+else:
+    items = [item for item in items if is_same_or_child_path(current_path, item.get("worktreePath") or "")]
+items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
+if not items:
+    log("no metadata candidates in current worktree")
+    raise SystemExit(1)
+current = next((item for item in items if item.get("windowId") == current_window_id), None)
+
 if current and (current.get("team") or {}).get("parentSessionId"):
     parent_id = (current.get("team") or {}).get("parentSessionId")
     items = [item for item in items if (item.get("team") or {}).get("parentSessionId") == parent_id]
@@ -958,8 +746,15 @@ if action == "prev":
     raise SystemExit(1)
 if action == "attention":
     def rank(item):
+        attention = item.get("attention")
+        attention_score = {
+            "error": 5,
+            "needs_input": 4,
+            "needs_response": 4,
+            "blocked": 3,
+        }.get(attention, 0)
         return (
-            1 if item.get("attention") == "needs-input" else 0,
+            attention_score,
             item.get("unseenCount", 0),
             1 if item.get("statusText") == "blocked" else 0,
         )
@@ -1009,12 +804,12 @@ fallback_local_control() {
       return 0
       ;;
     next|prev|attention|window)
-      target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || return 1
+      target_window_id=$(resolve_local_target_from_tmux_metadata) || return 1
       switch_local_window "$target_window_id"
       ;;
     team)
       debug_log_line "team requested session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown} pane=${pane_id:-unknown}"
-      target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || {
+      target_window_id=$(resolve_local_target_from_tmux_metadata) || {
         debug_log_line "team no live target session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown}"
         show_local_message "aimux: no live teammate target"
         return 0
