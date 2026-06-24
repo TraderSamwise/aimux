@@ -141,6 +141,30 @@ describe("TuiApiRuntime", () => {
     expect(failures).toHaveBeenCalledWith(error);
   });
 
+  it("recovers for schema validation failures that may indicate service skew", async () => {
+    const states: string[] = [];
+    const failures = vi.fn();
+    const error = new Error("invalid coordination payload");
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(async () => {
+        throw error;
+      }),
+      onConnectionStateChange: (state) => states.push(state),
+      onRequestFailure: failures,
+    });
+
+    await expect(
+      runtime.refreshJson("coordination-worklist", "/coordination-worklist", (value) => value),
+    ).resolves.toMatchObject({
+      ok: false,
+      error,
+    });
+
+    expect(runtime.getConnectionState()).toBe("reconnecting");
+    expect(states).toEqual(["reconnecting"]);
+    expect(failures).toHaveBeenCalledWith(error);
+  });
+
   it("does not let an older wrapper read failure degrade a newer success", async () => {
     const slow = deferred<unknown>();
     const fast = deferred<unknown>();

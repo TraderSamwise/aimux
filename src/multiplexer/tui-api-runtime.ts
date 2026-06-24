@@ -256,18 +256,7 @@ export function isRecoverableTuiApiError(error: unknown): boolean {
   }
   const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
   if (code === "ETIMEDOUT" || code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EPIPE") return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("timeout") ||
-    message.includes("timed out") ||
-    message.includes("ECONNREFUSED") ||
-    message.includes("ECONNRESET") ||
-    message.includes("socket hang up") ||
-    message.includes("endpoint is stale") ||
-    message.includes("endpoint could not be verified") ||
-    message.includes("no live project service endpoint") ||
-    message.includes("offline")
-  );
+  return true;
 }
 
 export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {

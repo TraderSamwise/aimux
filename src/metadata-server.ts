@@ -3131,7 +3131,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.read) {
         const body = (await readJson(req)) as { id?: string; ids?: unknown; sessionId?: string };
         const sessionId = body.sessionId?.trim() || undefined;
-        const ids = normalizeNotificationMutationIds(body.ids);
+        const ids = parseNotificationMutationIds(body);
         const updated = markNotificationsRead({
           id: body.id?.trim() || undefined,
           ids,
@@ -3149,7 +3149,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.clear) {
         const body = (await readJson(req)) as { id?: string; ids?: unknown; sessionId?: string };
         const sessionId = body.sessionId?.trim() || undefined;
-        const ids = normalizeNotificationMutationIds(body.ids);
+        const ids = parseNotificationMutationIds(body);
         const cleared = clearNotifications({
           id: body.id?.trim() || undefined,
           ids,
@@ -4388,4 +4388,12 @@ export class MetadataServer {
 function normalizeNotificationMutationIds(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.map((id) => (typeof id === "string" ? id.trim() : "")).filter(Boolean);
+}
+
+function parseNotificationMutationIds(body: { ids?: unknown }): string[] | undefined {
+  if (!Object.prototype.hasOwnProperty.call(body, "ids")) return undefined;
+  if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string")) {
+    throw new Error("ids must be an array of strings");
+  }
+  return normalizeNotificationMutationIds(body.ids);
 }
