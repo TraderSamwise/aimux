@@ -750,6 +750,47 @@ describe("TmuxRuntimeManager", () => {
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @codex")).toBe(false);
   });
 
+  it("disables window renumbering when replacing a dashboard in a multi-window client session", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}:0`);
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) return "";
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        return linked ? "@10\t0\tdashboard\t1\t100\n@codex\t1\tcodex\t0\t100" : "@placeholder\t0\tdashboard\t1\t100\n@codex\t1\tcodex\t0\t100";
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec, () => {});
+
+    manager.openTarget(
+      { sessionName: hostSessionName, windowId: "@10", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: true, clientSuffix: "268eff9c" },
+    );
+
+    const killIndex = calls.findIndex((call) => call.args.join(" ") === "kill-window -t @placeholder");
+    const disableIndex = calls.findIndex(
+      (call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows off`,
+    );
+    const restoreIndex = calls.findIndex(
+      (call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows on`,
+    );
+    expect(disableIndex).toBeGreaterThan(-1);
+    expect(killIndex).toBeGreaterThan(disableIndex);
+    expect(restoreIndex).toBeGreaterThan(killIndex);
+    expect(calls.some((call) => call.args.join(" ") === "kill-window -t @codex")).toBe(false);
+  });
+
   it("restores window renumbering when keepalive creation fails", () => {
     const hostSessionName = "aimux-mobile-abc";
     const clientSessionName = `${hostSessionName}-client-268eff9c`;
