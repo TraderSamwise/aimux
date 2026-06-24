@@ -896,32 +896,30 @@ async function requestProjectService(
       await sleepProjectServiceRetry(attempt, deadline);
       continue;
     }
-    if (opts.method === "POST") {
-      const endpointState = await endpointStateForRequest(
-        host,
-        endpoint,
-        Math.min(1000, remainingProjectServiceDeadline(deadline)),
-      );
-      if (endpointState === "stale" && Date.now() < deadline) {
-        clearProjectServiceEndpointHealth(host);
-        removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
-          restartProjectService: true,
-        });
+    const endpointState = await endpointStateForRequest(
+      host,
+      endpoint,
+      Math.min(1000, remainingProjectServiceDeadline(deadline)),
+    );
+    if (endpointState === "stale" && Date.now() < deadline) {
+      clearProjectServiceEndpointHealth(host);
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    if (endpointState === "stale") {
+      throw new Error("project service endpoint is stale");
+    }
+    if (endpointState === "unknown") {
+      lastError = new Error("project service endpoint could not be verified");
+      if (Date.now() < deadline) {
         await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
-      if (endpointState === "stale") {
-        throw new Error("project service endpoint is stale");
-      }
-      if (endpointState === "unknown") {
-        lastError = new Error("project service endpoint could not be verified");
-        if (Date.now() < deadline) {
-          await sleepProjectServiceRetry(attempt, deadline);
-          continue;
-        }
-        throw lastError;
-      }
+      throw lastError;
     }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {

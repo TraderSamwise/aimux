@@ -30,6 +30,7 @@ import {
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
@@ -122,7 +123,7 @@ export default function ChatScreen() {
     };
   }, [getToken]);
 
-  const serviceEndpoint = project?.serviceEndpoint ?? null;
+  const serviceEndpoint = getProjectServiceEndpoint(project);
   const endpointKey = serviceEndpoint ? `${serviceEndpoint.host}:${serviceEndpoint.port}` : null;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
 
