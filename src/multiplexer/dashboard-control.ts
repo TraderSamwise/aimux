@@ -324,6 +324,12 @@ function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string
   host.renderCurrentDashboardView?.();
 }
 
+function clearRuntimeGuardRepairError(host: DashboardControlHost): void {
+  if (host.dashboardErrorState?.title === "Aimux repair failed") {
+    host.dashboardErrorState = null;
+  }
+}
+
 function describeRuntimeGuardState(state: RuntimeGuardState): string {
   if (state.kind === "ok") return "healthy";
   if (state.kind === "stale") return `out of sync (${state.reason})`;
@@ -358,6 +364,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
   host.runtimeGuardRepairBusy = true;
+  clearRuntimeGuardRepairError(host);
   host.dashboardBusyState = {
     title: "Repairing Aimux",
     lines: ["Aimux is repairing the local control plane."],
@@ -421,6 +428,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
     host.runtimeGuardRepairRetryAt = undefined;
+    clearRuntimeGuardRepairError(host);
     if (host.runtimeGuardRepairBusy) {
       host.dashboardBusyState = null;
       host.runtimeGuardRepairBusy = false;
