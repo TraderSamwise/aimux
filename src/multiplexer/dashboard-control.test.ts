@@ -870,6 +870,41 @@ describe("startRuntimeGuardRepair", () => {
     expect(existsSync(lockPath)).toBe(true);
   });
 
+  it("does not reclaim a repair lock while another reclaim is in progress", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const lockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
+    const stealPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair.steal");
+    mkdirSync(lockPath, { recursive: true });
+    mkdirSync(stealPath, { recursive: true });
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 987654, projectRoot: "/repo/app" }));
+    const old = new Date("2000-01-01T00:00:00.000Z");
+    utimesSync(lockPath, old, old);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
+      if (pid === 987654) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      return true;
+    }) as typeof process.kill);
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/other",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
+    } finally {
+      killSpy.mockRestore();
+    }
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Aimux repair already running");
+    expect(existsSync(lockPath)).toBe(true);
+    expect(existsSync(stealPath)).toBe(true);
+  });
+
   it("shows a dashboard error when guarded repair fails to spawn", async () => {
     let onError: ((error: Error) => void) | undefined;
     mocks.spawn.mockReturnValueOnce({
