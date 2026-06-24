@@ -77,7 +77,7 @@ export function stabilizeRuntimeGuardProbe(
 
 // Keys that are non-mutating on every screen. Quit is allowed so a disconnected
 // guard cannot trap the user inside the dashboard.
-const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "escape", "?", "q"]);
+const GUARD_PASSTHROUGH_KEYS = new Set(["up", "down", "j", "k", "tab", "?", "q"]);
 
 /** What a keystroke should do while the dashboard is guarded. Repair is automatic. */
 export function runtimeGuardKeyDisposition(key: string): "passthrough" | "swallow" {
@@ -153,9 +153,13 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
           projectStateDir?: string;
           serviceInfo?: ProjectServiceManifest;
         }>(`http://${endpoint.host}:${endpoint.port}/health`, { timeoutMs: HEALTH_TIMEOUT_MS });
-        if (status >= 200 && status < 300 && json?.pid === endpoint.pid && json?.serviceInfo) {
-          serviceManifest = json.serviceInfo;
-          serviceIdentityMismatch = json.projectStateDir !== getProjectStateDirFor(projectRoot);
+        if (status >= 200 && status < 300) {
+          if (json?.serviceInfo) serviceManifest = json.serviceInfo;
+          else serviceManifest = getProjectServiceManifest();
+          serviceIdentityMismatch =
+            json?.pid !== endpoint.pid ||
+            json?.projectStateDir !== getProjectStateDirFor(projectRoot) ||
+            !json?.serviceInfo;
         } else {
           serviceManifest = "unreachable";
         }
