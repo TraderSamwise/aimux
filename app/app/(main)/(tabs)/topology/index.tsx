@@ -11,6 +11,7 @@ import { StatusDot, StatusPill } from "@/components/status-dot";
 import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import {
@@ -218,8 +219,9 @@ export default function TopologyScreen() {
     ? projects.find((item) => item.path === urlProjectPath)
     : selectedProject;
   const endpoint =
-    project?.serviceEndpoint ??
-    (project?.path === selectedProject?.path ? selectedProjectEndpoint : undefined);
+    project?.path === selectedProject?.path
+      ? selectedProjectEndpoint
+      : getProjectServiceEndpoint(project);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
   const selectSession = useSetAtom(selectedSessionIdAtom);
