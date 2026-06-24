@@ -337,6 +337,7 @@ export class TmuxRuntimeManager {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (existing) return existing;
     let occupyingDashboard: TmuxWindowInfo | undefined;
+    let requiresKeepalive = false;
     let keepaliveWindowId: string | null = null;
     let originalRenumberWindows: string | null = null;
     if (windowIndex !== undefined) {
@@ -349,28 +350,19 @@ export class TmuxRuntimeManager {
           );
         }
         occupyingDashboard = occupying;
-        if (windows.length === 1) {
-          const keepaliveName = `aimux-keepalive-${target.windowId.replace(/[^a-zA-Z0-9]/g, "")}`;
-          originalRenumberWindows = this.getSessionOption(clientSessionName, "renumber-windows") || "off";
-          this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
-          this.exec([
-            "new-window",
-            "-d",
-            "-t",
-            clientSessionName,
-            "-n",
-            keepaliveName,
-            "sh",
-            "-lc",
-            "tail -f /dev/null",
-          ]);
-          keepaliveWindowId =
-            this.listWindows(clientSessionName).find((window) => window.name === keepaliveName)?.id ?? null;
-        }
+        requiresKeepalive = windows.length === 1;
       }
     }
     const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
     try {
+      if (requiresKeepalive) {
+        const keepaliveName = `aimux-keepalive-${target.windowId.replace(/[^a-zA-Z0-9]/g, "")}`;
+        originalRenumberWindows = this.getSessionOption(clientSessionName, "renumber-windows") || "off";
+        this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
+        this.exec(["new-window", "-d", "-t", clientSessionName, "-n", keepaliveName, "sh", "-lc", "tail -f /dev/null"]);
+        keepaliveWindowId =
+          this.listWindows(clientSessionName).find((window) => window.name === keepaliveName)?.id ?? null;
+      }
       if (occupyingDashboard) {
         this.killWindow({
           sessionName: clientSessionName,
