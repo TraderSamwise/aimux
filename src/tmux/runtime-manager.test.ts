@@ -697,7 +697,7 @@ describe("TmuxRuntimeManager", () => {
       const joined = args.join(" ");
       const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`);
       const swapped = calls.some(
-        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`,
+        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`,
       );
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
@@ -730,7 +730,7 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`)).toBe(true);
     expect(
-      calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+      calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`),
     ).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`)).toBe(
       true,
@@ -750,7 +750,7 @@ describe("TmuxRuntimeManager", () => {
       calls.push({ args, cwd: options?.cwd });
       const joined = args.join(" ");
       const swapped = calls.some(
-        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`,
+        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`,
       );
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) return "";
@@ -778,7 +778,7 @@ describe("TmuxRuntimeManager", () => {
 
     expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`)).toBe(false);
     expect(
-      calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+      calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`),
     ).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@placeholder`)).toBe(
       true,
@@ -794,7 +794,7 @@ describe("TmuxRuntimeManager", () => {
       calls.push({ args, cwd: options?.cwd });
       const joined = args.join(" ");
       const moved = calls.some(
-        (call) => call.args.join(" ") === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`,
+        (call) => call.args.join(" ") === `move-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`,
       );
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) return "";
@@ -821,7 +821,7 @@ describe("TmuxRuntimeManager", () => {
 
     expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`)).toBe(false);
     expect(
-      calls.some((call) => call.args.join(" ") === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+      calls.some((call) => call.args.join(" ") === `move-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`),
     ).toBe(true);
     expect(calls.some((call) => call.args[0] === "unlink-window")).toBe(false);
     expect(interactiveCalls.at(-1)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:0`]);
@@ -844,7 +844,7 @@ describe("TmuxRuntimeManager", () => {
       ) {
         return "@10\t1\tdashboard\t1\t100";
       }
-      if (joined === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`) {
+      if (joined === `move-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`) {
         throw new Error("move failed");
       }
       if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
@@ -861,7 +861,7 @@ describe("TmuxRuntimeManager", () => {
 
     expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`)).toBe(false);
     expect(
-      calls.some((call) => call.args.join(" ") === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+      calls.some((call) => call.args.join(" ") === `move-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`),
     ).toBe(true);
     expect(calls.some((call) => call.args[0] === "unlink-window")).toBe(false);
   });
@@ -914,7 +914,7 @@ describe("TmuxRuntimeManager", () => {
       const joined = args.join(" ");
       const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`);
       const swapped = calls.some(
-        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:2 -t ${clientSessionName}:0`,
+        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`,
       );
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) return "";
@@ -952,6 +952,43 @@ describe("TmuxRuntimeManager", () => {
     expect(restoreIndex).toBeGreaterThan(unlinkIndex);
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @placeholder")).toBe(false);
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @codex")).toBe(false);
+  });
+
+  it("unlinks a newly linked dashboard when slot replacement verification fails", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`);
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) return "";
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        if (linked) return "@placeholder\t0\tdashboard\t1\t100\n@10\t1\tdashboard\t0\t100";
+        return "@placeholder\t0\tdashboard\t1\t100";
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec, () => {});
+
+    expect(() =>
+      manager.openTarget(
+        { sessionName: hostSessionName, windowId: "@10", windowIndex: 0, windowName: "dashboard" },
+        { insideTmux: true, clientSuffix: "268eff9c" },
+      ),
+    ).toThrow(`Failed to replace dashboard slot ${clientSessionName}:0`);
+
+    expect(
+      calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`),
+    ).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@10`)).toBe(true);
   });
 
   it("restores window renumbering when dashboard link fails", () => {
@@ -1002,7 +1039,7 @@ describe("TmuxRuntimeManager", () => {
       const joined = args.join(" ");
       const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`);
       const swapped = calls.some(
-        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`,
+        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@10 -t ${clientSessionName}:0`,
       );
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
@@ -1213,7 +1250,7 @@ describe("TmuxRuntimeManager", () => {
       const joined = args.join(" ");
       const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @121 -t ${clientSessionName}`);
       const swapped = calls.some(
-        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`,
+        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@121 -t ${clientSessionName}:0`,
       );
       if (joined === "-V") return "tmux 3.5a";
       if (joined === `has-session -t ${clientSessionName}`) return "";
@@ -1254,7 +1291,9 @@ describe("TmuxRuntimeManager", () => {
     expect(calls.some((call) => call.args.join(" ") === "kill-window -t @125")).toBe(false);
     expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @121 -t ${clientSessionName}`)).toBe(true);
     expect(
-      calls.some((call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+      calls.some(
+        (call) => call.args.join(" ") === `swap-window -s ${clientSessionName}:@121 -t ${clientSessionName}:0`,
+      ),
     ).toBe(true);
     expect(calls.some((call) => call.args.join(" ") === `unlink-window -t ${clientSessionName}:@125`)).toBe(true);
     expect(interactiveCalls.at(-1)?.args).toEqual([
