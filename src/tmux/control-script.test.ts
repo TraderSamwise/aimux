@@ -1798,6 +1798,61 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-1234abcd");
   });
 
+  it("ranks underscore attention metadata for prefix attention jumps", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 2, name: "codex" },
+        ],
+        "aimux-proj-client-1234abcd": [{ id: "@shell", index: 0, name: "shell" }],
+      },
+      windowMetadata: {
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+        "@claude": {
+          sessionId: "claude-1",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          attention: "needs_input",
+        },
+        "@codex": {
+          sessionId: "codex-1",
+          kind: "agent",
+          worktreePath: "/repo/project/worktree",
+          unseenCount: 9,
+        },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(envRoot, [
+      "attention",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-deadbeef",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @claude -t aimux-proj-client-1234abcd");
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
+  });
+
   it("rejects out-of-range window index jumps with a friendly message, not a raw error", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
