@@ -3331,6 +3331,27 @@ describe("MetadataServer threads API", () => {
     expect(listed.unreadCount).toBe(1);
   });
 
+  it("rejects malformed notification id batches without mutating everything", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    upsertNotification({ title: "First", body: "still unread" });
+    upsertNotification({ title: "Second", body: "also unread" });
+
+    const readRes = await fetch(`${base}/notifications/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: "not-an-array" }),
+    });
+    const readBody = (await readRes.json()) as { ok: boolean; error: string };
+    expect(readRes.status).toBe(400);
+    expect(readBody).toEqual({ ok: false, error: "ids must be an array of strings" });
+
+    const listRes = await fetch(`${base}/notifications?unread=1`);
+    const listed = (await listRes.json()) as { unreadCount: number };
+    expect(listed.unreadCount).toBe(2);
+  });
+
   it("streams project_update invalidations after inbox mutations", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
