@@ -14,6 +14,8 @@ vi.mock("./dashboard-control.js", () => controlMocks);
 import {
   applyDashboardAlert,
   handleProjectEvent,
+  PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS,
+  PROJECT_EVENT_STREAM_RETRY_BASE_MS,
   scheduleProjectViewRefresh,
   startDashboardProjectEventStream,
   stopDashboardProjectEventStream,
@@ -335,6 +337,84 @@ describe("dashboard project event refresh", () => {
         }),
       );
       expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    } finally {
+      stopDashboardProjectEventStream(host);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("repairs the control plane when the SSE stream wedges without keepalives", async () => {
+    const originalFetch = globalThis.fetch;
+    const stream = new ReadableStream<Uint8Array>();
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      body: stream,
+    })) as never;
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockResolvedValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 1234,
+      updatedAt: new Date().toISOString(),
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      ensureDashboardControlPlane: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startDashboardProjectEventStream(host);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
+      expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
+        }),
+      );
+    } finally {
+      stopDashboardProjectEventStream(host);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("backs off SSE reconnect attempts instead of spinning on a dead endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    globalThis.fetch = fetchMock as never;
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockResolvedValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 1234,
+      updatedAt: new Date().toISOString(),
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      ensureDashboardControlPlane: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startDashboardProjectEventStream(host);
+      await vi.advanceTimersByTimeAsync(25);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(Math.floor(PROJECT_EVENT_STREAM_RETRY_BASE_MS / 2));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(PROJECT_EVENT_STREAM_RETRY_BASE_MS);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
       stopDashboardProjectEventStream(host);
       globalThis.fetch = originalFetch;
