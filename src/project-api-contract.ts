@@ -478,6 +478,7 @@ export interface OrchestrationRouteOptionsResponse extends ProjectApiOk {
 
 export interface NotificationMutationInput {
   id?: string;
+  ids?: string[];
   sessionId?: string;
 }
 

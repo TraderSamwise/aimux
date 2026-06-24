@@ -24,7 +24,10 @@ import { refreshTopology } from "./topology.js";
 
 type ProjectEventStreamHost = any;
 
-const RETRY_MS = 1_000;
+export const PROJECT_EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
+export const PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS = 35_000;
+export const PROJECT_EVENT_STREAM_RETRY_BASE_MS = 1_000;
+export const PROJECT_EVENT_STREAM_RETRY_MAX_MS = 15_000;
 
 class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;
@@ -137,6 +140,7 @@ class DashboardProjectEventAdapter {
   }
 
   private async runLoop(signal: AbortSignal): Promise<void> {
+    let retryAttempt = 0;
     while (!signal.aborted && this.host.mode === "dashboard") {
       let endpoint: Awaited<ReturnType<typeof resolveCurrentProjectServiceEndpointForDashboard>>;
       try {
@@ -148,31 +152,41 @@ class DashboardProjectEventAdapter {
           "dashboard",
         );
         await this.recover(signal);
-        await sleep(RETRY_MS, signal);
+        await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
         continue;
       }
       if (signal.aborted || this.host.mode !== "dashboard") return;
       if (!endpoint) {
         await this.recover(signal);
-        await sleep(RETRY_MS, signal);
+        await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
         continue;
       }
       const url = `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.events}`;
+      const attemptController = new AbortController();
+      const abortAttempt = () => attemptController.abort(signal.reason);
+      const connectTimer = setTimeout(() => {
+        attemptController.abort(
+          new Error(`event stream connect timed out after ${PROJECT_EVENT_STREAM_CONNECT_TIMEOUT_MS}ms`),
+        );
+      }, PROJECT_EVENT_STREAM_CONNECT_TIMEOUT_MS);
+      signal.addEventListener("abort", abortAttempt, { once: true });
       try {
         const response = await fetch(url, {
           headers: { accept: "text/event-stream" },
-          signal,
+          signal: attemptController.signal,
         });
+        clearTimeout(connectTimer);
         if (!response.ok || !response.body) {
           throw new Error(`event stream request failed: ${response.status}`);
         }
+        retryAttempt = 0;
         const generation = this.generation;
-        await readEventStream(response.body, signal, (name, payload) => {
+        await readEventStream(response.body, attemptController.signal, (name, payload) => {
           if (generation === this.generation) this.handleEvent(name, payload);
         });
         if (!signal.aborted && this.host.mode === "dashboard") {
           debug("dashboard project event stream closed; reconnecting", "dashboard");
-          await sleep(RETRY_MS, signal);
+          await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
         }
       } catch (error) {
         if (signal.aborted || this.host.mode !== "dashboard") return;
@@ -182,7 +196,11 @@ class DashboardProjectEventAdapter {
         );
         removeMetadataEndpoint(process.cwd());
         await this.recover(signal);
-        await sleep(RETRY_MS, signal);
+        await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
+      } finally {
+        clearTimeout(connectTimer);
+        signal.removeEventListener("abort", abortAttempt);
+        attemptController.abort();
       }
     }
   }
@@ -299,7 +317,7 @@ async function readEventStream(
   let dataLines: string[] = [];
   try {
     while (!signal.aborted) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readEventStreamChunk(reader, signal);
       if (done) return;
       if (signal.aborted) return;
       pending += decoder.decode(value, { stream: true });
@@ -314,6 +332,35 @@ async function readEventStream(
   } finally {
     reader.releaseLock();
   }
+}
+
+async function readEventStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) return { done: true, value: undefined };
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let settled = false;
+  return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      fn();
+    };
+    const onAbort = () => settle(() => resolve({ done: true, value: undefined }));
+    timer = setTimeout(() => {
+      const error = new Error(`event stream idle timed out after ${PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS}ms`);
+      void reader.cancel(error).catch(() => undefined);
+      settle(() => reject(error));
+    }, PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS);
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (result) => settle(() => resolve(result)),
+      (error) => settle(() => reject(error)),
+    );
+  });
 }
 
 function processEventStreamLine(
@@ -360,6 +407,10 @@ function screenLifecycle(screen: string): DashboardLifecycleToken {
 
 function touches(views: Set<ProjectApiView>, candidates: ProjectApiView[]): boolean {
   return candidates.some((view) => views.has(view));
+}
+
+function projectEventStreamRetryMs(attempt: number): number {
+  return Math.min(PROJECT_EVENT_STREAM_RETRY_BASE_MS * 2 ** attempt, PROJECT_EVENT_STREAM_RETRY_MAX_MS);
 }
 
 export function applyDashboardAlert(host: ProjectEventStreamHost, event: AlertEvent): void {
