@@ -789,6 +789,47 @@ describe("TmuxRuntimeManager", () => {
     expect(calls.some((call) => call.args[0] === "kill-window")).toBe(false);
   });
 
+  it("restores window renumbering when keepalive cleanup fails", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      const linked = calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}:0`);
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) throw new Error("missing");
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
+      if (joined === "kill-window -t @keepalive") throw new Error("keepalive cleanup failed");
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        if (linked) return "@10\t0\tdashboard\t1\t100\n@keepalive\t1\taimux-keepalive-10\t0\t100";
+        if (calls.some((call) => call.args[0] === "new-window")) {
+          return "@placeholder\t0\tdashboard\t1\t100\n@keepalive\t1\taimux-keepalive-10\t0\t100";
+        }
+        return "@placeholder\t0\tdashboard\t1\t100";
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec, () => {});
+
+    expect(() =>
+      manager.openTarget(
+        { sessionName: hostSessionName, windowId: "@10", windowIndex: 0, windowName: "dashboard" },
+        { insideTmux: true, clientSuffix: "268eff9c" },
+      ),
+    ).toThrow("keepalive cleanup failed");
+
+    expect(calls.some((call) => call.args.join(" ") === "kill-window -t @keepalive")).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `set-option -t ${clientSessionName} renumber-windows on`)).toBe(
+      true,
+    );
+  });
+
   it("switches an explicit client tty + suffix for cross-project openTarget", () => {
     const exec = createExecMock();
     const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
@@ -1010,7 +1051,7 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
-  it("recreates a stale reused client session when its runtime contract drifts", () => {
+  it("repairs a stale reused client session without destroying linked windows", () => {
     const hostSessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
     const clientSessionName = `${hostSessionName}-client-deadbeef`;
     const calls: Array<{ args: string[]; cwd?: string }> = [];
@@ -1037,6 +1078,7 @@ describe("TmuxRuntimeManager", () => {
       if (joined === `show-options -v -t ${clientSessionName} @aimux-runtime-build`) return "stale-build";
       if (joined.startsWith("show-options -v -t ") && joined.endsWith(" terminal-features")) return "";
       if (args[0] === "set-option" && args[1] === "-as" && args[4] === "terminal-features") return "";
+      if (joined === `move-window -s @1 -t ${clientSessionName}:0`) return "";
       if (joined.startsWith("list-windows -t ")) return "";
       return "";
     };
@@ -1050,14 +1092,16 @@ describe("TmuxRuntimeManager", () => {
       manager as unknown as { ensureClientSession: (host: string, client: string, root: string) => void }
     ).ensureClientSession(hostSessionName, clientSessionName, "/repo/mobile");
 
-    expect(calls.some((call) => call.args.join(" ") === `kill-session -t ${clientSessionName}`)).toBe(true);
+    expect(calls.some((call) => call.args.join(" ") === `kill-session -t ${clientSessionName}`)).toBe(false);
     expect(
       calls.some(
         (call) =>
           call.args.join(" ") ===
           `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard sh -lc tail -f /dev/null`,
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(calls.some((call) => call.args.join(" ") === `move-window -s @1 -t ${clientSessionName}:0`)).toBe(true);
+    expect(calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-runtime-build")).toBe(true);
   });
 
   it("leaves managed tmux sessions by switching back when nested", () => {
