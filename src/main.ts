@@ -53,18 +53,10 @@ import {
   stopProjectService,
 } from "./daemon.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
-import {
-  listThreadSummaries,
-  readMessages,
-  readThread,
-  type MessageKind,
-  type ThreadKind,
-  type ThreadStatus,
-} from "./threads.js";
+import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
-import { readAllTasks, readTask } from "./tasks.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
@@ -93,10 +85,6 @@ import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
 import { recordTopologyBackendSessionId } from "./runtime-core/backend-session-ids.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
-import {
-  listTopologyWorktreeGraveyard,
-  listTopologyWorktreeGraveyardPaths,
-} from "./runtime-core/topology-worktrees.js";
 import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
@@ -392,37 +380,6 @@ function notificationQuery(opts: { unread?: boolean; session?: string }): string
   return rendered ? `?${rendered}` : "";
 }
 
-async function getProjectServiceJsonOrReadFallback(path: string, fallback: () => any): Promise<any> {
-  let endpoint;
-  try {
-    endpoint = await resolveProjectServiceEndpoint();
-    if (!endpoint) {
-      await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
-      endpoint = await resolveProjectServiceEndpoint();
-    }
-  } catch (error) {
-    if (error instanceof ProjectServiceVersionError) throw error;
-    return fallback();
-  }
-  if (!endpoint) {
-    return fallback();
-  }
-  let status: number;
-  let json: any;
-  try {
-    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`));
-  } catch {
-    return fallback();
-  }
-  if (status === 404 || status === 405 || status === 501) {
-    return fallback();
-  }
-  if (status < 200 || status >= 300 || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${status}`);
-  }
-  return json;
-}
-
 function exitAfterOpen(): never {
   process.exit(0);
 }
@@ -519,32 +476,15 @@ async function clearHookNotificationsViaService(projectRoot: string, sessionId: 
   }
 }
 
-async function getLiveProjectServiceJsonOrReadFallback(
-  projectRoot: string,
-  path: string,
-  fallback: () => any,
-): Promise<any> {
-  let endpoint;
-  try {
-    endpoint = await resolveProjectServiceEndpoint(projectRoot);
-  } catch {
-    return fallback();
-  }
+async function getLiveProjectServiceJson(projectRoot: string, path: string): Promise<any> {
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
-    return fallback();
+    throw new Error("no live project service metadata endpoint");
   }
-  let status: number;
-  let json: any;
-  try {
-    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "GET",
-    }));
-  } catch {
-    return fallback();
-  }
-  if (status === 404 || status === 405 || status === 501) {
-    return fallback();
-  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "GET",
+  });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
   }
@@ -1856,11 +1796,6 @@ async function prepareProjectContext(requestedProject?: string): Promise<string>
   return projectRoot;
 }
 
-function listVisibleLocalWorktrees(projectRoot: string): WorktreeInfo[] {
-  const graveyardPaths = listTopologyWorktreeGraveyardPaths();
-  return listWorktrees(projectRoot).filter((worktree) => !graveyardPaths.has(worktree.path));
-}
-
 function printWorktrees(projectRoot?: string, worktreesInput?: WorktreeInfo[]): void {
   try {
     const worktrees = worktreesInput ?? listWorktrees(projectRoot);
@@ -1934,23 +1869,9 @@ function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
-async function tryEnsureDaemonProjectReadyForReadFallback(projectRoot: string): Promise<void> {
-  try {
-    await ensureDaemonProjectReady(projectRoot);
-  } catch (err) {
-    if (err instanceof ProjectServiceVersionError) {
-      throw err;
-    }
-  }
-}
-
 worktreeCmd.action(async () => {
   const projectRoot = await prepareProjectContext();
-  await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
-  const result = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/worktrees", () => ({
-    ok: true,
-    worktrees: listVisibleLocalWorktrees(projectRoot),
-  }));
+  const result = await getLiveProjectServiceJson(projectRoot, "/worktrees");
   printWorktrees(projectRoot, result.worktrees ?? []);
 });
 
@@ -1962,9 +1883,7 @@ program
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrReadFallback(`/threads${query}`, () =>
-      listThreadSummaries(opts.session),
-    );
+    const summaries = await getProjectServiceJson(`/threads${query}`);
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1993,9 +1912,7 @@ threadCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrReadFallback(`/threads${query}`, () =>
-      listThreadSummaries(opts.session),
-    );
+    const summaries = await getProjectServiceJson(`/threads${query}`);
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -2023,11 +1940,7 @@ threadCmd
   .argument("<threadId>")
   .option("--json", "Emit JSON")
   .action(async (threadId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrReadFallback(`/threads/${encodeURIComponent(threadId)}`, () => {
-      const thread = readThread(threadId);
-      if (!thread) return null;
-      return { thread, messages: readMessages(threadId) };
-    });
+    const detail = await getProjectServiceJson(`/threads/${encodeURIComponent(threadId)}`);
     if (!detail?.thread) {
       console.error(`aimux: thread not found: ${threadId}`);
       process.exit(1);
@@ -2403,12 +2316,7 @@ taskCmd
     if (opts.session) params.set("session", opts.session);
     if (opts.status) params.set("status", opts.status);
     const query = params.toString();
-    const result = await getProjectServiceJsonOrReadFallback(`/tasks${query ? `?${query}` : ""}`, () => ({
-      ok: true,
-      tasks: readAllTasks()
-        .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
-        .filter((task) => !opts.status || task.status === opts.status),
-    }));
+    const result = await getProjectServiceJson(`/tasks${query ? `?${query}` : ""}`);
     const tasks = Array.isArray(result.tasks) ? result.tasks : [];
     if (opts.json) {
       console.log(JSON.stringify({ tasks }, null, 2));
@@ -2432,16 +2340,7 @@ taskCmd
   .argument("<taskId>")
   .option("--json", "Emit JSON")
   .action(async (taskId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrReadFallback(`/tasks/${encodeURIComponent(taskId)}`, () => {
-      const task = readTask(taskId);
-      if (!task) return null;
-      return {
-        ok: true,
-        task,
-        thread: task.threadId ? readThread(task.threadId) : undefined,
-        messages: task.threadId ? readMessages(task.threadId) : [],
-      };
-    });
+    const detail = await getProjectServiceJson(`/tasks/${encodeURIComponent(taskId)}`);
     if (!detail?.task) {
       console.error(`aimux: task not found: ${taskId}`);
       process.exit(1);
@@ -2615,11 +2514,7 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
-    const result = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/worktrees", () => ({
-      ok: true,
-      worktrees: listVisibleLocalWorktrees(projectRoot),
-    }));
+    const result = await getLiveProjectServiceJson(projectRoot, "/worktrees");
     const worktrees = result.worktrees ?? [];
     if (opts.json) {
       console.log(JSON.stringify(worktrees, null, 2));
@@ -2919,34 +2814,21 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await tryEnsureDaemonProjectReadyForReadFallback(projectRoot);
-    try {
-      const graveyard = await getLiveProjectServiceJsonOrReadFallback(projectRoot, "/graveyard", () => ({
-        ok: true,
-        entries: listTopologySessionStates({ statuses: ["graveyard"] }),
-        worktrees: listTopologyWorktreeGraveyard(),
-      }));
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              entries: Array.isArray(graveyard.entries) ? graveyard.entries : [],
-              worktrees: Array.isArray(graveyard.worktrees) ? graveyard.worktrees : [],
-            },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
-      printGraveyard(graveyard);
-    } catch {
-      if (opts.json) {
-        console.log(JSON.stringify({ entries: [], worktrees: [] }, null, 2));
-        return;
-      }
-      console.log("Graveyard is empty.");
+    const graveyard = await getLiveProjectServiceJson(projectRoot, "/graveyard");
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            entries: Array.isArray(graveyard.entries) ? graveyard.entries : [],
+            worktrees: Array.isArray(graveyard.worktrees) ? graveyard.worktrees : [],
+          },
+          null,
+          2,
+        ),
+      );
+      return;
     }
+    printGraveyard(graveyard);
   });
 
 graveyardCmd
