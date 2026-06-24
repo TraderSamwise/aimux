@@ -845,7 +845,7 @@ describe("restartAimuxControlPlane", () => {
     expect(tmux.linkWindowToSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", dashboardTarget, 0);
   });
 
-  it("fails dashboard relink when fallback leaves the dashboard outside slot zero", async () => {
+  it("fails dashboard relink without appending when slot zero relink fails", async () => {
     const dashboardTarget = {
       sessionName: "aimux-alpha-111",
       windowId: "@10",
@@ -898,9 +898,9 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(result.projects[0]?.dashboard.status).toBe("failed");
-    expect(result.projects[0]?.dashboard.error).toContain("dashboard linked at index 1, expected 0");
+    expect(result.projects[0]?.dashboard.error).toContain("move failed");
     expect(tmux.linkWindowToSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", dashboardTarget, 0);
-    expect(tmux.linkWindowToSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", dashboardTarget);
+    expect(tmux.linkWindowToSession).toHaveBeenCalledTimes(1);
   });
 
   it("restores active agents even when one client dashboard relink fails", async () => {

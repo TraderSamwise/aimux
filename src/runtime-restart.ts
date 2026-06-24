@@ -296,16 +296,7 @@ function relinkDashboardToClientSessions(
         throw new Error(`dashboard linked at index ${linked.windowIndex}, expected 0`);
       }
     } catch (indexedError) {
-      try {
-        const linked = tmux.linkWindowToSession(sessionName, dashboardTarget);
-        if (linked.windowIndex !== 0) {
-          errors.push(
-            `${sessionName}: indexed=${errorMessage(indexedError)}; append=dashboard linked at index ${linked.windowIndex}, expected 0`,
-          );
-        }
-      } catch (appendError) {
-        errors.push(`${sessionName}: indexed=${errorMessage(indexedError)}; append=${errorMessage(appendError)}`);
-      }
+      errors.push(`${sessionName}: indexed=${errorMessage(indexedError)}`);
     }
   }
   return errors;
