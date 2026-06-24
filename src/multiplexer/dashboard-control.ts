@@ -499,6 +499,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       if (next.state.kind === "ok") {
         host.runtimeGuardRepairFailedKey = undefined;
         host.runtimeGuardRepairRetryAt = undefined;
+        clearRuntimeGuardRepairError(host);
         if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
           host.dashboardBusyState = null;
           host.runtimeGuardRepairBusy = false;
