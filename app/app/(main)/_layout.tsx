@@ -329,7 +329,7 @@ export default function MainLayout() {
               ) {
                 kickDesktopStateRefresh();
               }
-              if (event.views.includes("notifications") || event.views.includes("inbox")) {
+              if (event.views.includes("notifications")) {
                 kickNotificationFeedRefresh();
               }
               return;

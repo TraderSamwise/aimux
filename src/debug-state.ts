@@ -311,7 +311,7 @@ const DEBUG_STATE_SOURCE_ROLES: DebugStateReport["sourceRoles"] = {
   notifications: {
     role: "projection",
     authority: "runtime-exchange.yaml",
-    note: "notification rows are exchange threads/messages/inbox entries tagged as notifications",
+    note: "notification rows are exchange threads/messages tagged as notifications",
   },
   operationFailures: {
     role: "projection",

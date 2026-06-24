@@ -158,7 +158,7 @@ export class ProjectEventBus {
 
     this.publish(event);
     this.publishProjectUpdate({
-      views: ["coordination-worklist", "inbox", "notifications"],
+      views: ["coordination-worklist", "notifications"],
       reason: "alert",
       sessionId: alert.sessionId,
       worktreePath: alert.worktreePath,

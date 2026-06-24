@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   requestJson: vi.fn(),
   loadMetadataEndpoint: vi.fn(),
   removeMetadataEndpoint: vi.fn(),
+  updateSessionMetadata: vi.fn(),
   ensureDaemonRunning: vi.fn(),
   ensureProjectService: vi.fn(),
   stopProjectService: vi.fn(),
@@ -34,6 +35,7 @@ function resetDashboardControlMocks(): void {
   mocks.requestJson.mockReset();
   mocks.loadMetadataEndpoint.mockReset();
   mocks.removeMetadataEndpoint.mockReset();
+  mocks.updateSessionMetadata.mockReset();
   mocks.ensureDaemonRunning.mockReset();
   mocks.ensureProjectService.mockReset();
   mocks.stopProjectService.mockReset();
@@ -59,6 +61,7 @@ vi.mock("../metadata-store.js", () => ({
   loadMetadataState: vi.fn(() => ({ sessions: {} })),
   loadMetadataEndpoint: mocks.loadMetadataEndpoint,
   removeMetadataEndpoint: mocks.removeMetadataEndpoint,
+  updateSessionMetadata: mocks.updateSessionMetadata,
 }));
 
 vi.mock("../daemon.js", () => ({
@@ -110,6 +113,29 @@ describe("postToProjectService", () => {
     expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.requestJson).toHaveBeenCalledTimes(4);
+  });
+
+  it("repairs the dashboard host project instead of process cwd", async () => {
+    const projectRoot = "/repo/actual-project";
+    const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:43444"), { code: "ECONNREFUSED" });
+    mocks.requestJson
+      .mockResolvedValueOnce(healthyServiceResponse(2, projectRoot))
+      .mockRejectedValueOnce(refused)
+      .mockResolvedValueOnce(healthyServiceResponse(2, projectRoot))
+      .mockResolvedValueOnce({ status: 200, json: { ok: true } });
+    const { postToProjectService } = await import("./dashboard-control.js");
+
+    const result = await postToProjectService(
+      { dashboardServiceRecovery: null, projectRoot },
+      "/agents/resume",
+      { sessionId: "claude-1" },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(projectRoot);
+    expect(mocks.stopProjectService).toHaveBeenCalledWith(projectRoot);
+    expect(mocks.ensureProjectService).toHaveBeenCalledWith(projectRoot);
+    expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalledWith(process.cwd());
   });
 
   it("does not retry non-retryable HTTP failures", async () => {
@@ -434,6 +460,63 @@ describe("postToProjectService", () => {
 });
 
 describe("dashboard live target activation", () => {
+  it("primes live tmux footer files under the dashboard project root", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-project-"));
+    const stateDir = getProjectStateDirFor(projectRoot);
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, "statusline.json"),
+      `${JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        sessions: [{ id: "codex-1", name: "codex" }],
+        metadata: {
+          "codex-1": {
+            statusline: {
+              top: [{ text: "project-root-top" }],
+              bottom: [{ text: "project-root-bottom" }],
+            },
+          },
+        },
+      })}\n`,
+    );
+    await import("../paths.js").then(({ initPaths }) => initPaths(process.cwd()));
+    const target = {
+      sessionName: "aimux-repo",
+      windowId: "@agent",
+      windowIndex: 2,
+      windowName: "codex(coder)",
+    };
+    const host: any = {
+      mode: "session",
+      projectRoot,
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn((root: string) => {
+          expect(root).toBe(projectRoot);
+          return [{ metadata: { kind: "agent", sessionId: "codex-1" }, target }];
+        }),
+        isInsideTmux: vi.fn(() => false),
+        openTarget: vi.fn(),
+        refreshStatus: vi.fn(),
+        displayMessage: vi.fn(() => projectRoot),
+        currentClientSession: vi.fn(() => undefined),
+      },
+      invalidateDesktopStateSnapshot: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    const { openLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+
+    const result = openLiveTmuxWindowForEntry(host, { id: "codex-1" });
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(result).toBe("opened");
+
+    const topPath = join(stateDir, "tmux-statusline", "top-@agent.txt");
+    const bottomPath = join(stateDir, "tmux-statusline", "bottom-@agent.txt");
+    expect(readFileSync(topPath, "utf8")).toContain("aimux-dashboard-project-");
+    expect(readFileSync(bottomPath, "utf8").length).toBeGreaterThan(0);
+    expect(existsSync(join(getProjectStateDirFor(process.cwd()), "tmux-statusline", "top-@agent.txt"))).toBe(false);
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
   it("opens agents through the project-service control API in dashboard mode", async () => {
     const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
     const host: any = {
