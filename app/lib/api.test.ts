@@ -114,6 +114,44 @@ describe("api relay routing", () => {
     );
     expect(init.method).toBe("GET");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("rejects ok-false direct HTTP responses", async () => {
+    installFetchMock({ ok: false, error: "service stale" });
+
+    await expect(getProjectTopology(endpoint)).rejects.toMatchObject({
+      status: 200,
+      message: expect.stringContaining("service stale"),
+    });
+  });
+
+  it("applies a default abort signal to direct HTTP requests", async () => {
+    vi.useFakeTimers();
+    try {
+      let requestSignal: AbortSignal | undefined;
+      globalThis.fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        requestSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener(
+            "abort",
+            () => reject(requestSignal?.reason ?? new Error("aborted")),
+            {
+              once: true,
+            },
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const request = getProjectTopology(endpoint, { timeoutMs: 25 }).catch((error) => error);
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(requestSignal?.aborted).toBe(true);
+      const error = await request;
+      expect(error).toBeInstanceOf(Error);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("routes project GET requests through the relay proxy when connected", async () => {

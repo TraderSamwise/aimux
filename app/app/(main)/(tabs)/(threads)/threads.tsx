@@ -6,6 +6,7 @@ import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { useAuth } from "@/lib/auth";
 import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom } from "@/stores/projects";
 import { cn } from "@/lib/utils";
@@ -18,22 +19,25 @@ export default function ThreadsScreen() {
   const [threads, setThreads] = useState<ThreadSummaryResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const endpoint = project?.serviceEndpoint ?? null;
+  const endpoint = getProjectServiceEndpoint(project);
+  const endpointHost = endpoint?.host;
+  const endpointPort = endpoint?.port;
 
   useEffect(() => {
     // Project switched away (or host went offline): drop stale data + error
     // so we don't render the previous project's threads.
-    if (!endpoint) {
+    if (!endpointHost || !endpointPort) {
       setThreads([]);
       setError(null);
       return;
     }
+    const currentEndpoint = { host: endpointHost, port: endpointPort };
     let cancelled = false;
     setError(null);
     (async () => {
       try {
         const token = await getToken();
-        const data = await listThreads(endpoint, undefined, { token });
+        const data = await listThreads(currentEndpoint, undefined, { token });
         if (cancelled) return;
         setThreads(Array.isArray(data) ? data : []);
         setError(null);
@@ -47,7 +51,7 @@ export default function ThreadsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [endpoint?.host, endpoint?.port, getToken]);
+  }, [endpointHost, endpointPort, getToken]);
 
   return (
     <Page>

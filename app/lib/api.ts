@@ -107,6 +107,7 @@ export function getApiRelay(): RelayTransport | null {
 export interface ApiOpts {
   token?: string | null;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export class ApiError extends Error {
@@ -120,13 +121,39 @@ export class ApiError extends Error {
   }
 }
 
+const DEFAULT_API_TIMEOUT_MS = 10_000;
+
+function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1, opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  const abortFromCaller = () => controller.abort(opts?.signal?.reason);
+  if (opts?.signal?.aborted) abortFromCaller();
+  else opts?.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      opts?.signal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
 async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Promise<T> {
   const headers = new Headers(init.headers);
   if (opts?.token) headers.set("Authorization", `Bearer ${opts.token}`);
   if (!headers.has("content-type") && init.body !== undefined && init.body !== null) {
     headers.set("content-type", "application/json");
   }
-  const res = await fetch(url, { ...init, headers, signal: opts?.signal });
+  const { signal, cleanup } = requestSignal(opts);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, headers, signal });
+  } finally {
+    cleanup();
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const msg =
@@ -135,7 +162,12 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
         : `HTTP ${res.status}`;
     throw new ApiError(res.status, body, `${msg} (${url})`);
   }
-  return (await res.json()) as T;
+  const body = await res.json();
+  if (body && typeof body === "object" && "ok" in body && (body as { ok?: unknown }).ok === false) {
+    const message = "error" in body ? String((body as { error: unknown }).error) : "Request failed";
+    throw new ApiError(res.status, body, `${message} (${url})`);
+  }
+  return body as T;
 }
 
 async function callDaemonViaRelay<T>(method: string, path: string, body?: unknown): Promise<T> {
