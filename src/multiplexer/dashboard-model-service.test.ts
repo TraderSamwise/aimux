@@ -98,6 +98,16 @@ describe("refreshDashboardModelFromService", () => {
     ]);
     expect(host.dashboardModelServiceRefreshedAt).toBeGreaterThan(0);
     expect(host.dashboardModelServiceRefreshError).toBeUndefined();
+    expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+  });
+
+  it("probes the runtime guard after a successful refresh only when currently guarded", async () => {
+    const host = hostDouble();
+    host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };
+    host.getFromProjectService.mockResolvedValueOnce(desktopPayload("fresh"));
+
+    await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(true);
+
     await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
   });
 
@@ -118,7 +128,7 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
     expect(host.dashboardSessionsCache.map((session: any) => session.id)).toEqual(["fresh"]);
     expect(host.dashboardModelServiceRefreshError).toBeUndefined();
-    await vi.waitFor(() => expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1));
+    expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
   });
 
   it("does not apply desktop-state when the refresh lifecycle is stale", async () => {

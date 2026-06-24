@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest } from "../project-service-manifest.js";
 import { AIMUX_TMUX_RUNTIME_CONTRACT_VERSION } from "../runtime-owner.js";
 import { buildDashboardRuntimeGuardOverlayOutput } from "../tui/screens/overlay-renderers.js";
@@ -38,6 +39,7 @@ vi.mock("../tmux/runtime-manager.js", () => ({
 }));
 
 const liveManifest = getProjectServiceManifest();
+const repoProjectStateDir = getProjectStateDirFor("/repo");
 
 beforeEach(() => {
   loadMetadataEndpointMock.mockReset();
@@ -76,6 +78,17 @@ describe("evaluateRuntimeGuard", () => {
     expect(evaluateRuntimeGuard({ selfDrift: false, endpointPresent: true, serviceManifest: null })).toEqual({
       kind: "disconnected",
     });
+  });
+
+  it("reports stale when a live endpoint belongs to the wrong service identity", () => {
+    expect(
+      evaluateRuntimeGuard({
+        selfDrift: false,
+        endpointPresent: true,
+        serviceManifest: liveManifest,
+        serviceIdentityMismatch: true,
+      }),
+    ).toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
   it("reports ok when the live service manifest matches ours", () => {
@@ -196,10 +209,25 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+  });
+
+  it("reports stale when health belongs to a different project state dir", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, projectStateDir: "/tmp/other-project", serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
   it("reports disconnected when health comes from a different pid", async () => {
@@ -211,7 +239,7 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 9999, serviceInfo: liveManifest },
+      json: { ok: true, pid: 9999, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
@@ -230,7 +258,7 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
@@ -252,7 +280,7 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
@@ -275,7 +303,7 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
@@ -299,7 +327,7 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
@@ -320,7 +348,7 @@ describe("probeRuntimeGuard", () => {
     });
     requestJsonMock.mockResolvedValue({
       status: 200,
-      json: { ok: true, pid: 1234, serviceInfo: liveManifest },
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
     });
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
