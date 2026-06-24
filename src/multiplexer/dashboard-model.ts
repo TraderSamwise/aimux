@@ -1092,7 +1092,11 @@ export async function refreshDashboardModelFromService(
     if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
     const json = result.value;
     if (isContradictoryEmptyDesktopState(host, json)) {
-      return failDashboardServiceRefresh(host, force, "project service returned empty state while tmux has live agents");
+      return failDashboardServiceRefresh(
+        host,
+        force,
+        "project service returned empty state while tmux has live agents",
+      );
     }
     (host as any).dashboardModelServiceRefreshedAt = Date.now();
     (host as any).dashboardModelServiceRefreshError = undefined;
@@ -1105,7 +1109,9 @@ export async function refreshDashboardModelFromService(
       json.mainCheckoutInfo,
       json.operationFailures ?? [],
     );
-    if (applied) scheduleTuiApiRecovery(host, { immediate: true });
+    if (applied && (host as any).runtimeGuardState?.kind && (host as any).runtimeGuardState.kind !== "ok") {
+      scheduleTuiApiRecovery(host, { immediate: true });
+    }
     return applied;
   } catch (error) {
     if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;

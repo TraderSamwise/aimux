@@ -90,6 +90,70 @@ describe("TuiApiRuntime", () => {
     expect(states).toContain("degraded");
   });
 
+  it("does not let an older wrapper read failure degrade a newer success", async () => {
+    const slow = deferred<unknown>();
+    const fast = deferred<unknown>();
+    const failures = vi.fn();
+    const runtime = new TuiApiRuntime({
+      request: vi.fn().mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise),
+      onRequestFailure: failures,
+    });
+
+    const slowRead = runtime.requestJson("/slow", (value) => value);
+    const fastRead = runtime.requestJson("/fast", (value) => value);
+
+    fast.resolve({ ok: true });
+    await expect(fastRead).resolves.toEqual({ ok: true, value: { ok: true } });
+    slow.reject(new Error("late timeout"));
+    await expect(slowRead).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(failures).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older wrapper mutation failure degrade a newer success", async () => {
+    const slow = deferred<unknown>();
+    const fast = deferred<unknown>();
+    const failures = vi.fn();
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(),
+      mutate: vi.fn().mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise),
+      onRequestFailure: failures,
+    });
+
+    const slowMutation = runtime.mutateJson("/slow", {}, (value) => value);
+    const fastMutation = runtime.mutateJson("/fast", {}, (value) => value);
+
+    fast.resolve({ ok: true });
+    await expect(fastMutation).resolves.toEqual({ ok: true, value: { ok: true } });
+    slow.reject(new Error("late timeout"));
+    await expect(slowMutation).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(failures).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older resource refresh failure degrade a newer direct success", async () => {
+    const slow = deferred<unknown>();
+    const fast = deferred<unknown>();
+    const failures = vi.fn();
+    const runtime = new TuiApiRuntime({
+      request: vi.fn().mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise),
+      onRequestFailure: failures,
+    });
+
+    const refresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    const read = runtime.requestJson("/health", (value) => value);
+
+    fast.resolve({ ok: true });
+    await expect(read).resolves.toEqual({ ok: true, value: { ok: true } });
+    slow.reject(new Error("late timeout"));
+    await expect(refresh).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(failures).not.toHaveBeenCalled();
+  });
+
   it("routes wrapper reads through the shared runtime transport", async () => {
     const host: any = {};
     const request = vi.fn(async () => ({ ok: true, value: 1 }));
@@ -211,6 +275,26 @@ describe("TuiApiRuntime", () => {
       await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
 
       expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries recovery after a guard probe rejects", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn().mockRejectedValueOnce(new Error("probe failed")).mockResolvedValueOnce(undefined),
+      };
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+      expect(host.tuiApiRecoveryLastError).toBeInstanceOf(Error);
     } finally {
       vi.useRealTimers();
     }

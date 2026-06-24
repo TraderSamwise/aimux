@@ -56,6 +56,8 @@ export class TuiApiRuntime {
   private readonly resources = new Map<string, ResourceState>();
   private state: TuiApiConnectionState = "connected";
   private disposed = false;
+  private requestGeneration = 0;
+  private lastSuccessfulRequestGeneration = 0;
 
   constructor(private readonly options: TuiApiRuntimeOptions) {}
 
@@ -97,19 +99,23 @@ export class TuiApiRuntime {
       return { ok: false, error: new Error("TUI API runtime disposed") };
     }
     const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
+    const generation = ++this.requestGeneration;
     try {
       const value = validate(await request(path, requestOpts));
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
+      this.lastSuccessfulRequestGeneration = generation;
       this.setConnectionState("connected");
       return { ok: true, value };
     } catch (error) {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      this.setConnectionState("degraded");
-      this.options.onRequestFailure?.(error);
+      if (this.lastSuccessfulRequestGeneration <= generation) {
+        this.setConnectionState("degraded");
+        this.options.onRequestFailure?.(error);
+      }
       return { ok: false, error };
     }
   }
@@ -128,19 +134,23 @@ export class TuiApiRuntime {
       return { ok: false, error: new Error("TUI API mutation transport unavailable") };
     }
     const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
+    const generation = ++this.requestGeneration;
     try {
       const value = validate(await mutate(path, body, requestOpts));
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
+      this.lastSuccessfulRequestGeneration = generation;
       this.setConnectionState("connected");
       return { ok: true, value };
     } catch (error) {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      this.setConnectionState("degraded");
-      this.options.onRequestFailure?.(error);
+      if (this.lastSuccessfulRequestGeneration <= generation) {
+        this.setConnectionState("degraded");
+        this.options.onRequestFailure?.(error);
+      }
       return { ok: false, error };
     }
   }
@@ -161,6 +171,7 @@ export class TuiApiRuntime {
     state.pending = true;
     state.stale = state.value !== undefined;
     state.error = undefined;
+    const requestGeneration = ++this.requestGeneration;
 
     const promise = load()
       .then((value) => {
@@ -173,6 +184,7 @@ export class TuiApiRuntime {
         state.stale = false;
         state.updatedAt = Date.now();
         state.pendingPromise = undefined;
+        this.lastSuccessfulRequestGeneration = requestGeneration;
         this.setConnectionState("connected");
         return { ok: true, value, stale: false, generation };
       })
@@ -185,8 +197,10 @@ export class TuiApiRuntime {
           state.pending = false;
           state.stale = state.value !== undefined;
           state.pendingPromise = undefined;
-          this.setConnectionState(state.value === undefined ? "reconnecting" : "degraded");
-          this.options.onRequestFailure?.(error);
+          if (this.lastSuccessfulRequestGeneration <= requestGeneration) {
+            this.setConnectionState(state.value === undefined ? "reconnecting" : "degraded");
+            this.options.onRequestFailure?.(error);
+          }
         }
         return { ok: false, value: state.value, error, stale: state.value !== undefined, generation };
       });
@@ -272,6 +286,9 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   try {
     const result = host.refreshRuntimeGuard?.();
     if (result && typeof result.then === "function") await result;
+  } catch (error) {
+    host.tuiApiRecoveryLastError = error;
+    host.tuiApiRecoveryPending = true;
   } finally {
     host.tuiApiRecoveryInFlight = false;
     host.tuiApiLastRecoveryAt = Date.now();
