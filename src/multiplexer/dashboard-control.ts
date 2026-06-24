@@ -376,8 +376,6 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
           try {
             child.kill?.("SIGKILL");
           } catch {}
-          releaseRuntimeGuardRepairLock(lockPath);
-          releaseLockWhenChildExits = false;
         }, RUNTIME_GUARD_REPAIR_KILL_GRACE_MS);
         repairKillTimeout.unref?.();
       }

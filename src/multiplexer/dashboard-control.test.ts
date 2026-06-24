@@ -974,10 +974,13 @@ describe("startRuntimeGuardRepair", () => {
 
   it("force-kills and releases the repair lock when the timed-out child does not exit", async () => {
     vi.useFakeTimers();
+    let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
     const child = {
       pid: 7654,
       kill: vi.fn(),
-      on: vi.fn(),
+      on: vi.fn((event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+        if (event === "exit") onExit = handler;
+      }),
       unref: vi.fn(),
     };
     mocks.spawn.mockReturnValueOnce(child);
@@ -1000,6 +1003,8 @@ describe("startRuntimeGuardRepair", () => {
       expect(existsSync(lockPath)).toBe(true);
       vi.advanceTimersByTime(5_001);
       expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(existsSync(lockPath)).toBe(true);
+      onExit?.(null, "SIGKILL");
       expect(existsSync(lockPath)).toBe(false);
     } finally {
       vi.useRealTimers();
