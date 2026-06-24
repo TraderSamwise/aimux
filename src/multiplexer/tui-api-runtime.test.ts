@@ -90,6 +90,57 @@ describe("TuiApiRuntime", () => {
     expect(states).toContain("degraded");
   });
 
+  it("does not degrade or recover for semantic mutation failures", async () => {
+    const states: string[] = [];
+    const failures = vi.fn();
+    const error = Object.assign(new Error("session is already stopped"), {
+      status: 400,
+      tuiApiRecoverable: false,
+    });
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(),
+      mutate: vi.fn(async () => {
+        throw error;
+      }),
+      onConnectionStateChange: (state) => states.push(state),
+      onRequestFailure: failures,
+    });
+
+    await expect(runtime.mutateJson("/agents/stop", {}, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error,
+    });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(states).toEqual([]);
+    expect(failures).not.toHaveBeenCalled();
+  });
+
+  it("still recovers for retryable service status failures", async () => {
+    const states: string[] = [];
+    const failures = vi.fn();
+    const error = Object.assign(new Error("service unavailable"), {
+      status: 503,
+      tuiApiRecoverable: true,
+    });
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(async () => {
+        throw error;
+      }),
+      onConnectionStateChange: (state) => states.push(state),
+      onRequestFailure: failures,
+    });
+
+    await expect(runtime.requestJson("/desktop-state", (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error,
+    });
+
+    expect(runtime.getConnectionState()).toBe("degraded");
+    expect(states).toEqual(["degraded"]);
+    expect(failures).toHaveBeenCalledWith(error);
+  });
+
   it("does not let an older wrapper read failure degrade a newer success", async () => {
     const slow = deferred<unknown>();
     const fast = deferred<unknown>();
