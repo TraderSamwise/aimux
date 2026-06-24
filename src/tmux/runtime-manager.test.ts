@@ -823,6 +823,45 @@ describe("TmuxRuntimeManager", () => {
     expect(interactiveCalls.at(-1)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:0`]);
   });
 
+  it("preserves a pre-existing dashboard link when moving it into the requested slot fails", () => {
+    const hostSessionName = "aimux-mobile-abc";
+    const clientSessionName = `${hostSessionName}-client-268eff9c`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${clientSessionName}`) return "";
+      if (joined === `show-options -v -t ${hostSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} renumber-windows`) return "on";
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}	#{pane_dead}`
+      ) {
+        return "@10\t1\tdashboard\t1\t100";
+      }
+      if (joined === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`) {
+        throw new Error("move failed");
+      }
+      if (joined.startsWith(`show-options -v -t ${clientSessionName} terminal-features`)) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec, () => {});
+
+    expect(() =>
+      manager.openTarget(
+        { sessionName: hostSessionName, windowId: "@10", windowIndex: 0, windowName: "dashboard" },
+        { insideTmux: true, clientSuffix: "268eff9c" },
+      ),
+    ).toThrow("move failed");
+
+    expect(calls.some((call) => call.args.join(" ") === `link-window -d -s @10 -t ${clientSessionName}`)).toBe(false);
+    expect(
+      calls.some((call) => call.args.join(" ") === `move-window -s ${clientSessionName}:1 -t ${clientSessionName}:0`),
+    ).toBe(true);
+    expect(calls.some((call) => call.args[0] === "unlink-window")).toBe(false);
+  });
+
   it("keeps the existing dashboard slot intact when linking into it fails", () => {
     const hostSessionName = "aimux-mobile-abc";
     const clientSessionName = `${hostSessionName}-client-268eff9c`;

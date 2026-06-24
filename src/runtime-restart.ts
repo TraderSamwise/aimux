@@ -147,22 +147,28 @@ function readRuntimeRestartLockPid(lockPath: string): number | null {
 
 function tryAcquireRuntimeRestartStealLock(): string | null {
   const stealPath = runtimeRestartStealLockPath();
+  const writeOwner = (): boolean => {
+    try {
+      writeFileSync(
+        joinLockOwnerPath(stealPath),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return true;
+    } catch {
+      rmSync(stealPath, { recursive: true, force: true });
+      return false;
+    }
+  };
   try {
     mkdirSync(stealPath, { recursive: false });
-    writeFileSync(
-      joinLockOwnerPath(stealPath),
-      `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
-    );
+    if (!writeOwner()) return null;
     return stealPath;
   } catch {
     try {
       if (Date.now() - statSync(stealPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
         rmSync(stealPath, { recursive: true, force: true });
         mkdirSync(stealPath, { recursive: false });
-        writeFileSync(
-          joinLockOwnerPath(stealPath),
-          `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
-        );
+        if (!writeOwner()) return null;
         return stealPath;
       }
     } catch {
@@ -178,10 +184,15 @@ function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): str
     try {
       mkdirSync(pathResolve(getGlobalAimuxDir(), "locks"), { recursive: true });
       mkdirSync(lockPath, { recursive: false });
-      writeFileSync(
-        joinLockOwnerPath(lockPath),
-        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
-      );
+      try {
+        writeFileSync(
+          joinLockOwnerPath(lockPath),
+          `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+        );
+      } catch (error) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
       return lockPath;
     } catch {
       return null;
