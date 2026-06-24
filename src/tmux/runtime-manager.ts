@@ -345,8 +345,6 @@ export class TmuxRuntimeManager {
     const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
     if (existing) return existing;
     let occupyingDashboard: TmuxWindowInfo | undefined;
-    let requiresKeepalive = false;
-    let keepaliveWindowId: string | null = null;
     let originalRenumberWindows: string | null = null;
     if (windowIndex !== undefined) {
       const windows = this.listWindows(clientSessionName);
@@ -358,45 +356,54 @@ export class TmuxRuntimeManager {
           );
         }
         occupyingDashboard = occupying;
-        requiresKeepalive = windows.length === 1;
         originalRenumberWindows = this.getSessionOption(clientSessionName, "renumber-windows") || "off";
       }
     }
-    const destination = windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
+    const destination =
+      occupyingDashboard || windowIndex === undefined ? clientSessionName : `${clientSessionName}:${windowIndex}`;
     try {
       if (originalRenumberWindows !== null) {
         this.exec(["set-option", "-t", clientSessionName, "renumber-windows", "off"]);
-      }
-      if (requiresKeepalive) {
-        const keepaliveName = `aimux-keepalive-${target.windowId.replace(/[^a-zA-Z0-9]/g, "")}`;
-        this.exec(["new-window", "-d", "-t", clientSessionName, "-n", keepaliveName, "sh", "-lc", "tail -f /dev/null"]);
-        keepaliveWindowId =
-          this.listWindows(clientSessionName).find((window) => window.name === keepaliveName)?.id ?? null;
-      }
-      if (occupyingDashboard) {
-        this.killWindow({
-          sessionName: clientSessionName,
-          windowId: occupyingDashboard.id,
-          windowIndex: occupyingDashboard.index,
-          windowName: occupyingDashboard.name,
-        });
       }
       this.exec(["link-window", "-d", "-s", target.windowId, "-t", destination]);
       const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
       if (!linked) {
         throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
       }
+      if (occupyingDashboard && windowIndex !== undefined && linked.windowIndex !== windowIndex) {
+        try {
+          this.exec([
+            "swap-window",
+            "-s",
+            `${clientSessionName}:${linked.windowIndex}`,
+            "-t",
+            `${clientSessionName}:${windowIndex}`,
+          ]);
+        } catch (error) {
+          try {
+            this.unlinkWindow(linked);
+          } catch {}
+          throw error;
+        }
+        const replaced = this.getTargetByWindowId(clientSessionName, target.windowId);
+        if (!replaced || replaced.windowIndex !== windowIndex) {
+          throw new Error(`Failed to replace dashboard slot ${clientSessionName}:${windowIndex}`);
+        }
+        const staleDashboard = this.getTargetByWindowId(clientSessionName, occupyingDashboard.id);
+        if (staleDashboard) {
+          try {
+            this.unlinkWindow(staleDashboard);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            debug(`failed to unlink stale dashboard ${occupyingDashboard.id}: ${message}`, "dashboard");
+          }
+        }
+        return replaced;
+      }
       return linked;
     } finally {
-      try {
-        if (keepaliveWindowId) {
-          const keepalive = this.getTargetByWindowId(clientSessionName, keepaliveWindowId);
-          if (keepalive) this.killWindow(keepalive);
-        }
-      } finally {
-        if (originalRenumberWindows !== null) {
-          this.exec(["set-option", "-t", clientSessionName, "renumber-windows", originalRenumberWindows]);
-        }
+      if (originalRenumberWindows !== null) {
+        this.exec(["set-option", "-t", clientSessionName, "renumber-windows", originalRenumberWindows]);
       }
     }
   }
@@ -618,6 +625,10 @@ export class TmuxRuntimeManager {
 
   killWindow(target: TmuxTarget): void {
     this.exec(["kill-window", "-t", target.windowId]);
+  }
+
+  unlinkWindow(target: TmuxTarget): void {
+    this.exec(["unlink-window", "-t", `${target.sessionName}:${target.windowIndex}`]);
   }
 
   killSession(sessionName: string): void {
