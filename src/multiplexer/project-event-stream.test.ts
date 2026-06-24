@@ -93,6 +93,57 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
+  it("serializes event refreshes that arrive while a refresh is in flight", async () => {
+    let resolveFirstRefresh!: (value: boolean) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      refreshDashboardModelFromService: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>((resolve) => {
+              resolveFirstRefresh = resolve;
+            }),
+        )
+        .mockResolvedValue(true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state"]);
+    await vi.advanceTimersByTimeAsync(25);
+    scheduleProjectViewRefresh(host, ["threads"]);
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+
+    resolveFirstRefresh(true);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledTimes(2);
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders successful view refreshes when another view refresh rejects", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshCoordinationFromService: vi.fn(async () => {
+        throw new Error("coordination unavailable");
+      }),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state", "coordination-worklist"]);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.refreshCoordinationFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
   it("coalesces bursts and cancels pending refreshes on stop", async () => {
     const host: any = {
       mode: "dashboard",
