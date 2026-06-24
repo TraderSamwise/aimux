@@ -11,6 +11,7 @@ log_dir=""
 log_file=""
 
 log_error() {
+  [ -n "$log_file" ] || return 0
   mkdir -p "$log_dir" 2>/dev/null || true
   printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$log_file" 2>/dev/null || true
 }
