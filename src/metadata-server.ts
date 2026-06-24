@@ -3129,10 +3129,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.read) {
-        const body = (await readJson(req)) as { id?: string; sessionId?: string };
+        const body = (await readJson(req)) as { id?: string; ids?: unknown; sessionId?: string };
         const sessionId = body.sessionId?.trim() || undefined;
+        const ids = normalizeNotificationMutationIds(body.ids);
         const updated = markNotificationsRead({
           id: body.id?.trim() || undefined,
+          ids,
           sessionId,
         });
         this.notifyProjectChanged({
@@ -3145,10 +3147,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.clear) {
-        const body = (await readJson(req)) as { id?: string; sessionId?: string };
+        const body = (await readJson(req)) as { id?: string; ids?: unknown; sessionId?: string };
         const sessionId = body.sessionId?.trim() || undefined;
+        const ids = normalizeNotificationMutationIds(body.ids);
         const cleared = clearNotifications({
           id: body.id?.trim() || undefined,
+          ids,
           sessionId,
         });
         this.notifyProjectChanged({
@@ -4379,4 +4383,9 @@ export class MetadataServer {
 
     send(res, 404, { ok: false, error: "not found" });
   }
+}
+
+function normalizeNotificationMutationIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((id) => (typeof id === "string" ? id.trim() : "")).filter(Boolean);
 }

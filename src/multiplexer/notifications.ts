@@ -185,18 +185,18 @@ export function notificationTargetState(
   return "missing";
 }
 
-// Mark an agent's whole notification rollup read (by sessionId), or each sessionless record —
-// routed through the service so it stays the sole writer of the notifications store.
-export async function markCoordinationItemRead(host: NotificationHost, item: WorklistItem): Promise<void> {
+export function notificationMutationInputForItem(item: WorklistItem): { sessionId?: string; ids?: string[] } | null {
   const note = item.notification;
-  if (!note) return;
-  if (item.sessionId) {
-    await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, { sessionId: item.sessionId });
-  } else {
-    for (const record of note.notifications) {
-      await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, { id: record.id });
-    }
-  }
+  if (!note) return null;
+  if (item.sessionId) return { sessionId: item.sessionId };
+  return { ids: note.notifications.map((record) => record.id).filter(Boolean) };
+}
+
+// Mark a notification rollup read through the service so it stays the sole writer.
+export async function markCoordinationItemRead(host: NotificationHost, item: WorklistItem): Promise<void> {
+  const input = notificationMutationInputForItem(item);
+  if (!input) return;
+  await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, input);
 }
 
 export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
