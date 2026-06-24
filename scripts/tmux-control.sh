@@ -285,7 +285,8 @@ dashboard_candidate_needs_reload() {
   esac
   expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
   dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
-  [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] && [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
+  [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] || return 0
+  [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
 
   dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
   case "$dashboard_preview" in

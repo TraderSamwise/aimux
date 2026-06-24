@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,5 +41,17 @@ describe("tmux-statusline.sh", () => {
     expect(readFileSync(join(root, "logs", "tmux-statusline.log"), "utf8")).toContain(
       "dashboard bottom render missing file",
     );
+  });
+
+  it("stays quiet before logging is configured", () => {
+    const script = join(process.cwd(), "scripts", "tmux-statusline.sh");
+
+    const result = spawnSync("sh", [script, "--line", "bottom"], {
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("\n");
+    expect(result.stderr).toBe("");
   });
 });
