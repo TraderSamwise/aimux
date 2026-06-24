@@ -105,7 +105,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      this.lastSuccessfulRequestGeneration = generation;
+      this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, generation);
       this.setConnectionState("connected");
       return { ok: true, value };
     } catch (error) {
@@ -140,7 +140,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      this.lastSuccessfulRequestGeneration = generation;
+      this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, generation);
       this.setConnectionState("connected");
       return { ok: true, value };
     } catch (error) {
@@ -184,7 +184,7 @@ export class TuiApiRuntime {
         state.stale = false;
         state.updatedAt = Date.now();
         state.pendingPromise = undefined;
-        this.lastSuccessfulRequestGeneration = requestGeneration;
+        this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, requestGeneration);
         this.setConnectionState("connected");
         return { ok: true, value, stale: false, generation };
       })

@@ -111,6 +111,35 @@ describe("TuiApiRuntime", () => {
     expect(failures).not.toHaveBeenCalled();
   });
 
+  it("keeps the successful request watermark monotonic", async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    const third = deferred<unknown>();
+    const failures = vi.fn();
+    const runtime = new TuiApiRuntime({
+      request: vi
+        .fn()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise)
+        .mockReturnValueOnce(third.promise),
+      onRequestFailure: failures,
+    });
+
+    const oldest = runtime.requestJson("/oldest", (value) => value);
+    const middle = runtime.requestJson("/middle", (value) => value);
+    const newest = runtime.requestJson("/newest", (value) => value);
+
+    third.resolve({ ok: true, id: "newest" });
+    await expect(newest).resolves.toMatchObject({ ok: true });
+    first.resolve({ ok: true, id: "oldest" });
+    await expect(oldest).resolves.toMatchObject({ ok: true });
+    second.reject(new Error("middle timeout"));
+    await expect(middle).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(failures).not.toHaveBeenCalled();
+  });
+
   it("does not let an older wrapper mutation failure degrade a newer success", async () => {
     const slow = deferred<unknown>();
     const fast = deferred<unknown>();
