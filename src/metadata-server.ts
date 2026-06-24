@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
+import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir, getRepoRoot } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import {
   type MetadataTone,
@@ -257,6 +257,14 @@ function listLibraryDocuments(projectRoot = process.cwd()) {
       return [];
     }
   });
+}
+
+function metadataProjectRoot(): string | undefined {
+  try {
+    return getRepoRoot();
+  } catch {
+    return undefined;
+  }
 }
 
 interface MetadataServerOptions {
@@ -635,25 +643,33 @@ function markActiveWindowFocused(
     if (!currentWindowId) return false;
     const dashboardTarget = findExistingDashboardTarget(tmux, projectRoot, currentClientSession);
     if (dashboardTarget?.windowId !== currentWindowId) return false;
-    updateNotificationContext("tui", {
-      focused: true,
-      screen: "dashboard",
-      panelOpen: false,
-      sessionId: undefined,
-    });
+    updateNotificationContext(
+      "tui",
+      {
+        focused: true,
+        screen: "dashboard",
+        panelOpen: false,
+        sessionId: undefined,
+      },
+      metadataProjectRoot() ?? projectRoot,
+    );
     return true;
   }
   if (!currentWindowId) return false;
   const match = findProjectManagedWindow(tmux, projectRoot, { windowId: currentWindowId });
   if (!match) return false;
-  updateNotificationContext("tui", {
-    focused: true,
-    screen: match.metadata.kind === "service" ? "service" : "agent",
-    sessionId: match.metadata.sessionId,
-    panelOpen: false,
-  });
+  updateNotificationContext(
+    "tui",
+    {
+      focused: true,
+      screen: match.metadata.kind === "service" ? "service" : "agent",
+      sessionId: match.metadata.sessionId,
+      panelOpen: false,
+    },
+    metadataProjectRoot() ?? projectRoot,
+  );
   if (match.metadata.kind === "agent") {
-    markSessionViewed(match.metadata.sessionId);
+    markSessionViewed(match.metadata.sessionId, metadataProjectRoot() ?? projectRoot);
   }
   markTargetUsed(tmux, projectRoot, match.target, currentClientSession, match.metadata.sessionId);
   return true;
@@ -2242,7 +2258,7 @@ export class MetadataServer {
           }
           const focusResult = focusControlTarget(tmux, match.target, focusClientSession, clientTty, focus);
           if (focus && itemId && session?.id === itemId) {
-            markSessionViewed(itemId);
+            markSessionViewed(itemId, metadataProjectRoot());
           }
           if (focus) {
             markTargetUsed(tmux, process.cwd(), match.target, focusClientSession, itemId);
@@ -2306,7 +2322,7 @@ export class MetadataServer {
         const itemId =
           match?.metadata.kind === "agent" || match?.metadata.kind === "service" ? match.metadata.sessionId : undefined;
         if (focus && match?.metadata.kind === "agent") {
-          markSessionViewed(match.metadata.sessionId);
+          markSessionViewed(match.metadata.sessionId, metadataProjectRoot());
         }
         if (focus) {
           markTargetUsed(tmux, process.cwd(), match.target, focusClientSession, itemId);
@@ -2419,7 +2435,7 @@ export class MetadataServer {
         }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         if (focus) {
-          markSessionViewed(item.metadata.sessionId);
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
           this.notifyChange();
         }
@@ -2471,7 +2487,7 @@ export class MetadataServer {
         }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         if (focus) {
-          markSessionViewed(item.metadata.sessionId);
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
           this.notifyChange();
         }
@@ -2526,7 +2542,7 @@ export class MetadataServer {
         }
         const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
         if (focus) {
-          markSessionViewed(item.metadata.sessionId);
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
           this.notifyChange();
         }
@@ -2653,7 +2669,7 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.markSeen) {
         const body = (await readJson(req)) as { session: string };
-        markSessionViewed(body.session);
+        markSessionViewed(body.session, metadataProjectRoot());
         this.notifyChange();
         send(res, 200, { ok: true });
         return;
@@ -2998,12 +3014,16 @@ export class MetadataServer {
           panelOpen?: boolean;
         };
         const source = body.source === "desktop" ? "desktop" : "tui";
-        const context = updateNotificationContext(source, {
-          focused: Boolean(body.focused),
-          screen: body.screen?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
-          panelOpen: Boolean(body.panelOpen),
-        });
+        const context = updateNotificationContext(
+          source,
+          {
+            focused: Boolean(body.focused),
+            screen: body.screen?.trim() || undefined,
+            sessionId: body.sessionId?.trim() || undefined,
+            panelOpen: Boolean(body.panelOpen),
+          },
+          metadataProjectRoot(),
+        );
         send(res, 200, { ok: true, context });
         return;
       }
@@ -3016,6 +3036,7 @@ export class MetadataServer {
           id: body.id?.trim() || undefined,
           ids,
           sessionId,
+          projectRoot: metadataProjectRoot(),
         });
         this.notifyProjectChanged({
           views: ["coordination-worklist", "notifications"],
@@ -3034,6 +3055,7 @@ export class MetadataServer {
           id: body.id?.trim() || undefined,
           ids,
           sessionId,
+          projectRoot: metadataProjectRoot(),
         });
         this.notifyProjectChanged({
           views: ["coordination-worklist", "notifications"],

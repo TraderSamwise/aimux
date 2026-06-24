@@ -20,10 +20,11 @@ function deriveFromEvent(
   sessionId: string,
   current: SessionDerivedState | undefined,
   event: AgentEvent,
+  projectRoot?: string,
 ): Pick<SessionDerivedState, "activity" | "attention" | "unseenCount" | "becameIdleAt"> {
   const message = event.message?.toLowerCase() ?? "";
   const tone = event.tone;
-  const suppressUnseen = isSessionNotificationFocused(sessionId);
+  const suppressUnseen = isSessionNotificationFocused(sessionId, projectRoot);
   let activity: AgentActivityState | undefined = current?.activity;
   let attention: AgentAttentionState | undefined = current?.attention ?? "normal";
   let unseenCount = current?.unseenCount ?? 0;
@@ -125,7 +126,7 @@ export class AgentTracker {
       sessionId,
       (current) => {
         const derivedCurrent = current.derived;
-        const nextState = deriveFromEvent(sessionId, derivedCurrent, normalized);
+        const nextState = deriveFromEvent(sessionId, derivedCurrent, normalized, projectRoot);
         const events = [...(derivedCurrent?.events ?? []).slice(-19), normalized];
         return {
           ...current,

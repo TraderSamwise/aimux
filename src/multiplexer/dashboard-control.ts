@@ -149,12 +149,16 @@ export function syncTuiNotificationContext(host: DashboardControlHost, panelOpen
         ? host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex]?.id
         : undefined
       : host.getDashboardSessions()[host.activeIndex]?.id;
-  updateNotificationContext("tui", {
-    focused: true,
-    screen: host.dashboardState.screen,
-    sessionId: selected,
-    panelOpen,
-  });
+  updateNotificationContext(
+    "tui",
+    {
+      focused: true,
+      screen: host.dashboardState.screen,
+      sessionId: selected,
+      panelOpen,
+    },
+    dashboardProjectRoot(host),
+  );
 }
 
 export function isDashboardScreen(host: DashboardControlHost, screen: DashboardScreen): boolean {
@@ -710,11 +714,15 @@ export function openLiveTmuxWindowForEntry(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
-    updateNotificationContext("tui", {
-      focused: true,
-      sessionId: entry.id,
-      panelOpen: false,
-    });
+    updateNotificationContext(
+      "tui",
+      {
+        focused: true,
+        sessionId: entry.id,
+        panelOpen: false,
+      },
+      dashboardProjectRoot(host),
+    );
     markSessionViewed(entry.id, dashboardProjectRoot(host));
     noteLastUsedItem(host, entry.id);
     return "opened";

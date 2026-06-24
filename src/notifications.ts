@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { deriveRuntimeExchangeIndexes } from "./runtime-core/exchange-derived.js";
 import {
   createRuntimeExchangeStore,
+  type RuntimeExchangeStore,
   type RuntimeExchange,
   type RuntimeExchangeInboxEntry,
   type RuntimeExchangeMessage,
@@ -9,12 +10,22 @@ import {
 } from "./runtime-core/exchange-store.js";
 import type { InteractionType } from "./interaction-requests.js";
 import type { NotificationInteractionRecord, NotificationRecord } from "./project-api-contract.js";
+import { getReadOnlyProjectPathsFor } from "./paths.js";
 
 export type { NotificationInteractionRecord, NotificationRecord } from "./project-api-contract.js";
 
 const PROJECT_NOTIFICATION_PARTICIPANT = "project";
 /** Tag marking an exchange thread as a notification record (not a workflow thread). */
 export const NOTIFICATION_TAG = "notification";
+
+interface NotificationStoreOptions {
+  projectRoot?: string;
+}
+
+function notificationStore(projectRoot?: string): RuntimeExchangeStore {
+  const root = projectRoot?.trim();
+  return createRuntimeExchangeStore(root ? getReadOnlyProjectPathsFor(root).runtimeExchangePath : undefined);
+}
 
 function normalizeTargetKey(input: { targetKey?: string; sessionId?: string }): string | undefined {
   const targetKey = input.targetKey?.trim();
@@ -192,7 +203,7 @@ function writeNotification(input: {
     },
   };
   let record: NotificationRecord | undefined;
-  createRuntimeExchangeStore().update((exchange) => {
+  notificationStore(input.projectRoot).update((exchange) => {
     const next = deriveRuntimeExchangeIndexes({
       ...exchange,
       generatedAt: now,
@@ -265,8 +276,8 @@ export function listNotifications(opts?: {
   unreadOnly?: boolean;
   includeCleared?: boolean;
   sessionId?: string;
-}): NotificationRecord[] {
-  return notificationRecords().filter((record) => {
+} & NotificationStoreOptions): NotificationRecord[] {
+  return notificationRecords(notificationStore(opts?.projectRoot).read()).filter((record) => {
     if (!opts?.includeCleared && record.cleared) return false;
     if (opts?.unreadOnly && !record.unread) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
@@ -274,8 +285,10 @@ export function listNotifications(opts?: {
   });
 }
 
-export function markNotificationsRead(opts?: { id?: string; ids?: string[]; sessionId?: string }): number {
-  const store = createRuntimeExchangeStore();
+export function markNotificationsRead(
+  opts?: { id?: string; ids?: string[]; sessionId?: string } & NotificationStoreOptions,
+): number {
+  const store = notificationStore(opts?.projectRoot);
   const ids = opts?.ids ? new Set(opts.ids) : undefined;
   const records = notificationRecords(store.read()).filter((record) => {
     if (record.cleared || !record.unread) return false;
@@ -305,8 +318,10 @@ export function markNotificationsRead(opts?: { id?: string; ids?: string[]; sess
   return records.length;
 }
 
-export function clearNotifications(opts?: { id?: string; ids?: string[]; sessionId?: string }): number {
-  const store = createRuntimeExchangeStore();
+export function clearNotifications(
+  opts?: { id?: string; ids?: string[]; sessionId?: string } & NotificationStoreOptions,
+): number {
+  const store = notificationStore(opts?.projectRoot);
   const ids = opts?.ids ? new Set(opts.ids) : undefined;
   const records = notificationRecords(store.read()).filter((record) => {
     if (record.cleared) return false;
@@ -341,8 +356,8 @@ export function clearNotifications(opts?: { id?: string; ids?: string[]; session
   return records.length;
 }
 
-export function unreadNotificationCount(opts?: { sessionId?: string }): number {
-  return listNotifications({ unreadOnly: true, sessionId: opts?.sessionId }).length;
+export function unreadNotificationCount(opts?: { sessionId?: string } & NotificationStoreOptions): number {
+  return listNotifications({ unreadOnly: true, sessionId: opts?.sessionId, projectRoot: opts?.projectRoot }).length;
 }
 
 export interface SessionNotificationSummary {
