@@ -101,6 +101,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
       }
     }
     for (const session of seen) {
+      if (queue.disposed || host.tuiRuntimeMutationQueue !== queue) return;
       try {
         await mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.markSeen, { session });
       } catch {
