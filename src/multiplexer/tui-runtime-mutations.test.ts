@@ -102,6 +102,19 @@ describe("TUI runtime mutation queue", () => {
     });
   });
 
+  it("backs off repeated notification context failures when no fresh context arrived", async () => {
+    const host: any = {};
+    apiMocks.mutateDashboardApi.mockRejectedValue(new Error("offline"));
+
+    queueTuiNotificationContext(host, { screen: "agent", sessionId: "codex-1" });
+    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(249);
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(2);
+  });
+
   it("does not reschedule an in-flight failure after teardown", async () => {
     const host: any = {};
     let rejectMutation!: (error: unknown) => void;
