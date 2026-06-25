@@ -709,7 +709,7 @@ export function openLiveTmuxWindowForEntry(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
-    noteTuiNotificationContext(host, { sessionId: entry.id, panelOpen: false });
+    noteTuiNotificationContext(host, { screen: "agent", sessionId: entry.id, panelOpen: false });
     markTuiSessionSeen(host, entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
