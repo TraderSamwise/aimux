@@ -785,7 +785,6 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   });
   host.noteLastUsedItem(sid);
   queueTuiSessionSeen(host, sid);
-  host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
     try {
