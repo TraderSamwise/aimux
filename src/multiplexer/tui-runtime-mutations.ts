@@ -54,10 +54,11 @@ function retryDelay(attempt: number): number {
   return RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
 }
 
-function requeueContext(host: TuiRuntimeMutationHost, context: NotificationContextPatch): void {
+function requeueContext(host: TuiRuntimeMutationHost, context: NotificationContextPatch): boolean {
   const queue = getQueue(host);
-  if (queue.disposed) return;
-  queue.context ??= context;
+  if (queue.disposed || queue.context) return false;
+  queue.context = context;
+  return true;
 }
 
 async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
@@ -71,6 +72,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   queue.seen.clear();
   const failedSeen: string[] = [];
   let failed = false;
+  let requeuedFailedContext = false;
   try {
     if (context) {
       try {
@@ -80,7 +82,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
           ...context,
         });
       } catch {
-        requeueContext(host, context);
+        requeuedFailedContext = requeueContext(host, context);
         failed = true;
       }
     }
@@ -104,7 +106,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   for (const session of failedSeen) queue.seen.add(session);
   queue.attempt += 1;
   debug(`TUI runtime mutation retry scheduled after failed attempt ${queue.attempt}`, "dashboard");
-  scheduleFlush(host, queue.context ? 0 : retryDelay(queue.attempt - 1));
+  scheduleFlush(host, queue.context && !requeuedFailedContext ? 0 : retryDelay(queue.attempt - 1));
 }
 
 export function queueTuiNotificationContext(
