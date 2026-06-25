@@ -34,9 +34,13 @@ function getQueue(host: TuiRuntimeMutationHost): MutationQueue {
   return host.tuiRuntimeMutationQueue;
 }
 
-function scheduleFlush(host: TuiRuntimeMutationHost, delayMs = 0): void {
+function scheduleFlush(host: TuiRuntimeMutationHost, delayMs = 0, opts: { preempt?: boolean } = {}): void {
   const queue = getQueue(host);
   if (queue.disposed) return;
+  if (queue.timer && opts.preempt === true && !queue.inFlight) {
+    clearTimeout(queue.timer);
+    queue.timer = null;
+  }
   if (queue.inFlight || queue.timer) return;
   queue.timer = setTimeout(() => {
     queue.timer = null;
@@ -100,7 +104,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   for (const session of failedSeen) queue.seen.add(session);
   queue.attempt += 1;
   debug(`TUI runtime mutation retry scheduled after failed attempt ${queue.attempt}`, "dashboard");
-  scheduleFlush(host, retryDelay(queue.attempt - 1));
+  scheduleFlush(host, queue.context ? 0 : retryDelay(queue.attempt - 1));
 }
 
 export function queueTuiNotificationContext(
@@ -109,7 +113,7 @@ export function queueTuiNotificationContext(
 ): void {
   const queue = getQueue(host);
   queue.context = patch;
-  scheduleFlush(host);
+  scheduleFlush(host, 0, { preempt: true });
 }
 
 export function queueTuiSessionSeen(host: TuiRuntimeMutationHost, sessionId: string): void {

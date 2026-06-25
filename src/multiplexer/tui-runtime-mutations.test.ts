@@ -81,6 +81,27 @@ describe("TUI runtime mutation queue", () => {
     expect(host.tuiRuntimeMutationQueue).toBeUndefined();
   });
 
+  it("lets fresh context updates preempt a pending mark-seen retry backoff", async () => {
+    const host: any = {};
+    apiMocks.mutateDashboardApi.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ ok: true });
+
+    queueTuiSessionSeen(host, "codex-1");
+    await vi.runOnlyPendingTimersAsync();
+    queueTuiNotificationContext(host, { screen: "agent", sessionId: "codex-2" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(3);
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(2, host, "/notification-context", {
+      source: "tui",
+      focused: true,
+      screen: "agent",
+      sessionId: "codex-2",
+    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(3, host, "/mark-seen", {
+      session: "codex-1",
+    });
+  });
+
   it("does not reschedule an in-flight failure after teardown", async () => {
     const host: any = {};
     let rejectMutation!: (error: unknown) => void;
