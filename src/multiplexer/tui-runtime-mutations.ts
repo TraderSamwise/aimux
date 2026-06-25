@@ -21,6 +21,13 @@ type MutationQueue = {
 
 const RETRY_DELAYS_MS = [250, 1_000, 3_000, 10_000];
 
+function mergeContext(
+  base: NotificationContextPatch | undefined,
+  patch: NotificationContextPatch,
+): NotificationContextPatch {
+  return { ...(base ?? {}), ...patch };
+}
+
 function getQueue(host: TuiRuntimeMutationHost): MutationQueue {
   if (!host.tuiRuntimeMutationQueue) {
     host.tuiRuntimeMutationQueue = {
@@ -54,9 +61,16 @@ function retryDelay(attempt: number): number {
   return RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
 }
 
-function requeueContext(host: TuiRuntimeMutationHost, context: NotificationContextPatch): boolean {
-  const queue = getQueue(host);
-  if (queue.disposed || queue.context) return false;
+function requeueContext(
+  host: TuiRuntimeMutationHost,
+  queue: MutationQueue,
+  context: NotificationContextPatch,
+): boolean {
+  if (queue.disposed || host.tuiRuntimeMutationQueue !== queue) return false;
+  if (queue.context) {
+    queue.context = mergeContext(context, queue.context);
+    return false;
+  }
   queue.context = context;
   return true;
 }
@@ -82,7 +96,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
           ...context,
         });
       } catch {
-        requeuedFailedContext = requeueContext(host, context);
+        requeuedFailedContext = requeueContext(host, queue, context);
         failed = true;
       }
     }
@@ -114,7 +128,7 @@ export function queueTuiNotificationContext(
   patch: NotificationContextPatch,
 ): void {
   const queue = getQueue(host);
-  queue.context = patch;
+  queue.context = mergeContext(queue.context, patch);
   scheduleFlush(host, 0, { preempt: true });
 }
 

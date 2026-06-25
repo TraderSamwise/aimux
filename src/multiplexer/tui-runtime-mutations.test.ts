@@ -115,6 +115,23 @@ describe("TUI runtime mutation queue", () => {
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(2);
   });
 
+  it("merges partial notification context patches before flushing", async () => {
+    const host: any = {};
+
+    queueTuiNotificationContext(host, { screen: "agent", sessionId: "codex-1" });
+    queueTuiNotificationContext(host, { panelOpen: false });
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledOnce();
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledWith(host, "/notification-context", {
+      source: "tui",
+      focused: true,
+      screen: "agent",
+      sessionId: "codex-1",
+      panelOpen: false,
+    });
+  });
+
   it("does not reschedule an in-flight failure after teardown", async () => {
     const host: any = {};
     let rejectMutation!: (error: unknown) => void;
@@ -125,6 +142,25 @@ describe("TUI runtime mutation queue", () => {
     );
 
     queueTuiSessionSeen(host, "codex-1");
+    await vi.advanceTimersByTimeAsync(0);
+    clearTuiRuntimeMutationQueue(host);
+    rejectMutation(new Error("offline"));
+    await vi.runAllTimersAsync();
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
+    expect(host.tuiRuntimeMutationQueue).toBeUndefined();
+  });
+
+  it("does not recreate the queue when in-flight context fails after teardown", async () => {
+    const host: any = {};
+    let rejectMutation!: (error: unknown) => void;
+    apiMocks.mutateDashboardApi.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectMutation = reject;
+      }),
+    );
+
+    queueTuiNotificationContext(host, { screen: "agent", sessionId: "codex-1" });
     await vi.advanceTimersByTimeAsync(0);
     clearTuiRuntimeMutationQueue(host);
     rejectMutation(new Error("offline"));
