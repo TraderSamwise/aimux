@@ -1189,6 +1189,7 @@ describe("focusSession", () => {
       expect(host.noteLastUsedItem).not.toHaveBeenCalled();
       expect(host.activeIndex).toBe(1);
       expect(host.sessionMRU).toEqual(["codex-2"]);
+      expect(host.sessionTmuxTargets.has("claude-1")).toBe(false);
       expect(host.postToProjectService).not.toHaveBeenCalled();
       expect(host.saveState).not.toHaveBeenCalled();
     } finally {
