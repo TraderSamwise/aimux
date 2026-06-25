@@ -509,6 +509,7 @@ describe("dashboard live target activation", () => {
     const result = openLiveTmuxWindowForEntry(host, { id: "codex-1" });
     expect(host.showDashboardError).not.toHaveBeenCalled();
     expect(result).toBe("opened");
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const topPath = join(stateDir, "tmux-statusline", "top-@agent.txt");
     const bottomPath = join(stateDir, "tmux-statusline", "bottom-@agent.txt");
