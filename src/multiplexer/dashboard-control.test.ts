@@ -519,6 +519,7 @@ describe("dashboard live target activation", () => {
       "/notification-context",
       expect.objectContaining({
         focused: true,
+        screen: "agent",
         sessionId: "codex-1",
         source: "tui",
       }),
