@@ -162,13 +162,16 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
       const resolved = host.tmuxRuntimeManager.getTargetByWindowId(candidate.sessionName, candidate.windowId);
       const metadata = resolved ? host.tmuxRuntimeManager.getWindowMetadata(resolved) : null;
       if (!resolved) {
-        return undefined;
-      }
-      if (!metadata || (metadata.kind === "agent" && metadata.sessionId === sessionId)) {
+        host.sessionTmuxTargets.delete(sessionId);
+      } else if (!metadata || (metadata.kind === "agent" && metadata.sessionId === sessionId)) {
         host.sessionTmuxTargets.set(sessionId, resolved);
         return resolved;
+      } else {
+        host.sessionTmuxTargets.delete(sessionId);
       }
-    } catch {}
+    } catch {
+      host.sessionTmuxTargets.delete(sessionId);
+    }
   }
 
   try {

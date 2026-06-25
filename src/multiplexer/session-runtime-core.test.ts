@@ -249,6 +249,25 @@ describe("session runtime prompt submission", () => {
     };
 
     expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toBeUndefined();
+    expect(host.sessionTmuxTargets.has("claude-1")).toBe(false);
+  });
+
+  it("removes a stale cached tmux target before adopting a scanned replacement", () => {
+    const staleTarget = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
+    const replacement = { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" };
+    const host: any = {
+      sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
+      tmuxRuntimeManager: {
+        getTargetByWindowId: vi.fn(() => undefined),
+        getWindowMetadata: vi.fn(() => null),
+        listProjectManagedWindows: vi.fn(() => [
+          { target: replacement, metadata: { kind: "agent", sessionId: "claude-1" } },
+        ]),
+      },
+    };
+
+    expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toEqual(replacement);
+    expect(host.sessionTmuxTargets.get("claude-1")).toEqual(replacement);
   });
 
   it("does not publish metadata backend ids to tmux metadata", async () => {

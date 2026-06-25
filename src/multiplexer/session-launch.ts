@@ -16,14 +16,15 @@ import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
-import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
-import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
+import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 
 type SessionLaunchHost = any;
 
@@ -771,30 +772,31 @@ export function getScopedSessionEntries(host: SessionLaunchHost): Array<{ sessio
   return host.sessions.map((session: any, index: number) => ({ session, index }));
 }
 
+function markFocusedSession(host: SessionLaunchHost, index: number, sessionId: string): void {
+  host.activeIndex = index;
+  host.sessionMRU = [sessionId, ...host.sessionMRU.filter((id: string) => id !== sessionId)];
+  queueTuiNotificationContext(host, {
+    screen: "agent",
+    sessionId,
+    panelOpen: false,
+  });
+  host.noteLastUsedItem(sessionId);
+  queueTuiSessionSeen(host, sessionId);
+}
+
 export function focusSession(host: SessionLaunchHost, index: number): void {
   if (index < 0 || index >= host.sessions.length) return;
 
-  host.activeIndex = index;
   const session = host.sessions[index];
   const sid = session.id;
-  host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
-  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, {
-    source: "tui",
-    focused: true,
-    screen: "agent",
-    sessionId: sid,
-    panelOpen: false,
-  }).catch(() => {});
-  host.noteLastUsedItem(sid);
-  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.markSeen, { session: sid }).catch(() => {});
-  host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
     try {
-      const resolved = host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
+      const resolved = resolveLiveSessionTmuxTarget(host, sid, target);
       if (resolved) {
-        host.saveState();
         host.selectLinkedOrOpenTarget(resolved);
+        markFocusedSession(host, index, sid);
+        host.saveState();
         return;
       }
     } catch {}
@@ -802,6 +804,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
     const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
     if (result === "opened") {
+      markFocusedSession(host, index, sid);
       host.saveState();
     }
   }
