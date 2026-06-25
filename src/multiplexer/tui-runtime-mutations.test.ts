@@ -169,4 +169,24 @@ describe("TUI runtime mutation queue", () => {
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
     expect(host.tuiRuntimeMutationQueue).toBeUndefined();
   });
+
+  it("does not continue a mixed batch after teardown", async () => {
+    const host: any = {};
+    let resolveContext!: (value: unknown) => void;
+    apiMocks.mutateDashboardApi.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveContext = resolve;
+      }),
+    );
+
+    queueTuiNotificationContext(host, { screen: "agent", sessionId: "codex-1" });
+    queueTuiSessionSeen(host, "codex-1");
+    await vi.advanceTimersByTimeAsync(0);
+    clearTuiRuntimeMutationQueue(host);
+    resolveContext({ ok: true });
+    await vi.runAllTimersAsync();
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
+    expect(host.tuiRuntimeMutationQueue).toBeUndefined();
+  });
 });
