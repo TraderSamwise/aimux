@@ -8,6 +8,7 @@ import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { stopDashboardProjectEventStream } from "./project-event-stream.js";
+import { clearTuiRuntimeMutationQueue } from "./tui-runtime-mutations.js";
 import {
   adjustAfterRemove as adjustAfterRemoveImpl,
   buildLiveServiceStates as buildLiveServiceStatesImpl,
@@ -340,6 +341,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     (this as any).tuiApiRecoveryDueAt = undefined;
     (this as any).tuiApiRecoveryPending = false;
     (this as any).tuiApiRecoveryInFlight = false;
+    clearTuiRuntimeMutationQueue(this);
     (this as any).tuiApiRuntime?.dispose?.();
     (this as any).tuiApiRuntime = null;
     (this as any).stopGraveyardCleanup?.();

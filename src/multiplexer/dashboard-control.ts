@@ -42,6 +42,7 @@ import {
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
 import {
   probeRuntimeGuard,
   runtimeGuardEquals,
@@ -60,7 +61,7 @@ const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
-function dashboardProjectRoot(host: DashboardControlHost): string {
+export function dashboardProjectRoot(host: DashboardControlHost): string {
   const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
   return projectRoot || process.cwd();
 }
@@ -708,7 +709,7 @@ export function openLiveTmuxWindowForEntry(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
-    noteTuiNotificationContext(host, { sessionId: entry.id, panelOpen: false });
+    noteTuiNotificationContext(host, { screen: "agent", sessionId: entry.id, panelOpen: false });
     markTuiSessionSeen(host, entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
@@ -725,15 +726,11 @@ function noteTuiNotificationContext(
   host: DashboardControlHost,
   patch: { screen?: string; sessionId?: string; panelOpen?: boolean },
 ): void {
-  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, {
-    source: "tui",
-    focused: true,
-    ...patch,
-  }).catch(() => {});
+  queueTuiNotificationContext(host, patch);
 }
 
 function markTuiSessionSeen(host: DashboardControlHost, sessionId: string): void {
-  void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.markSeen, { session: sessionId }).catch(() => {});
+  queueTuiSessionSeen(host, sessionId);
 }
 
 export async function waitAndOpenLiveTmuxWindowForEntry(
