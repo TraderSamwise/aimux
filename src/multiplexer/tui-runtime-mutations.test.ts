@@ -1,0 +1,102 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const apiMocks = vi.hoisted(() => ({
+  mutateDashboardApi: vi.fn(),
+}));
+
+vi.mock("./dashboard-api-client.js", () => apiMocks);
+
+import {
+  clearTuiRuntimeMutationQueue,
+  queueTuiNotificationContext,
+  queueTuiSessionSeen,
+} from "./tui-runtime-mutations.js";
+
+describe("TUI runtime mutation queue", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    apiMocks.mutateDashboardApi.mockResolvedValue({ ok: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("coalesces notification context updates and marks sessions seen off the hot path", async () => {
+    const host: any = {};
+
+    queueTuiNotificationContext(host, { screen: "dashboard", sessionId: "first", panelOpen: true });
+    queueTuiNotificationContext(host, { screen: "agent", sessionId: "second", panelOpen: false });
+    queueTuiSessionSeen(host, "first");
+    queueTuiSessionSeen(host, "second");
+
+    expect(apiMocks.mutateDashboardApi).not.toHaveBeenCalled();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(3);
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(1, host, "/notification-context", {
+      source: "tui",
+      focused: true,
+      screen: "agent",
+      sessionId: "second",
+      panelOpen: false,
+    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(2, host, "/mark-seen", {
+      session: "first",
+    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(3, host, "/mark-seen", {
+      session: "second",
+    });
+  });
+
+  it("retries failed idempotent mutations without overwriting newer context", async () => {
+    const host: any = {};
+    apiMocks.mutateDashboardApi.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ ok: true });
+
+    queueTuiNotificationContext(host, { screen: "dashboard", sessionId: "old" });
+    await vi.runOnlyPendingTimersAsync();
+    queueTuiNotificationContext(host, { screen: "coordination", sessionId: "new" });
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(2);
+    expect(apiMocks.mutateDashboardApi).toHaveBeenLastCalledWith(host, "/notification-context", {
+      source: "tui",
+      focused: true,
+      screen: "coordination",
+      sessionId: "new",
+    });
+  });
+
+  it("clears pending retries during teardown", async () => {
+    const host: any = {};
+    apiMocks.mutateDashboardApi.mockRejectedValue(new Error("offline"));
+
+    queueTuiSessionSeen(host, "codex-1");
+    await vi.runOnlyPendingTimersAsync();
+    clearTuiRuntimeMutationQueue(host);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
+    expect(host.tuiRuntimeMutationQueue).toBeUndefined();
+  });
+
+  it("does not reschedule an in-flight failure after teardown", async () => {
+    const host: any = {};
+    let rejectMutation!: (error: unknown) => void;
+    apiMocks.mutateDashboardApi.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectMutation = reject;
+      }),
+    );
+
+    queueTuiSessionSeen(host, "codex-1");
+    await vi.advanceTimersByTimeAsync(0);
+    clearTuiRuntimeMutationQueue(host);
+    rejectMutation(new Error("offline"));
+    await vi.runAllTimersAsync();
+
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
+    expect(host.tuiRuntimeMutationQueue).toBeUndefined();
+  });
+});

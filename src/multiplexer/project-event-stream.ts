@@ -11,7 +11,7 @@ import {
 } from "../project-api-contract.js";
 import type { AlertEvent } from "../project-events.js";
 import { refreshGraveyardEntriesFromService } from "./archives.js";
-import { resolveCurrentProjectServiceEndpointForDashboard } from "./dashboard-control.js";
+import { dashboardProjectRoot, resolveCurrentProjectServiceEndpointForDashboard } from "./dashboard-control.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -28,10 +28,6 @@ export const PROJECT_EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 export const PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS = 35_000;
 export const PROJECT_EVENT_STREAM_RETRY_BASE_MS = 1_000;
 export const PROJECT_EVENT_STREAM_RETRY_MAX_MS = 15_000;
-
-function projectEventStreamProjectRoot(host: ProjectEventStreamHost): string {
-  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
-}
 
 class DashboardProjectEventAdapter {
   private controller: AbortController | null = null;
@@ -198,7 +194,7 @@ class DashboardProjectEventAdapter {
           `dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`,
           "dashboard",
         );
-        removeMetadataEndpoint(projectEventStreamProjectRoot(this.host));
+        removeMetadataEndpoint(dashboardProjectRoot(this.host));
         await this.recover(signal);
         await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
       } finally {

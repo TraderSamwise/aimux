@@ -5,6 +5,10 @@ const metadataMocks = vi.hoisted(() => ({
 }));
 
 const controlMocks = vi.hoisted(() => ({
+  dashboardProjectRoot: vi.fn((host: any) => {
+    const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+    return projectRoot || process.cwd();
+  }),
   resolveCurrentProjectServiceEndpointForDashboard: vi.fn(),
 }));
 
