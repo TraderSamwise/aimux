@@ -1118,7 +1118,10 @@ describe("focusSession", () => {
         agentTracker: { markSeen: vi.fn() },
         noteLastUsedItem: vi.fn(),
         sessionTmuxTargets: new Map([["claude-1", target]]),
-        tmuxRuntimeManager: { getTargetByWindowId: vi.fn(() => target) },
+        tmuxRuntimeManager: {
+          getTargetByWindowId: vi.fn(() => target),
+          getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-1" })),
+        },
         selectLinkedOrOpenTarget: vi.fn(),
         openLiveTmuxWindowForEntry: vi.fn(),
         postToProjectService: vi.fn(async () => ({ ok: true })),
@@ -1163,7 +1166,11 @@ describe("focusSession", () => {
         agentTracker: { markSeen: vi.fn() },
         noteLastUsedItem: vi.fn(),
         sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
-        tmuxRuntimeManager: { getTargetByWindowId: vi.fn(() => undefined) },
+        tmuxRuntimeManager: {
+          getTargetByWindowId: vi.fn(() => undefined),
+          getWindowMetadata: vi.fn(() => null),
+          listProjectManagedWindows: vi.fn(() => []),
+        },
         selectLinkedOrOpenTarget: vi.fn(),
         openLiveTmuxWindowForEntry: vi.fn(() => "missing"),
         postToProjectService: vi.fn(async () => ({ ok: true })),
@@ -1178,6 +1185,49 @@ describe("focusSession", () => {
         id: "claude-1",
         backendSessionId: undefined,
       });
+      expect(host.selectLinkedOrOpenTarget).not.toHaveBeenCalled();
+      expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+      expect(host.activeIndex).toBe(1);
+      expect(host.sessionMRU).toEqual(["codex-2"]);
+      expect(host.postToProjectService).not.toHaveBeenCalled();
+      expect(host.saveState).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not focus a cached tmux target that now belongs to another session", async () => {
+    vi.useFakeTimers();
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-alias-"));
+    try {
+      gitInit(repoRoot);
+      await initPaths(repoRoot);
+
+      const staleTarget = { sessionName: "aimux-test", windowId: "@3", windowName: "claude" };
+      const host: any = {
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
+        agentTracker: { markSeen: vi.fn() },
+        noteLastUsedItem: vi.fn(),
+        sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
+        tmuxRuntimeManager: {
+          getTargetByWindowId: vi.fn(() => staleTarget),
+          getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-2" })),
+          listProjectManagedWindows: vi.fn(() => []),
+        },
+        selectLinkedOrOpenTarget: vi.fn(),
+        openLiveTmuxWindowForEntry: vi.fn(() => "missing"),
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        saveState: vi.fn(),
+      };
+
+      focusSession(host, 0);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(host.tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledWith("aimux-test", "@3");
+      expect(host.tmuxRuntimeManager.getWindowMetadata).toHaveBeenCalledWith(staleTarget);
       expect(host.selectLinkedOrOpenTarget).not.toHaveBeenCalled();
       expect(host.noteLastUsedItem).not.toHaveBeenCalled();
       expect(host.activeIndex).toBe(1);

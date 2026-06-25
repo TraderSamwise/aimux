@@ -24,6 +24,7 @@ import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-re
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
+import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 
 type SessionLaunchHost = any;
 
@@ -791,7 +792,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
     try {
-      const resolved = host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
+      const resolved = resolveLiveSessionTmuxTarget(host, sid, target);
       if (resolved) {
         host.selectLinkedOrOpenTarget(resolved);
         markFocusedSession(host, index, sid);
