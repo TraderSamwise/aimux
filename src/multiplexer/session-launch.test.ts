@@ -1067,9 +1067,9 @@ describe("focusSession", () => {
       await initPaths(repoRoot);
 
       const host: any = {
-        sessions: [{ id: "claude-1" }],
-        activeIndex: 0,
-        sessionMRU: [],
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
         agentTracker: { markSeen: vi.fn() },
         noteLastUsedItem: vi.fn(),
         sessionTmuxTargets: new Map(),
@@ -1086,6 +1086,8 @@ describe("focusSession", () => {
         id: "claude-1",
         backendSessionId: undefined,
       });
+      expect(host.activeIndex).toBe(0);
+      expect(host.sessionMRU).toEqual(["claude-1", "codex-2"]);
       expect(host.saveState).toHaveBeenCalledOnce();
       expect(host.postToProjectService).toHaveBeenNthCalledWith(1, "/notification-context", {
         source: "tui",
@@ -1110,9 +1112,9 @@ describe("focusSession", () => {
 
       const target = { sessionName: "aimux-test", windowId: "@1", windowName: "claude" };
       const host: any = {
-        sessions: [{ id: "claude-1" }],
-        activeIndex: 0,
-        sessionMRU: [],
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
         agentTracker: { markSeen: vi.fn() },
         noteLastUsedItem: vi.fn(),
         sessionTmuxTargets: new Map([["claude-1", target]]),
@@ -1129,6 +1131,8 @@ describe("focusSession", () => {
       expect(host.tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledWith("aimux-test", "@1");
       expect(host.selectLinkedOrOpenTarget).toHaveBeenCalledWith(target);
       expect(host.openLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+      expect(host.activeIndex).toBe(0);
+      expect(host.sessionMRU).toEqual(["claude-1", "codex-2"]);
       expect(host.saveState).toHaveBeenCalledOnce();
       expect(host.postToProjectService).toHaveBeenNthCalledWith(1, "/notification-context", {
         source: "tui",
@@ -1153,9 +1157,9 @@ describe("focusSession", () => {
 
       const staleTarget = { sessionName: "aimux-test", windowId: "@2", windowName: "claude" };
       const host: any = {
-        sessions: [{ id: "claude-1" }],
-        activeIndex: 0,
-        sessionMRU: [],
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
         agentTracker: { markSeen: vi.fn() },
         noteLastUsedItem: vi.fn(),
         sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
@@ -1176,6 +1180,8 @@ describe("focusSession", () => {
       });
       expect(host.selectLinkedOrOpenTarget).not.toHaveBeenCalled();
       expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+      expect(host.activeIndex).toBe(1);
+      expect(host.sessionMRU).toEqual(["codex-2"]);
       expect(host.postToProjectService).not.toHaveBeenCalled();
       expect(host.saveState).not.toHaveBeenCalled();
     } finally {
