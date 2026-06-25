@@ -1143,6 +1143,46 @@ describe("focusSession", () => {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("does not mark stale failed targets as focused or seen", async () => {
+    vi.useFakeTimers();
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-stale-"));
+    try {
+      gitInit(repoRoot);
+      await initPaths(repoRoot);
+
+      const staleTarget = { sessionName: "aimux-test", windowId: "@2", windowName: "claude" };
+      const host: any = {
+        sessions: [{ id: "claude-1" }],
+        activeIndex: 0,
+        sessionMRU: [],
+        agentTracker: { markSeen: vi.fn() },
+        noteLastUsedItem: vi.fn(),
+        sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
+        tmuxRuntimeManager: { getTargetByWindowId: vi.fn(() => undefined) },
+        selectLinkedOrOpenTarget: vi.fn(),
+        openLiveTmuxWindowForEntry: vi.fn(() => "missing"),
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        saveState: vi.fn(),
+      };
+
+      focusSession(host, 0);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(host.tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledWith("aimux-test", "@2");
+      expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
+        id: "claude-1",
+        backendSessionId: undefined,
+      });
+      expect(host.selectLinkedOrOpenTarget).not.toHaveBeenCalled();
+      expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+      expect(host.postToProjectService).not.toHaveBeenCalled();
+      expect(host.saveState).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("resumeSessions", () => {
