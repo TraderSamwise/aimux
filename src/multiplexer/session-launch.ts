@@ -771,7 +771,9 @@ export function getScopedSessionEntries(host: SessionLaunchHost): Array<{ sessio
   return host.sessions.map((session: any, index: number) => ({ session, index }));
 }
 
-function markFocusedSession(host: SessionLaunchHost, sessionId: string): void {
+function markFocusedSession(host: SessionLaunchHost, index: number, sessionId: string): void {
+  host.activeIndex = index;
+  host.sessionMRU = [sessionId, ...host.sessionMRU.filter((id: string) => id !== sessionId)];
   queueTuiNotificationContext(host, {
     screen: "agent",
     sessionId,
@@ -784,17 +786,15 @@ function markFocusedSession(host: SessionLaunchHost, sessionId: string): void {
 export function focusSession(host: SessionLaunchHost, index: number): void {
   if (index < 0 || index >= host.sessions.length) return;
 
-  host.activeIndex = index;
   const session = host.sessions[index];
   const sid = session.id;
-  host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
     try {
       const resolved = host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
       if (resolved) {
         host.selectLinkedOrOpenTarget(resolved);
-        markFocusedSession(host, sid);
+        markFocusedSession(host, index, sid);
         host.saveState();
         return;
       }
@@ -803,7 +803,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
     const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
     if (result === "opened") {
-      markFocusedSession(host, sid);
+      markFocusedSession(host, index, sid);
       host.saveState();
     }
   }
