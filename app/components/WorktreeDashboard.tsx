@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { AgentCreatePanel } from "@/components/agent-create-panel";
 import { AgentActions } from "@/components/agent-actions";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
@@ -54,12 +55,14 @@ function AgentRow({
   session,
   endpoint,
   token,
+  mainCheckoutPath,
   onKilled,
   onPress,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  mainCheckoutPath?: string | null;
   onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
@@ -95,6 +98,7 @@ function AgentRow({
           endpoint={endpoint}
           token={token}
           compact
+          mainCheckoutPath={mainCheckoutPath}
           onKilled={() => onKilled(session.id)}
         />
       </View>
@@ -229,6 +233,7 @@ function WorktreeGroup({
               session={session}
               endpoint={endpoint}
               token={token}
+              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
               onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
@@ -397,14 +402,17 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   }
 
   return (
-    <WorktreeList
-      groups={groups}
-      endpoint={endpoint}
-      token={token}
-      padded={padded}
-      onPickSession={handlePickSession}
-      onPickService={handlePickService}
-      onKillSession={handleKillSession}
-    />
+    <View className={cn(padded && "px-4")}>
+      <AgentCreatePanel endpoint={endpoint} token={token} groups={groups} />
+      <WorktreeList
+        groups={groups}
+        endpoint={endpoint}
+        token={token}
+        padded={false}
+        onPickSession={handlePickSession}
+        onPickService={handlePickService}
+        onKillSession={handleKillSession}
+      />
+    </View>
   );
 }

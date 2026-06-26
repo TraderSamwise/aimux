@@ -494,6 +494,7 @@ export default function ChatScreen() {
                     endpoint={serviceEndpoint}
                     token={token}
                     compact
+                    mainCheckoutPath={desktopState?.mainCheckoutPath}
                     onKilled={goBack}
                   />
                 </View>
