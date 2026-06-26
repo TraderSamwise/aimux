@@ -255,6 +255,7 @@ function listDashboardReports(input: {
 
   for (const sessionName of candidates) {
     const runtimeOwner = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_OWNER_OPTION);
+    const clientSession = isTmuxClientSessionForHost(sessionName, hostSession);
     for (const window of input.tmux.listWindows(sessionName)) {
       if (!isDashboardWindowName(window.name) || seen.has(window.id)) continue;
       seen.add(window.id);
@@ -267,9 +268,11 @@ function listDashboardReports(input: {
       const alive = input.tmux.isWindowAlive(target);
       const buildStamp = input.tmux.getWindowOption(target, "@aimux-dashboard-build");
       const owner = input.tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+      const paneStartCommand = input.tmux.displayMessage("#{pane_start_command}", window.id);
+      if (clientSession && !buildStamp && !owner && paneStartCommand?.includes("tail -f /dev/null")) continue;
       const process = buildProcessReport({
         pid: null,
-        args: input.tmux.displayMessage("#{pane_start_command}", window.id),
+        args: paneStartCommand,
         cliLaunch: input.cliLaunch,
       });
       const status =

@@ -157,7 +157,8 @@ function sessionActivityChips(session: DashboardSession): string {
   const needsInputUnread = session.notificationNeedsInputUnreadCount ?? 0;
   const label = session.semantic?.user.label;
   const stateConveysNeedsInput = label === "needs_input" || label === "needs_response";
-  const shownUnread = notificationUnread - (stateConveysNeedsInput ? Math.min(needsInputUnread, notificationUnread) : 0);
+  const shownUnread =
+    notificationUnread - (stateConveysNeedsInput ? Math.min(needsInputUnread, notificationUnread) : 0);
   if (shownUnread > 0) {
     chips.push(chip(`${Math.min(shownUnread, 99)} unread`, session.notificationStale ? "muted" : tone("work")));
   }
@@ -348,7 +349,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
         : "";
 
   const talk: FooterHint[] = [
-    ["S", "msg"],
+    ["s", "msg"],
     ["H", "handoff"],
     ["T", "task"],
     ["o", "thread"],
@@ -372,6 +373,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
       ["Tab", "details"],
       ["u", "attention"],
       ["Esc", "back"],
+      ["hjkl", "nav"],
       ["⇧↑↓", "reorder"],
       ["n", "agent"],
       ["v", "service"],
@@ -385,9 +387,9 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   // Worktrees present, focused at worktree level: create-only actions.
   if (state.hasWorktrees) {
     return [
-      ["↑↓", "worktrees"],
+      ["↑↓/jk", "worktrees"],
       ["1-9", "jump"],
-      ["Enter", "step in"],
+      ["Enter/l", "step in"],
       ["Tab", "details"],
       ["u", "attention"],
       ["n", "agent"],
@@ -404,8 +406,8 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     if (killVerb) manage.push(["x", killVerb, "danger"]);
     if (selectedSession) manage.push(["r", "name"]);
     return [
-      ["↑↓", "select"],
-      ["Enter", enterVerb],
+      ["↑↓/jk", "select"],
+      ["Enter/l", enterVerb],
       ["Tab", "details"],
       ["u", "attention"],
       ["n", "agent"],

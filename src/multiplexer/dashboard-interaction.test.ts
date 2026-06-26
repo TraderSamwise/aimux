@@ -1211,6 +1211,104 @@ describe("dashboardInteractionMethods", () => {
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
   });
 
+  it("uses lowercase hjkl for worktree-level dashboard navigation before commands", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo",
+        worktreeNavOrder: ["/repo", "/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboardWorktreeGroupsCache: [
+        { path: "/repo", name: "main", sessions: [], services: [] },
+        { path: "/repo/.aimux/worktrees/demo", name: "demo", sessions: [], services: [] },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      updateWorktreeSessions: vi.fn(function (this: any) {
+        this.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+        this.dashboardState.worktreeSessions = [{ id: "codex-1" }];
+      }),
+      showLibrary: vi.fn(),
+      showOrchestrationRoutePicker: vi.fn(),
+      renderDashboard: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("j"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("h"));
+    expect(host.showOrchestrationRoutePicker).not.toHaveBeenCalled();
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+    expect(host.updateWorktreeSessions).toHaveBeenCalledOnce();
+    expect(host.dashboardState.level).toBe("sessions");
+    expect(host.dashboardState.sessionIndex).toBe(0);
+    expect(host.showLibrary).not.toHaveBeenCalled();
+  });
+
+  it("uses lowercase hjkl for session-level dashboard navigation before commands", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [
+          { kind: "session", id: "codex-1" },
+          { kind: "session", id: "codex-2" },
+        ],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      activateSelectedDashboardWorktreeEntry: vi.fn(),
+      showLibrary: vi.fn(),
+      showOrchestrationRoutePicker: vi.fn(),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("j"));
+    expect(host.dashboardState.sessionIndex).toBe(1);
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
+    expect(host.dashboardState.sessionIndex).toBe(0);
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    expect(host.showLibrary).not.toHaveBeenCalled();
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("h"));
+    expect(host.dashboardState.level).toBe("worktrees");
+    expect(host.showOrchestrationRoutePicker).not.toHaveBeenCalled();
+  });
+
+  it("uses lowercase l to focus flat dashboard entries instead of opening Library", () => {
+    const entry = { id: "claude-1", status: "offline" };
+    const host: any = {
+      dashboardState: { hasWorktrees: () => false, quickJumpDigits: "" },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getDashboardSessions: vi.fn(() => [entry]),
+      activeIndex: 0,
+      activateDashboardEntry: vi.fn(),
+      showLibrary: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
+    expect(host.showLibrary).not.toHaveBeenCalled();
+  });
+
   it("reorders selected agents within their worktree without mixing services", () => {
     const store = new DashboardUiStateStore();
     const sessions = [
@@ -1301,16 +1399,21 @@ describe("dashboardInteractionMethods", () => {
       isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       handleDashboardQuickJumpDigit: vi.fn(() => false),
       showOrchestrationRoutePicker: vi.fn(),
+      showLibrary: vi.fn(),
       showWorktreeList: vi.fn(),
       getSelectedDashboardSessionForActions: vi.fn(() => selected),
       openRelevantThreadForSession: vi.fn(),
     };
 
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("H"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("L"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("T"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("W"));
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("R"));
 
+    expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("handoff");
     expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("task");
+    expect(host.showLibrary).toHaveBeenCalledOnce();
     expect(host.showWorktreeList).toHaveBeenCalledOnce();
     expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
   });
