@@ -299,7 +299,7 @@ async function waitForDashboardServiceStopSettle(
   return waitForRenderedDashboardServiceState(
     host,
     serviceId,
-    (entry) => !entry || (!isLiveDashboardServiceEntry(entry) && entry.status !== "running"),
+    (entry) => !entry || entry.status !== "running",
     timeoutMs,
     modelLifecycle,
   );

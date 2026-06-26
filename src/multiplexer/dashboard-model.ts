@@ -776,7 +776,7 @@ export function computeDashboardSessions(
   }
   let mainRepoPath: string | undefined;
   try {
-    mainRepoPath = findMainRepo();
+    mainRepoPath = findMainRepo(projectRoot);
   } catch {}
   const sessions = buildDashboardSessions({
     sessions: host.sessions.map((session: any) => ({

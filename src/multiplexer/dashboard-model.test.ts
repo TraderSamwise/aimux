@@ -1280,9 +1280,13 @@ describe("computeDashboardSessions thread stats", () => {
 
   it("builds API desktop snapshots from the host project root", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-project-root-"));
+    const cwdRepoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-cwd-root-"));
+    const originalCwd = process.cwd();
     try {
       mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      mkdirSync(join(cwdRepoRoot, ".git"), { recursive: true });
       await initPaths(repoRoot);
+      process.chdir(cwdRepoRoot);
       const tmuxRuntimeManager = {
         listProjectManagedWindows: vi.fn((projectRoot: string) => {
           expect(projectRoot).toBe(repoRoot);
@@ -1314,9 +1318,12 @@ describe("computeDashboardSessions thread stats", () => {
       const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
 
       expect(snapshot.sessions.map((session) => session.id)).toEqual(["claude-1"]);
+      expect(snapshot.sessions[0]?.worktreePath).toBeUndefined();
       expect(tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalledWith(repoRoot);
     } finally {
+      process.chdir(originalCwd);
       rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(cwdRepoRoot, { recursive: true, force: true });
     }
   });
 
