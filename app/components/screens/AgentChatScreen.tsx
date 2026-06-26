@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { AgentActions } from "@/components/agent-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -486,6 +487,17 @@ export default function ChatScreen() {
               </Text>
             </View>
             <View className="flex-row items-center">
+              {session ? (
+                <View className="mr-2">
+                  <AgentActions
+                    session={session}
+                    endpoint={serviceEndpoint}
+                    token={token}
+                    compact
+                    onKilled={goBack}
+                  />
+                </View>
+              ) : null}
               <Pressable
                 onPress={() => setSharePanelOpen((open) => !open)}
                 accessibilityLabel="Invite collaborator"

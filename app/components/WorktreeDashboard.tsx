@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { AgentActions } from "@/components/agent-actions";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -12,7 +13,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
-import { detailHrefForPath } from "@/lib/view-location";
+import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -49,14 +50,26 @@ function StatusWord({ status }: { status: string }) {
   );
 }
 
-function AgentRow({ session, onPress }: { session: DesktopSession; onPress: () => void }) {
+function AgentRow({
+  session,
+  endpoint,
+  token,
+  onKilled,
+  onPress,
+}: {
+  session: DesktopSession;
+  endpoint: ServiceEndpoint | null;
+  token: string | null;
+  onKilled: (sessionId: string) => void;
+  onPress: () => void;
+}) {
   const tool = firstTokenOf(session.command);
   return (
-    <Pressable
-      onPress={onPress}
-      className={cn("flex-row items-center rounded-md py-3 pl-4 pr-4", PRESS)}
-    >
-      <View className="min-w-0 flex-1 flex-row items-center gap-3">
+    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4 hover:bg-[#232429]">
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
+      >
         <StatusDotMini status={session.status} />
         <Text
           className="min-w-0 shrink text-[15px] font-medium text-[#edeef0]"
@@ -74,11 +87,18 @@ function AgentRow({ session, onPress }: { session: DesktopSession; onPress: () =
             {tool}
           </Text>
         ) : null}
-      </View>
+      </Pressable>
       <View className="flex-row items-center gap-5 pl-4">
         <StatusWord status={session.status} />
+        <AgentActions
+          session={session}
+          endpoint={endpoint}
+          token={token}
+          compact
+          onKilled={() => onKilled(session.id)}
+        />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -133,12 +153,14 @@ function WorktreeGroup({
   token,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   bucket: WorktreeBucket;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const hasChildren = worktreeHasChildren(bucket);
   const isEmpty = !hasChildren;
@@ -205,6 +227,9 @@ function WorktreeGroup({
             <AgentRow
               key={session.id}
               session={session}
+              endpoint={endpoint}
+              token={token}
+              onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
           ))}
@@ -230,6 +255,7 @@ function WorktreeList({
   padded,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   groups: WorktreeBucket[];
   endpoint: ServiceEndpoint | null;
@@ -237,6 +263,7 @@ function WorktreeList({
   padded: boolean;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
 
@@ -245,7 +272,7 @@ function WorktreeList({
   const activeRest = rest.filter(worktreeHasChildren);
   const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
 
-  const groupProps = { endpoint, token, onPickSession, onPickService };
+  const groupProps = { endpoint, token, onPickSession, onPickService, onKillSession };
 
   return (
     <View className={cn("py-3", padded && "px-4")}>
@@ -295,6 +322,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(project?.path ?? ""));
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
+  const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
@@ -323,6 +351,14 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
 
   function handlePickService(serviceId: string) {
     router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
+  }
+
+  function handleKillSession(sessionId: string) {
+    if (selectedSessionId !== sessionId) return;
+    selectSession(null);
+    if (pathname.includes("/agent/")) {
+      router.replace(parentViewHrefForPath(pathname, project?.path));
+    }
   }
 
   const statePad = padded ? "p-6" : "py-6";
@@ -368,6 +404,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
       padded={padded}
       onPickSession={handlePickSession}
       onPickService={handlePickService}
+      onKillSession={handleKillSession}
     />
   );
 }
