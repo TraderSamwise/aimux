@@ -35,6 +35,10 @@ const idleNotificationCandidates = new WeakMap<
   Map<string, { idleSince: number; notified: boolean }>
 >();
 
+function projectRootFor(host: RuntimeStateHost): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+}
+
 function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
   if (!worktreePath) return true;
   if (graveyardPaths.has(worktreePath)) return false;
@@ -45,7 +49,7 @@ function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return [];
   const graveyardPaths = listWorktreeGraveyardPaths();
   const windows: ManagedAgentWindow[] = [];
-  for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
     const { target, metadata } = entry;
     if (isDashboardWindowName(target.windowName)) continue;
     if (metadata.kind !== "agent") continue;
@@ -81,7 +85,7 @@ function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
       return;
     }
     if (host.mode === "dashboard" || host.mode === "project-service") {
-      markLastUsed(process.cwd(), {
+      markLastUsed(projectRootFor(host), {
         itemId,
         clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
       });
@@ -329,7 +333,7 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 
   const liveServiceIds = new Set(
     host.tmuxRuntimeManager
-      .listProjectManagedWindows(process.cwd())
+      .listProjectManagedWindows(projectRootFor(host))
       .filter(
         ({ target, metadata }: any) =>
           !isDashboardWindowName(target.windowName) &&
@@ -366,7 +370,7 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   const seen = new Set<string>();
   const graveyardPaths = listWorktreeGraveyardPaths();
   const liveServices: any[] = [];
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
     if (metadata.kind !== "service") continue;
     if (!host.tmuxRuntimeManager.isWindowAlive(target)) continue;
     if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
