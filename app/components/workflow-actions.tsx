@@ -44,8 +44,7 @@ export function TaskWorkflowActions({
   const [error, setError] = useState<string | null>(null);
   const status = String(task.status ?? "").toLowerCase();
   const isClosed = status === "done" || status === "failed" || status === "abandoned";
-  const isReview =
-    String((task as Record<string, unknown>).type ?? "") === "review" || Boolean(task.reviewOf);
+  const isReview = String((task as Record<string, unknown>).type ?? "") === "review";
   const canAct = Boolean(endpoint) && !busyAction;
 
   async function runAction(action: WorkflowAction, fn: (token: string | null) => Promise<unknown>) {
