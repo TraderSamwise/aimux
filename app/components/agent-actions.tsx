@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 import { View } from "react-native";
 import { useSetAtom } from "jotai";
-import { Play, Square, Trash2 } from "lucide-react-native";
+import { GitFork, Play, Square, Trash2 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { killAgent, resumeAgent, stopAgent } from "@/lib/api";
+import { forkAgent, killAgent, resumeAgent, stopAgent } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
+import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
@@ -18,12 +19,14 @@ export function AgentActions({
   endpoint,
   token,
   compact = false,
+  mainCheckoutPath,
   onKilled,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   compact?: boolean;
+  mainCheckoutPath?: string | null;
   onKilled?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -33,6 +36,11 @@ export function AgentActions({
   const canAct = !!endpoint && !busy;
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
+  const forkTool = agentToolForFork(session);
+  const forkWorktreePath =
+    session.worktreePath && session.worktreePath !== mainCheckoutPath
+      ? session.worktreePath
+      : undefined;
 
   function runAction(fn: () => Promise<unknown>, opts?: { isKill?: boolean }) {
     return async () => {
@@ -81,6 +89,27 @@ export function AgentActions({
             label={`Resume ${session.label || session.id}`}
           />
         )}
+        {forkTool ? (
+          <ActionButton
+            icon={GitFork}
+            iconSize={iconSize}
+            sizeClass={sizeClass}
+            onPress={runAction(() =>
+              forkAgent(
+                endpoint,
+                {
+                  sourceSessionId: session.id,
+                  tool: forkTool,
+                  worktreePath: forkWorktreePath,
+                  open: false,
+                },
+                { token },
+              ),
+            )}
+            disabled={!canAct}
+            label={`Fork ${session.label || session.id}`}
+          />
+        ) : null}
         <ActionButton
           icon={Trash2}
           iconSize={iconSize}
@@ -93,6 +122,14 @@ export function AgentActions({
       {error ? <Text className="mt-1 text-[11px] text-destructive">{error}</Text> : null}
     </View>
   );
+}
+
+const FALLBACK_FORK_TOOLS = new Set(["claude", "codex", "aider"]);
+
+function agentToolForFork(session: DesktopSession): string {
+  if (session.toolConfigKey) return session.toolConfigKey;
+  const commandTool = firstTokenOf(session.command);
+  return FALLBACK_FORK_TOOLS.has(commandTool) ? commandTool : "";
 }
 
 function ActionButton({
