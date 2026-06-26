@@ -5,6 +5,7 @@ import {
   ensureDaemonRunning,
   ensureProjectService,
   stopDaemon,
+  stopProjectService,
   type AimuxDaemonInfo,
   type ProjectServiceState,
 } from "./daemon.js";
@@ -101,6 +102,7 @@ export interface RestartAimuxControlPlaneOptions {
   stopDaemon?: typeof stopDaemon;
   ensureDaemonRunning?: typeof ensureDaemonRunning;
   ensureProjectService?: typeof ensureProjectService;
+  stopProjectService?: typeof stopProjectService;
   createTmux?: () => RuntimeRestartTmux;
   resolveDashboardTarget?: (
     projectRoot: string,
@@ -617,8 +619,10 @@ async function restartAimuxControlPlaneUnlocked(
     sleep,
     killPid,
   });
-  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)({ adoptExisting: false });
+  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
   const ensureService = options.ensureProjectService ?? ensureProjectService;
+  const stopService =
+    options.stopProjectService ?? (options.ensureProjectService ? async () => null : stopProjectService);
   const resolveDashboard =
     options.resolveDashboardTarget ??
     ((projectRoot, tmux, resolveOptions) =>
@@ -635,6 +639,7 @@ async function restartAimuxControlPlaneUnlocked(
       required: runtimeRepairProjectRoots.has(projectRoot),
     });
     try {
+      await stopService(projectRoot);
       result.service.state = await ensureService(projectRoot);
       result.service.status = "ensured";
     } catch (error) {

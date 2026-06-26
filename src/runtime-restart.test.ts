@@ -467,7 +467,7 @@ describe("restartAimuxControlPlane", () => {
     expect(processKill).not.toHaveBeenCalledWith(9001, "SIGKILL");
   });
 
-  it("restarts the daemon, ensures known services, and reloads only existing dashboards by default", async () => {
+  it("restarts the daemon, adopts a matching daemon if one wins the startup race, and reloads existing dashboards", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
       projectRoot,
@@ -476,6 +476,13 @@ describe("restartAimuxControlPlane", () => {
       updatedAt: "after",
     }));
     const ensureDaemonRunning = vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" }));
+    const stopProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1001 : 1002,
+      startedAt: "before",
+      updatedAt: "before",
+    }));
     const resolveDashboardTarget = vi.fn((projectRoot: string) => ({
       dashboardSession: { sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222" },
       dashboardTarget: {
@@ -492,6 +499,7 @@ describe("restartAimuxControlPlane", () => {
       stopDaemon: vi.fn(async () => stoppedDaemon()),
       ensureDaemonRunning,
       ensureProjectService,
+      stopProjectService,
       createTmux: () => ({ isAvailable: () => true }),
       resolveDashboardTarget,
       isPidAlive: () => false,
@@ -505,9 +513,17 @@ describe("restartAimuxControlPlane", () => {
       runtimeRebuildRequired: 0,
       failures: 0,
     });
-    expect(ensureDaemonRunning).toHaveBeenCalledWith({ adoptExisting: false });
+    expect(ensureDaemonRunning).toHaveBeenCalledWith();
+    expect(stopProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(stopProjectService).toHaveBeenCalledWith("/repo/beta");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
+    expect(stopProjectService.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureProjectService.mock.invocationCallOrder[0]!,
+    );
+    expect(stopProjectService.mock.invocationCallOrder[1]).toBeLessThan(
+      ensureProjectService.mock.invocationCallOrder[1]!,
+    );
     expect(resolveDashboardTarget).toHaveBeenCalledOnce();
     expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/alpha", expect.any(Object), {
       forceReload: true,

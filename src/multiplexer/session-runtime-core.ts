@@ -175,7 +175,9 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
   }
 
   try {
-    for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    const projectRoot =
+      typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+    for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot)) {
       if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) continue;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
       host.sessionTmuxTargets.set(sessionId, target);
