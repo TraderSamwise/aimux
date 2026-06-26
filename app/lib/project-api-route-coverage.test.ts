@@ -23,19 +23,6 @@ describe("project API route coverage", () => {
       .map(([route]) => route)
       .sort();
 
-    expect(plannedRoutes).toMatchInlineSnapshot(`
-      [
-        "/agents/history",
-        "/agents/interaction/stream",
-        "/agents/output/stream",
-        "/agents/teammates",
-        "/agents/teammates/create",
-        "/agents/teammates/kill",
-        "/agents/teammates/resume",
-        "/agents/teammates/resurrect",
-        "/agents/teammates/stop",
-        "/agents/teammates/tasks",
-      ]
-    `);
+    expect(plannedRoutes).toMatchInlineSnapshot(`[]`);
   });
 });

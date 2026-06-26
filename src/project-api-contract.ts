@@ -188,6 +188,35 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
   parsed?: unknown;
 }
 
+export interface AgentOutputStreamInput extends LivePaneOutputInput {
+  intervalMs?: number;
+}
+
+export type AgentOutputStreamEventName = "ready" | "output" | "error";
+
+export interface AgentOutputStreamReadyData {
+  sessionId: string;
+  startLine: number;
+  intervalMs: number;
+}
+
+export interface AgentOutputStreamOutputData {
+  sessionId: string;
+  output: string;
+  startLine: number;
+  parsed?: unknown;
+}
+
+export interface AgentOutputStreamErrorData {
+  sessionId: string;
+  error: string;
+}
+
+export type AgentOutputStreamEvent =
+  | { event: "ready"; data: AgentOutputStreamReadyData }
+  | { event: "output"; data: AgentOutputStreamOutputData }
+  | { event: "error"; data: AgentOutputStreamErrorData };
+
 export interface LivePaneInputRequest extends LivePaneSessionInput {
   text: string;
   attachmentIds?: string[];
@@ -854,6 +883,61 @@ export interface AgentOverseerResponse extends ProjectApiOk {
   overseer: boolean;
 }
 
+export interface TeammateTaskBody {
+  title?: string;
+  description?: string;
+  body?: string;
+  prompt?: string;
+  worktreePath?: string;
+}
+
+export interface CreateTeammateInput {
+  parentSessionId: string;
+  role?: string;
+  label?: string;
+  tool?: string;
+  sessionId?: string;
+  worktreePath?: string;
+  open?: boolean;
+  extraArgs?: string[];
+  initialTask?: TeammateTaskBody;
+  order?: number;
+}
+
+export interface CreateTeammateResponse extends ProjectApiOk {
+  parentSessionId?: string;
+  sessionId?: string;
+  task?: unknown;
+  thread?: unknown;
+  [k: string]: unknown;
+}
+
+export interface CreateTeammateTaskInput extends TeammateTaskBody {
+  parentSessionId: string;
+  teammateSessionId: string;
+}
+
+export interface CreateTeammateTaskResponse extends WorkflowMutationResponse {
+  parentSessionId: string;
+  teammateSessionId: string;
+}
+
+export interface TeammateLifecycleInput {
+  parentSessionId: string;
+  teammateSessionId: string;
+}
+
+export interface TeammateLifecycleResponse extends ProjectApiOk {
+  parentSessionId: string;
+  teammateSessionId: string;
+  [k: string]: unknown;
+}
+
+export interface TeammateListResponse extends ProjectApiOk {
+  parentSessionId: string;
+  teammates: AgentListItem[];
+}
+
 export interface SwitchableAgentsInput {
   currentClientSession?: string;
   currentWindow?: string;
@@ -877,6 +961,22 @@ export interface InteractionRespondInput {
 export interface InteractionRespondResponse extends ProjectApiOk {
   request?: unknown;
 }
+
+export type InteractionStreamEventName = "ready" | "interaction";
+
+export interface InteractionStreamReadyData {
+  pending: Array<Record<string, unknown>>;
+}
+
+export type InteractionStreamInteractionData = Record<string, unknown> & {
+  type?: string;
+  kind?: string;
+  interaction?: unknown;
+};
+
+export type InteractionStreamEvent =
+  | { event: "ready"; data: InteractionStreamReadyData }
+  | { event: "interaction"; data: InteractionStreamInteractionData };
 
 export interface OperationFailuresClearInput {
   targetKind?: "worktree" | "agent" | "service" | "dashboard";
