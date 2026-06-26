@@ -9,18 +9,9 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type LucideIcon = typeof Square;
-
-// Inline Stop / Resume / Remove cluster used in the sidebar service row, the
-// main-panel service card, and the service detail screen. Calls the matching
-// API wrapper, bumps the refresh nonce on success, and surfaces failures via
-// inline error text below the cluster.
-//
-// `onRemoved` fires after a successful Remove so callers can navigate back if
-// the screen they're on is the removed service's detail page.
-//
-// `compact` = sidebar variant with 28px buttons. Default is 36px (main panel).
 
 export function ServiceActions({
   service,
@@ -38,6 +29,7 @@ export function ServiceActions({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
+  const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
 
   const canAct = !!endpoint && !busy;
 
@@ -49,6 +41,7 @@ export function ServiceActions({
       try {
         await fn();
         kickRefresh();
+        kickProjectViewRefresh();
         if (opts?.isRemove) onRemoved?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -59,7 +52,7 @@ export function ServiceActions({
   }
 
   if (!endpoint) {
-    return <Text className="text-xs text-muted-foreground">service offline</Text>;
+    return compact ? null : <Text className="text-xs text-muted-foreground">service offline</Text>;
   }
 
   const sizeClass = compact ? "h-7 w-7" : "h-9 w-9";

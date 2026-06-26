@@ -8,6 +8,7 @@ import { AgentActions } from "@/components/agent-actions";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
+import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
 import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -403,6 +404,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
 
   return (
     <View className={cn(padded && "px-4")}>
+      <WorktreeManagementPanel endpoint={endpoint} token={token} groups={groups} />
       <AgentCreatePanel endpoint={endpoint} token={token} groups={groups} />
       <WorktreeList
         groups={groups}
