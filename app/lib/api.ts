@@ -47,7 +47,7 @@ import {
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
   type LibraryResponse,
-  type InteractionStreamEvent,
+  type InteractionStreamEventName,
   type InteractionPendingResponse,
   type InteractionRespondInput,
   type InteractionRespondResponse,
@@ -713,7 +713,7 @@ export async function respondToInteraction(
 export function getInteractionStreamRoute(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
-): ProjectStreamRoute & { eventTypes: Array<InteractionStreamEvent["type"]> } {
+): ProjectStreamRoute & { eventTypes: InteractionStreamEventName[] } {
   return {
     ...projectStreamRoute(endpoint, PROJECT_API_ROUTES.agents.interactionStream, opts),
     eventTypes: ["ready", "interaction"],

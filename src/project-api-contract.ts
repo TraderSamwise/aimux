@@ -192,13 +192,30 @@ export interface AgentOutputStreamInput extends LivePaneOutputInput {
   intervalMs?: number;
 }
 
-export interface AgentOutputStreamEvent {
-  type: "output";
+export type AgentOutputStreamEventName = "ready" | "output" | "error";
+
+export interface AgentOutputStreamReadyData {
+  sessionId: string;
+  startLine: number;
+  intervalMs: number;
+}
+
+export interface AgentOutputStreamOutputData {
   sessionId: string;
   output: string;
   startLine: number;
   parsed?: unknown;
 }
+
+export interface AgentOutputStreamErrorData {
+  sessionId: string;
+  error: string;
+}
+
+export type AgentOutputStreamEvent =
+  | { event: "ready"; data: AgentOutputStreamReadyData }
+  | { event: "output"; data: AgentOutputStreamOutputData }
+  | { event: "error"; data: AgentOutputStreamErrorData };
 
 export interface LivePaneInputRequest extends LivePaneSessionInput {
   text: string;
@@ -945,11 +962,21 @@ export interface InteractionRespondResponse extends ProjectApiOk {
   request?: unknown;
 }
 
-export interface InteractionStreamEvent {
-  type: "ready" | "interaction";
-  pending?: Array<Record<string, unknown>>;
-  [k: string]: unknown;
+export type InteractionStreamEventName = "ready" | "interaction";
+
+export interface InteractionStreamReadyData {
+  pending: Array<Record<string, unknown>>;
 }
+
+export type InteractionStreamInteractionData = Record<string, unknown> & {
+  type?: string;
+  kind?: string;
+  interaction?: unknown;
+};
+
+export type InteractionStreamEvent =
+  | { event: "ready"; data: InteractionStreamReadyData }
+  | { event: "interaction"; data: InteractionStreamInteractionData };
 
 export interface OperationFailuresClearInput {
   targetKind?: "worktree" | "agent" | "service" | "dashboard";
