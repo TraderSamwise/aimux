@@ -92,6 +92,9 @@ export default function ThreadsScreen() {
               )}
             >
               <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={`Open thread ${t.thread.title || t.thread.id}`}
+                accessibilityState={{ selected }}
                 onPress={() =>
                   router.replace(
                     buildViewHref("/threads", {

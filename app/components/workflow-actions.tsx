@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSetAtom } from "jotai";
 import {
@@ -40,6 +40,7 @@ export function TaskWorkflowActions({
 }) {
   const { getToken } = useAuth();
   const kickProjectRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const actionLockRef = useRef(false);
   const [busyAction, setBusyAction] = useState<WorkflowAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const status = String(task.status ?? "").toLowerCase();
@@ -48,7 +49,8 @@ export function TaskWorkflowActions({
   const canAct = Boolean(endpoint) && !busyAction;
 
   async function runAction(action: WorkflowAction, fn: (token: string | null) => Promise<unknown>) {
-    if (!endpoint || busyAction) return;
+    if (!endpoint || actionLockRef.current) return;
+    actionLockRef.current = true;
     setBusyAction(action);
     setError(null);
     try {
@@ -58,6 +60,7 @@ export function TaskWorkflowActions({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      actionLockRef.current = false;
       setBusyAction(null);
     }
   }
@@ -170,6 +173,7 @@ export function ThreadWorkflowActions({
 }) {
   const { getToken } = useAuth();
   const kickProjectRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const actionLockRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [busyAction, setBusyAction] = useState<"seen" | "reply" | "close" | "reopen" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +187,8 @@ export function ThreadWorkflowActions({
     action: "seen" | "reply" | "close" | "reopen",
     fn: (token: string | null) => Promise<unknown>,
   ) {
-    if (!endpoint || busyAction) return;
+    if (!endpoint || actionLockRef.current) return;
+    actionLockRef.current = true;
     setBusyAction(action);
     setError(null);
     try {
@@ -194,6 +199,7 @@ export function ThreadWorkflowActions({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      actionLockRef.current = false;
       setBusyAction(null);
     }
   }
