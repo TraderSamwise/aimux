@@ -29,20 +29,24 @@ export const kickProjectApiViewRefreshAtom = atom(null, (get, set) => {
 });
 
 function projectUpdateTouches(
-  views: readonly ProjectApiView[],
+  views: readonly string[],
   key: keyof AppProjectApiViewRefresh,
 ): boolean {
-  return views.some((view) => APP_PROJECT_API_VIEW_REGISTRY[view][key]);
+  return views.some((view) => {
+    const refresh = APP_PROJECT_API_VIEW_REGISTRY[view as ProjectApiView];
+    if (!refresh) return key === "projectApiViews";
+    return refresh[key];
+  });
 }
 
-export function projectUpdateTouchesProjectApiView(views: readonly ProjectApiView[]): boolean {
+export function projectUpdateTouchesProjectApiView(views: readonly string[]): boolean {
   return projectUpdateTouches(views, "projectApiViews");
 }
 
-export function projectUpdateTouchesDesktopState(views: readonly ProjectApiView[]): boolean {
+export function projectUpdateTouchesDesktopState(views: readonly string[]): boolean {
   return projectUpdateTouches(views, "desktopState");
 }
 
-export function projectUpdateTouchesNotificationFeed(views: readonly ProjectApiView[]): boolean {
+export function projectUpdateTouchesNotificationFeed(views: readonly string[]): boolean {
   return projectUpdateTouches(views, "notificationFeed");
 }

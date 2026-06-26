@@ -755,7 +755,8 @@ export interface ResumeAgentResponse extends ProjectApiOk {
 
 export interface KillAgentResponse extends ProjectApiOk {
   sessionId: string;
-  status: "graveyarded";
+  status: "graveyard";
+  previousStatus: "running" | "offline";
 }
 
 export interface ResurrectAgentResponse extends ProjectApiOk {

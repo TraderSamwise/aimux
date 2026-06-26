@@ -56,4 +56,10 @@ describe("project API view refresh registry", () => {
     expect(projectUpdateTouchesDesktopState(["agents", "services"])).toBe(true);
     expect(projectUpdateTouchesNotificationFeed(["agents", "services"])).toBe(false);
   });
+
+  it("tolerates unknown project update views from skewed services", () => {
+    expect(projectUpdateTouchesProjectApiView(["future-view"])).toBe(true);
+    expect(projectUpdateTouchesDesktopState(["future-view"])).toBe(false);
+    expect(projectUpdateTouchesNotificationFeed(["future-view"])).toBe(false);
+  });
 });
