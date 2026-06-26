@@ -15,6 +15,7 @@ import {
 import { Text } from "@/components/ui/text";
 import { AgentActions } from "@/components/agent-actions";
 import { AgentManagementPanel } from "@/components/agent-management-panel";
+import { TeammatePanel } from "@/components/teammate-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -537,13 +538,21 @@ export default function ChatScreen() {
             </View>
           </View>
           {session ? (
-            <AgentManagementPanel
-              key={session.id}
-              session={session}
-              endpoint={serviceEndpoint}
-              token={token}
-              groups={worktreeGroups}
-            />
+            <>
+              <AgentManagementPanel
+                key={`${session.id}:management`}
+                session={session}
+                endpoint={serviceEndpoint}
+                token={token}
+                groups={worktreeGroups}
+              />
+              <TeammatePanel
+                key={`${session.id}:teammates`}
+                session={session}
+                endpoint={serviceEndpoint}
+                token={token}
+              />
+            </>
           ) : null}
           {sharePanelOpen ? (
             <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>

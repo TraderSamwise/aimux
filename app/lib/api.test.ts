@@ -18,8 +18,12 @@ import {
   createService,
   createWorktree,
   createShareInvite,
+  createTeammate,
+  createTeammateTask,
   deleteGraveyardWorktree,
   getCoordinationWorklist,
+  getAgentOutputStreamRoute,
+  getInteractionStreamRoute,
   getProjectDiagnostics,
   getProjectHealth,
   getShare,
@@ -32,10 +36,12 @@ import {
   graveyardWorktree,
   interruptLivePane,
   killAgent,
+  killTeammate,
   listAgents,
   listProjectLibrary,
   leaveShare,
   listPendingInteractions,
+  listTeammates,
   listShares,
   listProjects,
   listNotifications,
@@ -58,9 +64,11 @@ import {
   refreshStatusline,
   renameAgent,
   respondToInteraction,
+  resurrectTeammate,
   resurrectGraveyardWorktree,
   resizeLivePane,
   resumeAgent,
+  resumeTeammate,
   resumeService,
   setAgentLoop,
   setAgentOverseer,
@@ -71,6 +79,7 @@ import {
   spawnAgent,
   forkAgent,
   stopAgent,
+  stopTeammate,
   setApiRelay,
   stopService,
   switchAttentionAgent,
@@ -216,6 +225,99 @@ describe("api relay routing", () => {
       "/proxy/127.0.0.1/43210/live-pane/output?sessionId=s%2F1&startLine=7",
       undefined,
     );
+  });
+
+  it("builds project stream routes for direct and relay transports", () => {
+    expect(
+      getAgentOutputStreamRoute(
+        endpoint,
+        { sessionId: "s/1", startLine: -80, intervalMs: 250 },
+        { token: "stream-token" },
+      ),
+    ).toEqual({
+      path: "/agents/output/stream?sessionId=s%2F1&startLine=-80&intervalMs=250",
+      directUrl:
+        "http://127.0.0.1:43210/agents/output/stream?sessionId=s%2F1&startLine=-80&intervalMs=250",
+      relayPath:
+        "/proxy/127.0.0.1/43210/agents/output/stream?sessionId=s%2F1&startLine=-80&intervalMs=250",
+      headers: { Authorization: "Bearer stream-token" },
+    });
+
+    expect(getInteractionStreamRoute(endpoint)).toEqual({
+      path: "/agents/interaction/stream",
+      directUrl: "http://127.0.0.1:43210/agents/interaction/stream",
+      relayPath: "/proxy/127.0.0.1/43210/agents/interaction/stream",
+      headers: {},
+      eventTypes: ["ready", "interaction"],
+    });
+  });
+
+  it("routes teammate management wrappers through the relay proxy when connected", async () => {
+    const fetchMock = installFetchMock();
+    const request = installRelayMock({ ok: true, parentSessionId: "parent-1" });
+
+    await listTeammates(endpoint, "parent-1");
+    await createTeammate(endpoint, {
+      parentSessionId: "parent-1",
+      role: "reviewer",
+      tool: "codex",
+      open: false,
+      initialTask: { body: "Review this." },
+    });
+    await createTeammateTask(endpoint, {
+      parentSessionId: "parent-1",
+      teammateSessionId: "team-1",
+      body: "Follow up.",
+    });
+    await stopTeammate(endpoint, "parent-1", "team-1");
+    await resumeTeammate(endpoint, "parent-1", "team-1");
+    await killTeammate(endpoint, "parent-1", "team-1");
+    await resurrectTeammate(endpoint, "parent-1", "team-1");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request.mock.calls).toEqual([
+      ["GET", "/proxy/127.0.0.1/43210/agents/teammates?parentSessionId=parent-1", undefined],
+      [
+        "POST",
+        "/proxy/127.0.0.1/43210/agents/teammates/create",
+        {
+          parentSessionId: "parent-1",
+          role: "reviewer",
+          tool: "codex",
+          open: false,
+          initialTask: { body: "Review this." },
+        },
+      ],
+      [
+        "POST",
+        "/proxy/127.0.0.1/43210/agents/teammates/tasks",
+        {
+          parentSessionId: "parent-1",
+          teammateSessionId: "team-1",
+          body: "Follow up.",
+        },
+      ],
+      [
+        "POST",
+        "/proxy/127.0.0.1/43210/agents/teammates/stop",
+        { parentSessionId: "parent-1", teammateSessionId: "team-1" },
+      ],
+      [
+        "POST",
+        "/proxy/127.0.0.1/43210/agents/teammates/resume",
+        { parentSessionId: "parent-1", teammateSessionId: "team-1" },
+      ],
+      [
+        "POST",
+        "/proxy/127.0.0.1/43210/agents/teammates/kill",
+        { parentSessionId: "parent-1", teammateSessionId: "team-1" },
+      ],
+      [
+        "POST",
+        "/proxy/127.0.0.1/43210/agents/teammates/resurrect",
+        { parentSessionId: "parent-1", teammateSessionId: "team-1" },
+      ],
+    ]);
   });
 
   it("routes project POST and PUT bodies through the relay proxy when connected", async () => {
@@ -552,7 +654,11 @@ describe("api relay routing", () => {
     await clearOperationFailures(endpoint, { targetKind: "agent", targetId: "agent-1" });
     await listAgents(endpoint);
     await spawnAgent(endpoint, { tool: "codex", worktreePath: "/repo/a", open: false });
-    await forkAgent(endpoint, { sourceSessionId: "agent-1", tool: "claude", instruction: "continue" });
+    await forkAgent(endpoint, {
+      sourceSessionId: "agent-1",
+      tool: "claude",
+      instruction: "continue",
+    });
     await stopAgent(endpoint, "agent-1");
     await resumeAgent(endpoint, "agent-1");
     await killAgent(endpoint, "agent-1");
@@ -569,7 +675,9 @@ describe("api relay routing", () => {
     await respondToInteraction(endpoint, { id: "interaction-1", response: { approved: true } });
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(request.mock.calls.map(([method, path, payload]) => ({ method, path, payload }))).toEqual([
+    expect(
+      request.mock.calls.map(([method, path, payload]) => ({ method, path, payload })),
+    ).toEqual([
       { method: "GET", path: "/proxy/127.0.0.1/43210/health", payload: undefined },
       { method: "GET", path: "/proxy/127.0.0.1/43210/diagnostics", payload: undefined },
       {

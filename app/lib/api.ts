@@ -22,10 +22,15 @@ import {
   type AgentLoopResponse,
   type AgentOverseerInput,
   type AgentOverseerResponse,
+  type AgentOutputStreamInput,
   type AgentSessionInput,
   type ControlActionResponse,
   type CreateServiceInput,
   type CreateServiceResponse,
+  type CreateTeammateInput,
+  type CreateTeammateResponse,
+  type CreateTeammateTaskInput,
+  type CreateTeammateTaskResponse,
   type CreateWorktreeInput,
   type CreateWorktreeResponse,
   type ForkAgentInput,
@@ -42,6 +47,7 @@ import {
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
   type LibraryResponse,
+  type InteractionStreamEventName,
   type InteractionPendingResponse,
   type InteractionRespondInput,
   type InteractionRespondResponse,
@@ -85,6 +91,8 @@ import {
   type TaskDetailResponse,
   type TaskLifecycleInput,
   type TaskListResponse,
+  type TeammateLifecycleResponse,
+  type TeammateListResponse,
   type ThreadLifecycleInput,
   type ThreadMarkSeenInput,
   type ThreadMarkSeenResponse,
@@ -115,6 +123,7 @@ export type {
   NotificationsResponse,
   ProjectObservabilityResponse,
   ProjectTopologyResponse,
+  TeammateListResponse,
   ProjectWorktreeSummary,
   TaskDetailResponse,
   TaskListResponse,
@@ -247,6 +256,44 @@ async function callProjectJson<T>(
   );
 }
 
+function projectProxyPath(endpoint: ServiceEndpoint, path: string): string {
+  return `/proxy/${endpoint.host}/${endpoint.port}${path}`;
+}
+
+function queryPath(
+  path: string,
+  params: Record<string, string | number | undefined | null>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return `${path}${qs ? `?${qs}` : ""}`;
+}
+
+export interface ProjectStreamRoute {
+  path: string;
+  directUrl: string;
+  relayPath: string;
+  headers: Record<string, string>;
+}
+
+function projectStreamRoute(
+  endpoint: ServiceEndpoint,
+  path: string,
+  opts?: ApiOpts,
+): ProjectStreamRoute {
+  const headers: Record<string, string> = {};
+  if (opts?.token) headers.Authorization = `Bearer ${opts.token}`;
+  return {
+    path,
+    directUrl: `${getServiceUrl(endpoint)}${path}`,
+    relayPath: projectProxyPath(endpoint, path),
+    headers,
+  };
+}
+
 // ── Daemon (port 43190) ───────────────────────────────────────────────────
 
 export interface DaemonHealth {
@@ -358,6 +405,22 @@ export async function getLivePaneOutput(
 }
 
 export const getAgentOutput = getLivePaneOutput;
+
+export function getAgentOutputStreamRoute(
+  endpoint: ServiceEndpoint,
+  input: AgentOutputStreamInput,
+  opts?: ApiOpts,
+): ProjectStreamRoute {
+  return projectStreamRoute(
+    endpoint,
+    queryPath(PROJECT_API_ROUTES.agents.outputStream, {
+      sessionId: input.sessionId,
+      startLine: input.startLine,
+      intervalMs: input.intervalMs,
+    }),
+    opts,
+  );
+}
 
 export type SendAgentInputResponse = LivePaneInputResponse;
 
@@ -500,6 +563,107 @@ export async function setAgentOverseer(
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.overseer, opts, input);
 }
 
+export async function listTeammates(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateListResponse> {
+  const path = queryPath(PROJECT_API_ROUTES.agents.teammates, { parentSessionId });
+  return callProjectJson(endpoint, "GET", path, opts);
+}
+
+export async function createTeammate(
+  endpoint: ServiceEndpoint,
+  input: CreateTeammateInput,
+  opts?: ApiOpts,
+): Promise<CreateTeammateResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.createTeammate, opts, input);
+}
+
+export async function createTeammateTask(
+  endpoint: ServiceEndpoint,
+  input: CreateTeammateTaskInput,
+  opts?: ApiOpts,
+): Promise<CreateTeammateTaskResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.agents.createTeammateTask,
+    opts,
+    input,
+  );
+}
+
+async function teammateLifecycle(
+  endpoint: ServiceEndpoint,
+  path: string,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return callProjectJson(endpoint, "POST", path, opts, { parentSessionId, teammateSessionId });
+}
+
+export async function stopTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.stopTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function resumeTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.resumeTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function killTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.killTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function resurrectTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.resurrectTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
 export async function listSwitchableAgents(
   endpoint: ServiceEndpoint,
   input: SwitchableAgentsInput = {},
@@ -537,7 +701,23 @@ export async function respondToInteraction(
   input: InteractionRespondInput,
   opts?: ApiOpts,
 ): Promise<InteractionRespondResponse> {
-  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.interactionRespond, opts, input);
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.agents.interactionRespond,
+    opts,
+    input,
+  );
+}
+
+export function getInteractionStreamRoute(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): ProjectStreamRoute & { eventTypes: InteractionStreamEventName[] } {
+  return {
+    ...projectStreamRoute(endpoint, PROJECT_API_ROUTES.agents.interactionStream, opts),
+    eventTypes: ["ready", "interaction"],
+  };
 }
 
 export async function openDashboard(
