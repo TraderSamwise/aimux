@@ -28,6 +28,7 @@ import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main
 import {
   buildViewHref,
   detailHrefForPath,
+  parentViewHrefForPath,
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
@@ -191,12 +192,14 @@ function AgentRow({
   isSelected,
   endpoint,
   token,
+  onKilled,
   onPress,
 }: {
   session: DesktopSession;
   isSelected: boolean;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
   const tool = firstTokenOf(session.command);
@@ -225,7 +228,13 @@ function AgentRow({
           </Text>
         ) : null}
       </Pressable>
-      <AgentActions session={session} endpoint={endpoint} token={token} compact />
+      <AgentActions
+        session={session}
+        endpoint={endpoint}
+        token={token}
+        compact
+        onKilled={() => onKilled(session.id)}
+      />
     </View>
   );
 }
@@ -271,6 +280,7 @@ function WorktreeGroup({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   bucket: WorktreeBucket;
   endpoint: ServiceEndpoint | null;
@@ -278,6 +288,7 @@ function WorktreeGroup({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const hasChildren = worktreeHasChildren(bucket);
   const [collapsed, setCollapsed] = useState(false);
@@ -338,6 +349,7 @@ function WorktreeGroup({
               isSelected={session.id === selectedSessionId}
               endpoint={endpoint}
               token={token}
+              onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
           ))}
@@ -393,6 +405,7 @@ function WorktreeTree({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   projectPath: string;
   endpoint: ServiceEndpoint | null;
@@ -402,6 +415,7 @@ function WorktreeTree({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
   const [showEmpty, setShowEmpty] = useState(false);
@@ -449,6 +463,7 @@ function WorktreeTree({
     selectedSessionId,
     onPickSession,
     onPickService,
+    onKillSession,
   };
 
   return (
@@ -662,6 +677,14 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     router.push(detailHrefForPath(pathname, "service", serviceId, effectiveProjectPath));
   }
 
+  function handleKillSession(sessionId: string) {
+    if (selectedSessionId !== sessionId) return;
+    setSelectedSession(null);
+    if (pathname.includes("/agent/")) {
+      router.replace(parentViewHrefForPath(pathname, effectiveProjectPath));
+    }
+  }
+
   return (
     <View
       className="border-r border-[#2a2b31] bg-[#161719]"
@@ -695,6 +718,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                     selectedSessionId={selectedSessionId}
                     onPickSession={handlePickSession}
                     onPickService={handlePickService}
+                    onKillSession={handleKillSession}
                   />
                 )}
               </>
@@ -708,6 +732,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                 selectedSessionId={selectedSessionId}
                 onPickSession={handlePickSession}
                 onPickService={handlePickService}
+                onKillSession={handleKillSession}
               />
             )}
           </>

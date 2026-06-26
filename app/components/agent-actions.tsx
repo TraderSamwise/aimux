@@ -31,7 +31,8 @@ export function AgentActions({
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const canAct = !!endpoint && !busy;
-  const isRunning = session.status === "running" || session.status === "waiting";
+  const isRunning =
+    session.status === "running" || session.status === "waiting" || session.status === "idle";
 
   function runAction(fn: () => Promise<unknown>, opts?: { isKill?: boolean }) {
     return async () => {
