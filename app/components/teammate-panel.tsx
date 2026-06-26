@@ -45,6 +45,7 @@ export function TeammatePanel({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const actionRef = useRef<TeammateAction | null>(null);
+  const listRequestSeqRef = useRef(0);
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
@@ -69,17 +70,28 @@ export function TeammatePanel({
     );
   }, []);
 
+  function nextListRequestId() {
+    listRequestSeqRef.current += 1;
+    return listRequestSeqRef.current;
+  }
+
+  function listErrorMessage(e: unknown) {
+    return e instanceof Error ? e.message : String(e);
+  }
+
   async function refreshTeammates(nextStatus?: string) {
     if (!endpoint || actionRef.current) return;
+    const requestId = nextListRequestId();
     actionRef.current = "refresh";
     setBusyAction("refresh");
     setError(null);
     try {
       const result = await listTeammates(endpoint, session.id, { token });
+      if (requestId !== listRequestSeqRef.current) return;
       applyTeammates(result);
       if (nextStatus) setStatus(nextStatus);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (requestId === listRequestSeqRef.current) setError(listErrorMessage(e));
     } finally {
       actionRef.current = null;
       setBusyAction(null);
@@ -89,14 +101,15 @@ export function TeammatePanel({
   useEffect(() => {
     let cancelled = false;
     if (!endpoint) return undefined;
+    const requestId = nextListRequestId();
     listTeammates(endpoint, session.id, { token })
       .then((result) => {
-        if (cancelled) return;
+        if (cancelled || requestId !== listRequestSeqRef.current) return;
         setError(null);
         applyTeammates(result);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled && requestId === listRequestSeqRef.current) setError(listErrorMessage(e));
       });
     return () => {
       cancelled = true;
@@ -109,6 +122,7 @@ export function TeammatePanel({
     nextStatus: string,
   ): Promise<boolean> {
     if (!endpoint || actionRef.current) return false;
+    const requestId = nextListRequestId();
     actionRef.current = action;
     setBusyAction(action);
     setError(null);
@@ -117,11 +131,18 @@ export function TeammatePanel({
       await fn();
       kickDesktopRefresh();
       kickProjectViewRefresh();
-      applyTeammates(await listTeammates(endpoint, session.id, { token }));
       setStatus(nextStatus);
+      try {
+        const result = await listTeammates(endpoint, session.id, { token });
+        if (requestId === listRequestSeqRef.current) applyTeammates(result);
+      } catch (e) {
+        if (requestId === listRequestSeqRef.current) {
+          setError(`Action completed, but teammate refresh failed: ${listErrorMessage(e)}`);
+        }
+      }
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (requestId === listRequestSeqRef.current) setError(listErrorMessage(e));
       return false;
     } finally {
       actionRef.current = null;
