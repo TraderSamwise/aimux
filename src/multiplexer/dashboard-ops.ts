@@ -136,13 +136,6 @@ function assertDashboardMutationSettled(settled: boolean, action: string): void 
   }
 }
 
-async function refreshDashboardModelAfterAuthoritativeMutation(
-  host: DashboardOpsHost,
-  lifecycle?: DashboardLifecycleToken,
-): Promise<boolean> {
-  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
-}
-
 async function refreshDashboardModelAfterMutationError(
   host: DashboardOpsHost,
   lifecycle?: DashboardLifecycleToken,
@@ -245,6 +238,28 @@ async function waitForDashboardSessionResumeSettle(
   return false;
 }
 
+async function waitForDashboardSessionStopSettle(
+  host: DashboardOpsHost,
+  sessionId: string,
+  timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+  renderLifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
+    const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
+    if (!entry) return true;
+    const hasLiveWindow = hasLiveManagedAgentWindow(host, sessionId);
+    if (!hasLiveWindow && !isLiveDashboardSessionEntry(entry) && entry.status !== "running") return true;
+    if (entry.pendingAction === "stopping") {
+      renderDashboardDuringSettlement(host, renderLifecycle);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 function isLiveDashboardServiceEntry(entry: any | undefined): boolean {
   return isLiveDashboardServiceRuntimeEntry(entry);
 }
@@ -273,6 +288,21 @@ async function waitForRenderedDashboardServiceState(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
+}
+
+async function waitForDashboardServiceStopSettle(
+  host: DashboardOpsHost,
+  serviceId: string,
+  timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  return waitForRenderedDashboardServiceState(
+    host,
+    serviceId,
+    (entry) => !entry || (!isLiveDashboardServiceEntry(entry) && entry.status !== "running"),
+    timeoutMs,
+    modelLifecycle,
+  );
 }
 
 async function waitForStableDashboardServiceAbsence(
@@ -320,6 +350,10 @@ async function runDashboardSessionMutation(
   };
   try {
     await opts.request();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) {
+      clearPending();
+      return;
+    }
     assertDashboardMutationSettled(await opts.settle(modelLifecycle, lifecycle), opts.pendingAction);
     clearPending();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
@@ -359,6 +393,10 @@ async function runDashboardServiceMutation(
   };
   try {
     await opts.request();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) {
+      clearPending();
+      return;
+    }
     assertDashboardMutationSettled(await opts.settle(modelLifecycle, lifecycle), opts.pendingAction);
     clearPending();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
@@ -544,7 +582,8 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
           { timeoutMs: 10_000 },
         );
       },
-      settle: (modelLifecycle) => refreshDashboardModelAfterAuthoritativeMutation(host, modelLifecycle),
+      settle: (modelLifecycle, renderLifecycle) =>
+        waitForDashboardSessionStopSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
       successFlash: { message: `Stopped ${label}` },
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to stop "${label}"`,
@@ -886,7 +925,7 @@ export async function stopDashboardServiceWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: (modelLifecycle) => refreshDashboardModelAfterAuthoritativeMutation(host, modelLifecycle),
+    settle: (modelLifecycle) => waitForDashboardServiceStopSettle(host, service.id, 10_000, modelLifecycle),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to stop service",
