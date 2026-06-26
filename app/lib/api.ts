@@ -17,13 +17,23 @@ import type { ParsedAgentOutput } from "@/lib/events";
 import {
   PROJECT_API_ROUTES,
   type ActiveWindowRequest,
+  type AgentListResponse,
+  type AgentLoopInput,
+  type AgentLoopResponse,
+  type AgentOverseerInput,
+  type AgentOverseerResponse,
+  type AgentSessionInput,
   type ControlActionResponse,
   type CreateServiceInput,
   type CreateServiceResponse,
   type CreateWorktreeInput,
   type CreateWorktreeResponse,
+  type ForkAgentInput,
+  type ForkAgentResponse,
   type CoordinationWorklistResponse,
   type DeleteWorktreeResponse,
+  type GraveyardCleanupInput,
+  type GraveyardCleanupResponse,
   type GraveyardResponse,
   type GraveyardWorktreeResponse,
   type LivePaneAttachRequest,
@@ -32,6 +42,12 @@ import {
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
   type LibraryResponse,
+  type InteractionPendingResponse,
+  type InteractionRespondInput,
+  type InteractionRespondResponse,
+  type KillAgentResponse,
+  type MigrateAgentInput,
+  type MigrateAgentResponse,
   type NotificationsResponse,
   type NotificationClearResponse,
   type NotificationMutationInput,
@@ -41,15 +57,29 @@ import {
   type OpenNotificationTargetRequest,
   type OrchestrationRouteMode,
   type OrchestrationRouteOptionsResponse,
+  type OperationFailuresClearInput,
+  type OperationFailuresClearResponse,
+  type ProjectDiagnosticsResponse,
+  type ProjectHealthResponse,
   type ProjectObservabilityResponse,
   type ProjectTopologyResponse,
+  type RenameAgentInput,
+  type RenameAgentResponse,
   type RemoveServiceResponse,
   type RemoveWorktreeResponse,
+  type ResumeAgentResponse,
   type ResumeServiceResponse,
   type ResurrectAgentResponse,
   type ResurrectWorktreeResponse,
   type HandoffSendInput,
+  type SpawnAgentInput,
+  type SpawnAgentResponse,
+  type StatuslineRefreshInput,
+  type StatuslineRefreshResponse,
+  type StopAgentResponse,
   type StopServiceResponse,
+  type SwitchableAgentsInput,
+  type SwitchableAgentsResponse,
   type SwitchAgentRequest,
   type TaskAssignInput,
   type TaskDetailResponse,
@@ -290,6 +320,25 @@ export async function getProjectState(
   return callProjectJson<ProjectStateResponse>(endpoint, "GET", PROJECT_API_ROUTES.state, opts);
 }
 
+export async function getProjectHealth(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectHealthResponse> {
+  return callProjectJson<ProjectHealthResponse>(endpoint, "GET", PROJECT_API_ROUTES.health, opts);
+}
+
+export async function getProjectDiagnostics(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectDiagnosticsResponse> {
+  return callProjectJson<ProjectDiagnosticsResponse>(
+    endpoint,
+    "GET",
+    PROJECT_API_ROUTES.diagnostics,
+    opts,
+  );
+}
+
 export type AgentOutputResponse = LivePaneOutputResponse & { parsed?: ParsedAgentOutput };
 
 export async function getLivePaneOutput(
@@ -367,6 +416,128 @@ export async function attachLivePane(
   opts?: ApiOpts,
 ): Promise<LivePaneAttachResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.attach, opts, input);
+}
+
+export async function listAgents(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<AgentListResponse> {
+  return callProjectJson<AgentListResponse>(endpoint, "GET", PROJECT_API_ROUTES.agents.list, opts);
+}
+
+export async function spawnAgent(
+  endpoint: ServiceEndpoint,
+  input: SpawnAgentInput,
+  opts?: ApiOpts,
+): Promise<SpawnAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.spawn, opts, input);
+}
+
+export async function forkAgent(
+  endpoint: ServiceEndpoint,
+  input: ForkAgentInput,
+  opts?: ApiOpts,
+): Promise<ForkAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.fork, opts, input);
+}
+
+export async function stopAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<StopAgentResponse> {
+  const input: AgentSessionInput = { sessionId };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.stop, opts, input);
+}
+
+export async function resumeAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<ResumeAgentResponse> {
+  const input: AgentSessionInput = { sessionId };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.resume, opts, input);
+}
+
+export async function killAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<KillAgentResponse> {
+  const input: AgentSessionInput = { sessionId };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.kill, opts, input);
+}
+
+export async function renameAgent(
+  endpoint: ServiceEndpoint,
+  input: RenameAgentInput,
+  opts?: ApiOpts,
+): Promise<RenameAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.rename, opts, input);
+}
+
+export async function migrateAgent(
+  endpoint: ServiceEndpoint,
+  input: MigrateAgentInput,
+  opts?: ApiOpts,
+): Promise<MigrateAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.migrate, opts, input);
+}
+
+export async function setAgentLoop(
+  endpoint: ServiceEndpoint,
+  input: AgentLoopInput,
+  opts?: ApiOpts,
+): Promise<AgentLoopResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.loop, opts, input);
+}
+
+export async function setAgentOverseer(
+  endpoint: ServiceEndpoint,
+  input: AgentOverseerInput,
+  opts?: ApiOpts,
+): Promise<AgentOverseerResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.overseer, opts, input);
+}
+
+export async function listSwitchableAgents(
+  endpoint: ServiceEndpoint,
+  input: SwitchableAgentsInput = {},
+  opts?: ApiOpts,
+): Promise<SwitchableAgentsResponse> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) {
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return callProjectJson(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.controls.switchableAgents}${query ? `?${query}` : ""}`,
+    opts,
+  );
+}
+
+export async function listPendingInteractions(
+  endpoint: ServiceEndpoint,
+  sessionId?: string,
+  opts?: ApiOpts,
+): Promise<InteractionPendingResponse> {
+  const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+  return callProjectJson(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.agents.interactionPending}${query}`,
+    opts,
+  );
+}
+
+export async function respondToInteraction(
+  endpoint: ServiceEndpoint,
+  input: InteractionRespondInput,
+  opts?: ApiOpts,
+): Promise<InteractionRespondResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.interactionRespond, opts, input);
 }
 
 export async function openDashboard(
@@ -862,6 +1033,20 @@ export async function deleteGraveyardWorktree(
   );
 }
 
+export async function cleanupGraveyard(
+  endpoint: ServiceEndpoint,
+  input: GraveyardCleanupInput = {},
+  opts?: ApiOpts,
+): Promise<GraveyardCleanupResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.cleanup,
+    opts,
+    input,
+  );
+}
+
 export async function listThreads(
   endpoint: ServiceEndpoint,
   sessionId?: string,
@@ -1130,6 +1315,22 @@ export async function listProjectLibrary(
   opts?: ApiOpts,
 ): Promise<LibraryResponse> {
   return callProjectJson<LibraryResponse>(endpoint, "GET", PROJECT_API_ROUTES.library, opts);
+}
+
+export async function refreshStatusline(
+  endpoint: ServiceEndpoint,
+  input: StatuslineRefreshInput = {},
+  opts?: ApiOpts,
+): Promise<StatuslineRefreshResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.statuslineRefresh, opts, input);
+}
+
+export async function clearOperationFailures(
+  endpoint: ServiceEndpoint,
+  input: OperationFailuresClearInput = {},
+  opts?: ApiOpts,
+): Promise<OperationFailuresClearResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.operationFailuresClear, opts, input);
 }
 
 export async function getTask(

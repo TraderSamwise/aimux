@@ -25,21 +25,9 @@ describe("project API route coverage", () => {
 
     expect(plannedRoutes).toMatchInlineSnapshot(`
       [
-        "/agents",
-        "/agents/fork",
         "/agents/history",
-        "/agents/interaction/pending",
-        "/agents/interaction/respond",
         "/agents/interaction/stream",
-        "/agents/kill",
-        "/agents/loop",
-        "/agents/migrate",
         "/agents/output/stream",
-        "/agents/overseer",
-        "/agents/rename",
-        "/agents/resume",
-        "/agents/spawn",
-        "/agents/stop",
         "/agents/teammates",
         "/agents/teammates/create",
         "/agents/teammates/kill",
@@ -47,12 +35,6 @@ describe("project API route coverage", () => {
         "/agents/teammates/resurrect",
         "/agents/teammates/stop",
         "/agents/teammates/tasks",
-        "/control/switchable-agents",
-        "/diagnostics",
-        "/graveyard/cleanup",
-        "/health",
-        "/operation-failures/clear",
-        "/statusline/refresh",
       ]
     `);
   });
