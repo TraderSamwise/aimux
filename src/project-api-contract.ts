@@ -297,6 +297,25 @@ export interface ProjectServiceInfoResponse extends ProjectApiOk {
   serviceInfo?: unknown;
 }
 
+export interface ProjectHealthResponse extends ProjectApiOk {
+  serviceInfo?: unknown;
+  [k: string]: unknown;
+}
+
+export interface ProjectDiagnosticsResponse extends ProjectApiOk {
+  serviceInfo?: unknown;
+  [k: string]: unknown;
+}
+
+export interface StatuslineRefreshInput {
+  sessionId?: string;
+  force?: boolean;
+}
+
+export interface StatuslineRefreshResponse extends ProjectApiOk {
+  [k: string]: unknown;
+}
+
 export type NotificationInteractionType = "permission" | "exit_plan" | "question" | "input";
 
 export interface NotificationInteractionRecord {
@@ -736,12 +755,127 @@ export interface ResumeAgentResponse extends ProjectApiOk {
 
 export interface KillAgentResponse extends ProjectApiOk {
   sessionId: string;
-  status: "graveyarded";
+  status: "graveyard";
+  previousStatus: "running" | "offline";
 }
 
 export interface ResurrectAgentResponse extends ProjectApiOk {
   sessionId: string;
   status: "offline";
+}
+
+export interface AgentListItem {
+  id: string;
+  tool?: string;
+  role?: string;
+  status?: string;
+  restoreState?: string;
+  restoreBlockedReason?: string;
+  worktreePath?: string;
+  label?: string;
+  activity?: string;
+  attention?: string;
+  loop?: unknown;
+  overseer?: boolean;
+  task?: { id: string; description?: string; status?: string };
+  [k: string]: unknown;
+}
+
+export interface AgentListResponse extends ProjectApiOk {
+  agents: AgentListItem[];
+}
+
+export interface SpawnAgentInput {
+  tool: string;
+  sessionId?: string;
+  worktreePath?: string;
+  open?: boolean;
+  launchOverride?: unknown;
+  overseer?: boolean;
+}
+
+export interface SpawnAgentResponse extends ProjectApiOk {
+  sessionId?: string;
+  [k: string]: unknown;
+}
+
+export interface ForkAgentInput {
+  sourceSessionId: string;
+  tool: string;
+  targetSessionId?: string;
+  instruction?: string;
+  worktreePath?: string;
+  open?: boolean;
+  launchOverride?: unknown;
+}
+
+export interface ForkAgentResponse extends ProjectApiOk {
+  sessionId?: string;
+  sourceSessionId?: string;
+  [k: string]: unknown;
+}
+
+export interface RenameAgentInput extends AgentSessionInput {
+  label?: string;
+}
+
+export interface RenameAgentResponse extends ProjectApiOk {
+  sessionId: string;
+  label?: string;
+  [k: string]: unknown;
+}
+
+export interface MigrateAgentInput extends AgentSessionInput {
+  worktreePath: string;
+}
+
+export interface MigrateAgentResponse extends ProjectApiOk {
+  sessionId: string;
+  worktreePath?: string;
+  [k: string]: unknown;
+}
+
+export interface AgentLoopInput extends AgentSessionInput {
+  active: boolean;
+  goal?: string;
+}
+
+export interface AgentLoopResponse extends ProjectApiOk {
+  sessionId: string;
+  loop: unknown | null;
+}
+
+export interface AgentOverseerInput extends AgentSessionInput {
+  active: boolean;
+}
+
+export interface AgentOverseerResponse extends ProjectApiOk {
+  sessionId: string;
+  overseer: boolean;
+}
+
+export interface SwitchableAgentsInput {
+  currentClientSession?: string;
+  currentWindow?: string;
+  currentWindowId?: string;
+  currentPath?: string;
+}
+
+export interface SwitchableAgentsResponse extends ProjectApiOk {
+  items: Array<Record<string, unknown>>;
+}
+
+export interface InteractionPendingResponse extends ProjectApiOk {
+  requests: Array<Record<string, unknown>>;
+}
+
+export interface InteractionRespondInput {
+  id: string;
+  response?: Record<string, unknown>;
+}
+
+export interface InteractionRespondResponse extends ProjectApiOk {
+  request?: unknown;
 }
 
 export interface OperationFailuresClearInput {
@@ -753,4 +887,13 @@ export interface OperationFailuresClearInput {
 
 export interface OperationFailuresClearResponse extends ProjectApiOk {
   cleared: number;
+}
+
+export interface GraveyardCleanupInput {
+  dryRun?: boolean;
+}
+
+export interface GraveyardCleanupResponse extends ProjectApiOk {
+  dryRun?: boolean;
+  [k: string]: unknown;
 }

@@ -9,6 +9,8 @@ import {
   approveReview,
   assignTask,
   blockTask,
+  cleanupGraveyard,
+  clearOperationFailures,
   focusWindow,
   clearNotifications,
   completeHandoff,
@@ -18,6 +20,8 @@ import {
   createShareInvite,
   deleteGraveyardWorktree,
   getCoordinationWorklist,
+  getProjectDiagnostics,
+  getProjectHealth,
   getShare,
   attachLivePane,
   getAgentOutput,
@@ -27,16 +31,21 @@ import {
   getTask,
   graveyardWorktree,
   interruptLivePane,
+  killAgent,
+  listAgents,
   listProjectLibrary,
   leaveShare,
+  listPendingInteractions,
   listShares,
   listProjects,
   listNotifications,
+  listSwitchableAgents,
   listTasks,
   listThreads,
   markThreadSeen,
   markNotificationsRead,
   markActiveWindow,
+  migrateAgent,
   openDashboard,
   openNotificationTarget,
   openThread,
@@ -46,13 +55,22 @@ import {
   putPlan,
   reopenTask,
   requestReviewChanges,
+  refreshStatusline,
+  renameAgent,
+  respondToInteraction,
   resurrectGraveyardWorktree,
   resizeLivePane,
+  resumeAgent,
   resumeService,
+  setAgentLoop,
+  setAgentOverseer,
   sendHandoff,
   sendAgentInput,
   sendLivePaneInput,
   sendThreadMessage,
+  spawnAgent,
+  forkAgent,
+  stopAgent,
   setApiRelay,
   stopService,
   switchAttentionAgent,
@@ -522,6 +540,115 @@ describe("api relay routing", () => {
         body: "Needs tests.",
       },
     );
+  });
+
+  it("routes project management parity wrappers through the relay proxy", async () => {
+    const fetchMock = installFetchMock();
+    const request = installRelayMock({ ok: true, agents: [], items: [], requests: [] });
+
+    await getProjectHealth(endpoint);
+    await getProjectDiagnostics(endpoint);
+    await refreshStatusline(endpoint, { sessionId: "agent-1", force: true });
+    await clearOperationFailures(endpoint, { targetKind: "agent", targetId: "agent-1" });
+    await listAgents(endpoint);
+    await spawnAgent(endpoint, { tool: "codex", worktreePath: "/repo/a", open: false });
+    await forkAgent(endpoint, { sourceSessionId: "agent-1", tool: "claude", instruction: "continue" });
+    await stopAgent(endpoint, "agent-1");
+    await resumeAgent(endpoint, "agent-1");
+    await killAgent(endpoint, "agent-1");
+    await renameAgent(endpoint, { sessionId: "agent-1", label: "reviewer" });
+    await migrateAgent(endpoint, { sessionId: "agent-1", worktreePath: "/repo/b" });
+    await setAgentLoop(endpoint, { sessionId: "agent-1", active: true, goal: "ship" });
+    await setAgentOverseer(endpoint, { sessionId: "agent-1", active: false });
+    await listSwitchableAgents(endpoint, {
+      currentClientSession: "client-1",
+      currentWindowId: "@7",
+    });
+    await cleanupGraveyard(endpoint, { dryRun: true });
+    await listPendingInteractions(endpoint, "agent-1");
+    await respondToInteraction(endpoint, { id: "interaction-1", response: { approved: true } });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request.mock.calls.map(([method, path, payload]) => ({ method, path, payload }))).toEqual([
+      { method: "GET", path: "/proxy/127.0.0.1/43210/health", payload: undefined },
+      { method: "GET", path: "/proxy/127.0.0.1/43210/diagnostics", payload: undefined },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/statusline/refresh",
+        payload: { sessionId: "agent-1", force: true },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/operation-failures/clear",
+        payload: { targetKind: "agent", targetId: "agent-1" },
+      },
+      { method: "GET", path: "/proxy/127.0.0.1/43210/agents", payload: undefined },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/spawn",
+        payload: { tool: "codex", worktreePath: "/repo/a", open: false },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/fork",
+        payload: { sourceSessionId: "agent-1", tool: "claude", instruction: "continue" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/stop",
+        payload: { sessionId: "agent-1" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/resume",
+        payload: { sessionId: "agent-1" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/kill",
+        payload: { sessionId: "agent-1" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/rename",
+        payload: { sessionId: "agent-1", label: "reviewer" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/migrate",
+        payload: { sessionId: "agent-1", worktreePath: "/repo/b" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/loop",
+        payload: { sessionId: "agent-1", active: true, goal: "ship" },
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/overseer",
+        payload: { sessionId: "agent-1", active: false },
+      },
+      {
+        method: "GET",
+        path: "/proxy/127.0.0.1/43210/control/switchable-agents?currentClientSession=client-1&currentWindowId=%407",
+        payload: undefined,
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/graveyard/cleanup",
+        payload: { dryRun: true },
+      },
+      {
+        method: "GET",
+        path: "/proxy/127.0.0.1/43210/agents/interaction/pending?sessionId=agent-1",
+        payload: undefined,
+      },
+      {
+        method: "POST",
+        path: "/proxy/127.0.0.1/43210/agents/interaction/respond",
+        payload: { id: "interaction-1", response: { approved: true } },
+      },
+    ]);
   });
 
   it("defaults location actions to resolve-only over relay", async () => {
