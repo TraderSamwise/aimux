@@ -38,12 +38,13 @@ export function AgentManagementPanel({
   const worktreeChoices = useMemo(
     () =>
       groups
-        .filter((group) => !group.isMainCheckout && group.path)
+        .filter((group) => group.path)
         .map((group) => ({
           key: group.key,
           label: group.name,
           path: group.path as string,
-          current: group.path === session.worktreePath,
+          current:
+            group.path === session.worktreePath || (group.isMainCheckout && !session.worktreePath),
         })),
     [groups, session.worktreePath],
   );
