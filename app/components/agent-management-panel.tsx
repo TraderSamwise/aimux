@@ -71,10 +71,12 @@ export function AgentManagementPanel({
   const trimmedGoal = loopGoal.trim();
   const selectedWorktreePath = worktreeChoices.some((choice) => choice.path === targetWorktreePath)
     ? targetWorktreePath
-    : (worktreeChoices.find((choice) => !choice.current)?.path ?? null);
+    : null;
+  const currentWorktreePath =
+    worktreeChoices.find((choice) => choice.current)?.path ?? session.worktreePath ?? null;
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
-    canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== session.worktreePath;
+    canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
 
   if (!endpoint) {
     return null;
