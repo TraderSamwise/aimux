@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Network,
 } from "lucide-react-native";
+import { AgentActions } from "@/components/agent-actions";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
@@ -188,35 +189,44 @@ function ProjectHeader({
 function AgentRow({
   session,
   isSelected,
+  endpoint,
+  token,
   onPress,
 }: {
   session: DesktopSession;
   isSelected: boolean;
+  endpoint: ServiceEndpoint | null;
+  token: string | null;
   onPress: () => void;
 }) {
   const tool = firstTokenOf(session.command);
   return (
-    <Pressable
-      onPress={onPress}
+    <View
       className={cn(
-        "min-h-[40px] flex-row items-center gap-2.5 rounded-md pl-3 pr-2.5",
-        isSelected ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
+        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-3 pr-2",
+        isSelected ? "bg-[#26272d]" : "hover:bg-[#232429]",
       )}
     >
-      <StatusDotMini status={session.status} />
-      <Text
-        className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-        numberOfLines={1}
-        ellipsizeMode="tail"
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
       >
-        {session.label || session.id}
-      </Text>
-      {tool ? (
-        <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
-          {tool}
+        <StatusDotMini status={session.status} />
+        <Text
+          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {session.label || session.id}
         </Text>
-      ) : null}
-    </Pressable>
+        {tool ? (
+          <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
+            {tool}
+          </Text>
+        ) : null}
+      </Pressable>
+      <AgentActions session={session} endpoint={endpoint} token={token} compact />
+    </View>
   );
 }
 
@@ -326,6 +336,8 @@ function WorktreeGroup({
               key={session.id}
               session={session}
               isSelected={session.id === selectedSessionId}
+              endpoint={endpoint}
+              token={token}
               onPress={() => onPickSession(session.id)}
             />
           ))}
