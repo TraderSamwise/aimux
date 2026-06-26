@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
-const TOOL_CHOICES = ["codex", "claude", "shell"] as const;
+const TOOL_CHOICES = ["claude", "codex", "aider"] as const;
 type ToolChoice = (typeof TOOL_CHOICES)[number];
 
 export function AgentCreatePanel({
@@ -24,7 +24,7 @@ export function AgentCreatePanel({
   token: string | null;
   groups: WorktreeBucket[];
 }) {
-  const [tool, setTool] = useState<ToolChoice>("codex");
+  const [tool, setTool] = useState<ToolChoice>("claude");
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,10 @@ export function AgentCreatePanel({
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
 
   const worktreeChoices = useMemo(
-    () => groups.map((group) => ({ key: group.key, label: group.name, path: group.path })),
+    () =>
+      groups
+        .filter((group) => !group.isMainCheckout && group.path)
+        .map((group) => ({ key: group.key, label: group.name, path: group.path })),
     [groups],
   );
 
@@ -79,6 +82,8 @@ export function AgentCreatePanel({
             <Pressable
               key={choice}
               onPress={() => setTool(choice)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: tool === choice }}
               className={cn(
                 "px-3 py-2",
                 tool === choice ? "bg-accent" : "hover:bg-accent/60 active:bg-accent",
@@ -141,6 +146,8 @@ function WorktreeChip({
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       className={cn(
         "rounded-md border px-2.5 py-1.5",
         active ? "border-primary bg-accent" : "border-border hover:bg-accent/60 active:bg-accent",
