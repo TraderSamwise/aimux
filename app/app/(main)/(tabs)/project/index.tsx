@@ -325,7 +325,11 @@ export default function ProjectScreen() {
     [visibleModel.story],
   );
   const openTasks = useMemo(
-    () => visibleTasks.filter((task) => task.status !== "done" && task.status !== "failed"),
+    () =>
+      visibleTasks.filter((task) => {
+        const status = String(task.status ?? "").toLowerCase();
+        return status !== "done" && status !== "failed" && status !== "abandoned";
+      }),
     [visibleTasks],
   );
   const agentCount =
