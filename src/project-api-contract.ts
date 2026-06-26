@@ -188,6 +188,18 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
   parsed?: unknown;
 }
 
+export interface AgentOutputStreamInput extends LivePaneOutputInput {
+  intervalMs?: number;
+}
+
+export interface AgentOutputStreamEvent {
+  type: "output";
+  sessionId: string;
+  output: string;
+  startLine: number;
+  parsed?: unknown;
+}
+
 export interface LivePaneInputRequest extends LivePaneSessionInput {
   text: string;
   attachmentIds?: string[];
@@ -854,6 +866,61 @@ export interface AgentOverseerResponse extends ProjectApiOk {
   overseer: boolean;
 }
 
+export interface TeammateTaskBody {
+  title?: string;
+  description?: string;
+  body?: string;
+  prompt?: string;
+  worktreePath?: string;
+}
+
+export interface CreateTeammateInput {
+  parentSessionId: string;
+  role?: string;
+  label?: string;
+  tool?: string;
+  sessionId?: string;
+  worktreePath?: string;
+  open?: boolean;
+  extraArgs?: string[];
+  initialTask?: TeammateTaskBody;
+  order?: number;
+}
+
+export interface CreateTeammateResponse extends ProjectApiOk {
+  parentSessionId?: string;
+  sessionId?: string;
+  task?: unknown;
+  thread?: unknown;
+  [k: string]: unknown;
+}
+
+export interface CreateTeammateTaskInput extends TeammateTaskBody {
+  parentSessionId: string;
+  teammateSessionId: string;
+}
+
+export interface CreateTeammateTaskResponse extends WorkflowMutationResponse {
+  parentSessionId: string;
+  teammateSessionId: string;
+}
+
+export interface TeammateLifecycleInput {
+  parentSessionId: string;
+  teammateSessionId: string;
+}
+
+export interface TeammateLifecycleResponse extends ProjectApiOk {
+  parentSessionId: string;
+  teammateSessionId: string;
+  [k: string]: unknown;
+}
+
+export interface TeammateListResponse extends ProjectApiOk {
+  parentSessionId: string;
+  teammates: AgentListItem[];
+}
+
 export interface SwitchableAgentsInput {
   currentClientSession?: string;
   currentWindow?: string;
@@ -876,6 +943,12 @@ export interface InteractionRespondInput {
 
 export interface InteractionRespondResponse extends ProjectApiOk {
   request?: unknown;
+}
+
+export interface InteractionStreamEvent {
+  type: "ready" | "interaction";
+  pending?: Array<Record<string, unknown>>;
+  [k: string]: unknown;
 }
 
 export interface OperationFailuresClearInput {
