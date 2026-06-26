@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Network,
 } from "lucide-react-native";
+import { AgentActions } from "@/components/agent-actions";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
@@ -27,6 +28,7 @@ import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main
 import {
   buildViewHref,
   detailHrefForPath,
+  parentViewHrefForPath,
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
@@ -188,35 +190,52 @@ function ProjectHeader({
 function AgentRow({
   session,
   isSelected,
+  endpoint,
+  token,
+  onKilled,
   onPress,
 }: {
   session: DesktopSession;
   isSelected: boolean;
+  endpoint: ServiceEndpoint | null;
+  token: string | null;
+  onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
   const tool = firstTokenOf(session.command);
   return (
-    <Pressable
-      onPress={onPress}
+    <View
       className={cn(
-        "min-h-[40px] flex-row items-center gap-2.5 rounded-md pl-3 pr-2.5",
-        isSelected ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
+        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-3 pr-2",
+        isSelected ? "bg-[#26272d]" : "hover:bg-[#232429]",
       )}
     >
-      <StatusDotMini status={session.status} />
-      <Text
-        className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-        numberOfLines={1}
-        ellipsizeMode="tail"
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
       >
-        {session.label || session.id}
-      </Text>
-      {tool ? (
-        <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
-          {tool}
+        <StatusDotMini status={session.status} />
+        <Text
+          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {session.label || session.id}
         </Text>
-      ) : null}
-    </Pressable>
+        {tool ? (
+          <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
+            {tool}
+          </Text>
+        ) : null}
+      </Pressable>
+      <AgentActions
+        session={session}
+        endpoint={endpoint}
+        token={token}
+        compact
+        onKilled={() => onKilled(session.id)}
+      />
+    </View>
   );
 }
 
@@ -261,6 +280,7 @@ function WorktreeGroup({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   bucket: WorktreeBucket;
   endpoint: ServiceEndpoint | null;
@@ -268,6 +288,7 @@ function WorktreeGroup({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const hasChildren = worktreeHasChildren(bucket);
   const [collapsed, setCollapsed] = useState(false);
@@ -326,6 +347,9 @@ function WorktreeGroup({
               key={session.id}
               session={session}
               isSelected={session.id === selectedSessionId}
+              endpoint={endpoint}
+              token={token}
+              onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
           ))}
@@ -381,6 +405,7 @@ function WorktreeTree({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   projectPath: string;
   endpoint: ServiceEndpoint | null;
@@ -390,6 +415,7 @@ function WorktreeTree({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
   const [showEmpty, setShowEmpty] = useState(false);
@@ -437,6 +463,7 @@ function WorktreeTree({
     selectedSessionId,
     onPickSession,
     onPickService,
+    onKillSession,
   };
 
   return (
@@ -650,6 +677,14 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     router.push(detailHrefForPath(pathname, "service", serviceId, effectiveProjectPath));
   }
 
+  function handleKillSession(sessionId: string) {
+    if (selectedSessionId !== sessionId) return;
+    setSelectedSession(null);
+    if (pathname.includes("/agent/")) {
+      router.replace(parentViewHrefForPath(pathname, effectiveProjectPath));
+    }
+  }
+
   return (
     <View
       className="border-r border-[#2a2b31] bg-[#161719]"
@@ -683,6 +718,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                     selectedSessionId={selectedSessionId}
                     onPickSession={handlePickSession}
                     onPickService={handlePickService}
+                    onKillSession={handleKillSession}
                   />
                 )}
               </>
@@ -696,6 +732,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                 selectedSessionId={selectedSessionId}
                 onPickSession={handlePickSession}
                 onPickService={handlePickService}
+                onKillSession={handleKillSession}
               />
             )}
           </>
