@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { AgentActions } from "@/components/agent-actions";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -49,14 +50,24 @@ function StatusWord({ status }: { status: string }) {
   );
 }
 
-function AgentRow({ session, onPress }: { session: DesktopSession; onPress: () => void }) {
+function AgentRow({
+  session,
+  endpoint,
+  token,
+  onPress,
+}: {
+  session: DesktopSession;
+  endpoint: ServiceEndpoint | null;
+  token: string | null;
+  onPress: () => void;
+}) {
   const tool = firstTokenOf(session.command);
   return (
-    <Pressable
-      onPress={onPress}
-      className={cn("flex-row items-center rounded-md py-3 pl-4 pr-4", PRESS)}
-    >
-      <View className="min-w-0 flex-1 flex-row items-center gap-3">
+    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4 hover:bg-[#232429]">
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
+      >
         <StatusDotMini status={session.status} />
         <Text
           className="min-w-0 shrink text-[15px] font-medium text-[#edeef0]"
@@ -74,11 +85,12 @@ function AgentRow({ session, onPress }: { session: DesktopSession; onPress: () =
             {tool}
           </Text>
         ) : null}
-      </View>
+      </Pressable>
       <View className="flex-row items-center gap-5 pl-4">
         <StatusWord status={session.status} />
+        <AgentActions session={session} endpoint={endpoint} token={token} compact />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -205,6 +217,8 @@ function WorktreeGroup({
             <AgentRow
               key={session.id}
               session={session}
+              endpoint={endpoint}
+              token={token}
               onPress={() => onPickSession(session.id)}
             />
           ))}
