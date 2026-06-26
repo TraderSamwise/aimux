@@ -162,7 +162,10 @@ describe("dashboard-ops", () => {
   });
 
   it("stops a service through the project service after the service row settles offline", async () => {
-    const services = [[{ id: "svc-1", status: "running" }], [{ id: "svc-1", status: "offline" }]];
+    const services = [
+      [{ id: "svc-1", status: "running" }],
+      [{ id: "svc-1", status: "offline", foregroundCommand: "zsh", previewLine: "prompt" }],
+    ];
     let serviceIndex = 0;
     const host = {
       dashboardInputEpoch: 0,
