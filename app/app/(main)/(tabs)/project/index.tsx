@@ -15,12 +15,14 @@ import {
   type TaskSummaryResponse,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
+import { TaskWorkflowActions } from "@/components/workflow-actions";
 
 type ProjectSection =
   | "dashboard"
@@ -152,7 +154,13 @@ function StoryList({ items }: { items: ProjectStoryItem[] }) {
   );
 }
 
-function TaskList({ tasks }: { tasks: TaskSummaryResponse[] }) {
+function TaskList({
+  tasks,
+  endpoint,
+}: {
+  tasks: TaskSummaryResponse[];
+  endpoint: ServiceEndpoint | null;
+}) {
   if (tasks.length === 0) {
     return <EmptyCard title="No queue items" body="Open task exchange items will appear here." />;
   }
@@ -169,6 +177,7 @@ function TaskList({ tasks }: { tasks: TaskSummaryResponse[] }) {
           <Text className="mt-2 text-[11px] uppercase tracking-widest text-muted-foreground">
             {[task.status, task.assignedTo ?? task.assignee, task.tool].filter(Boolean).join(" · ")}
           </Text>
+          <TaskWorkflowActions endpoint={endpoint} task={task} />
         </View>
       ))}
     </Card>
@@ -397,7 +406,7 @@ export default function ProjectScreen() {
           {section === "progress" ? <ProgressSection model={visibleModel} /> : null}
           {section === "artifacts" ? <StoryList items={artifactHints} /> : null}
           {section === "tests" ? <StoryList items={verificationHints} /> : null}
-          {section === "queue" ? <TaskList tasks={openTasks} /> : null}
+          {section === "queue" ? <TaskList tasks={openTasks} endpoint={endpoint} /> : null}
           {section === "topology" ? (
             <View>
               <Card className="mb-3 rounded-lg p-4">
