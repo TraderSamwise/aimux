@@ -37,7 +37,9 @@ import {
 } from "@/stores/projects";
 import {
   kickProjectApiViewRefreshAtom,
-  projectUpdateTouchesServiceView,
+  projectUpdateTouchesDesktopState,
+  projectUpdateTouchesNotificationFeed,
+  projectUpdateTouchesProjectApiView,
 } from "@/stores/projectViews";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import {
@@ -318,18 +320,13 @@ export default function MainLayout() {
               return;
             }
             if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
-              if (projectUpdateTouchesServiceView(event.views)) {
+              if (projectUpdateTouchesProjectApiView(event.views)) {
                 kickProjectApiViewRefresh();
               }
-              if (
-                event.views.includes("desktop-state") ||
-                event.views.includes("agents") ||
-                event.views.includes("services") ||
-                event.views.includes("worktrees")
-              ) {
+              if (projectUpdateTouchesDesktopState(event.views)) {
                 kickDesktopStateRefresh();
               }
-              if (event.views.includes("notifications")) {
+              if (projectUpdateTouchesNotificationFeed(event.views)) {
                 kickNotificationFeedRefresh();
               }
               return;
