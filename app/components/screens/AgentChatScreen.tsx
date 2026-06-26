@@ -14,6 +14,7 @@ import {
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { AgentActions } from "@/components/agent-actions";
+import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -43,7 +44,7 @@ import {
   outputBufferFamily,
   parsedOutputFamily,
 } from "@/stores/chat";
-import { desktopStateFamily } from "@/stores/desktopState";
+import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
@@ -69,6 +70,7 @@ export default function ChatScreen() {
   const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
+  const worktreeGroups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
@@ -534,6 +536,15 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           </View>
+          {session ? (
+            <AgentManagementPanel
+              key={session.id}
+              session={session}
+              endpoint={serviceEndpoint}
+              token={token}
+              groups={worktreeGroups}
+            />
+          ) : null}
           {sharePanelOpen ? (
             <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
               {activeShare ? (
