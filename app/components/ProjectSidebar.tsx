@@ -192,6 +192,7 @@ function AgentRow({
   isSelected,
   endpoint,
   token,
+  mainCheckoutPath,
   onKilled,
   onPress,
 }: {
@@ -199,6 +200,7 @@ function AgentRow({
   isSelected: boolean;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  mainCheckoutPath?: string | null;
   onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
@@ -233,6 +235,7 @@ function AgentRow({
         endpoint={endpoint}
         token={token}
         compact
+        mainCheckoutPath={mainCheckoutPath}
         onKilled={() => onKilled(session.id)}
       />
     </View>
@@ -349,6 +352,7 @@ function WorktreeGroup({
               isSelected={session.id === selectedSessionId}
               endpoint={endpoint}
               token={token}
+              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
               onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />

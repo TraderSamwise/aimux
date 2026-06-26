@@ -55,12 +55,14 @@ function AgentRow({
   session,
   endpoint,
   token,
+  mainCheckoutPath,
   onKilled,
   onPress,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  mainCheckoutPath?: string | null;
   onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
@@ -96,6 +98,7 @@ function AgentRow({
           endpoint={endpoint}
           token={token}
           compact
+          mainCheckoutPath={mainCheckoutPath}
           onKilled={() => onKilled(session.id)}
         />
       </View>
@@ -230,6 +233,7 @@ function WorktreeGroup({
               session={session}
               endpoint={endpoint}
               token={token}
+              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
               onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />

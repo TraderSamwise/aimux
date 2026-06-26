@@ -19,12 +19,14 @@ export function AgentActions({
   endpoint,
   token,
   compact = false,
+  mainCheckoutPath,
   onKilled,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   compact?: boolean;
+  mainCheckoutPath?: string | null;
   onKilled?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -35,6 +37,10 @@ export function AgentActions({
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
   const forkTool = agentToolForFork(session);
+  const forkWorktreePath =
+    session.worktreePath && session.worktreePath !== mainCheckoutPath
+      ? session.worktreePath
+      : undefined;
 
   function runAction(fn: () => Promise<unknown>, opts?: { isKill?: boolean }) {
     return async () => {
@@ -94,7 +100,7 @@ export function AgentActions({
                 {
                   sourceSessionId: session.id,
                   tool: forkTool,
-                  worktreePath: session.worktreePath,
+                  worktreePath: forkWorktreePath,
                   open: false,
                 },
                 { token },
@@ -118,8 +124,12 @@ export function AgentActions({
   );
 }
 
+const FALLBACK_FORK_TOOLS = new Set(["claude", "codex", "aider"]);
+
 function agentToolForFork(session: DesktopSession): string {
-  return session.toolConfigKey || firstTokenOf(session.command) || "";
+  if (session.toolConfigKey) return session.toolConfigKey;
+  const commandTool = firstTokenOf(session.command);
+  return FALLBACK_FORK_TOOLS.has(commandTool) ? commandTool : "";
 }
 
 function ActionButton({
