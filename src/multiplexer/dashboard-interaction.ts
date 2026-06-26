@@ -103,6 +103,148 @@ function isShiftedCommand(event: KeyEvent, lowerKey: string, letter: string): bo
   return lowerKey === letter && (event.shift || rawKey === letter.toUpperCase());
 }
 
+function isPlainDashboardNavigationEvent(event: KeyEvent, key: string): boolean {
+  if (event.shift || event.ctrl || event.alt) return false;
+  if (["up", "down", "left", "right", "enter", "escape"].includes(key)) return true;
+  if (!["h", "j", "k", "l"].includes(key)) return false;
+  return event.name === "" && event.char === key;
+}
+
+function stepIntoFocusedDashboardWorktree(host: any): void {
+  const focusedGroup = findDashboardWorktreeGroup(host, host.dashboardState.focusedWorktreePath);
+  if (isCreatingDashboardWorktree(focusedGroup)) {
+    host.footerFlash = creatingWorktreeMessage(focusedGroup, host.dashboardState.focusedWorktreePath);
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+    return;
+  }
+  if (isRemovingDashboardWorktree(focusedGroup)) {
+    host.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, host.dashboardState.focusedWorktreePath);
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+    return;
+  }
+  if (isFailedDashboardWorktree(focusedGroup)) {
+    host.footerFlash = failedWorktreeMessage(focusedGroup, host.dashboardState.focusedWorktreePath);
+    host.footerFlashTicks = 4;
+    host.renderDashboard();
+    return;
+  }
+  host.updateWorktreeSessions();
+  if (host.dashboardState.worktreeEntries.length > 0) {
+    host.dashboardState.level = "sessions";
+    host.dashboardState.sessionIndex = 0;
+    host.renderDashboard();
+  }
+}
+
+function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: boolean): boolean {
+  if (!hasWorktrees) {
+    const totalCount = host.getDashboardSessions().length;
+    switch (key) {
+      case "down":
+      case "j":
+        if (totalCount > 1) {
+          host.activeIndex = (host.activeIndex + 1) % totalCount;
+          host.renderDashboard();
+        }
+        return true;
+      case "up":
+      case "k":
+        if (totalCount > 1) {
+          host.activeIndex = (host.activeIndex - 1 + totalCount) % totalCount;
+          host.renderDashboard();
+        }
+        return true;
+      case "enter":
+      case "right":
+      case "l": {
+        const entry = host.getDashboardSessions()[host.activeIndex];
+        if (entry) {
+          void host.activateDashboardEntry(entry);
+          return true;
+        }
+        if (host.sessions.length > 0) host.focusSession(host.activeIndex);
+        return true;
+      }
+      case "escape":
+        if (host.sessions.length > 0) host.focusSession(host.activeIndex);
+        return true;
+      case "left":
+      case "h":
+        return true;
+    }
+    return false;
+  }
+
+  if (host.dashboardState.level === "worktrees") {
+    switch (key) {
+      case "down":
+      case "j": {
+        const order = host.dashboardState.worktreeNavOrder;
+        if (order.length === 0) return true;
+        const curIdx = Math.max(0, order.indexOf(host.dashboardState.focusedWorktreePath));
+        host.dashboardState.focusedWorktreePath = order[(curIdx + 1) % order.length];
+        host.renderDashboard();
+        return true;
+      }
+      case "up":
+      case "k": {
+        const order = host.dashboardState.worktreeNavOrder;
+        if (order.length === 0) return true;
+        const curIdx = Math.max(0, order.indexOf(host.dashboardState.focusedWorktreePath));
+        host.dashboardState.focusedWorktreePath = order[(curIdx - 1 + order.length) % order.length];
+        host.renderDashboard();
+        return true;
+      }
+      case "enter":
+      case "right":
+      case "l":
+        stepIntoFocusedDashboardWorktree(host);
+        return true;
+      case "escape":
+        if (host.sessions.length > 0) host.focusSession(host.activeIndex);
+        return true;
+      case "left":
+      case "h":
+        return true;
+    }
+    return false;
+  }
+
+  switch (key) {
+    case "down":
+    case "j":
+      if (host.dashboardState.worktreeEntries.length > 1) {
+        host.dashboardState.sessionIndex =
+          (host.dashboardState.sessionIndex + 1) % host.dashboardState.worktreeEntries.length;
+        host.renderDashboard();
+      }
+      return true;
+    case "up":
+    case "k":
+      if (host.dashboardState.worktreeEntries.length > 1) {
+        host.dashboardState.sessionIndex =
+          (host.dashboardState.sessionIndex - 1 + host.dashboardState.worktreeEntries.length) %
+          host.dashboardState.worktreeEntries.length;
+        host.renderDashboard();
+      }
+      return true;
+    case "enter":
+    case "right":
+    case "l":
+      host.activateSelectedDashboardWorktreeEntry();
+      return true;
+    case "escape":
+    case "left":
+    case "h":
+      host.dashboardState.level = "worktrees";
+      host.renderDashboard();
+      return true;
+  }
+  return false;
+}
+
 function failedWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
   const name = group?.name ?? worktreePath?.split("/").pop() ?? "worktree";
   return `Worktree ${name} failed: ${group?.operationFailure?.message ?? "operation failed"}`;
@@ -358,16 +500,28 @@ export const dashboardInteractionMethods = {
       }
     }
 
+    if (
+      this.isDashboardScreen("dashboard") &&
+      isPlainDashboardNavigationEvent(event, key) &&
+      handleDashboardNavigationKey(this, key, hasWorktrees)
+    ) {
+      return;
+    }
+
     if (key === "s") {
       this.showOrchestrationRoutePicker("message");
       return;
     }
-    if (key === "h") {
+    if (isShiftedCommand(event, key, "h")) {
       this.showOrchestrationRoutePicker("handoff");
       return;
     }
     if (isShiftedCommand(event, key, "t")) {
       this.showOrchestrationRoutePicker("task");
+      return;
+    }
+    if (isShiftedCommand(event, key, "l")) {
+      this.showLibrary();
       return;
     }
     if (isShiftedCommand(event, key, "w")) {
@@ -433,9 +587,6 @@ export const dashboardInteractionMethods = {
         return;
       case "p":
         this.showProject();
-        return;
-      case "l":
-        this.showLibrary();
         return;
       case "t":
         this.showTopology();
@@ -570,131 +721,6 @@ export const dashboardInteractionMethods = {
           this.renderLabelInput();
         }
         return;
-      }
-    }
-
-    if (!hasWorktrees) {
-      const totalCount = this.getDashboardSessions().length;
-      switch (key) {
-        case "down":
-        case "j":
-          if (totalCount > 1) {
-            this.activeIndex = (this.activeIndex + 1) % totalCount;
-            this.renderDashboard();
-          }
-          break;
-        case "up":
-        case "k":
-          if (totalCount > 1) {
-            this.activeIndex = (this.activeIndex - 1 + totalCount) % totalCount;
-            this.renderDashboard();
-          }
-          break;
-        case "enter": {
-          const ds = this.getDashboardSessions();
-          const entry = ds[this.activeIndex];
-          if (entry) {
-            void this.activateDashboardEntry(entry);
-            return;
-          }
-          if (this.sessions.length > 0) {
-            this.focusSession(this.activeIndex);
-          }
-          break;
-        }
-        case "escape":
-          if (this.sessions.length > 0) {
-            this.focusSession(this.activeIndex);
-          }
-          break;
-      }
-      return;
-    }
-
-    if (this.dashboardState.level === "worktrees") {
-      switch (key) {
-        case "down":
-        case "j": {
-          const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
-          this.dashboardState.focusedWorktreePath =
-            this.dashboardState.worktreeNavOrder[(curIdx + 1) % this.dashboardState.worktreeNavOrder.length];
-          this.renderDashboard();
-          break;
-        }
-        case "up":
-        case "k": {
-          const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
-          this.dashboardState.focusedWorktreePath =
-            this.dashboardState.worktreeNavOrder[
-              (curIdx - 1 + this.dashboardState.worktreeNavOrder.length) % this.dashboardState.worktreeNavOrder.length
-            ];
-          this.renderDashboard();
-          break;
-        }
-        case "enter":
-        case "right": {
-          const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
-          if (isCreatingDashboardWorktree(focusedGroup)) {
-            this.footerFlash = creatingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-            break;
-          }
-          if (isRemovingDashboardWorktree(focusedGroup)) {
-            this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-            break;
-          }
-          if (isFailedDashboardWorktree(focusedGroup)) {
-            this.footerFlash = failedWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
-            this.footerFlashTicks = 4;
-            this.renderDashboard();
-            break;
-          }
-          this.updateWorktreeSessions();
-          if (this.dashboardState.worktreeEntries.length > 0) {
-            this.dashboardState.level = "sessions";
-            this.dashboardState.sessionIndex = 0;
-            this.renderDashboard();
-          }
-          break;
-        }
-        case "escape":
-          if (this.sessions.length > 0) {
-            this.focusSession(this.activeIndex);
-          }
-          break;
-      }
-    } else {
-      switch (key) {
-        case "down":
-        case "j":
-          if (this.dashboardState.worktreeEntries.length > 1) {
-            this.dashboardState.sessionIndex =
-              (this.dashboardState.sessionIndex + 1) % this.dashboardState.worktreeEntries.length;
-            this.renderDashboard();
-          }
-          break;
-        case "up":
-        case "k":
-          if (this.dashboardState.worktreeEntries.length > 1) {
-            this.dashboardState.sessionIndex =
-              (this.dashboardState.sessionIndex - 1 + this.dashboardState.worktreeEntries.length) %
-              this.dashboardState.worktreeEntries.length;
-            this.renderDashboard();
-          }
-          break;
-        case "enter": {
-          this.activateSelectedDashboardWorktreeEntry();
-          break;
-        }
-        case "escape":
-        case "left":
-        case "h":
-          this.dashboardState.level = "worktrees";
-          this.renderDashboard();
-          break;
       }
     }
   },
