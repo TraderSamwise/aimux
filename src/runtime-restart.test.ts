@@ -211,6 +211,32 @@ function staleHookCoherenceReport(): RuntimeCoherenceReport {
   return report;
 }
 
+function foreignDashboardCoherenceReport(): RuntimeCoherenceReport {
+  const report = okCoherenceReport();
+  report.expected.runtimeOwner = "owner-isolated";
+  report.projects[0] = {
+    ...report.projects[0]!,
+    status: "needs-restart",
+    runtime: {
+      ...report.projects[0]!.runtime,
+      rebuildRequired: false,
+    },
+    dashboards: report.projects[0]!.dashboards.map((dashboard) => ({
+      ...dashboard,
+      owner: "owner-stable",
+      runtimeOwner: "owner-stable",
+      status: "mismatch",
+    })),
+  };
+  report.summary = {
+    projects: report.projects.length,
+    ok: 1,
+    needsRestart: 1,
+    runtimeRebuildRequired: 0,
+  };
+  return report;
+}
+
 function stoppedDaemon(
   stoppedProjectServices: NonNullable<RuntimeCoherenceReport["projects"][number]["service"]["daemonState"]>[] = [],
 ) {
@@ -531,6 +557,50 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
+  it("does not reload or mutate dashboards owned by another runtime owner", async () => {
+    const ensureProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+    const resolveDashboardTarget = vi.fn();
+    const setSessionOption = vi.fn();
+    const report = foreignDashboardCoherenceReport();
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce(report);
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService,
+      createTmux: () => ({
+        isAvailable: () => true,
+        getProjectSession: vi.fn((projectRoot: string) => ({
+          sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+        })),
+        getSessionOption: vi.fn((sessionName: string, key: string) =>
+          sessionName === "aimux-alpha-111" && key === "@aimux-runtime-owner" ? "owner-stable" : null,
+        ),
+        setSessionOption,
+      }),
+      resolveDashboardTarget,
+      isPidAlive: () => false,
+    });
+
+    expect(resolveDashboardTarget).not.toHaveBeenCalled();
+    expect(setSessionOption).not.toHaveBeenCalledWith("aimux-alpha-111", expect.any(String), expect.any(String));
+    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(result.projects[0]?.runtime.status).toBe("skipped");
+    expect(result.projects[0]?.dashboard.status).toBe("skipped");
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary).toMatchObject({ dashboardsReloaded: 0, failures: 0 });
+  });
+
   it("records and notifies restart repair diagnostics", async () => {
     const repairNotifier = {
       record: vi.fn(),
@@ -636,16 +706,15 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/alpha", "/repo/beta"]);
-    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/beta"]);
+    expect(ensureProjectService).not.toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
     expect(resolveDashboardTarget).toHaveBeenCalledOnce();
     expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/beta", expect.any(Object), {
       forceReload: true,
       openInHostSession: true,
     });
-    expect(result.projects[0]?.dashboard.status).toBe("skipped");
-    expect(result.projects[1]?.dashboard.status).toBe("reloaded");
+    expect(result.projects[0]?.dashboard.status).toBe("reloaded");
     expect(killWindow).not.toHaveBeenCalled();
     expect(renderRuntimeRestartResult(result)).toContain("dashboards reloaded: 1");
   });
