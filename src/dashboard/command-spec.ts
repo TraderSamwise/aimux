@@ -13,20 +13,39 @@ export interface DashboardCommandSpec {
   dashboardCommand: TmuxCommandSpec;
 }
 
+const DASHBOARD_ENV_KEYS = [
+  "AIMUX_HOME",
+  "AIMUX_DAEMON_HOST",
+  "AIMUX_DAEMON_PORT",
+  "AIMUX_ENV",
+  "AIMUX_WEB_APP_URL",
+  "AIMUX_CLI_BIN",
+  "AIMUX_INSTALL_ROOT",
+] as const;
+
 function resolveDashboardScriptPath(): string {
   const compiledPath = fileURLToPath(new URL("../main.js", import.meta.url));
   if (existsSync(compiledPath)) return compiledPath;
   return fileURLToPath(new URL("../main.ts", import.meta.url));
 }
 
-export function getDashboardCommandSpec(projectRoot: string): DashboardCommandSpec {
+function buildDashboardEnvCommandPrefix(env: NodeJS.ProcessEnv): string {
+  const entries = DASHBOARD_ENV_KEYS.flatMap((key) => {
+    const value = env[key]?.trim();
+    return value ? [`${key}=${shellQuote(value)}`] : [];
+  });
+  return entries.length > 0 ? `env ${entries.join(" ")} ` : "";
+}
+
+export function getDashboardCommandSpec(projectRoot: string, env: NodeJS.ProcessEnv = process.env): DashboardCommandSpec {
   const scriptPath = resolveDashboardScriptPath();
+  const dashboardEntrypoint = `${buildDashboardEnvCommandPrefix(env)}${buildAimuxCliShellCommand(["--tmux-dashboard-internal"])}`;
   const wrappedDashboardCommand = [
     "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
     ";",
     "set -o pipefail",
     ";",
-    buildAimuxCliShellCommand(["--tmux-dashboard-internal"]),
+    dashboardEntrypoint,
     "2>&1",
     "|",
     "tee",
