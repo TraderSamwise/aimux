@@ -741,6 +741,8 @@ interface PendingShellStateUpdate {
   command?: string;
 }
 
+const SHELL_STATES = new Set(["running", "command", "busy", "prompt", "idle"]);
+
 function validateSessionId(raw: string): { ok: true; value: string } | { ok: false } {
   if (!SESSION_ID_PATTERN.test(raw)) return { ok: false };
   if (raw.includes("..")) return { ok: false };
@@ -3173,17 +3175,31 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.shellState) {
         const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string; command?: string };
-        if (typeof body.sessionId === "string" && consumeShellStateSuppressFile(body.sessionId)) {
-          send(res, 202, { ok: true, suppressed: true, sessionId: body.sessionId, state: body.state });
+        const state = typeof body.state === "string" ? body.state.trim() : "";
+        const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+        if (!sessionId || !state || !SHELL_STATES.has(state)) {
+          send(res, 400, { ok: false, error: "invalid shell-state payload" });
+          return;
+        }
+        if (body.tool !== undefined && typeof body.tool !== "string") {
+          send(res, 400, { ok: false, error: "invalid shell-state tool" });
+          return;
+        }
+        if (body.command !== undefined && typeof body.command !== "string") {
+          send(res, 400, { ok: false, error: "invalid shell-state command" });
+          return;
+        }
+        if (consumeShellStateSuppressFile(sessionId)) {
+          send(res, 202, { ok: true, suppressed: true, sessionId, state });
           return;
         }
         this.scheduleShellStateUpdate({
-          state: body.state,
-          sessionId: body.sessionId,
+          state,
+          sessionId,
           tool: body.tool,
           command: body.command,
         });
-        send(res, 202, { ok: true, queued: true, sessionId: body.sessionId, state: body.state });
+        send(res, 202, { ok: true, queued: true, sessionId, state });
         return;
       }
 

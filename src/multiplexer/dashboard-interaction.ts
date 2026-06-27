@@ -63,7 +63,8 @@ function dashboardServiceSeed(host: any, service: DashboardService): DashboardSe
 }
 
 function clearDashboardServicePending(host: any, serviceId: string, token: number | undefined): void {
-  if (typeof token === "number" && host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
+  if (typeof token === "number" && typeof host.dashboardPendingActions?.clearServiceActionIfToken === "function") {
+    if (!host.dashboardPendingActions.clearServiceActionIfToken(serviceId, token)) return;
     host.reapplyDashboardPendingActions?.();
     return;
   }

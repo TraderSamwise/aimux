@@ -85,11 +85,12 @@ function markServiceUsed(host: ServiceHost, serviceId: string): void {
 
 function commitServiceState(host: ServiceHost, options: { upsert?: ServiceState[]; removeIds?: string[] } = {}) {
   const statePath = getStatePath();
+  let state: Record<string, unknown> = {};
   let services: ServiceState[] = [];
   if (existsSync(statePath)) {
     try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: ServiceState[] };
-      services = state.services ?? [];
+      state = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
+      services = Array.isArray(state.services) ? (state.services as ServiceState[]) : [];
     } catch {}
   }
   const byId = new Map(services.map((service) => [service.id, service]));
@@ -103,6 +104,7 @@ function commitServiceState(host: ServiceHost, options: { upsert?: ServiceState[
     byId.delete(serviceId);
   }
   writeJsonAtomic(statePath, {
+    ...state,
     savedAt: new Date().toISOString(),
     cwd: process.cwd(),
     services: [...byId.values()],

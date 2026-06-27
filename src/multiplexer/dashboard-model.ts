@@ -103,10 +103,10 @@ function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
 
 function listOfflineSessionsForDashboard(host: DashboardModelHost): any[] {
   const sessionsById = new Map<string, any>();
-  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+  for (const session of host.offlineSessions ?? []) {
     if (session?.id) sessionsById.set(session.id, session);
   }
-  for (const session of host.offlineSessions ?? []) {
+  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
     if (session?.id) sessionsById.set(session.id, session);
   }
   return [...sessionsById.values()];

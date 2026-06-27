@@ -3475,8 +3475,29 @@ describe("MetadataServer threads API", () => {
 
     expect(promptRes.status).toBe(202);
     expect(body).toMatchObject({ ok: true, suppressed: true, sessionId: "shell-1", state: "prompt" });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(loadMetadataState(repoRoot).sessions["shell-1"]).toBeUndefined();
+    await vi.waitFor(() => {
+      expect(loadMetadataState(repoRoot).sessions["shell-1"]).toBeUndefined();
+    });
+  });
+
+  it("rejects malformed shell-state payloads before queueing", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const invalidState = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state: "done", sessionId: "shell-1", tool: "shell" }),
+    });
+    const missingSession = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state: "prompt", tool: "shell" }),
+    });
+
+    expect(invalidState.status).toBe(400);
+    expect(missingSession.status).toBe(400);
   });
 
   it("streams session chat events over SSE", async () => {

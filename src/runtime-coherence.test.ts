@@ -157,6 +157,39 @@ describe("runtime coherence report", () => {
     expect(requestJson).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps ownerless tmux-only projects in the versions report", async () => {
+    const requestJson = vi.fn(async () => ({
+      status: 200,
+      json: { ok: true, pid: 1001, serviceInfo: expectedManifest },
+    }));
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => ["aimux-legacy-333"]),
+        getSessionOption: vi.fn((sessionName: string, key: string) => {
+          if (key === "@aimux-project-root" && sessionName === "aimux-legacy-333") return "/repo/legacy";
+          if (key === TMUX_RUNTIME_OWNER_OPTION) return null;
+          if (key === TMUX_RUNTIME_CONTRACT_OPTION) return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
+          return null;
+        }),
+        listWindows: vi.fn(() => [{ id: "@3", index: 0, name: "dashboard", active: true }]),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({ projects: {} }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43211,
+        pid: 1001,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson,
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.projects.map((project) => project.projectRoot)).toEqual(["/repo/legacy"]);
+  });
+
   it("keeps unreachable services visible in the versions report", async () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
