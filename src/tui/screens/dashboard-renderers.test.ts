@@ -594,6 +594,32 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(plain).not.toContain("Running:");
   });
 
+  it("shows pending service state instead of raw status in details", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedServiceId: "svc-creating",
+        services: [
+          {
+            id: "svc-creating",
+            command: "shell",
+            args: [],
+            status: "running",
+            active: false,
+            pendingAction: "creating",
+          },
+        ],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      140,
+      40,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("State: Creating");
+    expect(plain).not.toContain("Status: running");
+  });
+
   it("renders a dedicated Overseer line above the worktrees when an overseer exists", () => {
     const overseerSession = {
       index: 0,
