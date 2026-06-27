@@ -598,7 +598,7 @@ async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVers
     }
     await restartStaleControlPlane(projectRoot);
   }
-  await ensureProjectService(projectRoot);
+  await ensureProjectServiceForDashboardStartup(projectRoot, opts);
   try {
     await waitForVerifiedProjectService(projectRoot);
   } catch (error) {
@@ -618,9 +618,49 @@ async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVers
   }
 }
 
+async function ensureProjectServiceForDashboardStartup(
+  projectRoot: string,
+  opts?: { repairVersionDrift?: boolean },
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await ensureProjectService(projectRoot);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (opts?.repairVersionDrift === false || !isLocalControlPlaneTransientStartupError(error)) {
+        throw error;
+      }
+      removeMetadataEndpoint(projectRoot);
+      await delay(150 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 async function ensureDaemonProjectSpawned(projectRoot: string): Promise<void> {
-  await ensureDaemonRunning();
-  await ensureProjectService(projectRoot);
+  await ensureDaemonProjectReady(projectRoot);
+}
+
+function isLocalControlPlaneTransientStartupError(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "ECONNRESET" ||
+    code === "ECONNREFUSED" ||
+    code === "EPIPE" ||
+    code === "ETIMEDOUT" ||
+    message.includes("ECONNRESET") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("project service exited before it became ready") ||
+    message.includes("socket hang up") ||
+    message.includes("request timed out")
+  );
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: string): string[] {
@@ -3884,4 +3924,7 @@ teamCmd
     }
   });
 
-program.parse();
+void program.parseAsync().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});

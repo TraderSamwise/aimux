@@ -714,6 +714,7 @@ const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
   PROJECT_API_ROUTES.agents.interactionWait,
 ]);
 const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
+const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
 
 interface ProjectServiceResourceSnapshot {
   uptimeMs: number;
@@ -733,10 +734,35 @@ interface ProjectServiceSlowRequest {
   resources: ProjectServiceResourceSnapshot;
 }
 
+interface PendingShellStateUpdate {
+  state: string;
+  sessionId: string;
+  tool?: string;
+  command?: string;
+}
+
 function validateSessionId(raw: string): { ok: true; value: string } | { ok: false } {
   if (!SESSION_ID_PATTERN.test(raw)) return { ok: false };
   if (raw.includes("..")) return { ok: false };
   return { ok: true, value: raw };
+}
+
+function consumeShellStateSuppressFile(sessionId: string): boolean {
+  const validated = validateSessionId(sessionId);
+  if (!validated.ok) return false;
+  const path = join(getProjectStateDir(), "shell-state-suppress", validated.value);
+  if (!existsSync(path)) return false;
+  try {
+    const remaining = Math.max(1, Number.parseInt(readFileSync(path, "utf-8").trim(), 10) || 1) - 1;
+    if (remaining > 0) {
+      writeFileSync(path, String(remaining));
+    } else {
+      rmSync(path, { force: true });
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readJson(req: IncomingMessage): Promise<any> {
@@ -1107,6 +1133,9 @@ export class MetadataServer {
   private desktopStateCacheDirty = false;
   private desktopStateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private desktopStateRefreshing = false;
+  private lastProjectChangeAt = 0;
+  private readonly pendingShellStateUpdates: PendingShellStateUpdate[] = [];
+  private shellStateFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
@@ -1144,6 +1173,9 @@ export class MetadataServer {
     this.server = null;
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
+    if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
+    this.shellStateFlushTimer = null;
+    this.pendingShellStateUpdates.length = 0;
     this.desktopStateRefreshing = false;
     this.unsubscribeAlertSink?.();
     this.unsubscribeAlertSink = null;
@@ -1172,8 +1204,8 @@ export class MetadataServer {
       worktreePath?: string;
     } = {},
   ): void {
+    this.lastProjectChangeAt = Date.now();
     this.desktopStateCacheDirty = true;
-    this.scheduleDesktopStateRefresh();
     this.eventBus.publishProjectUpdate(input);
     this.options.onChange?.();
   }
@@ -1193,6 +1225,11 @@ export class MetadataServer {
     if (!this.options.desktop?.getState || this.desktopStateRefreshTimer || this.desktopStateRefreshing) return;
     this.desktopStateRefreshTimer = setTimeout(() => {
       this.desktopStateRefreshTimer = null;
+      const quietFor = Date.now() - this.lastProjectChangeAt;
+      if (this.desktopStateCacheDirty && quietFor < DESKTOP_STATE_STALE_REFRESH_DELAY_MS) {
+        this.scheduleDesktopStateRefresh(DESKTOP_STATE_STALE_REFRESH_DELAY_MS - quietFor);
+        return;
+      }
       this.desktopStateRefreshing = true;
       try {
         this.refreshDesktopStateCache();
@@ -1207,8 +1244,48 @@ export class MetadataServer {
     this.desktopStateRefreshTimer.unref?.();
   }
 
-  private getDesktopStateSnapshot(): Record<string, unknown> {
+  private scheduleShellStateUpdate(input: PendingShellStateUpdate): void {
+    this.pendingShellStateUpdates.push(input);
+    if (this.shellStateFlushTimer) return;
+    this.shellStateFlushTimer = setTimeout(() => this.flushShellStateUpdates(), DESKTOP_STATE_STALE_REFRESH_DELAY_MS);
+    this.shellStateFlushTimer.unref?.();
+  }
+
+  private flushShellStateUpdates(): void {
+    this.shellStateFlushTimer = null;
+    const quietFor = Date.now() - this.lastProjectChangeAt;
+    if (quietFor < DESKTOP_STATE_STALE_REFRESH_DELAY_MS) {
+      this.shellStateFlushTimer = setTimeout(
+        () => this.flushShellStateUpdates(),
+        DESKTOP_STATE_STALE_REFRESH_DELAY_MS - quietFor,
+      );
+      this.shellStateFlushTimer.unref?.();
+      return;
+    }
+    const updates = this.pendingShellStateUpdates.splice(0);
+    for (const update of updates) {
+      try {
+        const result = applyShellStateTransition({
+          ...update,
+          tracker: this.tracker,
+          emitAlert: (input) => this.emitAlert(input),
+        });
+        this.notifyProjectChanged({ reason: "shell-state", sessionId: result.sessionId });
+      } catch (error) {
+        log.warn("shell-state update failed", "api", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private getDesktopStateSnapshot(force = false): Record<string, unknown> {
+    if (force) return this.refreshDesktopStateCache();
     const now = Date.now();
+    if (this.desktopStateCache && this.desktopStateCacheDirty) {
+      this.scheduleDesktopStateRefresh(DESKTOP_STATE_STALE_REFRESH_DELAY_MS);
+      return this.desktopStateCache.state;
+    }
     if (
       this.desktopStateCache &&
       !this.desktopStateCacheDirty &&
@@ -1742,11 +1819,12 @@ export class MetadataServer {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
       }
+      const force = url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true";
       send(res, 200, {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...this.getDesktopStateSnapshot(),
+        ...this.getDesktopStateSnapshot(force),
       });
       return;
     }
@@ -3095,16 +3173,17 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.shellState) {
         const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string; command?: string };
-        const result = applyShellStateTransition({
+        if (typeof body.sessionId === "string" && consumeShellStateSuppressFile(body.sessionId)) {
+          send(res, 202, { ok: true, suppressed: true, sessionId: body.sessionId, state: body.state });
+          return;
+        }
+        this.scheduleShellStateUpdate({
           state: body.state,
           sessionId: body.sessionId,
           tool: body.tool,
           command: body.command,
-          tracker: this.tracker,
-          emitAlert: (input) => this.emitAlert(input),
         });
-        this.notifyChange();
-        send(res, 200, result);
+        send(res, 202, { ok: true, queued: true, sessionId: body.sessionId, state: body.state });
         return;
       }
 

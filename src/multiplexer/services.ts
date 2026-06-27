@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { findMainRepo } from "../worktree.js";
-import { getStatePath } from "../paths.js";
+import { getProjectStateDirFor, getStatePath } from "../paths.js";
 import { writeJsonAtomic } from "../atomic-write.js";
 import type { ServiceState } from "./index.js";
 import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "../shell-hooks.js";
@@ -79,6 +80,41 @@ function markServiceUsed(host: ServiceHost, serviceId: string): void {
         clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
       });
     }
+  } catch {}
+}
+
+function commitServiceState(host: ServiceHost, options: { upsert?: ServiceState[]; removeIds?: string[] } = {}) {
+  const statePath = getStatePath();
+  let services: ServiceState[] = [];
+  if (existsSync(statePath)) {
+    try {
+      const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: ServiceState[] };
+      services = state.services ?? [];
+    } catch {}
+  }
+  const byId = new Map(services.map((service) => [service.id, service]));
+  for (const service of host.offlineServices ?? []) {
+    byId.set(service.id, service);
+  }
+  for (const service of options.upsert ?? []) {
+    byId.set(service.id, service);
+  }
+  for (const serviceId of options.removeIds ?? []) {
+    byId.delete(serviceId);
+  }
+  writeJsonAtomic(statePath, {
+    savedAt: new Date().toISOString(),
+    cwd: process.cwd(),
+    services: [...byId.values()],
+  });
+  host.invalidateDesktopStateSnapshot();
+}
+
+function suppressNextShellReports(projectRoot: string, serviceId: string, count: number): void {
+  try {
+    const dir = join(getProjectStateDirFor(projectRoot), "shell-state-suppress");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, serviceId), String(Math.max(1, count)));
   } catch {}
 }
 
@@ -207,10 +243,19 @@ export function createService(
       "running",
     );
     host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
-    host.saveState();
-    host.invalidateDesktopStateSnapshot();
-    host.refreshLocalDashboardModel();
-    host.updateWorktreeSessions();
+    commitServiceState(host, {
+      upsert: [
+        {
+          id: serviceId,
+          createdAt: new Date().toISOString(),
+          worktreePath,
+          cwd,
+          label,
+          launchCommandLine: trimmed,
+          tmuxTarget: target,
+        },
+      ],
+    });
     host.preferDashboardEntrySelection("service", serviceId, worktreePath);
     host.settleDashboardCreatePending(serviceId, "service");
     return { serviceId };
@@ -249,16 +294,9 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
     }),
     "stopped",
   );
+  suppressNextShellReports(process.cwd(), serviceId, 1);
   host.tmuxRuntimeManager.sendKey(match.target, "C-c");
-  host.tmuxRuntimeManager.setWindowMetadata(match.target, {
-    ...match.metadata,
-    worktreePath: match.metadata.worktreePath,
-  });
-  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(match.target, "service");
-  host.saveState();
-  host.invalidateDesktopStateSnapshot();
-  host.refreshLocalDashboardModel();
-  host.adjustAfterRemove(host.dashboardWorktreeGroupsCache.length > 0);
+  commitServiceState(host);
   return { serviceId, status: "stopped" };
 }
 
@@ -282,18 +320,7 @@ export function removeOfflineService(host: ServiceHost, serviceId: string): { se
   }
   host.offlineServices = host.offlineServices.filter((service: ServiceState) => service.id !== serviceId);
   removeTopologyService(serviceId);
-  const statePath = getStatePath();
-  if (existsSync(statePath)) {
-    try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: ServiceState[] };
-      state.services = (state.services ?? []).filter((service) => service.id !== serviceId);
-      writeJsonAtomic(statePath, state);
-    } catch {}
-  }
-  host.saveState();
-  host.invalidateDesktopStateSnapshot();
-  host.refreshLocalDashboardModel();
-  host.adjustAfterRemove(host.dashboardWorktreeGroupsCache.length > 0);
+  commitServiceState(host, { removeIds: [serviceId] });
   return { serviceId, status: "removed" };
 }
 
@@ -312,9 +339,7 @@ export function resumeOfflineService(
       service.tmuxTarget = existing.target;
     } else if (host.tmuxRuntimeManager.isWindowAlive(existing.target)) {
       host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
-      host.saveState();
-      host.invalidateDesktopStateSnapshot();
-      host.refreshLocalDashboardModel();
+      commitServiceState(host);
       return { serviceId: service.id, status: "running" };
     } else {
       try {
@@ -326,46 +351,8 @@ export function resumeOfflineService(
   const resumeCwd = service.cwd ?? cwd;
   const shell = process.env.SHELL || "zsh";
   const launchCommandLine = service.launchCommandLine?.trim() ?? "";
-  const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
-  let projectRoot = process.cwd();
-  try {
-    projectRoot = findMainRepo(cwd);
-  } catch {
-    projectRoot = process.cwd();
-  }
-  const wrapped = launchCommandLine
-    ? wrapCommandWithShellIntegration({
-        projectRoot,
-        sessionId: service.id,
-        tool: "service",
-        command: shell,
-        args: ["-lc", launchScript],
-        shellPath: shell,
-      })
-    : wrapInteractiveShellWithIntegration({
-        projectRoot,
-        sessionId: service.id,
-        tool: "service",
-        shellPath: shell,
-      });
-  const command = wrapped.command;
-  const args = wrapped.args;
   const label = service.label ?? serviceLabelForCommand(launchCommandLine);
-  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
-  const retainedTarget =
-    service.tmuxTarget && host.tmuxRuntimeManager.hasWindow?.(service.tmuxTarget) ? service.tmuxTarget : undefined;
-  const target =
-    retainedTarget ??
-    host.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, resumeCwd, command, args, {
-      detached: true,
-    });
-  if (retainedTarget) {
-    if (launchCommandLine) {
-      host.tmuxRuntimeManager.sendText(retainedTarget, launchCommandLine);
-      host.tmuxRuntimeManager.sendEnter(retainedTarget);
-    }
-  }
-  host.tmuxRuntimeManager.setWindowMetadata(target, {
+  const metadata = {
     kind: "service",
     sessionId: service.id,
     command: launchCommandLine ? shell : "shell",
@@ -375,7 +362,61 @@ export function resumeOfflineService(
     createdAt: service.createdAt ?? new Date().toISOString(),
     worktreePath: service.worktreePath,
     label,
-  });
+  };
+  const retainedTarget = service.retained && existing ? existing.target : undefined;
+  let target = retainedTarget;
+  let createdWindow = false;
+  if (target) {
+    try {
+      if (launchCommandLine) {
+        suppressNextShellReports(process.cwd(), service.id, 2);
+        host.tmuxRuntimeManager.sendText(target, launchCommandLine);
+        host.tmuxRuntimeManager.sendEnter(target);
+      }
+    } catch {
+      try {
+        host.tmuxRuntimeManager.killWindow(target);
+      } catch {}
+      target = undefined;
+    }
+  }
+  if (!target) {
+    const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
+    let projectRoot = process.cwd();
+    try {
+      projectRoot = findMainRepo(cwd);
+    } catch {
+      projectRoot = process.cwd();
+    }
+    const wrapped = launchCommandLine
+      ? wrapCommandWithShellIntegration({
+          projectRoot,
+          sessionId: service.id,
+          tool: "service",
+          command: shell,
+          args: ["-lc", launchScript],
+          shellPath: shell,
+        })
+      : wrapInteractiveShellWithIntegration({
+          projectRoot,
+          sessionId: service.id,
+          tool: "service",
+          shellPath: shell,
+        });
+    const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
+    target = host.tmuxRuntimeManager.createWindow(
+      tmuxSession.sessionName,
+      label,
+      resumeCwd,
+      wrapped.command,
+      wrapped.args,
+      {
+        detached: true,
+      },
+    );
+    createdWindow = true;
+    host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
+  }
   upsertTopologyService(
     {
       ...serviceStateToTopologyState(service),
@@ -386,13 +427,24 @@ export function resumeOfflineService(
     },
     "running",
   );
-  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
+  if (createdWindow) {
+    host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
+  }
   host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
   markServiceUsed(host, service.id);
-  host.saveState();
-  host.invalidateDesktopStateSnapshot();
-  host.refreshLocalDashboardModel();
-  host.updateWorktreeSessions();
+  commitServiceState(host, {
+    upsert: [
+      {
+        id: service.id,
+        createdAt: service.createdAt,
+        worktreePath: service.worktreePath,
+        cwd: resumeCwd,
+        label,
+        launchCommandLine,
+        tmuxTarget: target,
+      },
+    ],
+  });
   host.preferDashboardEntrySelection("service", service.id, service.worktreePath);
   return { serviceId: service.id, status: "running" };
 }

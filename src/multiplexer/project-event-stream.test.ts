@@ -391,6 +391,57 @@ describe("dashboard project event refresh", () => {
     }
   });
 
+  it("repairs the control plane when the SSE reader reports ECONNRESET", async () => {
+    const originalFetch = globalThis.fetch;
+    const socketReset = Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      errno: -54,
+      syscall: "read",
+    });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(socketReset);
+      },
+    });
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      body: stream,
+    })) as never;
+    controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockResolvedValue({
+      host: "127.0.0.1",
+      port: 43444,
+      pid: 1234,
+      updatedAt: new Date().toISOString(),
+    });
+    const host: any = {
+      mode: "dashboard",
+      projectRoot: "/repo/project",
+      dashboardInputEpoch: 0,
+      ensureDashboardControlPlane: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => false),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    try {
+      startDashboardProjectEventStream(host);
+      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
+      expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
+        }),
+      );
+    } finally {
+      stopDashboardProjectEventStream(host);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("backs off SSE reconnect attempts instead of spinning on a dead endpoint", async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async () => {

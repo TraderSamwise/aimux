@@ -9,6 +9,7 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { commandKey, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import { isLiveDashboardServiceRuntimeEntry } from "../dashboard/runtime-evidence.js";
 import {
   getDefaultTeamConfig,
   isTeammateSession,
@@ -45,6 +46,100 @@ function flashPendingDashboardItem(
   host.footerFlash = pendingDashboardItemMessage(entry, fallbackKind);
   host.footerFlashTicks = 3;
   host.renderDashboard();
+}
+
+function dashboardServiceSeed(host: any, service: DashboardService): DashboardService {
+  return (
+    host.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? {
+      id: service.id,
+      command: service.label ?? "service",
+      args: [],
+      status: "offline",
+      active: false,
+      label: service.label,
+      worktreePath: service.worktreePath,
+    }
+  );
+}
+
+function clearDashboardServicePending(host: any, serviceId: string, token: number | undefined): void {
+  if (typeof token === "number" && host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
+    host.reapplyDashboardPendingActions?.();
+    return;
+  }
+  host.setPendingDashboardServiceAction?.(serviceId, null);
+}
+
+function getDashboardServiceEntry(host: any, serviceId: string): DashboardService | undefined {
+  return host.getDashboardServices?.().find((entry: DashboardService) => entry.id === serviceId);
+}
+
+async function waitForLiveDashboardServiceForOpen(
+  host: any,
+  serviceId: string,
+  activationToken: any,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await refreshDashboardModelThroughApi(host, { force: true }).catch(() => false);
+    if (!isCurrentDashboardActivation(host, activationToken)) return false;
+    host.reapplyDashboardPendingActions?.();
+    if (isLiveDashboardServiceRuntimeEntry(getDashboardServiceEntry(host, serviceId))) return true;
+    host.renderDashboard();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return isLiveDashboardServiceRuntimeEntry(getDashboardServiceEntry(host, serviceId));
+}
+
+async function refreshDashboardAfterServiceOpen(host: any, activationToken: any): Promise<void> {
+  try {
+    await refreshDashboardModelThroughApi(host, { force: true });
+  } catch {}
+  if (isCurrentDashboardActivation(host, activationToken)) {
+    host.renderDashboard();
+  }
+}
+
+async function resumeDashboardServiceForOpen(
+  host: any,
+  service: DashboardService,
+  activationToken: any,
+): Promise<"resumed" | "missing" | "error"> {
+  const label = service.label ?? service.command ?? service.id;
+  const token = host.setPendingDashboardServiceAction?.(service.id, "starting", {
+    serviceSeed: dashboardServiceSeed(host, service),
+  });
+  host.footerFlash = `Restoring ${label}`;
+  host.footerFlashTicks = 3;
+  host.renderDashboard();
+  try {
+    await mutateDashboardApi(
+      host,
+      PROJECT_API_ROUTES.services.resume,
+      { serviceId: service.id },
+      { timeoutMs: 10_000 },
+    );
+  } catch (error) {
+    clearDashboardServicePending(host, service.id, token);
+    await refreshDashboardModelThroughApi(host, { force: true }).catch(() => false);
+    if (isCurrentDashboardActivation(host, activationToken)) {
+      host.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
+    }
+    return "error";
+  }
+  const isLive = await waitForLiveDashboardServiceForOpen(host, service.id, activationToken);
+  if (!isLive) {
+    clearDashboardServicePending(host, service.id, token);
+    if (isCurrentDashboardActivation(host, activationToken)) {
+      host.showDashboardError("Failed to start service", ["starting did not settle before timing out"]);
+      return "error";
+    }
+    return "missing";
+  }
+  clearDashboardServicePending(host, service.id, token);
+  if (!isCurrentDashboardActivation(host, activationToken)) return "missing";
+  return "resumed";
 }
 
 function isBlockedOfflineSession(entry: DashboardSession | undefined): boolean {
@@ -481,6 +576,26 @@ export const dashboardInteractionMethods = {
   handleDashboardKey(this: any, data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
+    if (events.length > 1) {
+      for (const event of events) {
+        const beforeMode = this.mode;
+        const beforeOverlay = this.dashboardOverlayState?.kind ?? "none";
+        dashboardInteractionMethods.handleDashboardKey.call(this, Buffer.from(event.raw));
+        const key = commandKey(event);
+        const afterOverlay = this.dashboardOverlayState?.kind ?? "none";
+        if (
+          this.mode !== beforeMode ||
+          afterOverlay !== beforeOverlay ||
+          key === "enter" ||
+          key === "right" ||
+          key === "l" ||
+          key === "q"
+        ) {
+          break;
+        }
+      }
+      return;
+    }
 
     const event = events[0];
     const key = commandKey(event);
@@ -763,17 +878,20 @@ export const dashboardInteractionMethods = {
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
     this.persistDashboardUiState();
     if (service.status !== "running") {
-      await this.resumeOfflineServiceWithFeedback(service);
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      await refreshDashboardModelThroughApi(this, { force: true });
+      const resumeResult =
+        this.mode === "dashboard"
+          ? await resumeDashboardServiceForOpen(this, service, activationToken)
+          : await this.resumeOfflineServiceWithFeedback(service).then(() => "resumed" as const);
+      if (resumeResult !== "resumed") return resumeResult;
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       const result = await this.waitAndOpenLiveTmuxWindowForService(service.id, 60_000);
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      void refreshDashboardAfterServiceOpen(this, activationToken);
       if (result !== "opened") {
         this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
         this.footerFlashTicks = 3;
+        this.renderDashboard();
       }
-      this.renderDashboard();
       return result;
     }
     const openResult = await this.waitAndOpenLiveTmuxWindowForService(service.id);

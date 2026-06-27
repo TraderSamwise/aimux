@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isExitedProcessState, restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
+import {
+  cleanupStaleDashboardLinks,
+  isExitedProcessState,
+  restartAimuxControlPlane,
+  renderRuntimeRestartResult,
+} from "./runtime-restart.js";
 import type { RuntimeCoherenceReport } from "./runtime-coherence.js";
 
 const execFileSyncMock = vi.hoisted(() => vi.fn());
@@ -904,6 +909,7 @@ describe("restartAimuxControlPlane", () => {
         sessionName,
         windowIndex: windowIndex ?? 2,
       })),
+      unlinkWindow: vi.fn(),
       selectWindow: vi.fn(),
     };
 
@@ -928,6 +934,67 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(tmux.linkWindowToSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", dashboardTarget, 0);
+    expect(tmux.listWindows).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef");
+    expect(tmux.unlinkWindow).toHaveBeenCalledWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@stale",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
+  });
+
+  it("removes stale duplicate dashboard links from client sessions", () => {
+    const tmux = {
+      listWindows: vi.fn(() => [
+        { id: "@437", index: 0, name: "dashboard", active: true },
+        { id: "@438", index: 1, name: "dashboard", active: false },
+        { id: "@441", index: 2, name: "claude", active: false },
+      ]),
+      unlinkWindow: vi.fn(),
+    };
+
+    const errors = cleanupStaleDashboardLinks(tmux, "aimux-alpha-111-client-deadbeef", {
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@437",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
+
+    expect(errors).toEqual([]);
+    expect(tmux.unlinkWindow).toHaveBeenCalledExactlyOnceWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@438",
+      windowIndex: 1,
+      windowName: "dashboard",
+    });
+  });
+
+  it("kills stale duplicate dashboards when tmux cannot unlink the only link", () => {
+    const tmux = {
+      listWindows: vi.fn(() => [
+        { id: "@437", index: 0, name: "dashboard", active: true },
+        { id: "@438", index: 1, name: "dashboard", active: false },
+      ]),
+      unlinkWindow: vi.fn(() => {
+        throw new Error("window only linked to one session");
+      }),
+      killWindow: vi.fn(),
+    };
+
+    const errors = cleanupStaleDashboardLinks(tmux, "aimux-alpha-111-client-deadbeef", {
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@437",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
+
+    expect(errors).toEqual([]);
+    expect(tmux.killWindow).toHaveBeenCalledExactlyOnceWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@438",
+      windowIndex: 1,
+      windowName: "dashboard",
+    });
   });
 
   it("fails dashboard relink without appending when slot zero relink fails", async () => {
