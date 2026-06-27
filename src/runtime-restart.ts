@@ -255,6 +255,21 @@ function emptyProjectResult(projectRoot: string): RuntimeRestartProjectResult {
   };
 }
 
+function reconcileProjectResultsWithVerification(
+  projects: RuntimeRestartProjectResult[],
+  verification: RuntimeRestartResult["verification"],
+): void {
+  if (verification.status !== "ok" || !verification.after) return;
+  for (const result of projects) {
+    if (result.service.status !== "failed") continue;
+    const verifiedProject = verification.after.projects.find((project) => project.projectRoot === result.projectRoot);
+    if (verifiedProject?.service.status !== "ok") continue;
+    result.service.status = "ensured";
+    result.service.state = verifiedProject.service.daemonState ?? result.service.state;
+    result.service.error = null;
+  }
+}
+
 function selectProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string): string[] {
   const roots = before.projects.map((project) => project.projectRoot);
   if (projectRoot) roots.push(projectRoot);
@@ -682,12 +697,6 @@ async function restartAimuxControlPlaneUnlocked(
     projects.push(result);
   }
 
-  const projectFailures = projects.filter(
-    (project) =>
-      project.runtime.status === "failed" ||
-      project.service.status === "failed" ||
-      project.dashboard.status === "failed",
-  ).length;
   const shouldVerifyAfterRestart = options.verifyAfterRestart ?? !options.buildRuntimeCoherenceReport;
   let verification: RuntimeRestartResult["verification"] = {
     status: "skipped",
@@ -704,6 +713,13 @@ async function restartAimuxControlPlaneUnlocked(
       intervalMs: options.verificationIntervalMs ?? 250,
     });
   }
+  reconcileProjectResultsWithVerification(projects, verification);
+  const projectFailures = projects.filter(
+    (project) =>
+      project.runtime.status === "failed" ||
+      project.service.status === "failed" ||
+      project.dashboard.status === "failed",
+  ).length;
   const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
   const result: RuntimeRestartResult = {
     startedAt: before.generatedAt,

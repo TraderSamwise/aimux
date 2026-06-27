@@ -1385,6 +1385,44 @@ describe("restartAimuxControlPlane", () => {
     expect(result.summary.failures).toBe(0);
   });
 
+  it("does not fail restart for a transient service ensure race when verification is healthy", async () => {
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(coherenceReport())
+      .mockResolvedValueOnce(okCoherenceReport());
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => {
+        if (projectRoot.endsWith("alpha")) throw new Error("project service exited before it became ready: pid 1003");
+        return {
+          projectId: "beta",
+          projectRoot,
+          pid: 1004,
+          startedAt: "after",
+          updatedAt: "after",
+        };
+      }),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(result.verification.status).toBe("ok");
+    expect(result.projects[0]?.service.status).toBe("ensured");
+    expect(result.projects[0]?.service.error).toBeNull();
+    expect(result.projects[0]?.service.state?.pid).toBe(1001);
+    expect(result.summary).toMatchObject({ servicesEnsured: 2, failures: 0 });
+  });
+
   it("waits for old project service pids before ensuring services", async () => {
     const calls: string[] = [];
     const alive = new Map<number, number>([
