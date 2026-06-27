@@ -57,7 +57,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(writtenInstructionFiles.size).toBe(0);
   });
 
-  it("merges aimux instructions into configured instruction files without overwriting user content", () => {
+  it("ignores legacy configured instruction files without overwriting user content", () => {
     process.chdir(repoRoot);
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
@@ -75,13 +75,11 @@ describe("runtime lifecycle state persistence", () => {
     const content = readFileSync(agentsPath, "utf-8");
     expect(content).toContain("# Project Rules");
     expect(content).toContain("Keep this user rule.");
-    expect(content).toContain("<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->");
-    expect(content).toContain("# aimux Agent Instructions");
-    expect(content).toContain("<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->");
-    expect(writtenInstructionFiles.size).toBe(1);
+    expect(content).not.toContain("<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->");
+    expect(writtenInstructionFiles.size).toBe(0);
   });
 
-  it("removes only aimux managed instructions during cleanup", () => {
+  it("does not track legacy configured instruction files during cleanup", () => {
     process.chdir(repoRoot);
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
@@ -98,9 +96,10 @@ describe("runtime lifecycle state persistence", () => {
 
     const content = readFileSync(agentsPath, "utf-8");
     expect(content).toBe("# Project Rules\n\nKeep this user rule.\n");
+    expect(writtenInstructionFiles.size).toBe(0);
   });
 
-  it("deletes configured generated-only instruction files during cleanup", () => {
+  it("does not create configured generated-only instruction files", () => {
     process.chdir(repoRoot);
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
@@ -112,11 +111,8 @@ describe("runtime lifecycle state persistence", () => {
     const lifecycleHost = { writtenInstructionFiles } as never;
 
     runtimeLifecycleMethods.writeInstructionFiles.call(lifecycleHost);
-    expect(existsSync(agentsPath)).toBe(true);
-
-    runtimeLifecycleMethods.removeInstructionFiles.call(lifecycleHost);
-
     expect(existsSync(agentsPath)).toBe(false);
+    expect(writtenInstructionFiles.size).toBe(0);
   });
 
   it("removes stale default AGENTS.md managed blocks when file projection is no longer configured", () => {
@@ -185,6 +181,33 @@ describe("runtime lifecycle state persistence", () => {
     expect(writtenInstructionFiles.size).toBe(0);
   });
 
+  it("removes stale managed blocks from legacy adapter docs", () => {
+    process.chdir(repoRoot);
+    for (const file of ["CLAUDE.md", "CODEX.md"]) {
+      writeFileSync(
+        join(repoRoot, file),
+        [
+          "# Adapter",
+          "",
+          "<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->",
+          "# aimux Agent Instructions",
+          "old generated content",
+          "<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->",
+          "",
+        ].join("\n"),
+      );
+    }
+    const writtenInstructionFiles = new Set<string>();
+
+    runtimeLifecycleMethods.writeInstructionFiles.call({
+      writtenInstructionFiles,
+    } as never);
+
+    expect(readFileSync(join(repoRoot, "CLAUDE.md"), "utf-8")).toBe("# Adapter\n");
+    expect(readFileSync(join(repoRoot, "CODEX.md"), "utf-8")).toBe("# Adapter\n");
+    expect(writtenInstructionFiles.size).toBe(0);
+  });
+
   it("does not expose topology sessions through the service state loader", () => {
     writeFileSync(
       getStatePath(),
@@ -207,6 +230,66 @@ describe("runtime lifecycle state persistence", () => {
 
     expect(loadStateStatic()).not.toHaveProperty("sessions");
     expect(topologySessions()).toEqual([expect.objectContaining({ id: "codex-offline" })]);
+  });
+
+  it("awaits project service shutdown during cleanup", async () => {
+    const order: string[] = [];
+    const stopProjectServices = vi.fn(async () => {
+      order.push("stop-start");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      order.push("stop-done");
+    });
+    const session = { destroy: vi.fn(() => order.push("destroy")) };
+    const lifecycleHost = {
+      teardown: vi.fn(() => order.push("teardown")),
+      stopProjectServices,
+      sessions: [session],
+    };
+
+    await runtimeLifecycleMethods.cleanup.call(lifecycleHost as never);
+
+    expect(order).toEqual(["teardown", "destroy", "stop-start", "stop-done"]);
+    expect(stopProjectServices).toHaveBeenCalledOnce();
+    expect(session.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("clears pending TUI API recovery during teardown", () => {
+    vi.useFakeTimers();
+    try {
+      const refreshRuntimeGuard = vi.fn();
+      const teardownHost = {
+        clearDashboardBusy: vi.fn(),
+        stopHeartbeat: vi.fn(),
+        stopProjectServiceRefresh: vi.fn(),
+        tuiProjectEventAdapter: { stop: vi.fn() },
+        tuiApiRecoveryTimer: setTimeout(refreshRuntimeGuard, 25),
+        tuiApiRecoveryDueAt: Date.now() + 25,
+        tuiApiRecoveryPending: true,
+        tuiApiRecoveryInFlight: true,
+        tuiApiRuntime: { dispose: vi.fn() },
+        stopGraveyardCleanup: vi.fn(),
+        stopInboxCleanup: vi.fn(),
+        saveState: vi.fn(),
+        stopStatusRefresh: vi.fn(),
+        contextWatcher: { stop: vi.fn() },
+        removeInstructionFiles: vi.fn(),
+        hotkeys: { destroy: vi.fn() },
+        terminalHost: { restoreTerminalState: vi.fn() },
+      };
+
+      runtimeLifecycleMethods.teardown.call(teardownHost as never);
+      vi.advanceTimersByTime(25);
+
+      expect(teardownHost.tuiApiRecoveryTimer).toBeNull();
+      expect(teardownHost.tuiApiRecoveryDueAt).toBeUndefined();
+      expect(teardownHost.tuiApiRecoveryPending).toBe(false);
+      expect(teardownHost.tuiApiRecoveryInFlight).toBe(false);
+      expect(refreshRuntimeGuard).not.toHaveBeenCalled();
+      expect(teardownHost.tuiProjectEventAdapter).toBeNull();
+      expect(teardownHost.tuiApiRuntime).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("preserves topology sessions even when service state does not exist yet", () => {

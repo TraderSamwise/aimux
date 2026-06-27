@@ -3,7 +3,7 @@ import { Pressable, View, useWindowDimensions } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
-import { BookOpen, FolderKanban, Network } from "lucide-react-native";
+import { Bell, BookOpen, FolderKanban, Network } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
@@ -14,8 +14,9 @@ import { buildViewHref } from "@/lib/view-location";
 import { selectedProjectPathAtom } from "@/stores/projects";
 
 const TABS = [
-  { id: "topology", label: "Topology", Icon: Network },
   { id: "project", label: "Project", Icon: FolderKanban },
+  { id: "coordination", label: "Coord", Icon: Bell },
+  { id: "topology", label: "Topology", Icon: Network },
   { id: "library", label: "Library", Icon: BookOpen },
 ] as const;
 

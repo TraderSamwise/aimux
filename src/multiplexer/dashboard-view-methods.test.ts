@@ -107,6 +107,42 @@ describe("dashboardViewMethods.renderDashboard", () => {
     expect(host.writeFrame).toHaveBeenCalledTimes(1);
     expect(host.writeFrame).toHaveBeenCalledWith("base-frame");
   });
+
+  it("writes a visible static error frame if dashboard rendering throws", () => {
+    const host: any = {
+      dashboardRenderOptions: null,
+      writeStatuslineFile: vi.fn(),
+      getViewportSize: () => ({ cols: 80, rows: 24 }),
+      dashboardSessionsCache: [],
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      dashboardState: {
+        focusedWorktreePath: undefined,
+        level: "sessions",
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboard: {
+        update: vi.fn(),
+        render: vi.fn(() => {
+          throw new Error("render boom");
+        }),
+      },
+      dashboardFeedback: {
+        clearBusy: vi.fn(),
+        errorState: null,
+      },
+      syncTuiNotificationContext: vi.fn(),
+      writeFrame: vi.fn(),
+    };
+
+    dashboardViewMethods.renderDashboard.call(host);
+
+    expect(host.writeFrame).toHaveBeenCalledWith(expect.stringContaining("Dashboard render failed"), true);
+    expect(host.writeFrame).toHaveBeenCalledWith(expect.stringContaining("render boom"), true);
+  });
 });
 
 describe("dashboardViewMethods.settleDashboardCreatePending", () => {
@@ -221,7 +257,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     await expect(isSettled?.()).resolves.toBe(true);
   });
 
-  it("settles a creating worktree from the raw worktree list even when rendered pending is still applied", async () => {
+  it("settles a creating worktree from the service-rendered worktree group", async () => {
     let isSettled: (() => Promise<boolean> | boolean) | undefined;
     const path = "/repo/.aimux/worktrees/demo";
     const host: any = {
@@ -233,8 +269,8 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
         }),
       },
       refreshDashboardModelFromService: vi.fn(async () => true),
-      listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path, isBare: false }]),
-      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, pending: true, pendingAction: "creating" }],
+      listDesktopWorktrees: vi.fn(),
+      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path }],
       getDashboardServices: vi.fn(() => []),
       getDashboardSessions: vi.fn(() => []),
     };
@@ -242,6 +278,59 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     dashboardViewMethods.settleDashboardCreatePending.call(host, `worktree:${path}`);
 
     await expect(isSettled?.()).resolves.toBe(true);
+    expect(host.listDesktopWorktrees).not.toHaveBeenCalled();
+  });
+
+  it("does not render create settlement callbacks after dashboard exit", async () => {
+    let onSettled: (() => void) | undefined;
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, settled, opts) => {
+          onSettled = settled;
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => []),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+    host.mode = "session";
+    host.dashboardInputEpoch = 1;
+
+    await expect(isSettled?.()).resolves.toBe(true);
+    onSettled?.();
+    await Promise.resolve();
+
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("does not treat later dashboard input as create settlement", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => []),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+    host.dashboardInputEpoch = 1;
+
+    await expect(isSettled?.()).resolves.toBe(false);
   });
 });
 
@@ -307,10 +396,11 @@ describe("dashboardStateMethods.writeFrame", () => {
 
     dashboardStateMethods.writeFrame.call(host, "base-frame");
 
+    // The stored base stays raw; the composited frame dims it (faint) behind the overlay.
     expect(host.lastRenderedBaseFrame).toBe("base-frame");
-    expect(host.lastRenderedFrame).toBe("base-frameoverlay-frame");
+    expect(host.lastRenderedFrame).toBe("\x1b[2;38;5;240mbase-frame\x1b[0moverlay-frame");
     expect(host.lastRenderedFrameKey).toBe("120x40|model:3|pending:7|overlay:2|ui:screen:dashboard|level:worktrees");
-    expect(writes).toEqual(["\x1b[H\x1b[Jbase-frameoverlay-frame"]);
+    expect(writes).toEqual(["\x1b[?25l\x1b[H\x1b[J\x1b[2;38;5;240mbase-frame\x1b[0moverlay-frame"]);
     stdoutWrite.mockRestore();
   });
 });

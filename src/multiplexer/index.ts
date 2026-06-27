@@ -25,9 +25,16 @@ import {
 } from "../alert-display.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
-import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
+import { type CoordinationModel, type WorklistItem } from "../coordination-model.js";
+import { type NotificationRowMeta } from "./notifications.js";
+import { type WorkflowEntry } from "../workflow.js";
+import { type ProjectObservability } from "../project-observability.js";
+import { type LibraryEntry } from "../library.js";
+import { type ProjectTopology } from "../project-topology.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type { WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import {
@@ -36,6 +43,7 @@ import {
   type DashboardErrorState,
 } from "../dashboard/feedback.js";
 import { MultiplexerRuntimeSync } from "./runtime-sync.js";
+import type { RuntimeGuardState } from "./runtime-guard.js";
 import { selectLinkedOrOpenTarget } from "../tmux/window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./dashboard-actions-methods.js";
 import { agentIoMethods, type AgentIoMethods } from "./agent-io-methods.js";
@@ -119,21 +127,6 @@ interface WorktreeCreateJob {
   startedAt: number;
 }
 
-interface PlanEntry {
-  sessionId: string;
-  tool?: string;
-  label?: string;
-  worktree?: string;
-  updatedAt?: string;
-  path: string;
-  content: string;
-}
-
-interface NotificationPanelState {
-  entries: NotificationRecord[];
-  index: number;
-}
-
 interface DashboardOrchestrationTarget {
   label: string;
   sessionId?: string;
@@ -190,25 +183,36 @@ export class Multiplexer {
   private worktreeGraveyardEntries: WorktreeGraveyardEntry[] = [];
   private graveyardIndex = 0;
   private graveyardWorktreeDeleteConfirm: WorktreeGraveyardEntry | null = null;
-  private activityEntries: DashboardSession[] = [];
-  private activityIndex = 0;
-  private workflowEntries: WorkflowEntry[] = [];
-  private workflowIndex = 0;
-  private workflowFilter: WorkflowFilter = "all";
-  private threadEntries: ThreadEntry[] = [];
+  private threadEntries: WorkflowEntry[] = [];
   private threadIndex = 0;
   private threadReplyBuffer = "";
-  private planEntries: PlanEntry[] = [];
-  private planIndex = 0;
-  private notificationPanelState: NotificationPanelState | null = null;
+  private notificationEntries: NotificationRecord[] = [];
+  private notificationRowMeta: NotificationRowMeta[] = [];
+  private coordinationModel: CoordinationModel | null = null;
+  private coordinationWorklist: WorklistItem[] = [];
+  private coordinationIndex = 0;
+  private coordinationFilter: "all" | "threads" = "all";
+  private notificationIndex = 0;
+  private projectObservability: ProjectObservability | null = null;
+  private projectObservabilityLoaded = false;
+  private projectIndex = 0;
+  private topology: ProjectTopology | null = null;
+  private topologyLoaded = false;
+  private topologyIndex = 0;
+  private libraryEntries: LibraryEntry[] = [];
+  private libraryLoaded = false;
+  private libraryIndex = 0;
   private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
-      void this.refreshDashboardModelFromService(true).then(() => {
-        if (this.mode === "dashboard") {
-          this.renderCurrentDashboardView();
-        }
-      });
+      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+      void refreshDashboardModelThroughApi(this, { force: true, lifecycle })
+        .then(() => {
+          if (isDashboardLifecycleCurrent(this, lifecycle)) {
+            this.renderCurrentDashboardView();
+          }
+        })
+        .catch(() => undefined);
       this.renderCurrentDashboardView();
     }
   });
@@ -228,6 +232,8 @@ export class Multiplexer {
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private graveyardCleanupInterval: ReturnType<typeof setInterval> | null = null;
   private graveyardCleanupRunning = false;
+  private inboxCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private inboxCleanupRunning = false;
   private dashboardViewportPollInterval: ReturnType<typeof setInterval> | null = null;
   private dashboardLastViewportKey: string | null = null;
   private dashboardLastViewportSize: { cols: number; rows: number } | null = null;
@@ -235,9 +241,7 @@ export class Multiplexer {
   private dashboardPendingExpandedViewportCount = 0;
   private dashboardModelVersion = 0;
   private agentTracker = new AgentTracker();
-  private contextWatcher = new ContextWatcher((target) =>
-    this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
-  );
+  private contextWatcher: ContextWatcher;
   /** Maps session ID → toolConfigKey for topology persistence */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
@@ -277,12 +281,14 @@ export class Multiplexer {
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;
-  private dashboardServiceSnapshotRefreshing = false;
   private dashboardServiceRecovery: Promise<void> | null = null;
   private dashboardNextBackgroundRefreshAt = 0;
   private runtimeSync!: MultiplexerRuntimeSync;
+  private _runtimeGuard: RuntimeGuardState = { kind: "ok" };
+  private runtimeGuardProbing = false;
+  private runtimeGuardDisconnectProbeCount = 0;
 
-  constructor() {
+  constructor(options: { contextWatcherEnabled?: boolean } = {}) {
     this.projectRoot = (() => {
       try {
         return findMainRepo(process.cwd());
@@ -291,6 +297,10 @@ export class Multiplexer {
       }
     })();
     this.terminalHost = new TerminalHost();
+    this.contextWatcher = new ContextWatcher(
+      (target) => this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
+      { enabled: options.contextWatcherEnabled ?? true },
+    );
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
     this.runtimeSync = new MultiplexerRuntimeSync({
@@ -301,31 +311,9 @@ export class Multiplexer {
       renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
       renderDashboard: () => this.renderDashboard(),
       writeStatuslineFile: () => this.writeStatuslineFile(),
-    });
-    this.eventBus.subscribe((event) => {
-      if (event.type !== "alert") return;
-      if (event.kind === "notification") {
-        this.footerFlash = `◌ ${event.title}`;
-      } else if (event.kind === "needs_input") {
-        this.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
-      } else if (event.kind === "next_step") {
-        this.footerFlash = `◉ ${event.sessionId ?? "agent"} ready for next step`;
-      } else if (event.kind === "message_waiting") {
-        this.footerFlash = `✉ Message waiting → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "handoff_waiting") {
-        this.footerFlash = `⇢ Handoff waiting → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "task_assigned") {
-        this.footerFlash = `⧫ Task assigned → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "review_waiting") {
-        this.footerFlash = `◌ Review waiting → ${event.sessionId ?? "agent"}`;
-      } else if (event.kind === "blocked") {
-        this.footerFlash = `⧗ ${event.title}`;
-      } else if (event.kind === "task_done") {
-        this.footerFlash = `✓ ${event.title}`;
-      } else if (event.kind === "task_failed") {
-        this.footerFlash = `✗ ${event.title}`;
-      }
-      this.footerFlashTicks = 4;
+      refreshRuntimeGuard: () => {
+        void this.refreshRuntimeGuard();
+      },
     });
   }
 
@@ -664,6 +652,14 @@ export class Multiplexer {
 
   private set dashboardErrorState(value: DashboardErrorState | null) {
     this.dashboardFeedback.errorState = value;
+  }
+
+  private get runtimeGuardState(): RuntimeGuardState {
+    return this._runtimeGuard;
+  }
+
+  private set runtimeGuardState(value: RuntimeGuardState) {
+    this._runtimeGuard = value;
   }
 
   private get footerFlash(): string | null {

@@ -41,7 +41,7 @@ Desktop heartbeat should be driven by:
 
 Supplementary desktop views can read directly from project-service HTTP too:
 
-- `GET /workflow` for activity-style workflow/task feeds
+- `GET /coordination-worklist` for activity-style needs-you/worklist feeds
 - `GET /threads` and `GET /threads/:id` for thread browsing
 - `GET /tasks` and `GET /tasks/:id` for task browsing
 - `GET /graveyard` for graveyard browsing

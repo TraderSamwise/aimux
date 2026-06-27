@@ -230,18 +230,36 @@ describe("config", () => {
     });
   });
 
-  it("defaults exposé scope to per-worktree (forceGlobalScope disabled)", () => {
-    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false });
+  it("defaults notification view acknowledgement behavior", () => {
+    expect(loadConfig({ includeGlobal: false }).notifications).toMatchObject({
+      markReadOnView: true,
+      clearNeedsInputOnView: true,
+      clearFormalInteractionsOnView: false,
+    });
   });
 
-  it("merges an exposé forceGlobalScope override", () => {
+  it("defaults exposé to worktree initial scope", () => {
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ initialScope: "worktree", dimInactive: false });
+  });
+
+  it("merges an exposé initialScope override", () => {
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
       join(repoRoot, ".aimux/config.json"),
-      JSON.stringify({ expose: { forceGlobalScope: true } }, null, 2) + "\n",
+      JSON.stringify({ expose: { initialScope: "global" } }, null, 2) + "\n",
     );
 
-    expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(true);
+    expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("global");
+  });
+
+  it("merges an exposé dimInactive override", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { dimInactive: true } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ initialScope: "worktree", dimInactive: true });
   });
 
   it("reads an explicit projectRoot config without touching global path state", () => {
@@ -252,14 +270,23 @@ describe("config", () => {
       mkdirSync(join(otherRepo, ".aimux"), { recursive: true });
       writeFileSync(
         join(otherRepo, ".aimux/config.json"),
-        JSON.stringify({ expose: { forceGlobalScope: true } }, null, 2) + "\n",
+        JSON.stringify({ expose: { initialScope: "project" } }, null, 2) + "\n",
       );
-      expect(loadConfig({ includeGlobal: false, projectRoot: otherRepo }).expose.forceGlobalScope).toBe(true);
+      expect(loadConfig({ includeGlobal: false, projectRoot: otherRepo }).expose.initialScope).toBe("project");
       // The default-init repo (repoRoot) has no such override.
-      expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(false);
+      expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("worktree");
     } finally {
       rmSync(otherRepo, { recursive: true, force: true });
     }
+  });
+
+  it("defaults inbox cleanup to a 14 day retention window and a 10-item cap", () => {
+    expect(loadConfig({ includeGlobal: false }).inbox).toEqual({
+      cleanupEnabled: true,
+      retentionDays: 14,
+      cleanupIntervalMs: 86_400_000,
+      maxSize: 10,
+    });
   });
 
   it("defaults graveyard cleanup to a 14 day retention window", () => {

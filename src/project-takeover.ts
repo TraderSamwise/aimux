@@ -6,6 +6,7 @@ import { getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
+import { commandArgValueMatches } from "./process-args.js";
 
 interface OtherOwner {
   home: string;
@@ -18,7 +19,7 @@ interface DaemonInfo {
 }
 
 interface DaemonState {
-  projects?: Record<string, { pid?: number; projectRoot?: string }>;
+  projects?: Record<string, { pid?: number; projectId?: string; projectRoot?: string }>;
 }
 
 function isPidAlive(pid: number): boolean {
@@ -31,10 +32,7 @@ function isPidAlive(pid: number): boolean {
 }
 
 function knownOwners(): OtherOwner[] {
-  return [
-    { home: join(homedir(), ".aimux"), port: 43190 },
-    { home: join(homedir(), ".aimux-dev"), port: 43191 },
-  ];
+  return [{ home: join(homedir(), ".aimux"), port: 43190 }];
 }
 
 function readJson<T>(path: string): T | null {
@@ -50,13 +48,39 @@ function writeJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
 }
 
-function isAimuxProjectServiceProcess(pid: number): boolean {
+function readProcessCwd(pid: number): string | null {
+  try {
+    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const cwd = output
+      .split("\n")
+      .find((line) => line.startsWith("n"))
+      ?.slice(1)
+      .trim();
+    return cwd || null;
+  } catch {
+    return null;
+  }
+}
+
+function isAimuxProjectServiceProcess(
+  pid: number,
+  expected: { projectId?: string; projectRoot?: string } = {},
+): boolean {
   try {
     const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return args.includes("__project-service-internal");
+    if (!args.includes("__project-service-internal")) return false;
+    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
+      return resolve(readProcessCwd(pid) ?? "") === resolve(expected.projectRoot);
+    }
+    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
+    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
+    return true;
   } catch {
     return false;
   }
@@ -84,7 +108,7 @@ function cleanOtherOwnerProjectState(owner: OtherOwner, projectId: string): void
   const state = readJson<DaemonState>(statePath);
   const entry = state?.projects?.[projectId];
   if (entry?.pid && isPidAlive(entry.pid)) {
-    if (isAimuxProjectServiceProcess(entry.pid)) {
+    if (isAimuxProjectServiceProcess(entry.pid, { projectId, projectRoot: entry.projectRoot })) {
       try {
         process.kill(entry.pid, "SIGTERM");
       } catch {}
@@ -102,7 +126,7 @@ function cleanOtherOwnerProjectState(owner: OtherOwner, projectId: string): void
     writeJson(statePath, state);
   }
   const projectStateDir = join(owner.home, "projects", projectId);
-  for (const file of ["metadata-api.json", "metadata-api.txt", "host.json"]) {
+  for (const file of ["metadata-api.json", "metadata-api.txt"]) {
     try {
       rmSync(join(projectStateDir, file), { force: true });
     } catch {}

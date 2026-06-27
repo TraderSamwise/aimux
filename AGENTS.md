@@ -15,12 +15,40 @@ Aimux is an agent multiplexer. It runs long-lived Claude, Codex, and shell sessi
 
 Agents inside aimux coordinate through aimux task, handoff, and thread commands backed by the runtime exchange, not by directly spawning each other unless the user gives an explicit CLI command. Use explicit aimux CLI/API task or handoff operations only when the user explicitly asks for delegation or handoff. Do not proactively write `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks.
 
-## Stable vs Dev CLI
+## Runtime Architecture
 
-- `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is for real project work and production remote auth, so defaults should point at `https://aimux.app` and the production relay unless explicitly overridden.
-- `aimux-dev` should stay repo-linked for Aimux development. It sets `AIMUX_HOME=~/.aimux-dev`, `AIMUX_DAEMON_PORT=43191`, `AIMUX_ENV=development`, and `AIMUX_WEB_APP_URL=http://localhost:8081`.
-- Do not point `~/.local/bin/aimux` directly at this checkout for normal development. Use `aimux-dev` for live source iteration and rebuild with `yarn build` after `src/*.ts` changes.
-- To create a local stable build from current source, build a release asset with `AIMUX_RELEASE_VERSION=<version-or-local-label> yarn release:asset`, then install it with `scripts/install.sh release/aimux-<platform>-<arch>.tar.gz`.
+Aimux separates local execution from the shared control plane.
+
+- The global daemon owns project discovery, project activation, and supervision of per-project services.
+- The per-project service (`src/metadata-server.ts`) is the single writer/authority for shared project control-plane state.
+- The managed tmux runtime owns local execution: agent/service/dashboard windows, PTYs, scrollback, attach/detach, and same-machine focus/open behavior.
+- Clients include the terminal TUI dashboard, Expo web/mobile app, CLI helpers, scripts, and plugins. They should use daemon/project-service APIs for shared reads and mutations.
+
+Shared control-plane state includes notifications, threads, tasks, handoffs, reviews, Coordination, project/topology/library views, graveyard/worktree state, and lifecycle mutations. TUI-local state is limited to presentation concerns such as selection, filters, current screen, overlays, text buffers, and terminal render timing.
+
+When changing dashboard behavior, preserve the API-backed boundary:
+
+- Use `src/multiplexer/dashboard-control.ts` request helpers for TUI reads/mutations that affect shared project state.
+- Keep shared response contracts aligned with `src/project-api-contract.ts` and app wrappers in `app/lib/api.ts`.
+- Do not add direct dashboard writes to runtime-exchange, notification stores, thread/task/review state, topology, or worktree/graveyard state.
+- `statusline.json` is a derived/debug/status artifact, not the primary transport for TUI or app state.
+
+Remote-only is not the goal. Execution and service composition remain local by design; web/mobile parity comes from API-backed control-plane routes plus remote equivalents for tmux-specific behavior such as pane streaming or deep-link/focus actions.
+
+For cross-project terminal features, keep the boundary explicit:
+
+- API owns semantic product state: project health, lifecycle, Coordination, notifications, threads, tasks, handoffs, reviews, worktrees, and graveyard state.
+- tmux owns terminal mechanics: pane capture, live preview, window focus, window linking, client switching, and same-machine open behavior.
+- tmux metadata may bridge identity only: project root, worktree path, session id, window id, tool, label, and lightweight status hints.
+- Exposé and the meta dashboard are tmux-native local surfaces. They can use tmux metadata for previews and jumps, but must not become independent writers or alternate sources of truth for product state.
+- Future web/mobile parity for terminal actions should be pane streaming or deep-link/focus APIs, not raw tmux mechanics in remote clients.
+
+## Local CLI Development
+
+- `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is the only normal CLI lane, so defaults should point at `~/.aimux`, daemon port `43190`, `https://aimux.app`, and the production relay unless explicitly overridden.
+- Do not point `~/.local/bin/aimux` directly at this checkout for normal development. Build a local release asset, install it with `scripts/install.sh`, then use `aimux restart` to make the daemon/services/dashboards coherent.
+- To create a local build from current source, run `AIMUX_RELEASE_VERSION=<version-or-local-label> yarn release:asset`, then install it with `scripts/install.sh release/aimux-<platform>-<arch>.tar.gz`.
+- For rare sandboxing, use explicit environment overrides with `aimux`, for example `AIMUX_HOME=/tmp/aimux-scratch AIMUX_DAEMON_PORT=43201 aimux daemon restart`. Do not introduce a second named CLI lane.
 
 ## App (`app/`) - Expo Router + RN + Web
 
@@ -30,7 +58,7 @@ The browser and native clients live in `app/`. Single Expo codebase targeting we
 
 ```bash
 cd app
-yarn dev:web:local      # web client on http://localhost:8081, HMR, aimux-dev daemon
+yarn dev:web:local      # web client on http://localhost:8081, HMR, local aimux daemon
 yarn dev:native:local   # Metro for an already-installed native dev build
 yarn dev:ios:local      # build/install/open the iOS simulator dev build, not Expo Go
 yarn dev:android:local  # build/install/open the Android emulator dev build
@@ -39,7 +67,7 @@ yarn dev:android:local  # build/install/open the Android emulator dev build
 What triggers what:
 
 - `app/app/`, `app/components/`, `app/lib/`, `app/stores/` changes: Metro HMR, no restart.
-- `src/*.ts` Node CLI changes: run `yarn build` at the repo root so the daemon and metadata server see updated `dist/` code.
+- `src/*.ts` Node CLI changes: build and install a local release asset, then run `aimux restart` so the daemon and metadata server see the updated bundle.
 - The app is a pure HTTP+SSE client of the aimux daemon; it does not bundle the CLI.
 
 ### App Architecture
@@ -76,13 +104,26 @@ For aimux runtime or CLI behavior, source-level validation is not enough.
 
 - Changes under `src/*.ts` do not affect the running CLI until `yarn build` updates `dist/`.
 - `yarn vitest` and `yarn typecheck` validate source correctness; they do not prove the live runtime changed.
+- `yarn build` only updates this checkout. Plain `aimux` runs the installed bundle behind `~/.local/bin/aimux`; update it with a local release install:
+
+```bash
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
+```
+
+- Reinstalling over an existing local/native install automatically runs the safe `aimux restart` repair. That path repairs daemon/service/dashboard drift and managed tmux contract drift in place without killing agent windows.
+- Use `AIMUX_SKIP_POST_INSTALL_RESTART=1 scripts/install.sh "$ASSET"` only for installer tests or unusual environments where post-install repair must be suppressed.
 - Before asking someone to verify runtime behavior manually, always run:
 
 ```bash
 yarn build
 ```
 
-- If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; restart or reload the relevant runtime after the build.
+- If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; install a local release so the post-install repair can move the running control plane.
+- Use `aimux restart` as the normal post-build coherence repair. It restarts the daemon, re-ensures known project services, repairs managed tmux contract drift in place, and reloads existing dashboards without killing agent tmux windows.
+- Use `aimux doctor versions` to inspect daemon/project-service/dashboard build coherence.
+- Treat `aimux repair`, `aimux dashboard-reload --open`, and `aimux restart-runtime --open` as advanced/debug plumbing, not normal user recovery instructions.
 - Do not send a user to test behavior changes against stale `dist/`.
 
 ### Navigation Layer Rule
@@ -144,3 +185,10 @@ The browser/mobile client calls daemon and project-service HTTP directly. The sa
 - `aimux worktree list --project <path> --json`: list worktrees.
 - `aimux graveyard list --project <path> --json`: list dead agents.
 - `aimux graveyard resurrect <id> --project <path>`: revive agent.
+- `aimux message send <body> --project <path>`: send a thread message or direct coordination message.
+- `aimux handoff send|accept|complete ... --project <path>`: create and resolve handoff workflow records.
+- `aimux task assign|accept|block|complete|reopen ... --project <path>`: create and resolve task workflow records.
+- `aimux review approve|request-changes ... --project <path>`: resolve review workflow records.
+- `aimux thread list --project <path> --json`: inspect project thread/workflow state.
+- `aimux host agent-read <sessionId> --project <path>`: read a tmux pane snapshot through the project service.
+- `aimux host agent-stream <sessionId> --project <path>`: stream live pane output through project-service SSE.

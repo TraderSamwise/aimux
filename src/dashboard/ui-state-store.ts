@@ -62,7 +62,7 @@ export class DashboardUiStateStore {
       const raw = readFileSync(getDashboardClientUiStatePath(clientKey), "utf-8");
       const snapshot = JSON.parse(raw) as DashboardUiClientSnapshot;
       if (snapshot.screen) {
-        state.screen = snapshot.screen;
+        state.screen = normalizePersistedScreen(snapshot.screen);
       }
       if ("focusedWorktreePath" in snapshot) {
         state.focusedWorktreePath = snapshot.focusedWorktreePath;
@@ -232,6 +232,25 @@ export class DashboardUiStateStore {
     };
     return result.moved;
   }
+}
+
+const VALID_SCREENS: ReadonlySet<DashboardScreen> = new Set([
+  "dashboard",
+  "coordination",
+  "project",
+  "library",
+  "topology",
+  "graveyard",
+  "help",
+]);
+
+// Migrate screens persisted before the IA redesign: inbox/threads/workflow ->
+// coordination, plans -> library; fall back to dashboard for anything unknown.
+function normalizePersistedScreen(screen: string): DashboardScreen {
+  if (VALID_SCREENS.has(screen as DashboardScreen)) return screen as DashboardScreen;
+  if (screen === "notifications" || screen === "threads" || screen === "workflow") return "coordination";
+  if (screen === "plans") return "library";
+  return "dashboard";
 }
 
 function sanitizeOrderMap(value: unknown): Record<string, string[]> {

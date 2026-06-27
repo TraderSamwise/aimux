@@ -16,6 +16,7 @@ export type SessionLifecycleState =
   | "error";
 export type SessionUserLabel =
   | "working"
+  | "ready"
   | "needs_input"
   | "needs_response"
   | "next_step"
@@ -137,6 +138,7 @@ function statusLabelFor(label: SessionUserLabel): string {
   if (label === "needs_response") return "needs answer";
   if (label === "next_step") return "next step";
   if (label === "working") return "working";
+  if (label === "ready") return "ready";
   return label;
 }
 
@@ -198,21 +200,18 @@ export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): Sess
     user = { label: "done", attention: "none", source: "tool" };
   } else if (input.activity === "interrupted") {
     user = { label: "interrupted", attention: "none", source: "tool" };
-  } else if (
-    input.activity === "running" ||
-    input.activity === "waiting" ||
-    input.status === "running" ||
-    input.status === "waiting"
-  ) {
+  } else if (input.activity === "running" || input.activity === "waiting" || input.status === "waiting") {
     user = {
-      label: input.status === "waiting" || input.activity === "waiting" ? "working" : "working",
+      label: "working",
       attention: "none",
       source: "runtime",
     };
+  } else if (hasActiveTask) {
+    user = { label: "next_step", attention: "none", source: "runtime", reason: "task still assigned" };
+  } else if (input.status === "running") {
+    user = { label: "ready", attention: "none", source: "runtime" };
   } else {
-    user = hasActiveTask
-      ? { label: "next_step", attention: "none", source: "runtime", reason: "task still assigned" }
-      : { label: "idle", attention: "none", source: "runtime" };
+    user = { label: "idle", attention: "none", source: "runtime" };
   }
   const orchestration: SessionOrchestrationState = {
     pressure,

@@ -14,15 +14,138 @@ import { env } from "@/lib/env";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
+import {
+  PROJECT_API_ROUTES,
+  type ActiveWindowRequest,
+  type AgentListResponse,
+  type AgentLoopInput,
+  type AgentLoopResponse,
+  type AgentOverseerInput,
+  type AgentOverseerResponse,
+  type AgentOutputStreamInput,
+  type AgentSessionInput,
+  type ControlActionResponse,
+  type CreateServiceInput,
+  type CreateServiceResponse,
+  type CreateTeammateInput,
+  type CreateTeammateResponse,
+  type CreateTeammateTaskInput,
+  type CreateTeammateTaskResponse,
+  type CreateWorktreeInput,
+  type CreateWorktreeResponse,
+  type ForkAgentInput,
+  type ForkAgentResponse,
+  type CoordinationWorklistResponse,
+  type DeleteWorktreeResponse,
+  type GraveyardCleanupInput,
+  type GraveyardCleanupResponse,
+  type GraveyardResponse,
+  type GraveyardWorktreeResponse,
+  type LivePaneAttachRequest,
+  type LivePaneAttachResponse,
+  type LivePaneInputResponse,
+  type LivePaneOutputResponse,
+  type LivePaneResizeResponse,
+  type LibraryResponse,
+  type InteractionStreamEventName,
+  type InteractionPendingResponse,
+  type InteractionRespondInput,
+  type InteractionRespondResponse,
+  type KillAgentResponse,
+  type MigrateAgentInput,
+  type MigrateAgentResponse,
+  type NotificationsResponse,
+  type NotificationClearResponse,
+  type NotificationMutationInput,
+  type NotificationReadResponse,
+  type FocusWindowRequest,
+  type OpenDashboardRequest,
+  type OpenNotificationTargetRequest,
+  type OrchestrationRouteMode,
+  type OrchestrationRouteOptionsResponse,
+  type OperationFailuresClearInput,
+  type OperationFailuresClearResponse,
+  type ProjectDiagnosticsResponse,
+  type ProjectHealthResponse,
+  type ProjectObservabilityResponse,
+  type ProjectTopologyResponse,
+  type RenameAgentInput,
+  type RenameAgentResponse,
+  type RemoveServiceResponse,
+  type RemoveWorktreeResponse,
+  type ResumeAgentResponse,
+  type ResumeServiceResponse,
+  type ResurrectAgentResponse,
+  type ResurrectWorktreeResponse,
+  type HandoffSendInput,
+  type SpawnAgentInput,
+  type SpawnAgentResponse,
+  type StatuslineRefreshInput,
+  type StatuslineRefreshResponse,
+  type StopAgentResponse,
+  type StopServiceResponse,
+  type SwitchableAgentsInput,
+  type SwitchableAgentsResponse,
+  type SwitchAgentRequest,
+  type TaskAssignInput,
+  type TaskDetailResponse,
+  type TaskLifecycleInput,
+  type TaskListResponse,
+  type TeammateLifecycleResponse,
+  type TeammateListResponse,
+  type ThreadLifecycleInput,
+  type ThreadMarkSeenInput,
+  type ThreadMarkSeenResponse,
+  type ThreadOpenInput,
+  type ThreadOpenResponse,
+  type ThreadSendInput,
+  type ThreadSendResponse,
+  type ThreadStatusInput,
+  type ThreadStatusResponse,
+  type ThreadSummaryResponse,
+  type WorkflowMutationResponse,
+  type WorktreesResponse,
+  type WorktreePathInput,
+} from "../../src/project-api-contract";
+
+export type {
+  CoordinationBucket,
+  CoordinationReachability,
+  CoordinationWorklistItem,
+  CoordinationWorklistResponse,
+  CoordinationWorklistType,
+  GraveyardEntryResponse,
+  GraveyardResponse,
+  LibraryDocument,
+  LibraryEntry,
+  LibraryResponse,
+  NotificationRecord,
+  NotificationsResponse,
+  ProjectObservabilityResponse,
+  ProjectTopologyResponse,
+  TeammateListResponse,
+  ProjectWorktreeSummary,
+  TaskDetailResponse,
+  TaskListResponse,
+  TaskSummaryResponse,
+  ThreadSummaryResponse,
+  WorktreeGraveyardEntryResponse,
+  WorktreesResponse,
+} from "../../src/project-api-contract";
 
 let _relay: RelayTransport | null = null;
 export function setApiRelay(relay: RelayTransport | null): void {
   _relay = relay;
 }
 
+export function getApiRelay(): RelayTransport | null {
+  return _relay;
+}
+
 export interface ApiOpts {
   token?: string | null;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export class ApiError extends Error {
@@ -36,22 +159,58 @@ export class ApiError extends Error {
   }
 }
 
+const DEFAULT_API_TIMEOUT_MS = 10_000;
+
+function requestSignal(opts?: ApiOpts): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1, opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  const abortFromCaller = () => controller.abort(opts?.signal?.reason);
+  if (opts?.signal?.aborted) abortFromCaller();
+  else opts?.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      opts?.signal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
 async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Promise<T> {
   const headers = new Headers(init.headers);
   if (opts?.token) headers.set("Authorization", `Bearer ${opts.token}`);
   if (!headers.has("content-type") && init.body !== undefined && init.body !== null) {
     headers.set("content-type", "application/json");
   }
-  const res = await fetch(url, { ...init, headers, signal: opts?.signal });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const msg =
-      body && typeof body === "object" && "error" in body
-        ? String((body as { error: unknown }).error)
-        : `HTTP ${res.status}`;
-    throw new ApiError(res.status, body, `${msg} (${url})`);
+  const { signal, cleanup } = requestSignal(opts);
+  try {
+    const res = await fetch(url, { ...init, headers, signal });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const msg =
+        body && typeof body === "object" && "error" in body
+          ? String((body as { error: unknown }).error)
+          : `HTTP ${res.status}`;
+      throw new ApiError(res.status, body, `${msg} (${url})`);
+    }
+    const body = await res.json();
+    if (
+      body &&
+      typeof body === "object" &&
+      "ok" in body &&
+      (body as { ok?: unknown }).ok === false
+    ) {
+      const message =
+        "error" in body ? String((body as { error: unknown }).error) : "Request failed";
+      throw new ApiError(res.status, body, `${message} (${url})`);
+    }
+    return body as T;
+  } finally {
+    cleanup();
   }
-  return (await res.json()) as T;
 }
 
 async function callDaemonViaRelay<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -75,7 +234,7 @@ async function callServiceViaRelay<T>(
   return callDaemonViaRelay<T>(method, proxyPath, body);
 }
 
-function shouldRouteViaRelay(): boolean {
+export function shouldRouteViaRelay(): boolean {
   return _relay !== null || env.AIMUX_CONNECTION_MODE === "relay";
 }
 
@@ -95,6 +254,44 @@ async function callProjectJson<T>(
     },
     opts,
   );
+}
+
+function projectProxyPath(endpoint: ServiceEndpoint, path: string): string {
+  return `/proxy/${endpoint.host}/${endpoint.port}${path}`;
+}
+
+function queryPath(
+  path: string,
+  params: Record<string, string | number | undefined | null>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return `${path}${qs ? `?${qs}` : ""}`;
+}
+
+export interface ProjectStreamRoute {
+  path: string;
+  directUrl: string;
+  relayPath: string;
+  headers: Record<string, string>;
+}
+
+function projectStreamRoute(
+  endpoint: ServiceEndpoint,
+  path: string,
+  opts?: ApiOpts,
+): ProjectStreamRoute {
+  const headers: Record<string, string> = {};
+  if (opts?.token) headers.Authorization = `Bearer ${opts.token}`;
+  return {
+    path,
+    directUrl: `${getServiceUrl(endpoint)}${path}`,
+    relayPath: projectProxyPath(endpoint, path),
+    headers,
+  };
 }
 
 // ── Daemon (port 43190) ───────────────────────────────────────────────────
@@ -167,17 +364,31 @@ export async function getProjectState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectStateResponse> {
-  return callProjectJson<ProjectStateResponse>(endpoint, "GET", "/state", opts);
+  return callProjectJson<ProjectStateResponse>(endpoint, "GET", PROJECT_API_ROUTES.state, opts);
 }
 
-export interface AgentOutputResponse {
-  sessionId: string;
-  output: string;
-  startLine?: number;
-  parsed?: ParsedAgentOutput;
+export async function getProjectHealth(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectHealthResponse> {
+  return callProjectJson<ProjectHealthResponse>(endpoint, "GET", PROJECT_API_ROUTES.health, opts);
 }
 
-export async function getAgentOutput(
+export async function getProjectDiagnostics(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectDiagnosticsResponse> {
+  return callProjectJson<ProjectDiagnosticsResponse>(
+    endpoint,
+    "GET",
+    PROJECT_API_ROUTES.diagnostics,
+    opts,
+  );
+}
+
+export type AgentOutputResponse = LivePaneOutputResponse & { parsed?: ParsedAgentOutput };
+
+export async function getLivePaneOutput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   startLine?: number,
@@ -188,31 +399,404 @@ export async function getAgentOutput(
   return callProjectJson<AgentOutputResponse>(
     endpoint,
     "GET",
-    `/agents/output?${params.toString()}`,
+    `${PROJECT_API_ROUTES.livePane.output}?${params.toString()}`,
     opts,
   );
 }
 
-export interface SendAgentInputResponse {
-  ok: boolean;
-  sessionId: string;
-  accepted: true;
+export const getAgentOutput = getLivePaneOutput;
+
+export function getAgentOutputStreamRoute(
+  endpoint: ServiceEndpoint,
+  input: AgentOutputStreamInput,
+  opts?: ApiOpts,
+): ProjectStreamRoute {
+  return projectStreamRoute(
+    endpoint,
+    queryPath(PROJECT_API_ROUTES.agents.outputStream, {
+      sessionId: input.sessionId,
+      startLine: input.startLine,
+      intervalMs: input.intervalMs,
+    }),
+    opts,
+  );
 }
+
+export type SendAgentInputResponse = LivePaneInputResponse;
 
 export interface SendAgentInputOptions extends ApiOpts {
   attachmentIds?: string[];
 }
 
-export async function sendAgentInput(
+export async function sendLivePaneInput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   text: string,
   opts?: SendAgentInputOptions,
 ): Promise<SendAgentInputResponse> {
-  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", "/agents/input", opts, {
+  return callProjectJson<SendAgentInputResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.livePane.input,
+    opts,
+    {
+      sessionId,
+      text,
+      ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+    },
+  );
+}
+
+export const sendAgentInput = sendLivePaneInput;
+
+export async function interruptLivePane(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; sessionId: string }> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.interrupt, opts, {
     sessionId,
-    text,
-    ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+  });
+}
+
+export async function resizeLivePane(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  cols: number,
+  rows: number,
+  opts?: ApiOpts,
+): Promise<LivePaneResizeResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.resize, opts, {
+    sessionId,
+    cols,
+    rows,
+  });
+}
+
+export async function attachLivePane(
+  endpoint: ServiceEndpoint,
+  input: LivePaneAttachRequest,
+  opts?: ApiOpts,
+): Promise<LivePaneAttachResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.attach, opts, input);
+}
+
+export async function listAgents(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<AgentListResponse> {
+  return callProjectJson<AgentListResponse>(endpoint, "GET", PROJECT_API_ROUTES.agents.list, opts);
+}
+
+export async function spawnAgent(
+  endpoint: ServiceEndpoint,
+  input: SpawnAgentInput,
+  opts?: ApiOpts,
+): Promise<SpawnAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.spawn, opts, input);
+}
+
+export async function forkAgent(
+  endpoint: ServiceEndpoint,
+  input: ForkAgentInput,
+  opts?: ApiOpts,
+): Promise<ForkAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.fork, opts, input);
+}
+
+export async function stopAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<StopAgentResponse> {
+  const input: AgentSessionInput = { sessionId };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.stop, opts, input);
+}
+
+export async function resumeAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<ResumeAgentResponse> {
+  const input: AgentSessionInput = { sessionId };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.resume, opts, input);
+}
+
+export async function killAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<KillAgentResponse> {
+  const input: AgentSessionInput = { sessionId };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.kill, opts, input);
+}
+
+export async function renameAgent(
+  endpoint: ServiceEndpoint,
+  input: RenameAgentInput,
+  opts?: ApiOpts,
+): Promise<RenameAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.rename, opts, input);
+}
+
+export async function migrateAgent(
+  endpoint: ServiceEndpoint,
+  input: MigrateAgentInput,
+  opts?: ApiOpts,
+): Promise<MigrateAgentResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.migrate, opts, input);
+}
+
+export async function setAgentLoop(
+  endpoint: ServiceEndpoint,
+  input: AgentLoopInput,
+  opts?: ApiOpts,
+): Promise<AgentLoopResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.loop, opts, input);
+}
+
+export async function setAgentOverseer(
+  endpoint: ServiceEndpoint,
+  input: AgentOverseerInput,
+  opts?: ApiOpts,
+): Promise<AgentOverseerResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.overseer, opts, input);
+}
+
+export async function listTeammates(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateListResponse> {
+  const path = queryPath(PROJECT_API_ROUTES.agents.teammates, { parentSessionId });
+  return callProjectJson(endpoint, "GET", path, opts);
+}
+
+export async function createTeammate(
+  endpoint: ServiceEndpoint,
+  input: CreateTeammateInput,
+  opts?: ApiOpts,
+): Promise<CreateTeammateResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.agents.createTeammate, opts, input);
+}
+
+export async function createTeammateTask(
+  endpoint: ServiceEndpoint,
+  input: CreateTeammateTaskInput,
+  opts?: ApiOpts,
+): Promise<CreateTeammateTaskResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.agents.createTeammateTask,
+    opts,
+    input,
+  );
+}
+
+async function teammateLifecycle(
+  endpoint: ServiceEndpoint,
+  path: string,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return callProjectJson(endpoint, "POST", path, opts, { parentSessionId, teammateSessionId });
+}
+
+export async function stopTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.stopTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function resumeTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.resumeTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function killTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.killTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function resurrectTeammate(
+  endpoint: ServiceEndpoint,
+  parentSessionId: string,
+  teammateSessionId: string,
+  opts?: ApiOpts,
+): Promise<TeammateLifecycleResponse> {
+  return teammateLifecycle(
+    endpoint,
+    PROJECT_API_ROUTES.agents.resurrectTeammate,
+    parentSessionId,
+    teammateSessionId,
+    opts,
+  );
+}
+
+export async function listSwitchableAgents(
+  endpoint: ServiceEndpoint,
+  input: SwitchableAgentsInput = {},
+  opts?: ApiOpts,
+): Promise<SwitchableAgentsResponse> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) {
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return callProjectJson(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.controls.switchableAgents}${query ? `?${query}` : ""}`,
+    opts,
+  );
+}
+
+export async function listPendingInteractions(
+  endpoint: ServiceEndpoint,
+  sessionId?: string,
+  opts?: ApiOpts,
+): Promise<InteractionPendingResponse> {
+  const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+  return callProjectJson(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.agents.interactionPending}${query}`,
+    opts,
+  );
+}
+
+export async function respondToInteraction(
+  endpoint: ServiceEndpoint,
+  input: InteractionRespondInput,
+  opts?: ApiOpts,
+): Promise<InteractionRespondResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.agents.interactionRespond,
+    opts,
+    input,
+  );
+}
+
+export function getInteractionStreamRoute(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): ProjectStreamRoute & { eventTypes: InteractionStreamEventName[] } {
+  return {
+    ...projectStreamRoute(endpoint, PROJECT_API_ROUTES.agents.interactionStream, opts),
+    eventTypes: ["ready", "interaction"],
+  };
+}
+
+export async function openDashboard(
+  endpoint: ServiceEndpoint,
+  input: OpenDashboardRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.openDashboard, opts, {
+    focus: false,
+    ...input,
+  });
+}
+
+export async function openNotificationTarget(
+  endpoint: ServiceEndpoint,
+  input: OpenNotificationTargetRequest,
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.controls.openNotificationTarget,
+    opts,
+    {
+      focus: false,
+      ...input,
+    },
+  );
+}
+
+export async function focusWindow(
+  endpoint: ServiceEndpoint,
+  input: FocusWindowRequest,
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.focusWindow, opts, {
+    focus: false,
+    ...input,
+  });
+}
+
+export async function markActiveWindow(
+  endpoint: ServiceEndpoint,
+  input: ActiveWindowRequest,
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.activeWindow, opts, input);
+}
+
+export async function switchNextAgent(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchNext, opts, {
+    focus: false,
+    ...input,
+  });
+}
+
+export async function switchPrevAgent(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchPrev, opts, {
+    focus: false,
+    ...input,
+  });
+}
+
+export async function switchAttentionAgent(
+  endpoint: ServiceEndpoint,
+  input: SwitchAgentRequest = {},
+  opts?: ApiOpts,
+): Promise<ControlActionResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.controls.switchAttention, opts, {
+    focus: false,
+    ...input,
   });
 }
 
@@ -242,12 +826,18 @@ export async function uploadImageAttachment(
   input: UploadImageAttachmentInput,
   opts?: ApiOpts,
 ): Promise<UploadImageAttachmentResponse> {
-  return callProjectJson<UploadImageAttachmentResponse>(endpoint, "POST", "/attachments", opts, {
-    kind: "image",
-    filename: input.filename,
-    mimeType: input.mimeType,
-    dataBase64: input.dataBase64,
-  });
+  return callProjectJson<UploadImageAttachmentResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.attachments,
+    opts,
+    {
+      kind: "image",
+      filename: input.filename,
+      mimeType: input.mimeType,
+      dataBase64: input.dataBase64,
+    },
+  );
 }
 
 // ── Relay sharing ────────────────────────────────────────────────────────
@@ -408,7 +998,7 @@ export async function getPlan(
   return callProjectJson<PlanResponse>(
     endpoint,
     "GET",
-    `/plans/${encodeURIComponent(sessionId)}`,
+    `${PROJECT_API_ROUTES.plans}/${encodeURIComponent(sessionId)}`,
     opts,
   );
 }
@@ -422,7 +1012,7 @@ export async function putPlan(
   return callProjectJson<{ ok: boolean; sessionId: string }>(
     endpoint,
     "PUT",
-    `/plans/${encodeURIComponent(sessionId)}`,
+    `${PROJECT_API_ROUTES.plans}/${encodeURIComponent(sessionId)}`,
     opts,
     { content },
   );
@@ -434,47 +1024,10 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<DesktopState> {
-  return callProjectJson<DesktopState>(endpoint, "GET", "/desktop-state", opts);
+  return callProjectJson<DesktopState>(endpoint, "GET", PROJECT_API_ROUTES.desktopState, opts);
 }
 
 // ── Notifications ────────────────────────────────────────────────────────
-
-export interface NotificationRecord {
-  id: string;
-  title: string;
-  subtitle?: string;
-  body: string;
-  sessionId?: string;
-  targetKey?: string;
-  targetKind?: "session" | "generic";
-  kind?: string;
-  projectName?: string;
-  projectRoot?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  branch?: string;
-  categoryLabel?: string;
-  reasonLabel?: string;
-  unread: boolean;
-  cleared: boolean;
-  createdAt: string;
-  updatedAt: string;
-  dedupeKey?: string;
-  interaction?: {
-    id: string;
-    type: "permission" | "exit_plan" | "question" | "input";
-    summary?: string;
-    telemetry?: boolean;
-    toolName?: string;
-    toolInputJSON?: string;
-  };
-}
-
-export interface NotificationsResponse {
-  ok: boolean;
-  notifications: NotificationRecord[];
-  unreadCount: number;
-}
 
 export async function listNotifications(
   endpoint: ServiceEndpoint,
@@ -487,66 +1040,84 @@ export async function listNotifications(
   return callProjectJson<NotificationsResponse>(
     endpoint,
     "GET",
-    `/notifications${query ? `?${query}` : ""}`,
+    `${PROJECT_API_ROUTES.notifications.list}${query ? `?${query}` : ""}`,
     opts,
   );
 }
 
 export async function markNotificationsRead(
   endpoint: ServiceEndpoint,
-  input: { id?: string; sessionId?: string } = {},
+  input: NotificationMutationInput = {},
   opts?: ApiOpts,
-): Promise<{ ok: boolean; updated: number }> {
-  return callProjectJson(endpoint, "POST", "/notifications/read", opts, input);
+): Promise<NotificationReadResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.notifications.read, opts, input);
 }
 
 export async function clearNotifications(
   endpoint: ServiceEndpoint,
-  input: { id?: string; sessionId?: string } = {},
+  input: NotificationMutationInput = {},
   opts?: ApiOpts,
-): Promise<{ ok: boolean; cleared: number }> {
+): Promise<NotificationClearResponse> {
   const response = await callProjectJson<{ ok: boolean; cleared?: number; updated?: number }>(
     endpoint,
     "POST",
-    "/notifications/clear",
+    PROJECT_API_ROUTES.notifications.clear,
     opts,
     input,
   );
   return { ok: response.ok, cleared: response.cleared ?? response.updated ?? 0 };
 }
 
+export async function getOrchestrationRouteOptions(
+  endpoint: ServiceEndpoint,
+  input: { mode?: OrchestrationRouteMode; selectedSessionId?: string; worktreePath?: string } = {},
+  opts?: ApiOpts,
+): Promise<OrchestrationRouteOptionsResponse> {
+  const params = new URLSearchParams();
+  if (input.mode) params.set("mode", input.mode);
+  if (input.selectedSessionId) params.set("selectedSessionId", input.selectedSessionId);
+  if (input.worktreePath) params.set("worktreePath", input.worktreePath);
+  const query = params.toString();
+  return callProjectJson<OrchestrationRouteOptionsResponse>(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.orchestration.routes}${query ? `?${query}` : ""}`,
+    opts,
+  );
+}
+
 // ── Service actions ──────────────────────────────────────────────────────
 
 export async function createService(
   endpoint: ServiceEndpoint,
-  input: { command?: string; worktreePath?: string; serviceId?: string },
+  input: CreateServiceInput,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string }> {
-  return callProjectJson(endpoint, "POST", "/services/create", opts, input);
+): Promise<CreateServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.create, opts, input);
 }
 
 export async function stopService(
   endpoint: ServiceEndpoint,
   serviceId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
-  return callProjectJson(endpoint, "POST", "/services/stop", opts, { serviceId });
+): Promise<StopServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.stop, opts, { serviceId });
 }
 
 export async function resumeService(
   endpoint: ServiceEndpoint,
   serviceId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
-  return callProjectJson(endpoint, "POST", "/services/resume", opts, { serviceId });
+): Promise<ResumeServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.resume, opts, { serviceId });
 }
 
 export async function removeService(
   endpoint: ServiceEndpoint,
   serviceId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
-  return callProjectJson(endpoint, "POST", "/services/remove", opts, { serviceId });
+): Promise<RemoveServiceResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.services.remove, opts, { serviceId });
 }
 
 // ── Worktree actions ─────────────────────────────────────────────────────
@@ -555,128 +1126,105 @@ export async function createWorktree(
   endpoint: ServiceEndpoint,
   name: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string }> {
-  return callProjectJson(endpoint, "POST", "/worktrees/create", opts, { name });
+): Promise<CreateWorktreeResponse> {
+  const input: CreateWorktreeInput = { name };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.create, opts, input);
 }
 
 export async function removeWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string }> {
-  return callProjectJson(endpoint, "POST", "/worktrees/remove", opts, { path });
+): Promise<RemoveWorktreeResponse> {
+  const input: WorktreePathInput = { path };
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.worktreeActions.remove, opts, input);
 }
 
 export async function graveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "graveyarded" }> {
-  return callProjectJson(endpoint, "POST", "/worktrees/graveyard", opts, { path });
+): Promise<GraveyardWorktreeResponse> {
+  const input: WorktreePathInput = { path };
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.worktreeActions.graveyard,
+    opts,
+    input,
+  );
 }
 
 // ── Worktrees, graveyard, threads ───────────────────────────────────────
-
-export interface WorktreesResponse {
-  ok: boolean;
-  worktrees: DesktopState["worktrees"];
-  [k: string]: unknown;
-}
-
-export interface GraveyardEntryResponse {
-  id: string;
-  tool?: string;
-  label?: string;
-  diedAt?: string;
-  [k: string]: unknown;
-}
-
-export interface WorktreeGraveyardEntryResponse {
-  name: string;
-  path: string;
-  branch?: string;
-  createdAt?: string;
-  graveyardedAt?: string;
-  agents?: GraveyardEntryResponse[];
-  services?: Array<{ id: string; command?: string; [k: string]: unknown }>;
-  [k: string]: unknown;
-}
-
-export interface GraveyardResponse {
-  ok: boolean;
-  entries: GraveyardEntryResponse[];
-  worktrees?: WorktreeGraveyardEntryResponse[];
-  [k: string]: unknown;
-}
-
-export interface ThreadSummaryResponse {
-  thread: { id: string; title?: string; status?: string; kind?: string };
-  lastMessage?: { body?: string; createdAt?: string };
-  [k: string]: unknown;
-}
-
-export interface TaskSummaryResponse {
-  id: string;
-  description?: string;
-  status?: string;
-  assignedTo?: string;
-  assignedBy?: string;
-  assignee?: string;
-  tool?: string;
-  threadId?: string;
-  [k: string]: unknown;
-}
-
-export interface TaskListResponse {
-  ok: boolean;
-  tasks: TaskSummaryResponse[];
-  [k: string]: unknown;
-}
-
-export interface TaskDetailResponse {
-  ok: boolean;
-  task: TaskSummaryResponse;
-  thread?: ThreadSummaryResponse["thread"];
-  messages?: Array<{ id?: string; body?: string; [k: string]: unknown }>;
-  [k: string]: unknown;
-}
 
 export async function listWorktrees(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<WorktreesResponse> {
-  return callProjectJson<WorktreesResponse>(endpoint, "GET", "/worktrees", opts);
+  return callProjectJson<WorktreesResponse>(endpoint, "GET", PROJECT_API_ROUTES.worktrees, opts);
 }
 
 export async function listGraveyard(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<GraveyardResponse> {
-  return callProjectJson<GraveyardResponse>(endpoint, "GET", "/graveyard", opts);
+  return callProjectJson<GraveyardResponse>(endpoint, "GET", PROJECT_API_ROUTES.graveyard, opts);
 }
 
 export async function resurrectGraveyardAgent(
   endpoint: ServiceEndpoint,
   sessionId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; sessionId: string; status: "offline" }> {
-  return callProjectJson(endpoint, "POST", "/graveyard/resurrect", opts, { sessionId });
+): Promise<ResurrectAgentResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
+    opts,
+    { sessionId },
+  );
 }
 
 export async function resurrectGraveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "active" }> {
-  return callProjectJson(endpoint, "POST", "/graveyard/worktrees/resurrect", opts, { path });
+): Promise<ResurrectWorktreeResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.resurrectWorktree,
+    opts,
+    { path },
+  );
 }
 
 export async function deleteGraveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "removed" }> {
-  return callProjectJson(endpoint, "POST", "/graveyard/worktrees/delete", opts, { path });
+): Promise<DeleteWorktreeResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.deleteWorktree,
+    opts,
+    { path },
+  );
+}
+
+export async function cleanupGraveyard(
+  endpoint: ServiceEndpoint,
+  input: GraveyardCleanupInput = {},
+  opts?: ApiOpts,
+): Promise<GraveyardCleanupResponse> {
+  return callProjectJson(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.graveyardActions.cleanup,
+    opts,
+    input,
+  );
 }
 
 export async function listThreads(
@@ -684,20 +1232,205 @@ export async function listThreads(
   sessionId?: string,
   opts?: ApiOpts,
 ): Promise<ThreadSummaryResponse[]> {
-  const path = sessionId ? `/threads?session=${encodeURIComponent(sessionId)}` : "/threads";
+  const path = sessionId
+    ? `${PROJECT_API_ROUTES.threads.list}?session=${encodeURIComponent(sessionId)}`
+    : PROJECT_API_ROUTES.threads.list;
   return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
 }
 
-export async function listWorkflow(
+export async function markThreadSeen(
   endpoint: ServiceEndpoint,
-  participant = "user",
+  input: ThreadMarkSeenInput,
   opts?: ApiOpts,
-): Promise<Array<Record<string, unknown>>> {
-  return callProjectJson<Array<Record<string, unknown>>>(
+): Promise<ThreadMarkSeenResponse> {
+  return callProjectJson<ThreadMarkSeenResponse>(
     endpoint,
-    "GET",
-    `/workflow?participant=${encodeURIComponent(participant)}`,
+    "POST",
+    PROJECT_API_ROUTES.threads.markSeen,
     opts,
+    input,
+  );
+}
+
+export async function openThread(
+  endpoint: ServiceEndpoint,
+  input: ThreadOpenInput,
+  opts?: ApiOpts,
+): Promise<ThreadOpenResponse> {
+  return callProjectJson<ThreadOpenResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.open,
+    opts,
+    input,
+  );
+}
+
+export async function sendThreadMessage(
+  endpoint: ServiceEndpoint,
+  input: ThreadSendInput,
+  opts?: ApiOpts,
+): Promise<ThreadSendResponse> {
+  return callProjectJson<ThreadSendResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.send,
+    opts,
+    input,
+  );
+}
+
+export async function updateThreadStatus(
+  endpoint: ServiceEndpoint,
+  input: ThreadStatusInput,
+  opts?: ApiOpts,
+): Promise<ThreadStatusResponse> {
+  return callProjectJson<ThreadStatusResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.threads.status,
+    opts,
+    input,
+  );
+}
+
+export async function sendHandoff(
+  endpoint: ServiceEndpoint,
+  input: HandoffSendInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.handoff.send,
+    opts,
+    input,
+  );
+}
+
+export async function acceptHandoff(
+  endpoint: ServiceEndpoint,
+  input: ThreadLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.handoff.accept,
+    opts,
+    input,
+  );
+}
+
+export async function completeHandoff(
+  endpoint: ServiceEndpoint,
+  input: ThreadLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.handoff.complete,
+    opts,
+    input,
+  );
+}
+
+export async function assignTask(
+  endpoint: ServiceEndpoint,
+  input: TaskAssignInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.assign,
+    opts,
+    input,
+  );
+}
+
+export async function acceptTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.accept,
+    opts,
+    input,
+  );
+}
+
+export async function blockTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.block,
+    opts,
+    input,
+  );
+}
+
+export async function completeTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.complete,
+    opts,
+    input,
+  );
+}
+
+export async function reopenTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.reopen,
+    opts,
+    input,
+  );
+}
+
+export async function approveReview(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.reviews.approve,
+    opts,
+    input,
+  );
+}
+
+export async function requestReviewChanges(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.reviews.requestChanges,
+    opts,
+    input,
   );
 }
 
@@ -713,32 +1446,71 @@ export async function listTasks(
   return callProjectJson<TaskListResponse>(
     endpoint,
     "GET",
-    `/tasks${query ? `?${query}` : ""}`,
+    `${PROJECT_API_ROUTES.tasks.list}${query ? `?${query}` : ""}`,
     opts,
   );
 }
 
-export interface LibraryDocument {
-  id: string;
-  title: string;
-  path: string;
-  kind: string;
-  size: number;
-  updatedAt: string;
-  content: string;
-  truncated?: boolean;
+// ── Coordination worklist (reconciled "needs-you" inbox) ─────────────────
+
+export async function getCoordinationWorklist(
+  endpoint: ServiceEndpoint,
+  participant = "user",
+  opts?: ApiOpts,
+): Promise<CoordinationWorklistResponse> {
+  return callProjectJson<CoordinationWorklistResponse>(
+    endpoint,
+    "GET",
+    `${PROJECT_API_ROUTES.coordinationWorklist}?participant=${encodeURIComponent(participant)}`,
+    opts,
+  );
 }
 
-export interface LibraryResponse {
-  ok: boolean;
-  documents: LibraryDocument[];
+export async function getProjectObservability(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectObservabilityResponse> {
+  return callProjectJson<ProjectObservabilityResponse>(
+    endpoint,
+    "GET",
+    PROJECT_API_ROUTES.projectObservability,
+    opts,
+  );
+}
+
+export async function getProjectTopology(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<ProjectTopologyResponse> {
+  return callProjectJson<ProjectTopologyResponse>(
+    endpoint,
+    "GET",
+    PROJECT_API_ROUTES.topology,
+    opts,
+  );
 }
 
 export async function listProjectLibrary(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<LibraryResponse> {
-  return callProjectJson<LibraryResponse>(endpoint, "GET", "/library", opts);
+  return callProjectJson<LibraryResponse>(endpoint, "GET", PROJECT_API_ROUTES.library, opts);
+}
+
+export async function refreshStatusline(
+  endpoint: ServiceEndpoint,
+  input: StatuslineRefreshInput = {},
+  opts?: ApiOpts,
+): Promise<StatuslineRefreshResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.statuslineRefresh, opts, input);
+}
+
+export async function clearOperationFailures(
+  endpoint: ServiceEndpoint,
+  input: OperationFailuresClearInput = {},
+  opts?: ApiOpts,
+): Promise<OperationFailuresClearResponse> {
+  return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.operationFailuresClear, opts, input);
 }
 
 export async function getTask(
@@ -749,7 +1521,7 @@ export async function getTask(
   return callProjectJson<TaskDetailResponse>(
     endpoint,
     "GET",
-    `/tasks/${encodeURIComponent(taskId)}`,
+    `${PROJECT_API_ROUTES.tasks.list}/${encodeURIComponent(taskId)}`,
     opts,
   );
 }

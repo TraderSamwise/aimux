@@ -16,7 +16,7 @@ aimux_home=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|inbox|menu|expose|meta|window|active|team)
+    next|prev|attention|dashboard|coordination|menu|expose|meta|window|active|team)
       action="$1"
       shift
       ;;
@@ -71,7 +71,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$action" ] || exit 1
-[ -n "$project_state_dir" ] || exit 1
 
 hydrate_from_tmux_pane() {
   pane_target="$pane_id"
@@ -97,22 +96,37 @@ hydrate_from_tmux_pane() {
 
 hydrate_from_tmux_pane || true
 
-endpoint_file="$project_state_dir/metadata-api.txt"
-project_root_file="$project_state_dir/project-root.txt"
-statusline_json="$project_state_dir/statusline.json"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
-debug_log_line() {
-  printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
+project_context_session() {
+  context_session="$current_client_session"
+  [ -n "$context_session" ] || return 1
+  case "$context_session" in
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      context_session=${context_session%-client-????????}
+      ;;
+  esac
+  printf '%s' "$context_session"
 }
 
-load_endpoint() {
-  [ -f "$endpoint_file" ] || return 1
-  endpoint=$(tr -d '\n' < "$endpoint_file")
-  [ -n "$endpoint" ] || return 1
-  return 0
+hydrate_project_context() {
+  context_session=$(project_context_session) || return 1
+  if [ -z "$project_root" ]; then
+    project_root=$(tmux show-options -v -t "$context_session" @aimux-project-root 2>/dev/null || true)
+  fi
+  if [ -z "$project_state_dir" ]; then
+    project_state_dir=$(tmux show-options -v -t "$context_session" @aimux-project-state-dir 2>/dev/null || true)
+  fi
+}
+
+hydrate_project_context || true
+
+[ -n "$project_state_dir" ] || exit 1
+
+debug_log_line() {
+  printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
 }
 
 shell_quote() {
@@ -150,26 +164,75 @@ resolve_live_client() {
   return 1
 }
 
-request_control() {
-  max_time="$1"
-  curl \
-    --silent \
-    --show-error \
-    --fail \
-    --max-time "$max_time" \
-    --get \
-    --data-urlencode "currentClientSession=$current_client_session" \
-    --data-urlencode "clientTty=$client_tty" \
-    --data-urlencode "currentWindow=$current_window" \
-    --data-urlencode "currentWindowId=$current_window_id" \
-    --data-urlencode "currentPath=$current_path" \
-    --data-urlencode "windowId=$window_id" \
-    "${endpoint}${path}" >/dev/null 2>>"$debug_log"
+switch_client_to_target() {
+  switch_target="$1"
+  switch_tty="${2-}"
+  if [ -n "$switch_tty" ]; then
+    tmux switch-client -c "$switch_tty" -t "$switch_target" >/dev/null 2>&1 || return 1
+  else
+    tmux switch-client -t "$switch_target" >/dev/null 2>&1 || return 1
+  fi
 }
 
-focus_local_dashboard_target() {
-  resolve_live_client || true
+refresh_navigation_client() {
+  refresh_tty="${1-}"
+  if [ -n "$refresh_tty" ]; then
+    tmux refresh-client -t "$refresh_tty" -S >/dev/null 2>&1 || true
+  else
+    tmux refresh-client -S >/dev/null 2>&1 || true
+  fi
+}
 
+validate_dashboard_target() {
+  validate_session="$1"
+  validate_index="$2"
+  validate_target="${validate_session}:${validate_index}"
+  dashboard_row=$(tmux list-windows -t "$validate_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$validate_index" '$1 == idx { print; exit }')
+  [ -n "$dashboard_row" ] || return 1
+  dashboard_window_id=$(printf '%s' "$dashboard_row" | cut -d '|' -f2)
+  dashboard_pane_dead=$(printf '%s' "$dashboard_row" | cut -d '|' -f4)
+  [ -n "$dashboard_window_id" ] || return 1
+  [ "$dashboard_pane_dead" != "1" ] && [ -n "$dashboard_pane_dead" ] || return 1
+
+  validate_host_session="$validate_session"
+  case "$validate_host_session" in
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      validate_host_session=${validate_host_session%-client-????????}
+      ;;
+  esac
+
+  target_project_root=$(tmux show-options -v -t "$validate_host_session" @aimux-project-root 2>/dev/null || true)
+  [ -n "$project_root" ] && [ "$target_project_root" = "$project_root" ] || return 1
+
+  expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
+  dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
+  [ -n "$expected_dashboard_build" ] && [ "$dashboard_build" = "$expected_dashboard_build" ] || return 1
+
+  expected_runtime_owner=$(tmux show-options -v -t "$validate_host_session" @aimux-runtime-owner 2>/dev/null || true)
+  target_runtime_owner=$(tmux show-options -v -t "$validate_session" @aimux-runtime-owner 2>/dev/null || true)
+  dashboard_owner=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-owner 2>/dev/null || true)
+  [ -n "$expected_runtime_owner" ] && [ "$target_runtime_owner" = "$expected_runtime_owner" ] && [ "$dashboard_owner" = "$expected_runtime_owner" ] || return 1
+
+  if [ "$(tmux display-message -p -t "$dashboard_window_id" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
+    tmux send-keys -t "$dashboard_window_id" -X cancel >/dev/null 2>&1 || true
+  fi
+
+  dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
+  case "$dashboard_command" in
+    cat|tail)
+      return 1
+      ;;
+  esac
+  dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
+  case "$dashboard_preview" in
+    *"aimux dashboard failed to start."*)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+find_dashboard_candidate() {
   dashboard_session=""
   dashboard_index=""
 
@@ -190,7 +253,9 @@ focus_local_dashboard_target() {
   if [ -z "$dashboard_session" ]; then
     session_prefix="$current_client_session"
     case "$session_prefix" in
-      *-client-*) session_prefix=${session_prefix%-client-*} ;;
+      *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+        session_prefix=${session_prefix%-client-????????}
+        ;;
     esac
     dashboard_target=$(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' -v prefix="$session_prefix" '$1 ~ ("^" prefix "(-client-[a-f0-9]{8})?$") && $3 ~ /^dashboard/ { print $1 "|" $2; exit }')
     if [ -n "$dashboard_target" ]; then
@@ -199,84 +264,131 @@ focus_local_dashboard_target() {
     fi
   fi
 
-  [ -n "$dashboard_session" ] || return 1
+  [ -n "$dashboard_session" ] && [ -n "$dashboard_index" ]
+}
+
+dashboard_candidate_needs_reload() {
+  find_dashboard_candidate || return 0
+  dashboard_row=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}|#{pane_dead}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print; exit }')
+  dashboard_window_id=$(printf '%s' "$dashboard_row" | cut -d '|' -f2)
+  dashboard_pane_dead=$(printf '%s' "$dashboard_row" | cut -d '|' -f4)
+  [ -n "$dashboard_window_id" ] || return 0
+  [ "$dashboard_pane_dead" != "1" ] && [ -n "$dashboard_pane_dead" ] || return 0
+
+  validate_host_session="$dashboard_session"
+  case "$validate_host_session" in
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      validate_host_session=${validate_host_session%-client-????????}
+      ;;
+  esac
+  expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
+  dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
+  [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] || return 0
+  [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
+
+  dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
+  case "$dashboard_preview" in
+    *"aimux dashboard failed to start."*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+switch_fast_current_session_dashboard() {
+  [ -n "$current_client_session" ] || return 1
+  dashboard_index=$(tmux list-windows -t "$current_client_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 ~ /^dashboard/ { print $1; exit }')
   [ -n "$dashboard_index" ] || return 1
+  validate_dashboard_target "$current_client_session" "$dashboard_index" || return 1
+  dashboard_switch_target="${current_client_session}:${dashboard_index}"
+  switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
+  refresh_navigation_client "$client_tty"
+  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  exit 0
+}
+
+focus_local_dashboard_target() {
+  resolve_live_client || true
+  find_dashboard_candidate || return 1
   dashboard_switch_target="${dashboard_session}:${dashboard_index}"
-
-  if [ "$(tmux display-message -p -t "$dashboard_switch_target" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
-    tmux send-keys -t "$dashboard_switch_target" -X cancel >/dev/null 2>&1 || true
-  fi
-
-  dashboard_window_id=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print $2; exit }')
-  if [ -n "$dashboard_window_id" ]; then
-    dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
-    case "$dashboard_command" in
-      sh|bash|cat|tail)
-        return 1
-        ;;
-    esac
-    dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
-    case "$dashboard_preview" in
-      *"aimux dashboard failed to start."*)
-        return 1
-        ;;
-    esac
-  fi
+  validate_dashboard_target "$dashboard_session" "$dashboard_index" || return 1
 
   return 0
 }
 
 switch_local_dashboard() {
+  switch_fast_current_session_dashboard || true
   focus_local_dashboard_target || return 1
 
   if [ -n "${live_client_tty-}" ]; then
-    tmux switch-client -c "$live_client_tty" -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
+    switch_client_to_target "$dashboard_switch_target" "$live_client_tty" || return 1
   elif [ -n "$client_tty" ]; then
-    tmux switch-client -c "$client_tty" -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
+    switch_client_to_target "$dashboard_switch_target" "$client_tty" || return 1
   else
-    tmux switch-client -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
+    switch_client_to_target "$dashboard_switch_target" "" || return 1
   fi
   if [ -n "${live_client_tty-}" ]; then
-    tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
+    refresh_navigation_client "$live_client_tty"
   elif [ -n "$client_tty" ]; then
-    tmux refresh-client -t "$client_tty" -S >/dev/null 2>&1 || true
+    refresh_navigation_client "$client_tty"
   else
-    tmux refresh-client -S >/dev/null 2>&1 || true
+    refresh_navigation_client ""
   fi
   tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
   exit 0
 }
 
-show_local_inbox_popup() {
+reload_local_dashboard() {
+  [ -n "$project_root" ] || return 1
+  debug_log_line "dashboard reload fallback project_root=$project_root"
+  show_local_message "#[fg=colour220,bold]aimux#[default] reloading dashboard"
+  (
+    cd "$project_root" || exit 1
+    reload_client_tty="${live_client_tty-${client_tty-}}"
+    reload_client_session="${live_client_session-${current_client_session-}}"
+    set -- dashboard-reload --open
+    [ -n "$reload_client_tty" ] && set -- "$@" --client-tty "$reload_client_tty"
+    [ -n "$reload_client_session" ] && set -- "$@" --current-client-session "$reload_client_session"
+    "$aimux_bin" "$@"
+  ) >/dev/null 2>&1 &
+  return 0
+}
+
+persist_dashboard_screen() {
+  target_client_session="$1"
+  target_screen="$2"
+  [ -n "$project_state_dir" ] || return 1
+  [ -n "$target_client_session" ] || return 1
+  python3 - "$project_state_dir" "$target_client_session" "$target_screen" <<'PY'
+import json
+import os
+import re
+import sys
+
+state_dir, session, screen = sys.argv[1:4]
+client_key = re.sub(r"[^a-zA-Z0-9._-]", "_", session)
+path = os.path.join(state_dir, f"dashboard-ui-client-{client_key}.json")
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        snapshot = json.load(fh)
+except Exception:
+    snapshot = {}
+snapshot["screen"] = screen
+tmp = f"{path}.tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(snapshot, fh)
+os.replace(tmp, path)
+PY
+}
+
+show_local_coordination() {
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
-  popup_client_tty="${live_client_tty-}"
-  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
-  popup_session="${live_client_session-}"
-  [ -n "$popup_session" ] || popup_session="$current_client_session"
-  inbox_cmd="exec $(shell_quote "$aimux_bin") inbox-popup --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id")"
-  if [ -n "$popup_client_tty" ]; then
-    tmux display-popup -c "$popup_client_tty" -T "aimux inbox" -x P -y P -w 96 -h 18 -E "$inbox_cmd" >/dev/null 2>&1 || return 1
-  else
-    tmux display-popup -T "aimux inbox" -x P -y P -w 96 -h 18 -E "$inbox_cmd" >/dev/null 2>&1 || return 1
-  fi
-  exit 0
-}
-
-open_dashboard_via_aimux() {
-  if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
-    project_root=$(tr -d '\n' < "$project_root_file")
-  fi
-  if [ -z "$project_root" ] && [ -n "$current_client_session" ]; then
-    project_root=$(tmux show-options -v -t "$current_client_session" @aimux-project-root 2>/dev/null || true)
-  fi
-  [ -n "$project_root" ] || return 1
-  [ -x "$aimux_bin" ] || return 1
-  (cd "$project_root" && "$aimux_bin" dashboard-reload --open >/dev/null 2>&1) ||
-    (cd "$project_root" && "$aimux_bin" >/dev/null 2>&1) ||
-    return 1
-  exit 0
+  coordination_session="${live_client_session-}"
+  [ -n "$coordination_session" ] || coordination_session="$current_client_session"
+  persist_dashboard_screen "$coordination_session" "coordination" || true
+  switch_local_dashboard || { dashboard_candidate_needs_reload && reload_local_dashboard && return 0; }
 }
 
 ensure_linked_window() {
@@ -292,57 +404,18 @@ ensure_linked_window() {
   printf '%s' "$linked_index"
 }
 
-mark_last_used_local() {
-  item_id="$1"
-  [ -n "$item_id" ] || return 0
-  [ -n "${project_state_dir-}" ] || return 0
-  python3 - "$project_state_dir" "$item_id" "${live_client_session-}" <<'PY' >/dev/null 2>&1
-import json, sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-project_state_dir, item_id, client_session = sys.argv[1:]
-state_path = Path(project_state_dir) / "last-used.json"
-try:
-    state = json.loads(state_path.read_text()) if state_path.exists() else {}
-except Exception:
-    state = {}
-
-state["version"] = 1
-state.setdefault("items", {})
-state.setdefault("clients", {})
-state.setdefault("projectRecentIds", [])
-
-used_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-state["items"][item_id] = {"lastUsedAt": used_at}
-state["projectRecentIds"] = [item_id] + [entry for entry in state.get("projectRecentIds", []) if entry != item_id]
-state["projectRecentIds"] = state["projectRecentIds"][:64]
-
-if client_session:
-    client = state["clients"].get(client_session) or {"recentIds": [], "updatedAt": used_at}
-    recent_ids = [item_id] + [entry for entry in client.get("recentIds", []) if entry != item_id]
-    client["recentIds"] = recent_ids[:64]
-    client["updatedAt"] = used_at
-    state["clients"][client_session] = client
-
-state["updatedAt"] = used_at
-state_path.write_text(json.dumps(state, indent=2) + "\n")
-PY
-}
-
 switch_local_window() {
   target_window_id="$1"
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
-  item_id="${2-}"
+  is_live_window "$target_window_id" || return 1
   target_index=$(ensure_linked_window "$target_window_id") || return 1
   if [ -n "${live_client_tty-}" ]; then
     tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   else
     tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   fi
-  mark_last_used_local "$item_id"
   if [ -n "${live_client_tty-}" ]; then
     tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
   elif [ -n "$client_tty" ]; then
@@ -353,6 +426,13 @@ switch_local_window() {
   exit 0
 }
 
+is_live_window() {
+  target_window_id="$1"
+  [ -n "$target_window_id" ] || return 1
+  pane_dead=$(tmux display-message -p -t "$target_window_id" '#{pane_dead}' 2>/dev/null || true)
+  [ "$pane_dead" != "1" ] && [ -n "$pane_dead" ]
+}
+
 show_local_message() {
   message="$1"
   if [ -n "${pane_id-}" ]; then
@@ -360,6 +440,23 @@ show_local_message() {
   else
     tmux display-message "$message" >/dev/null 2>&1 || true
   fi
+}
+
+report_control_failure() {
+  failure_reason="$1"
+  case "$action" in
+    next | prev | window) action_label="switch window" ;;
+    attention) action_label="jump to attention" ;;
+    dashboard) action_label="open dashboard" ;;
+    coordination) action_label="open coordination" ;;
+    menu) action_label="open switcher" ;;
+    expose) action_label="expose sessions" ;;
+    meta) action_label="open meta" ;;
+    team) action_label="reach teammate" ;;
+    *) action_label="$action" ;;
+  esac
+  debug_log_line "control failure action=$action reason=$failure_reason"
+  show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label — $failure_reason"
 }
 
 show_local_switcher() {
@@ -389,12 +486,39 @@ show_local_expose() {
   [ -n "$popup_session" ] || popup_session="$current_client_session"
   home_arg=""
   [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
-  expose_cmd="exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg"
-  if [ -n "$popup_client_tty" ]; then
-    tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 90% -h 90% -E "$expose_cmd" >/dev/null 2>&1 || return 1
-  else
-    tmux display-popup -T "aimux exposé" -x C -y C -w 90% -h 90% -E "$expose_cmd" >/dev/null 2>&1 || return 1
-  fi
+  # tmux popups are fixed-size, so exposé exits 75 when it detects the terminal resized;
+  # relaunch it at the new 100%×100% bounds. Each pass recaptures a fresh backdrop.
+  # Relies on display-popup -E propagating the command's exit code (tmux >= 3.3); on
+  # older tmux popup_status is always 0, so the loop simply never relaunches.
+  while :; do
+    # Snapshot the host BEFORE the popup opens; opening it transiently reflows the host pane,
+    # so an in-popup capture would catch a mis-sized frame. Exposé reads then deletes this file.
+    backdrop_arg=""
+    prepaint=""
+    expose_backdrop=$(mktemp 2>/dev/null || true)
+    if [ -n "$expose_backdrop" ]; then
+      capture_target="${current_window_id:-$popup_session}"
+      if tmux capture-pane -p -e -t "$capture_target" -S 0 > "$expose_backdrop" 2>/dev/null; then
+        backdrop_arg="--backdrop-file $(shell_quote "$expose_backdrop")"
+        # Paint the captured screen instantly so the popup shows your work while the exposé
+        # process cold-starts; exposé then atomically repaints it dimmed with the panel.
+        prepaint="printf '\\033[H'; cat $(shell_quote "$expose_backdrop"); "
+      else
+        rm -f "$expose_backdrop"
+      fi
+    fi
+    expose_cmd="${prepaint}exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
+    if [ -n "$popup_client_tty" ]; then
+      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      popup_status=$?
+    else
+      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      popup_status=$?
+    fi
+    rm -f "$expose_backdrop"
+    [ "$popup_status" = 75 ] && continue
+    break
+  done
   exit 0
 }
 
@@ -425,175 +549,6 @@ show_local_meta() {
   exit 0
 }
 
-resolve_local_target_from_statusline() {
-  [ -f "$statusline_json" ] || return 1
-  resolved_target=$(
-    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
-import json, sys
-path, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
-
-def log(message):
-    if action != "team":
-        return
-    try:
-        with open(debug_log, "a") as handle:
-            handle.write(f"aimux-control team statusline: {message}\n")
-    except Exception:
-        pass
-
-try:
-    data = json.load(open(path))
-except Exception as error:
-    log(f"read failed path={path!r} error={error}")
-    raise SystemExit(1)
-sessions = list(data.get("sessions") or [])
-teammates = list(data.get("teammates") or [])
-if explicit_window_id:
-    log(f"explicit target {explicit_window_id}")
-    print(explicit_window_id)
-    raise SystemExit(0)
-if action == "team":
-    log(f"start currentWindowId={current_window_id!r} sessions={len(sessions)} teammates={len(teammates)}")
-    all_sessions = sessions + teammates
-    current = None
-    for session in all_sessions:
-        if session.get("tmuxWindowId") == current_window_id:
-            current = session
-            break
-    if not current:
-        live_ids = [
-            f"{session.get('id')}:{session.get('tmuxWindowId') or '-'}:{(session.get('team') or {}).get('parentSessionId') or '-'}"
-            for session in all_sessions
-        ]
-        log(f"current not found candidates={live_ids}")
-        raise SystemExit(1)
-
-    current_team = current.get("team") or {}
-    parent_id = current_team.get("parentSessionId")
-    log(f"current id={current.get('id')!r} parentId={parent_id!r} window={current.get('tmuxWindowId')!r}")
-    if parent_id:
-        parent = next((session for session in sessions if session.get("id") == parent_id), None)
-        target = (parent or {}).get("tmuxWindowId") or ""
-        if not target:
-            log(f"parent target missing parentId={parent_id!r} parentFound={bool(parent)}")
-            raise SystemExit(1)
-        log(f"target parent window={target!r}")
-        print(target)
-        raise SystemExit(0)
-
-    current_id = current.get("id")
-    if not current_id:
-        raise SystemExit(1)
-
-    def parse_time(value):
-        if not value:
-            return float("inf")
-        try:
-            from datetime import datetime
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-        except Exception:
-            return float("inf")
-
-    direct = [
-        session
-        for session in teammates
-        if (session.get("team") or {}).get("parentSessionId") == current_id
-    ]
-    log("direct candidates=" + repr([
-        f"{session.get('id')}:{session.get('tmuxWindowId') or '-'}:{session.get('status') or '-'}"
-        for session in direct
-    ]))
-    def teammate_order(session):
-        order = (session.get("team") or {}).get("order")
-        if isinstance(order, bool):
-            return float("inf")
-        return order if isinstance(order, (int, float)) else float("inf")
-
-    direct.sort(key=lambda session: (
-        teammate_order(session),
-        parse_time(session.get("createdAt")),
-        session.get("id") or "",
-    ))
-    direct = [session for session in direct if session.get("tmuxWindowId")]
-    if not direct:
-        log(f"no direct live teammates for currentId={current_id!r}")
-        raise SystemExit(1)
-    target = direct[0].get("tmuxWindowId")
-    log(f"target teammate window={target!r} id={direct[0].get('id')!r}")
-    print(target)
-    raise SystemExit(0)
-if not sessions:
-    raise SystemExit(1)
-current_worktree = None
-for session in sessions:
-    if session.get("tmuxWindowId") == current_window_id:
-        current_worktree = session.get("worktreePath") or project_root
-        break
-matched = []
-best_len = -1
-for session in sessions:
-    worktree = session.get("worktreePath") or project_root
-    if not worktree:
-        continue
-    if current_worktree:
-        if worktree != current_worktree:
-            continue
-    elif not current_path.startswith(worktree):
-        continue
-    length = len(worktree)
-    if length > best_len:
-        matched = [session]
-        best_len = length
-    elif length == best_len:
-        matched.append(session)
-items = matched if matched else sessions
-items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, int(s.get("tmuxWindowIndex") or 1_000_000)))
-if not items:
-    raise SystemExit(1)
-current_index = 0
-for idx, item in enumerate(items):
-    if item.get("tmuxWindowId") == current_window_id:
-        current_index = idx
-        break
-if action == "next":
-    target = items[(current_index + 1) % len(items)]
-    print(target.get("tmuxWindowId", ""))
-    raise SystemExit(0)
-if action == "prev":
-    target = items[(current_index - 1) % len(items)]
-    print(target.get("tmuxWindowId", ""))
-    raise SystemExit(0)
-if action == "attention":
-    def rank(item):
-        semantic = item.get("semantic") or {}
-        return (
-            int(semantic.get("waitingOnMeCount") or 0),
-            int(semantic.get("unreadCount") or 0),
-            int(semantic.get("blockedCount") or 0),
-            int(semantic.get("pendingDeliveryCount") or 0),
-        )
-    ranked = sorted(items, key=rank, reverse=True)
-    target = ranked[0]
-    if rank(target) == (0, 0, 0, 0):
-        raise SystemExit(1)
-    print(target.get("tmuxWindowId", ""))
-    raise SystemExit(0)
-if action == "window":
-    try:
-        index = int(item_index)
-    except Exception:
-        raise SystemExit(1)
-    if index < 1 or index > len(items):
-        raise SystemExit(1)
-    print(items[index - 1].get("tmuxWindowId", ""))
-    raise SystemExit(0)
-raise SystemExit(1)
-PY
-  ) || return 1
-  [ -n "$resolved_target" ] || return 1
-  printf '%s' "$resolved_target"
-}
-
 resolve_host_session_name() {
   session_name="${live_client_session-}"
   if [ -z "$session_name" ]; then
@@ -601,7 +556,9 @@ resolve_host_session_name() {
   fi
   [ -n "$session_name" ] || return 1
   case "$session_name" in
-    *-client-*) printf '%s' "${session_name%-client-*}" ;;
+    *-client-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      printf '%s' "${session_name%-client-????????}"
+      ;;
     *) printf '%s' "$session_name" ;;
   esac
 }
@@ -626,13 +583,20 @@ def log(message):
 def run(*args):
     return subprocess.check_output(["tmux", *args], text=True)
 
+def is_same_or_child_path(path, parent):
+    if not path or not parent:
+        return False
+    path = path.rstrip("/")
+    parent = parent.rstrip("/")
+    return path == parent or path.startswith(parent + "/")
+
 if explicit_window_id:
     log(f"explicit target {explicit_window_id}")
     print(explicit_window_id)
     raise SystemExit(0)
 
 try:
-    windows = run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}").splitlines()
+    windows = run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}|#{pane_dead}").splitlines()
     log(f"start host={host_session!r} currentWindowId={current_window_id!r} currentPath={current_path!r} windows={len(windows)}")
 except Exception as error:
     log(f"list windows failed host={host_session!r} error={error}")
@@ -641,7 +605,7 @@ except Exception as error:
 items = []
 for line in windows:
     try:
-        window_id, index, name = line.split("|", 2)
+        window_id, index, name, pane_dead = line.split("|", 3)
     except ValueError:
         log(f"skip malformed window line={line!r}")
         continue
@@ -652,9 +616,6 @@ for line in windows:
         log(f"skip window={window_id!r} name={name!r} no/invalid meta error={error}")
         continue
     worktree = meta.get("worktreePath") or project_root
-    if not worktree or not current_path.startswith(worktree):
-        log(f"skip window={window_id!r} session={meta.get('sessionId')!r} worktree mismatch worktree={worktree!r}")
-        continue
     kind = meta.get("kind") or "agent"
     team = meta.get("team") or {}
     items.append({
@@ -668,6 +629,7 @@ for line in windows:
         "statusText": meta.get("statusText", ""),
         "team": team if isinstance(team, dict) else {},
         "createdAt": meta.get("createdAt", ""),
+        "alive": pane_dead != "1",
     })
 
 if not items:
@@ -680,18 +642,14 @@ for item in items:
         current_worktree = item.get("worktreePath")
         break
 
-if current_worktree:
-    items = [item for item in items if item.get("worktreePath") == current_worktree]
-else:
-    items = [item for item in items if current_path.startswith(item.get("worktreePath") or "")]
+items = [item for item in items if item.get("alive") or item.get("windowId") == current_window_id]
 log("items=" + repr([
-    f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}"
+    f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}:{'live' if item.get('alive') else 'dead'}"
     for item in items
 ]))
 
-items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 if not items:
-    log("no metadata candidates in current worktree")
+    log("no live metadata candidates")
     raise SystemExit(1)
 
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
@@ -703,7 +661,7 @@ if action == "team":
     parent_id = current_team.get("parentSessionId")
     log(f"current id={current.get('sessionId')!r} parentId={parent_id!r} window={current.get('windowId')!r}")
     if parent_id:
-        parent = next((item for item in items if item.get("sessionId") == parent_id and not (item.get("team") or {}).get("parentSessionId")), None)
+        parent = next((item for item in items if item.get("alive") and item.get("sessionId") == parent_id and not (item.get("team") or {}).get("parentSessionId")), None)
         if not parent:
             log(f"parent metadata target missing parentId={parent_id!r}")
             raise SystemExit(1)
@@ -719,7 +677,7 @@ if action == "team":
     direct = [
         item
         for item in items
-        if (item.get("team") or {}).get("parentSessionId") == current_id
+        if item.get("alive") and (item.get("team") or {}).get("parentSessionId") == current_id
     ]
     log("direct candidates=" + repr([
         f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('statusText') or '-'}"
@@ -738,6 +696,16 @@ if action == "team":
     log(f"target teammate window={direct[0]['windowId']!r} id={direct[0].get('sessionId')!r}")
     print(direct[0]["windowId"])
     raise SystemExit(0)
+
+if current_worktree:
+    items = [item for item in items if item.get("worktreePath") == current_worktree]
+else:
+    items = [item for item in items if is_same_or_child_path(current_path, item.get("worktreePath") or "")]
+items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
+if not items:
+    log("no metadata candidates in current worktree")
+    raise SystemExit(1)
+current = next((item for item in items if item.get("windowId") == current_window_id), None)
 
 if current and (current.get("team") or {}).get("parentSessionId"):
     parent_id = (current.get("team") or {}).get("parentSessionId")
@@ -763,19 +731,36 @@ for idx, item in enumerate(items):
         break
 
 if action == "next":
-    print(items[(current_index + 1) % len(items)]["windowId"])
-    raise SystemExit(0)
+    for offset in range(1, len(items) + 1):
+        target = items[(current_index + offset) % len(items)]
+        if target.get("alive"):
+            print(target["windowId"])
+            raise SystemExit(0)
+    raise SystemExit(1)
 if action == "prev":
-    print(items[(current_index - 1) % len(items)]["windowId"])
-    raise SystemExit(0)
+    for offset in range(1, len(items) + 1):
+        target = items[(current_index - offset) % len(items)]
+        if target.get("alive"):
+            print(target["windowId"])
+            raise SystemExit(0)
+    raise SystemExit(1)
 if action == "attention":
     def rank(item):
+        attention = item.get("attention")
+        attention_score = {
+            "error": 5,
+            "needs_input": 4,
+            "needs_response": 4,
+            "blocked": 3,
+        }.get(attention, 0)
         return (
-            1 if item.get("attention") == "needs-input" else 0,
+            attention_score,
             item.get("unseenCount", 0),
             1 if item.get("statusText") == "blocked" else 0,
         )
-    ranked = sorted(items, key=rank, reverse=True)
+    ranked = sorted([item for item in items if item.get("alive")], key=rank, reverse=True)
+    if not ranked:
+        raise SystemExit(1)
     if rank(ranked[0]) == (0, 0, 0):
         raise SystemExit(1)
     print(ranked[0]["windowId"])
@@ -785,9 +770,10 @@ if action == "window":
         index = int(item_index)
     except Exception:
         raise SystemExit(1)
-    if index < 1 or index > len(items):
+    live_items = [item for item in items if item.get("alive")]
+    if index < 1 or index > len(live_items):
         raise SystemExit(1)
-    print(items[index - 1]["windowId"])
+    print(live_items[index - 1]["windowId"])
     raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -800,10 +786,10 @@ fallback_local_control() {
   case "$action" in
     dashboard)
       printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
-      switch_local_dashboard || open_dashboard_via_aimux
+      switch_local_dashboard || { dashboard_candidate_needs_reload && reload_local_dashboard && return 0; }
       ;;
-    inbox)
-      show_local_inbox_popup
+    coordination)
+      show_local_coordination
       ;;
     menu)
       show_local_switcher
@@ -818,79 +804,27 @@ fallback_local_control() {
       return 0
       ;;
     next|prev|attention|window)
-      target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || return 1
-      target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; import sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
-      switch_local_window "$target_window_id" "$target_item_id"
+      target_window_id=$(resolve_local_target_from_tmux_metadata) || return 1
+      switch_local_window "$target_window_id"
       ;;
     team)
       debug_log_line "team requested session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown} pane=${pane_id:-unknown}"
-      target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || {
+      target_window_id=$(resolve_local_target_from_tmux_metadata) || {
         debug_log_line "team no live target session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown}"
         show_local_message "aimux: no live teammate target"
         return 0
       }
-      target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
-      switch_local_window "$target_window_id" "$target_item_id"
+      switch_local_window "$target_window_id"
       ;;
   esac
   return 1
 }
 
-repair_control_plane() {
-  if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
-    project_root=$(tr -d '\n' < "$project_root_file")
-  fi
-  if [ -z "$project_root" ] && [ -n "$current_client_session" ]; then
-    project_root=$(tmux show-options -v -t "$current_client_session" @aimux-project-root 2>/dev/null || true)
-  fi
-  [ -n "$project_root" ] || return 1
-  [ -x "$aimux_bin" ] || return 1
-  "$aimux_bin" daemon project-ensure --project "$project_root" >/dev/null 2>&1 || return 1
-  load_endpoint
-}
-
-endpoint_available=0
-if load_endpoint; then
-  endpoint_available=1
-fi
-
 case "$action" in
-  next) path="/control/switch-next" ;;
-  prev) path="/control/switch-prev" ;;
-  attention) path="/control/switch-attention" ;;
-  dashboard) path="/control/open-dashboard" ;;
-  inbox) path="/control/open-inbox" ;;
-  window) path="/control/focus-window" ;;
-  active) path="/control/active-window" ;;
-  team) path="" ;;
-  menu) path="" ;;
-  expose) path="" ;;
-  meta) path="" ;;
+  next|prev|attention|dashboard|coordination|menu|expose|meta|window|active|team)
+    fallback_local_control && exit 0
+    report_control_failure "no local tmux target available"
+    exit 0
+    ;;
   *) exit 1 ;;
 esac
-
-case "$action" in
-  next|prev|attention|dashboard|inbox|menu|expose|meta|window|active|team)
-    fallback_local_control && exit 0
-    ;;
-esac
-
-if [ "$endpoint_available" -eq 1 ] && [ -n "$path" ]; then
-  if request_control 0.35; then
-    exit 0
-  fi
-
-  if request_control 1.2; then
-    exit 0
-  fi
-
-  if repair_control_plane; then
-    if request_control 1.5; then
-      exit 0
-    fi
-  fi
-fi
-
-fallback_local_control && exit 0
-
-exit 28

@@ -6,11 +6,23 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
-import { requestReview } from "../task-workflow.js";
-import { isTeammateSession, isOverseerSession } from "../team.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import {
+  getDefaultTeamConfig,
+  isTeammateSession,
+  isOverseerSession,
+  loadTeamConfig,
+  type TeamConfig,
+} from "../team.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  renderDashboardIfCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -39,6 +51,29 @@ function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined)
   return host.dashboardWorktreeGroupsCache.find((group: any) => group.path === worktreePath);
 }
 
+function isTeamConfig(value: unknown): value is TeamConfig {
+  if (!value || typeof value !== "object") return false;
+  const config = value as TeamConfig;
+  if (!config.roles || typeof config.roles !== "object") return false;
+  return Object.values(config.roles).every(
+    (role) =>
+      role &&
+      typeof role === "object" &&
+      typeof role.description === "string" &&
+      (role.canEdit === undefined || typeof role.canEdit === "boolean") &&
+      (role.reviewedBy === undefined || typeof role.reviewedBy === "string"),
+  );
+}
+
+function loadDashboardTeamConfig(): TeamConfig {
+  try {
+    const team = loadTeamConfig();
+    return isTeamConfig(team) ? team : getDefaultTeamConfig();
+  } catch {
+    return getDefaultTeamConfig();
+  }
+}
+
 function isRemovingDashboardWorktree(group: any | undefined): boolean {
   return Boolean(group?.removing || group?.pendingAction === "removing" || group?.pendingAction === "graveyarding");
 }
@@ -49,6 +84,165 @@ function isCreatingDashboardWorktree(group: any | undefined): boolean {
 
 function isFailedDashboardWorktree(group: any | undefined): boolean {
   return Boolean(group?.operationFailure);
+}
+
+function beginDashboardActivation(host: any, targetKind: "session" | "service", targetId: string): any | undefined {
+  if (host.mode !== "dashboard") return undefined;
+  const token = { targetKind, targetId, inputEpoch: host.dashboardInputEpoch ?? 0 };
+  host.dashboardActivationToken = token;
+  return token;
+}
+
+function isCurrentDashboardActivation(host: any, token: any | undefined): boolean {
+  if (!token) return true;
+  return host.dashboardActivationToken === token && (host.dashboardInputEpoch ?? 0) === token.inputEpoch;
+}
+
+function isShiftedCommand(event: KeyEvent, lowerKey: string, letter: string): boolean {
+  const rawKey = event.name || event.char;
+  return lowerKey === letter && (event.shift || rawKey === letter.toUpperCase());
+}
+
+function isPlainDashboardNavigationEvent(event: KeyEvent, key: string): boolean {
+  if (event.shift || event.ctrl || event.alt) return false;
+  if (["up", "down", "left", "right", "enter", "escape"].includes(key)) return true;
+  if (!["h", "j", "k", "l"].includes(key)) return false;
+  return event.name === "" && event.char === key;
+}
+
+function stepIntoFocusedDashboardWorktree(host: any): void {
+  const focusedGroup = findDashboardWorktreeGroup(host, host.dashboardState.focusedWorktreePath);
+  if (isCreatingDashboardWorktree(focusedGroup)) {
+    host.footerFlash = creatingWorktreeMessage(focusedGroup, host.dashboardState.focusedWorktreePath);
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+    return;
+  }
+  if (isRemovingDashboardWorktree(focusedGroup)) {
+    host.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, host.dashboardState.focusedWorktreePath);
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+    return;
+  }
+  if (isFailedDashboardWorktree(focusedGroup)) {
+    host.footerFlash = failedWorktreeMessage(focusedGroup, host.dashboardState.focusedWorktreePath);
+    host.footerFlashTicks = 4;
+    host.renderDashboard();
+    return;
+  }
+  host.updateWorktreeSessions();
+  if (host.dashboardState.worktreeEntries.length > 0) {
+    host.dashboardState.level = "sessions";
+    host.dashboardState.sessionIndex = 0;
+    host.renderDashboard();
+  }
+}
+
+function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: boolean): boolean {
+  if (!hasWorktrees) {
+    const totalCount = host.getDashboardSessions().length;
+    switch (key) {
+      case "down":
+      case "j":
+        if (totalCount > 1) {
+          host.activeIndex = (host.activeIndex + 1) % totalCount;
+          host.renderDashboard();
+        }
+        return true;
+      case "up":
+      case "k":
+        if (totalCount > 1) {
+          host.activeIndex = (host.activeIndex - 1 + totalCount) % totalCount;
+          host.renderDashboard();
+        }
+        return true;
+      case "enter":
+      case "right":
+      case "l": {
+        const entry = host.getDashboardSessions()[host.activeIndex];
+        if (entry) {
+          void host.activateDashboardEntry(entry);
+          return true;
+        }
+        if (host.sessions.length > 0) host.focusSession(host.activeIndex);
+        return true;
+      }
+      case "escape":
+        if (host.sessions.length > 0) host.focusSession(host.activeIndex);
+        return true;
+      case "left":
+      case "h":
+        return true;
+    }
+    return false;
+  }
+
+  if (host.dashboardState.level === "worktrees") {
+    switch (key) {
+      case "down":
+      case "j": {
+        const order = host.dashboardState.worktreeNavOrder;
+        if (order.length === 0) return true;
+        const curIdx = order.indexOf(host.dashboardState.focusedWorktreePath);
+        host.dashboardState.focusedWorktreePath = order[curIdx < 0 ? 0 : (curIdx + 1) % order.length];
+        host.renderDashboard();
+        return true;
+      }
+      case "up":
+      case "k": {
+        const order = host.dashboardState.worktreeNavOrder;
+        if (order.length === 0) return true;
+        const curIdx = order.indexOf(host.dashboardState.focusedWorktreePath);
+        host.dashboardState.focusedWorktreePath = order[curIdx < 0 ? 0 : (curIdx - 1 + order.length) % order.length];
+        host.renderDashboard();
+        return true;
+      }
+      case "enter":
+      case "right":
+      case "l":
+        stepIntoFocusedDashboardWorktree(host);
+        return true;
+      case "escape":
+        if (host.sessions.length > 0) host.focusSession(host.activeIndex);
+        return true;
+      case "left":
+      case "h":
+        return true;
+    }
+    return false;
+  }
+
+  switch (key) {
+    case "down":
+    case "j":
+      if (host.dashboardState.worktreeEntries.length > 1) {
+        host.dashboardState.sessionIndex =
+          (host.dashboardState.sessionIndex + 1) % host.dashboardState.worktreeEntries.length;
+        host.renderDashboard();
+      }
+      return true;
+    case "up":
+    case "k":
+      if (host.dashboardState.worktreeEntries.length > 1) {
+        host.dashboardState.sessionIndex =
+          (host.dashboardState.sessionIndex - 1 + host.dashboardState.worktreeEntries.length) %
+          host.dashboardState.worktreeEntries.length;
+        host.renderDashboard();
+      }
+      return true;
+    case "enter":
+    case "right":
+    case "l":
+      host.activateSelectedDashboardWorktreeEntry();
+      return true;
+    case "escape":
+    case "left":
+    case "h":
+      host.dashboardState.level = "worktrees";
+      host.renderDashboard();
+      return true;
+  }
+  return false;
 }
 
 function failedWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
@@ -65,6 +259,8 @@ function creatingWorktreeMessage(group: any | undefined, worktreePath: string | 
   const name = group?.name ?? worktreePath?.split("/").pop() ?? "worktree";
   return `Worktree ${name} is still creating`;
 }
+
+export type DashboardActivationResult = "opened" | "missing" | "error" | "blocked";
 
 function refreshSelectedWorktreeEntry(host: any): { kind: "session" | "service"; id: string } | undefined {
   const before = host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
@@ -109,7 +305,7 @@ function moveSelectedDashboardWorktreeEntry(host: any, direction: "up" | "down")
   if (nextIndex >= 0) host.dashboardState.sessionIndex = nextIndex;
   host.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, host.dashboardState.focusedWorktreePath);
   host.persistDashboardUiState();
-  void host.postToProjectService?.("/statusline/refresh", { force: true }).catch(() => {});
+  void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { force: true }).catch(() => undefined);
   host.footerFlash = `Moved ${selectedEntry.kind === "session" ? "agent" : "service"} ${direction}`;
   host.footerFlashTicks = 2;
   host.renderDashboard();
@@ -273,7 +469,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
     const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
 
@@ -304,12 +500,57 @@ export const dashboardInteractionMethods = {
       }
     }
 
+    if (
+      this.isDashboardScreen("dashboard") &&
+      isPlainDashboardNavigationEvent(event, key) &&
+      handleDashboardNavigationKey(this, key, hasWorktrees)
+    ) {
+      return;
+    }
+
+    if (key === "s") {
+      this.showOrchestrationRoutePicker("message");
+      return;
+    }
+    if (isShiftedCommand(event, key, "h")) {
+      this.showOrchestrationRoutePicker("handoff");
+      return;
+    }
+    if (isShiftedCommand(event, key, "t")) {
+      this.showOrchestrationRoutePicker("task");
+      return;
+    }
+    if (isShiftedCommand(event, key, "l")) {
+      this.showLibrary();
+      return;
+    }
+    if (isShiftedCommand(event, key, "w")) {
+      this.showWorktreeList();
+      return;
+    }
+    if (isShiftedCommand(event, key, "r")) {
+      const selected = this.getSelectedDashboardSessionForActions();
+      if (selected) {
+        if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
+          void this.openRelevantThreadForSession(selected.id);
+        } else {
+          this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
+          this.footerFlashTicks = 3;
+          this.renderDashboard();
+        }
+      }
+      return;
+    }
+
     switch (key) {
       case "?":
         this.showHelp();
         return;
-      case "c":
+      case "n":
         this.showToolPicker();
+        return;
+      case "c":
+        this.showCoordination();
         return;
       case "v":
         this.showServiceCreatePrompt();
@@ -328,32 +569,10 @@ export const dashboardInteractionMethods = {
         }
         return;
       }
-      case "S":
-        this.showOrchestrationRoutePicker("message");
-        return;
-      case "H":
-        this.showOrchestrationRoutePicker("handoff");
-        return;
-      case "T":
-        this.showOrchestrationRoutePicker("task");
-        return;
       case "o": {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected) {
-          this.openRelevantThreadForSession(selected.id);
-        }
-        return;
-      }
-      case "R": {
-        const selected = this.getSelectedDashboardSessionForActions();
-        if (selected) {
-          if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
-            this.openRelevantThreadForSession(selected.id);
-          } else {
-            this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-          }
+          void this.openRelevantThreadForSession(selected.id);
         }
         return;
       }
@@ -363,26 +582,14 @@ export const dashboardInteractionMethods = {
       case "w":
         this.showWorktreeCreatePrompt();
         return;
-      case "W":
-        this.showWorktreeList();
-        return;
       case "g":
         this.showGraveyard();
         return;
-      case "i":
-        this.showNotifications();
-        return;
-      case "y":
-        this.showWorkflow();
-        return;
       case "p":
-        this.showPlans();
+        this.showProject();
         return;
       case "t":
-        this.showThreads();
-        return;
-      case "a":
-        this.showActivityDashboard();
+        this.showTopology();
         return;
       case "u":
         void this.activateNextAttentionEntry();
@@ -405,16 +612,26 @@ export const dashboardInteractionMethods = {
             return;
           }
           if (isFailedDashboardWorktree(focusedGroup)) {
-            clearDashboardOperationFailures({
+            const modelLifecycle = captureDashboardLifecycle(this);
+            const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+            this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
+            this.footerFlashTicks = 3;
+            this.renderDashboard();
+            void mutateDashboardApi(this, PROJECT_API_ROUTES.operationFailuresClear, {
               targetKind: "worktree",
               operation: focusedGroup.operationFailure.operation,
               worktreePath: this.dashboardState.focusedWorktreePath,
-            });
-            this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
-            this.footerFlashTicks = 3;
-            this.invalidateDesktopStateSnapshot();
-            this.refreshLocalDashboardModel();
-            this.renderDashboard();
+            })
+              .then(async () => {
+                await refreshDashboardModelThroughApi(this, { force: true, lifecycle: modelLifecycle });
+                renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
+              })
+              .catch((error: unknown) => {
+                if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+                this.showDashboardError("Failed to dismiss worktree failure", [
+                  error instanceof Error ? error.message : String(error),
+                ]);
+              });
             return;
           }
           const wtName =
@@ -506,135 +723,6 @@ export const dashboardInteractionMethods = {
         return;
       }
     }
-
-    if (!hasWorktrees) {
-      const totalCount = this.getDashboardSessions().length;
-      switch (key) {
-        case "down":
-        case "j":
-          if (totalCount > 1) {
-            this.activeIndex = (this.activeIndex + 1) % totalCount;
-            this.renderDashboard();
-          }
-          break;
-        case "up":
-        case "k":
-        case "p":
-          if (totalCount > 1) {
-            this.activeIndex = (this.activeIndex - 1 + totalCount) % totalCount;
-            this.renderDashboard();
-          }
-          break;
-        case "enter": {
-          const ds = this.getDashboardSessions();
-          const entry = ds[this.activeIndex];
-          if (entry) {
-            void this.activateDashboardEntry(entry);
-            return;
-          }
-          if (this.sessions.length > 0) {
-            this.focusSession(this.activeIndex);
-          }
-          break;
-        }
-        case "escape":
-          if (this.sessions.length > 0) {
-            this.focusSession(this.activeIndex);
-          }
-          break;
-      }
-      return;
-    }
-
-    if (this.dashboardState.level === "worktrees") {
-      switch (key) {
-        case "down":
-        case "j": {
-          const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
-          this.dashboardState.focusedWorktreePath =
-            this.dashboardState.worktreeNavOrder[(curIdx + 1) % this.dashboardState.worktreeNavOrder.length];
-          this.renderDashboard();
-          break;
-        }
-        case "up":
-        case "k":
-        case "p": {
-          const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
-          this.dashboardState.focusedWorktreePath =
-            this.dashboardState.worktreeNavOrder[
-              (curIdx - 1 + this.dashboardState.worktreeNavOrder.length) % this.dashboardState.worktreeNavOrder.length
-            ];
-          this.renderDashboard();
-          break;
-        }
-        case "enter":
-        case "right":
-        case "l": {
-          const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
-          if (isCreatingDashboardWorktree(focusedGroup)) {
-            this.footerFlash = creatingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-            break;
-          }
-          if (isRemovingDashboardWorktree(focusedGroup)) {
-            this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-            break;
-          }
-          if (isFailedDashboardWorktree(focusedGroup)) {
-            this.footerFlash = failedWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
-            this.footerFlashTicks = 4;
-            this.renderDashboard();
-            break;
-          }
-          this.updateWorktreeSessions();
-          if (this.dashboardState.worktreeEntries.length > 0) {
-            this.dashboardState.level = "sessions";
-            this.dashboardState.sessionIndex = 0;
-            this.renderDashboard();
-          }
-          break;
-        }
-        case "escape":
-          if (this.sessions.length > 0) {
-            this.focusSession(this.activeIndex);
-          }
-          break;
-      }
-    } else {
-      switch (key) {
-        case "down":
-        case "j":
-          if (this.dashboardState.worktreeEntries.length > 1) {
-            this.dashboardState.sessionIndex =
-              (this.dashboardState.sessionIndex + 1) % this.dashboardState.worktreeEntries.length;
-            this.renderDashboard();
-          }
-          break;
-        case "up":
-        case "k":
-        case "p":
-          if (this.dashboardState.worktreeEntries.length > 1) {
-            this.dashboardState.sessionIndex =
-              (this.dashboardState.sessionIndex - 1 + this.dashboardState.worktreeEntries.length) %
-              this.dashboardState.worktreeEntries.length;
-            this.renderDashboard();
-          }
-          break;
-        case "enter": {
-          this.activateSelectedDashboardWorktreeEntry();
-          break;
-        }
-        case "escape":
-        case "left":
-        case "h":
-          this.dashboardState.level = "worktrees";
-          this.renderDashboard();
-          break;
-      }
-    }
   },
 
   async activateDashboardEntryByNumber(this: any, index: number): Promise<void> {
@@ -643,45 +731,68 @@ export const dashboardInteractionMethods = {
     await this.activateDashboardEntry(entry);
   },
 
-  async activateDashboardService(this: any, service: DashboardService): Promise<void> {
-    if (!service) return;
+  async activateDashboardService(this: any, service: DashboardService): Promise<DashboardActivationResult> {
+    if (!service) return "missing";
+    const activationToken = beginDashboardActivation(this, "service", service.id);
     const worktreeGroup = findDashboardWorktreeGroup(this, service.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
       this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, service.worktreePath);
       this.footerFlashTicks = 3;
       this.renderDashboard();
-      return;
+      return "blocked";
     }
     if (hasBlockingPendingDashboardAction(service)) {
       flashPendingDashboardItem(this, service, "service");
-      return;
+      return "blocked";
     }
 
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
     this.persistDashboardUiState();
     if (service.status !== "running") {
       await this.resumeOfflineServiceWithFeedback(service);
-      return;
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      await refreshDashboardModelThroughApi(this, { force: true });
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      const result = await this.waitAndOpenLiveTmuxWindowForService(service.id, 60_000);
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      if (result !== "opened") {
+        this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
+        this.footerFlashTicks = 3;
+      }
+      this.renderDashboard();
+      return result;
     }
-    await this.waitAndOpenLiveTmuxWindowForService(service.id);
+    const openResult = await this.waitAndOpenLiveTmuxWindowForService(service.id);
+    if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+    if (openResult !== "opened") {
+      await refreshDashboardModelThroughApi(this, { force: true });
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      if (openResult === "missing") {
+        this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
+        this.footerFlashTicks = 3;
+      }
+      this.renderDashboard();
+    }
+    return openResult;
   },
 
   async activateDashboardEntry(
     this: any,
     entry: DashboardSession,
     options: { preserveDashboardSelection?: boolean } = {},
-  ): Promise<void> {
-    if (!entry) return;
+  ): Promise<DashboardActivationResult> {
+    if (!entry) return "missing";
+    const activationToken = beginDashboardActivation(this, "session", entry.id);
     const worktreeGroup = findDashboardWorktreeGroup(this, entry.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
       this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, entry.worktreePath);
       this.footerFlashTicks = 3;
       this.renderDashboard();
-      return;
+      return "blocked";
     }
     if (hasBlockingPendingDashboardAction(entry)) {
       flashPendingDashboardItem(this, entry, "agent");
-      return;
+      return "blocked";
     }
 
     if (!options.preserveDashboardSelection) {
@@ -689,26 +800,58 @@ export const dashboardInteractionMethods = {
       this.persistDashboardUiState();
     }
 
-    const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
-    if (openResult !== "missing") {
-      if (entry.status === "offline") {
-        this.refreshLocalDashboardModel();
-        this.renderDashboard();
+    if (this.mode === "dashboard" && (entry.status === "offline" || entry.status === "exited")) {
+      await this.resumeOfflineSessionWithFeedback(
+        this.offlineSessions?.find((session: any) => session.id === entry.id) ?? entry,
+      );
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      await refreshDashboardModelThroughApi(this, { force: true });
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      const refreshed =
+        this.getDashboardSessions?.().find((session: DashboardSession) => session.id === entry.id) ?? entry;
+      const result = await this.waitAndOpenLiveTmuxWindowForEntry(refreshed, 60_000);
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      if (result !== "opened") {
+        this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
+        this.footerFlashTicks = 3;
       }
-      return;
+      this.renderDashboard();
+      return result;
     }
 
-    if (entry.status === "offline") {
+    const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
+    if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+    if (openResult !== "missing") {
+      if (entry.status === "offline" || entry.status === "exited") {
+        await refreshDashboardModelThroughApi(this, { force: true });
+        if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+        this.renderDashboard();
+      }
+      return openResult;
+    }
+
+    if (this.mode === "dashboard") {
+      await refreshDashboardModelThroughApi(this, { force: true });
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+      this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return "missing";
+    }
+
+    if (entry.status === "offline" || entry.status === "exited") {
       const offline = this.offlineSessions.find((session: any) => session.id === entry.id);
       await this.resumeOfflineSessionWithFeedback(offline ?? entry);
-      return;
+      return "opened";
     }
 
     const ptyIdx = this.sessions.findIndex((session: any) => session.id === entry.id);
     if (ptyIdx >= 0) {
       this.noteLastUsedItem(entry.id);
       this.focusSession(ptyIdx);
+      return "opened";
     }
+    return "missing";
   },
 
   getTeammatePickerEntries(this: any): DashboardSession[] {
@@ -743,7 +886,7 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
     const teammates = teammatePickerEntries(this);
     const visibleTeammates = teammates.slice(0, teammatePickerVisibleCount(teammates.length));
     const selectedIndex = Math.max(0, Math.min(this.teammatePickerState?.index ?? 0, visibleTeammates.length - 1));
@@ -800,7 +943,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
 
     if (key === "escape") {
       this.clearDashboardOverlay();
@@ -810,16 +953,11 @@ export const dashboardInteractionMethods = {
 
     if (key === "enter" || key === "return") {
       this.clearDashboardOverlay();
-      if (this.mode === "dashboard") {
-        void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
-      } else {
-        try {
-          this.createService(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
-        } catch (error) {
-          this.showDashboardError("Failed to create service", [error instanceof Error ? error.message : String(error)]);
-          return;
-        }
+      if (this.mode !== "dashboard") {
+        this.showDashboardError("Failed to create service", ["Service creation requires the project service."]);
+        return;
       }
+      void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
       this.restoreDashboardAfterOverlayDismiss();
       return;
     }
@@ -841,7 +979,7 @@ export const dashboardInteractionMethods = {
     if (events.length === 0) return;
 
     const event = events[0];
-    const key = event.name || event.char;
+    const key = commandKey(event);
 
     if (key === "escape") {
       this.clearDashboardOverlay();
@@ -880,19 +1018,51 @@ export const dashboardInteractionMethods = {
     if (!session) return;
 
     const role = this.sessionRoles.get(session.id) ?? "coder";
-    let diff: string | undefined;
-    try {
-      diff = execSync("git diff HEAD", { encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
-    } catch {}
-
-    const reviewTask = await requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
-
-    if (reviewTask) {
-      this.footerFlash = `⧫ Review requested → ${reviewTask.assignee ?? "reviewer"}`;
-      this.footerFlashTicks = 3;
-    } else {
+    const team = loadDashboardTeamConfig();
+    const roleConfig = team.roles[role];
+    let reviewerRole = roleConfig?.reviewedBy;
+    if (!reviewerRole || reviewerRole === role) {
+      const fallback = Object.entries(team.roles)
+        .filter(([roleKey]) => roleKey !== role)
+        .find(([, cfg]) => cfg.description.toLowerCase().includes("review"));
+      reviewerRole =
+        fallback?.[0] ?? Object.entries(team.roles).find(([roleKey, cfg]) => roleKey !== role && cfg.canEdit)?.[0];
+    }
+    if (!reviewerRole) {
       this.footerFlash = "No reviewer role configured";
       this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return;
+    }
+    const worktreePath = this.sessionWorktreePaths?.get?.(session.id);
+    const reviewCwd = worktreePath ?? this.projectRoot ?? process.cwd();
+    let diff: string | undefined;
+    try {
+      diff =
+        execSync("git diff HEAD", { cwd: reviewCwd, encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
+    } catch {}
+
+    try {
+      const result = await mutateDashboardApi(this, PROJECT_API_ROUTES.tasks.assign, {
+        from: session.id,
+        assignee: reviewerRole,
+        description: `Review: Review ${session.command} agent's recent work`,
+        prompt: `Review ${session.command} agent's recent work`,
+        type: "review",
+        diff,
+        worktreePath,
+        assigner: role,
+        reviewOf: session.id,
+        iteration: 1,
+      });
+      const assignee = result?.task?.assignee ?? reviewerRole;
+      this.footerFlash = `⧫ Review requested → ${assignee}`;
+      this.footerFlashTicks = 3;
+    } catch (error) {
+      this.showDashboardError("Failed to request review", [error instanceof Error ? error.message : String(error)]);
+      return;
+    } finally {
+      this.renderDashboard();
     }
   },
 
@@ -908,8 +1078,10 @@ export const dashboardInteractionMethods = {
     mode: "message" | "handoff" | "task",
     target: any,
     body: string,
+    lifecycle: DashboardLifecycleToken = captureDashboardLifecycle(this),
   ): Promise<void> {
     try {
+      let successFlash = "";
       const requestBody = {
         from: "user",
         to: target.sessionId ? [target.sessionId] : undefined,
@@ -918,32 +1090,35 @@ export const dashboardInteractionMethods = {
         worktreePath: target.worktreePath,
       };
       if (mode === "message") {
-        await this.postToProjectService("/threads/send", {
+        await mutateDashboardApi(this, PROJECT_API_ROUTES.threads.send, {
           kind: "request",
           ...requestBody,
           body,
         });
         const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
-        this.footerFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
+        successFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
       } else if (mode === "handoff") {
-        await this.postToProjectService("/handoff", {
+        await mutateDashboardApi(this, PROJECT_API_ROUTES.handoff.send, {
           ...requestBody,
           body,
         });
-        this.footerFlash = `Sent handoff to ${target.label}`;
+        successFlash = `Sent handoff to ${target.label}`;
       } else {
-        await this.postToProjectService("/tasks/assign", {
+        await mutateDashboardApi(this, PROJECT_API_ROUTES.tasks.assign, {
           ...requestBody,
           description: body,
         });
-        this.footerFlash = `Assigned task to ${target.label}`;
+        successFlash = `Assigned task to ${target.label}`;
       }
+      if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
+      this.footerFlash = successFlash;
       this.footerFlashTicks = 3;
       this.clearDashboardOverlay();
       this.orchestrationInputBuffer = "";
       this.orchestrationInputTarget = null;
       this.orchestrationInputMode = null;
     } catch (error) {
+      if (!isDashboardLifecycleCurrent(this, lifecycle)) return;
       this.clearDashboardOverlay();
       this.orchestrationInputBuffer = "";
       this.orchestrationInputTarget = null;
@@ -954,7 +1129,7 @@ export const dashboardInteractionMethods = {
       );
       return;
     }
-    this.renderDashboard();
+    renderDashboardIfCurrent(this, lifecycle, () => this.renderDashboard());
   },
 };
 

@@ -8,7 +8,8 @@ import { openTaskThread } from "./threads.js";
 import { readTask, writeTask, type Task } from "./tasks.js";
 import { saveTeamConfig } from "./team.js";
 import { requestReview } from "./task-workflow.js";
-import { buildWorkflowEntries, filterWorkflowEntries } from "./workflow.js";
+import { addNotification } from "./notifications.js";
+import { buildCoordinationThreadEntries, buildWorkflowEntries, filterWorkflowEntries } from "./workflow.js";
 
 describe("workflow model", () => {
   let repoRoot = "";
@@ -57,6 +58,20 @@ describe("workflow model", () => {
     for (const entry of familyEntries) {
       expect(entry.familyTaskIds).toEqual([created.task.id, reviewTask.id]);
     }
+  });
+
+  it("excludes notification-tagged threads from coordination thread entries", async () => {
+    addNotification({
+      title: "[Needs input] claude @ beautify-tui",
+      body: "Claude is waiting for your input",
+      sessionId: "claude-x",
+      kind: "needs_input",
+    });
+    await assignTask({ from: "claude-lead", to: "codex-worker", description: "Audit the parser failure path" });
+
+    const entries = buildCoordinationThreadEntries("user");
+    expect(entries.some((entry) => entry.thread.title.includes("[Needs input]"))).toBe(false);
+    expect(entries.some((entry) => entry.thread.kind === "task")).toBe(true);
   });
 
   it("filters workflow entries by waiting-on-me, blocked, and families", async () => {

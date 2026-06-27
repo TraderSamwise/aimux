@@ -18,6 +18,12 @@ export interface NotificationConfig {
   onError: boolean;
   /** Notify when an agent completes a task */
   onComplete: boolean;
+  /** Mark session notifications read when the user views that session. */
+  markReadOnView: boolean;
+  /** Clear generic needs-input attention when the user views that session. */
+  clearNeedsInputOnView: boolean;
+  /** Clear formal interaction attention on view; pending interactions still require an answer. */
+  clearFormalInteractionsOnView: boolean;
 }
 
 export interface WorktreeConfig {
@@ -48,8 +54,10 @@ export interface RuntimeConfig {
 }
 
 export interface ExposeConfig {
-  /** When true, the Exposé popup always shows agents across all worktrees, ignoring the current-worktree scope. */
-  forceGlobalScope: boolean;
+  /** Initial Exposé scope outside the meta dashboard; meta dashboard still starts at global. */
+  initialScope: "worktree" | "project" | "global";
+  /** When true, non-selected tiles are dimmed (preview receded to gray, border dimmed); off keeps every tile in full color. */
+  dimInactive: boolean;
 }
 
 export interface LoopConfig {
@@ -83,6 +91,17 @@ export interface GraveyardConfig {
   cleanupIntervalMs: number;
 }
 
+export interface InboxConfig {
+  /** Whether automatic notification-inbox cleanup is enabled for this project. */
+  cleanupEnabled: boolean;
+  /** How long read/handled notifications are kept before being archived (cleared). */
+  retentionDays: number;
+  /** How often the project service checks for cleanup-eligible notifications. */
+  cleanupIntervalMs: number;
+  /** Soft cap on retained notifications; overflow is archived, never unread-actionable rows. */
+  maxSize: number;
+}
+
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
@@ -90,6 +109,7 @@ export interface AimuxConfig {
   compactEveryNTurns: number;
   logging: LoggingConfig;
   graveyard: GraveyardConfig;
+  inbox: InboxConfig;
   notifications: NotificationConfig;
   statusline: StatuslineConfig;
   runtime: RuntimeConfig;
@@ -151,11 +171,20 @@ const DEFAULT_CONFIG: AimuxConfig = {
     retentionDays: 14,
     cleanupIntervalMs: 86_400_000,
   },
+  inbox: {
+    cleanupEnabled: true,
+    retentionDays: 14,
+    cleanupIntervalMs: 86_400_000,
+    maxSize: 10,
+  },
   notifications: {
     enabled: true,
     onPrompt: true,
     onError: true,
     onComplete: true,
+    markReadOnView: true,
+    clearNeedsInputOnView: true,
+    clearFormalInteractionsOnView: false,
   },
   statusline: {
     defaultPlugins: {
@@ -180,7 +209,8 @@ const DEFAULT_CONFIG: AimuxConfig = {
     autoNudgeWithoutOverseer: false,
   },
   expose: {
-    forceGlobalScope: false,
+    initialScope: "worktree",
+    dimInactive: false,
   },
   tools: {
     claude: {

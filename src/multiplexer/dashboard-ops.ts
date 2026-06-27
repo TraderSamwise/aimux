@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 
-import { composeTwoPane, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "../tui/render/text.js";
+import { truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "../tui/render/text.js";
 import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
@@ -10,6 +10,7 @@ import {
 } from "../dashboard/session-actions.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   isAttachableDashboardSessionEntry,
   isLiveDashboardServiceRuntimeEntry,
@@ -17,6 +18,13 @@ import {
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import type { LaunchOverride } from "../shell-args.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  renderDashboardIfCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -77,10 +85,11 @@ interface DashboardSessionMutationOptions {
   pendingAction: DashboardSessionMutationPendingAction;
   sessionSeed?: DashboardSession;
   request: () => Promise<void>;
-  settle: () => Promise<boolean>;
+  settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
+  lifecycle?: DashboardLifecycleToken;
   onBeforeRequest?: () => void;
   onAfterSettle?: () => void;
-  onError?: () => Promise<void> | void;
+  onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
   errorTitle: string;
 }
@@ -90,10 +99,10 @@ interface DashboardServiceMutationOptions {
   pendingAction: PendingServiceActionKind;
   serviceSeed?: any;
   request: () => Promise<void>;
-  settle: () => Promise<boolean>;
+  settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   onBeforeRequest?: () => void;
   onAfterSettle?: () => void;
-  onError?: () => Promise<void> | void;
+  onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
   errorTitle: string;
 }
@@ -127,14 +136,18 @@ function assertDashboardMutationSettled(settled: boolean, action: string): void 
   }
 }
 
-async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOpsHost): Promise<boolean> {
-  if (typeof host.refreshDashboardModelFromService === "function") {
-    await host.refreshDashboardModelFromService(true);
-  }
-  if (typeof host.refreshLocalDashboardModel === "function") {
-    host.refreshLocalDashboardModel();
-  }
-  return true;
+async function refreshDashboardModelAfterMutationError(
+  host: DashboardOpsHost,
+  lifecycle?: DashboardLifecycleToken,
+): Promise<void> {
+  await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+}
+
+async function refreshDashboardModelForSettlement(
+  host: DashboardOpsHost,
+  lifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
 }
 
 async function waitForStableDashboardSessionAbsence(
@@ -142,11 +155,12 @@ async function waitForStableDashboardSessionAbsence(
   sessionId: string,
   timeoutMs = 10_000,
   stableMs = 350,
+  modelLifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
     const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
     if (session) {
       missingSince = null;
@@ -163,10 +177,21 @@ function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
   return isAttachableDashboardSessionEntry(entry);
 }
 
+function renderDashboardDuringSettlement(host: DashboardOpsHost, lifecycle: DashboardLifecycleToken | undefined): void {
+  if (typeof host.renderDashboard !== "function") return;
+  if (lifecycle) {
+    renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+    return;
+  }
+  host.renderDashboard();
+}
+
 function hasLiveManagedAgentWindow(host: DashboardOpsHost, sessionId: string): boolean {
   try {
     if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
-    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+    const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+    const projectRoot = configuredProjectRoot || process.cwd();
+    return host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot).some(({ target, metadata }: any) => {
       if (isDashboardWindowName(target.windowName)) return false;
       if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) return false;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
@@ -181,19 +206,16 @@ async function waitForDashboardSessionResumeSettle(
   host: DashboardOpsHost,
   sessionId: string,
   timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+  renderLifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
     const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
     if (isLiveDashboardSessionEntry(entry)) {
       if (entry?.status === "offline" || entry?.pendingAction === "starting") {
-        if (typeof host.refreshLocalDashboardModel === "function") {
-          host.refreshLocalDashboardModel();
-        }
-        if (typeof host.renderDashboard === "function") {
-          host.renderDashboard();
-        }
+        renderDashboardDuringSettlement(host, renderLifecycle);
       }
       return true;
     }
@@ -201,22 +223,37 @@ async function waitForDashboardSessionResumeSettle(
       typeof host.waitForSessionStart === "function" &&
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
     ) {
-      host.refreshLocalDashboardModel();
-      host.renderDashboard();
+      if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
+      renderDashboardDuringSettlement(host, renderLifecycle);
       const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
       if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
     }
     if (hasLiveManagedAgentWindow(host, sessionId)) {
-      if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true);
-      }
-      if (typeof host.refreshLocalDashboardModel === "function") {
-        host.refreshLocalDashboardModel();
-      }
-      if (typeof host.renderDashboard === "function") {
-        host.renderDashboard();
-      }
+      if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
+      renderDashboardDuringSettlement(host, renderLifecycle);
       return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function waitForDashboardSessionStopSettle(
+  host: DashboardOpsHost,
+  sessionId: string,
+  timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+  renderLifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
+    const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
+    if (!entry) return true;
+    const hasLiveWindow = hasLiveManagedAgentWindow(host, sessionId);
+    if (!hasLiveWindow && !isLiveDashboardSessionEntry(entry) && entry.status !== "running") return true;
+    if (entry.pendingAction === "stopping") {
+      renderDashboardDuringSettlement(host, renderLifecycle);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -232,22 +269,19 @@ async function waitForRenderedDashboardServiceState(
   serviceId: string,
   predicate: (service: any | undefined) => boolean,
   timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+  renderLifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
     const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
     if (predicate(service)) {
       if (
         isLiveDashboardServiceEntry(service) &&
         (service?.status !== "running" || service?.pendingAction === "starting")
       ) {
-        if (typeof host.refreshLocalDashboardModel === "function") {
-          host.refreshLocalDashboardModel();
-        }
-        if (typeof host.renderDashboard === "function") {
-          host.renderDashboard();
-        }
+        renderDashboardDuringSettlement(host, renderLifecycle);
       }
       return true;
     }
@@ -256,16 +290,32 @@ async function waitForRenderedDashboardServiceState(
   return false;
 }
 
+async function waitForDashboardServiceStopSettle(
+  host: DashboardOpsHost,
+  serviceId: string,
+  timeoutMs = 10_000,
+  modelLifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  return waitForRenderedDashboardServiceState(
+    host,
+    serviceId,
+    (entry) => !entry || entry.status !== "running",
+    timeoutMs,
+    modelLifecycle,
+  );
+}
+
 async function waitForStableDashboardServiceAbsence(
   host: DashboardOpsHost,
   serviceId: string,
   timeoutMs = 10_000,
   stableMs = 350,
+  modelLifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
+    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
     const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
     if (service) {
       missingSince = null;
@@ -282,14 +332,14 @@ async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
 ): Promise<void> {
+  const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host, { inputEpoch: true });
+  const modelLifecycle = captureDashboardLifecycle(host);
   const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
     sessionSeed: opts.sessionSeed,
   });
-  opts.onBeforeRequest?.();
-  host.renderDashboard();
-  try {
-    await opts.request();
-    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
+  if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+  const clearPending = () => {
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
         host.reapplyDashboardPendingActions?.();
@@ -297,6 +347,16 @@ async function runDashboardSessionMutation(
     } else {
       host.setPendingDashboardSessionAction(opts.sessionId, null);
     }
+  };
+  try {
+    await opts.request();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) {
+      clearPending();
+      return;
+    }
+    assertDashboardMutationSettled(await opts.settle(modelLifecycle, lifecycle), opts.pendingAction);
+    clearPending();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -304,14 +364,9 @@ async function runDashboardSessionMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    if (typeof token === "number") {
-      if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
-        host.reapplyDashboardPendingActions?.();
-      }
-    } else {
-      host.setPendingDashboardSessionAction(opts.sessionId, null);
-    }
-    await opts.onError?.();
+    clearPending();
+    await opts.onError?.(modelLifecycle);
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
 }
@@ -320,14 +375,14 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const modelLifecycle = captureDashboardLifecycle(host);
   const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
     serviceSeed: opts.serviceSeed,
   });
-  opts.onBeforeRequest?.();
-  host.renderDashboard();
-  try {
-    await opts.request();
-    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
+  if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+  const clearPending = () => {
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
         host.reapplyDashboardPendingActions?.();
@@ -335,6 +390,16 @@ async function runDashboardServiceMutation(
     } else {
       host.setPendingDashboardServiceAction(opts.serviceId, null);
     }
+  };
+  try {
+    await opts.request();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) {
+      clearPending();
+      return;
+    }
+    assertDashboardMutationSettled(await opts.settle(modelLifecycle, lifecycle), opts.pendingAction);
+    clearPending();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -342,14 +407,9 @@ async function runDashboardServiceMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    if (typeof token === "number") {
-      if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
-        host.reapplyDashboardPendingActions?.();
-      }
-    } else {
-      host.setPendingDashboardServiceAction(opts.serviceId, null);
-    }
-    await opts.onError?.();
+    clearPending();
+    await opts.onError?.(modelLifecycle);
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
 }
@@ -388,8 +448,9 @@ export async function spawnDashboardAgentWithFeedback(
       host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath);
     },
     request: async () => {
-      await host.postToProjectService(
-        "/agents/spawn",
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.agents.spawn,
         {
           tool: input.tool,
           sessionId: input.sessionId,
@@ -401,8 +462,9 @@ export async function spawnDashboardAgentWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForDashboardSessionResumeSettle(host, input.sessionId),
-    onError: () => host.refreshDashboardModelFromService(true),
+    settle: (modelLifecycle, renderLifecycle) =>
+      waitForDashboardSessionResumeSettle(host, input.sessionId, 10_000, modelLifecycle, renderLifecycle),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to create ${input.tool} agent`,
   });
 }
@@ -432,8 +494,9 @@ export async function forkDashboardAgentWithFeedback(
       host.preferDashboardEntrySelection("session", input.targetSessionId, input.worktreePath);
     },
     request: async () => {
-      await host.postToProjectService(
-        "/agents/fork",
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.agents.fork,
         {
           sourceSessionId: input.sourceSessionId,
           targetSessionId: input.targetSessionId,
@@ -446,8 +509,9 @@ export async function forkDashboardAgentWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForDashboardSessionResumeSettle(host, input.targetSessionId),
-    onError: () => host.refreshDashboardModelFromService(true),
+    settle: (modelLifecycle, renderLifecycle) =>
+      waitForDashboardSessionResumeSettle(host, input.targetSessionId, 10_000, modelLifecycle, renderLifecycle),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Cannot fork session",
   });
 }
@@ -511,11 +575,17 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/agents/stop", { sessionId: session.id }, { timeoutMs: 10_000 });
+        await mutateDashboardApi(
+          host,
+          PROJECT_API_ROUTES.agents.stop,
+          { sessionId: session.id },
+          { timeoutMs: 10_000 },
+        );
       },
-      settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
+      settle: (modelLifecycle, renderLifecycle) =>
+        waitForDashboardSessionStopSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
       successFlash: { message: `Stopped ${label}` },
-      onError: () => host.refreshDashboardModelFromService(true),
+      onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to stop "${label}"`,
     });
     return;
@@ -599,41 +669,6 @@ export function renderSessionDetails(host: DashboardOpsHost, session: any, width
   return lines.slice(0, height);
 }
 
-export function composeSplitScreen(
-  host: DashboardOpsHost,
-  leftLines: string[],
-  rightLines: string[],
-  cols: number,
-  viewportHeight: number,
-  focusLine: number,
-  twoPane: boolean,
-): string[] {
-  const content = [...leftLines];
-  let scrollOffset = 0;
-  const maxScroll = Math.max(0, content.length - viewportHeight);
-  if (focusLine >= 0) {
-    if (focusLine < scrollOffset + 1) {
-      scrollOffset = Math.max(0, focusLine - 1);
-    } else if (focusLine >= scrollOffset + viewportHeight - 1) {
-      scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
-    }
-  }
-  const visibleLeft = content.slice(scrollOffset, scrollOffset + viewportHeight);
-  const canScrollUp = scrollOffset > 0;
-  const canScrollDown = scrollOffset < maxScroll;
-  if (canScrollUp && visibleLeft.length > 0) visibleLeft[0] = host.centerInWidth("\x1b[2m▲ more ▲\x1b[0m", cols);
-  if (canScrollDown && visibleLeft.length > 0) {
-    visibleLeft[visibleLeft.length - 1] = host.centerInWidth("\x1b[2m▼ more ▼\x1b[0m", cols);
-  }
-  while (visibleLeft.length < viewportHeight) visibleLeft.push("");
-  if (!twoPane) return visibleLeft;
-  return composeTwoPaneLines(visibleLeft, rightLines, cols);
-}
-
-export function composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
-  return composeTwoPane(left, right, cols);
-}
-
 export function wrapKeyValueForHost(key: string, value: string, width: number): string[] {
   return wrapKeyValue(key, value, width);
 }
@@ -673,12 +708,12 @@ export async function graveyardSessionWithFeedback(
       pendingAction: "graveyarding",
       sessionSeed,
       request: async () => {
-        await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
+        await mutateDashboardApi(host, PROJECT_API_ROUTES.agents.kill, { sessionId }, { timeoutMs: 10_000 });
       },
-      settle: () => waitForStableDashboardSessionAbsence(host, sessionId),
+      settle: (modelLifecycle) => waitForStableDashboardSessionAbsence(host, sessionId, 10_000, 350, modelLifecycle),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
       successFlash: { message: `Sent ${label} to graveyard` },
-      onError: () => host.refreshDashboardModelFromService(true),
+      onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to graveyard "${label}"`,
     });
     return;
@@ -689,6 +724,7 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     if (
       host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
       queuedAgentRestoresFor(host).has(session.id)
@@ -717,25 +753,28 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         sessionId: session.id,
         pendingAction: "starting",
         sessionSeed,
+        lifecycle,
         onBeforeRequest: () => {
           host.footerFlash = `Restoring ${label}`;
           host.footerFlashTicks = 3;
         },
         request: async () => {
-          resumeResult = await host.postToProjectService(
-            "/agents/resume",
+          resumeResult = await mutateDashboardApi(
+            host,
+            PROJECT_API_ROUTES.agents.resume,
             { sessionId: session.id },
             { timeoutMs: 60_000 },
           );
         },
-        settle: () => waitForDashboardSessionResumeSettle(host, session.id),
+        settle: (modelLifecycle, renderLifecycle) =>
+          waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
         successFlash: { message: `Restored ${label}` },
-        onError: () => host.refreshDashboardModelFromService(true),
+        onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
         errorTitle: `Failed to restore "${label}"`,
       });
     });
     const warningLines = restoreWarningLines(resumeResult);
-    if (warningLines.length > 0) {
+    if (warningLines.length > 0 && isDashboardLifecycleCurrent(host, lifecycle)) {
       host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
     }
     return;
@@ -768,12 +807,24 @@ export async function resumeOfflineServiceWithFeedback(
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/services/resume", { serviceId: service.id }, { timeoutMs: 10_000 });
+        await mutateDashboardApi(
+          host,
+          PROJECT_API_ROUTES.services.resume,
+          { serviceId: service.id },
+          { timeoutMs: 10_000 },
+        );
       },
-      settle: () =>
-        waitForRenderedDashboardServiceState(host, service.id, (entry) => isLiveDashboardServiceEntry(entry)),
+      settle: (modelLifecycle, renderLifecycle) =>
+        waitForRenderedDashboardServiceState(
+          host,
+          service.id,
+          (entry) => isLiveDashboardServiceEntry(entry),
+          10_000,
+          modelLifecycle,
+          renderLifecycle,
+        ),
       successFlash: { message: `◆ Started service ${service.label ?? service.id}` },
-      onError: () => host.refreshDashboardModelFromService(true),
+      onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: "Failed to start service",
     });
     return;
@@ -824,15 +875,24 @@ export async function createDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService(
-        "/services/create",
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.services.create,
         { serviceId, command: commandLine, worktreePath },
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForRenderedDashboardServiceState(host, serviceId, (entry) => isLiveDashboardServiceEntry(entry)),
+    settle: (modelLifecycle, renderLifecycle) =>
+      waitForRenderedDashboardServiceState(
+        host,
+        serviceId,
+        (entry) => isLiveDashboardServiceEntry(entry),
+        10_000,
+        modelLifecycle,
+        renderLifecycle,
+      ),
     successFlash: { message: `◆ Created service ${label}` },
-    onError: () => host.refreshDashboardModelFromService(true),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to create service",
   });
 }
@@ -858,11 +918,16 @@ export async function stopDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService("/services/stop", { serviceId: service.id }, { timeoutMs: 10_000 });
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.services.stop,
+        { serviceId: service.id },
+        { timeoutMs: 10_000 },
+      );
     },
-    settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
+    settle: (modelLifecycle) => waitForDashboardServiceStopSettle(host, service.id, 10_000, modelLifecycle),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
-    onError: () => host.refreshDashboardModelFromService(true),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to stop service",
   });
 }
@@ -875,11 +940,16 @@ export async function removeDashboardServiceWithFeedback(
     serviceId: service.id,
     pendingAction: "removing",
     request: async () => {
-      await host.postToProjectService("/services/remove", { serviceId: service.id }, { timeoutMs: 10_000 });
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.services.remove,
+        { serviceId: service.id },
+        { timeoutMs: 10_000 },
+      );
     },
-    settle: () => waitForStableDashboardServiceAbsence(host, service.id),
+    settle: (modelLifecycle) => waitForStableDashboardServiceAbsence(host, service.id, 10_000, 350, modelLifecycle),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
-    onError: () => host.refreshDashboardModelFromService(true),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to delete service",
   });
 }
@@ -906,8 +976,9 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         host.resumeOfflineSession(session);
         return;
       }
-      const result = await host.postToProjectService(
-        "/agents/resume",
+      const result = await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.agents.resume,
         { sessionId: session.id },
         { timeoutMs: 10_000 },
       );
@@ -968,15 +1039,17 @@ export async function migrateSessionWithFeedback(
     pendingAction: "migrating",
     sessionSeed,
     request: async () => {
-      await host.postToProjectService(
-        "/agents/migrate",
+      await mutateDashboardApi(
+        host,
+        PROJECT_API_ROUTES.agents.migrate,
         { sessionId: session.id, worktreePath: targetPath },
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForDashboardSessionResumeSettle(host, session.id),
+    settle: (modelLifecycle, renderLifecycle) =>
+      waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
     successFlash: { message: `Migrated ${label} to ${targetName}` },
-    onError: () => host.refreshDashboardModelFromService(true),
+    onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to migrate "${label}"`,
   });
 }

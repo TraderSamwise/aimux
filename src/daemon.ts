@@ -1,12 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve as pathResolve } from "node:path";
-import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve as pathResolve } from "node:path";
+import { execFileSync, spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { writeJsonAtomic } from "./atomic-write.js";
 import {
   getDaemonInfoPath,
   getDaemonStatePath,
   getDaemonStdioLogPath,
+  getGlobalAimuxDir,
   getProjectIdFor,
   getProjectServiceStdioLogPathFor,
 } from "./paths.js";
@@ -18,11 +19,17 @@ import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } fro
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
+import { commandArgValueMatches } from "./process-args.js";
+import { getAimuxCliLaunchCommand } from "./cli-launcher.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
+const DAEMON_HEALTH_PROBE_TIMEOUT_MS = 2_500;
 const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
+const PROJECT_SERVICE_READY_POLL_MS = 100;
 const PROJECT_SERVICE_HEALTH_TIMEOUT_MS = 2_500;
 // A busy event loop can miss a health ping; only restart after this many
 // consecutive failures so transient stalls don't churn the service.
@@ -31,6 +38,7 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
+const DAEMON_HEALTH_KIND = "aimux-daemon";
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
@@ -79,6 +87,14 @@ export interface ProjectServiceState {
   pid: number;
   startedAt: string;
   updatedAt: string;
+}
+
+export interface StoppedDaemonInfo extends AimuxDaemonInfo {
+  stoppedProjectServices: ProjectServiceState[];
+}
+
+export interface EnsureDaemonRunningOptions {
+  adoptExisting?: boolean;
 }
 
 interface DaemonState {
@@ -154,6 +170,154 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+interface ProjectServiceProcessIdentity {
+  projectId?: string;
+  projectRoot?: string;
+}
+
+function isAimuxDaemonHealth(json: any): boolean {
+  return json?.kind === DAEMON_HEALTH_KIND && Number.isInteger(json?.pid) && json.pid > 0;
+}
+
+function isMatchingDaemonHealth(json: any): boolean {
+  return isAimuxDaemonHealth(json) && manifestsMatch(getProjectServiceManifest(), json?.serviceInfo);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function daemonStartLockPath(): string {
+  return join(getGlobalAimuxDir(), "locks", "daemon-start");
+}
+
+function readLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryAcquireDaemonStartLock(): string | null {
+  const lockPath = daemonStartLockPath();
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const acquire = (): string | null => {
+    try {
+      mkdirSync(lockPath);
+      writeFileSync(join(lockPath, "owner.json"), `${JSON.stringify({ pid: process.pid })}\n`);
+      return lockPath;
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EEXIST") throw error;
+      return null;
+    }
+  };
+  const acquired = acquire();
+  if (acquired) return acquired;
+  const pid = readLockPid(lockPath);
+  if (pid && isPidAlive(pid)) return null;
+  rmSync(lockPath, { recursive: true, force: true });
+  return acquire();
+}
+
+function releaseDaemonStartLock(lockPath: string | null): void {
+  if (!lockPath) return;
+  if (readLockPid(lockPath) !== process.pid) return;
+  rmSync(lockPath, { recursive: true, force: true });
+}
+
+async function probeDefaultDaemon(options: EnsureDaemonRunningOptions): Promise<AimuxDaemonInfo | null> {
+  try {
+    const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`, {
+      timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS,
+    });
+    if (status >= 200 && status < 300 && json?.ok !== false && isAimuxDaemonHealth(json)) {
+      if (options.adoptExisting === false) {
+        log.warn("terminating daemon on default port instead of adopting", "daemon", { pid: json.pid });
+        await terminateDaemonOnDefaultPort(json.pid);
+        clearFile(getDaemonInfoPath());
+        return null;
+      }
+      if (!isMatchingDaemonHealth(json)) {
+        throw new Error("aimux daemon on default port is from a different local build; run aimux restart");
+      }
+      const adopted: AimuxDaemonInfo = {
+        pid: json.pid,
+        port: typeof json?.port === "number" ? json.port : getDaemonPort(),
+        startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      saveJson(getDaemonInfoPath(), adopted);
+      log.info("adopted existing daemon on default port", "daemon", { ...adopted });
+      return adopted;
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("different local build")) {
+      throw error;
+    }
+    log.debug("default daemon health probe failed", "daemon", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return null;
+}
+
+function readProcessCwd(pid: number): string | null {
+  try {
+    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const cwd = output
+      .split("\n")
+      .find((line) => line.startsWith("n"))
+      ?.slice(1)
+      .trim();
+    return cwd || null;
+  } catch {
+    return null;
+  }
+}
+
+function isAimuxProjectServiceProcess(pid: number, expected: ProjectServiceProcessIdentity = {}): boolean {
+  try {
+    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (!args.includes("__project-service-internal")) return false;
+    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
+      return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
+    }
+    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
+    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isPidAlive(pid);
+}
+
+async function terminateDaemonOnDefaultPort(pid: number): Promise<void> {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {}
+  if (await waitForPidExit(pid, 2_000)) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+  await waitForPidExit(pid, 2_000);
+}
+
 async function readJson(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -205,18 +369,29 @@ export function loadDaemonInfo(): AimuxDaemonInfo | null {
   return isPidAlive(info.pid) ? info : null;
 }
 
-export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<AimuxDaemonInfo | null> {
+export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<StoppedDaemonInfo | null> {
   const info = loadDaemonInfo();
   if (!info) return null;
   const state = loadDaemonState();
+  const projectServiceStates = Object.values(state.projects);
   log.info("stopping daemon", "daemon", {
     pid: info.pid,
     signal,
     projectCount: Object.keys(state.projects).length,
   });
-  for (const entry of Object.values(state.projects)) {
+  const stoppedProjectServices: ProjectServiceState[] = [];
+  for (const entry of projectServiceStates) {
+    if (!isAimuxProjectServiceProcess(entry.pid, entry)) {
+      log.warn("skipping unverified project service pid during daemon stop", "daemon", {
+        projectId: entry.projectId,
+        projectRoot: entry.projectRoot,
+        pid: entry.pid,
+      });
+      continue;
+    }
     try {
       process.kill(entry.pid, signal);
+      stoppedProjectServices.push(entry);
     } catch {}
   }
   try {
@@ -228,7 +403,7 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<Ai
     projects: {},
   } satisfies DaemonState);
   clearFile(getDaemonInfoPath());
-  return info;
+  return { ...info, stoppedProjectServices };
 }
 
 export function loadDaemonState(): DaemonState {
@@ -257,7 +432,7 @@ export function loadDaemonState(): DaemonState {
   };
 }
 
-export async function requestDaemonJson(path: string, init?: RequestInit): Promise<any> {
+export async function requestDaemonJson(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<any> {
   const info = loadDaemonInfo();
   if (!info) {
     throw new Error("aimux daemon is not running");
@@ -266,6 +441,7 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
     method: init?.method,
     headers: init?.headers as Record<string, string> | undefined,
     body: init?.body,
+    timeoutMs: init?.timeoutMs,
   });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `daemon request failed: ${status}`);
@@ -273,12 +449,26 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
   return json;
 }
 
-export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
+export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = {}): Promise<AimuxDaemonInfo> {
   const existing = loadDaemonInfo();
   if (existing) {
     try {
-      await requestDaemonJson("/health");
-      return existing;
+      const health = await requestDaemonJson("/health", { timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS });
+      if (!isAimuxDaemonHealth(health)) {
+        throw new Error("stored daemon health response does not identify Aimux");
+      }
+      if (health.pid !== existing.pid) {
+        throw new Error(`stored daemon pid ${existing.pid} does not match live pid ${health?.pid ?? "unknown"}`);
+      }
+      if (options.adoptExisting === false) {
+        log.warn("terminating stored daemon instead of adopting", "daemon", { pid: existing.pid });
+        await terminateDaemonOnDefaultPort(existing.pid);
+        clearFile(getDaemonInfoPath());
+      } else if (!isMatchingDaemonHealth(health)) {
+        throw new Error("stored daemon health response does not match this Aimux build");
+      } else {
+        return existing;
+      }
     } catch (error) {
       log.warn("stored daemon info failed health check", "daemon", {
         pid: existing.pid,
@@ -288,54 +478,61 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
     }
   }
 
-  try {
-    const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`);
-    if (status >= 200 && status < 300 && json?.ok !== false && typeof json?.pid === "number") {
-      const adopted: AimuxDaemonInfo = {
-        pid: json.pid,
-        port: typeof json?.port === "number" ? json.port : getDaemonPort(),
-        startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      saveJson(getDaemonInfoPath(), adopted);
-      log.info("adopted existing daemon on default port", "daemon", { ...adopted });
-      return adopted;
+  const probed = await probeDefaultDaemon(options);
+  if (probed) return probed;
+
+  let lockPath = tryAcquireDaemonStartLock();
+  if (!lockPath) {
+    const deadline = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const adopted = await probeDefaultDaemon(options);
+      if (adopted) return adopted;
+      lockPath = tryAcquireDaemonStartLock();
+      if (lockPath) break;
+      await sleep(100);
     }
-  } catch (error) {
-    log.debug("default daemon health probe failed", "daemon", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  const stdio = loggingChildStdio(getDaemonStdioLogPath());
-  let child: ChildProcess;
-  try {
-    child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
-      detached: true,
-      env: loggingChildEnv(),
-      stdio: stdio.stdio,
-    });
-  } catch (error) {
-    stdio.close();
-    throw error;
-  }
-  child.once("exit", stdio.close);
-  child.unref();
-  log.info("spawned daemon", "daemon", { pid: child.pid });
-
-  const deadline = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const info = loadDaemonInfo();
-    if (info) {
-      try {
-        await requestDaemonJson("/health");
-        return info;
-      } catch {}
+    if (!lockPath) {
+      throw new Error("timed out waiting for aimux daemon startup lock");
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  throw new Error("timed out waiting for aimux daemon to start");
+  try {
+    const adopted = await probeDefaultDaemon(options);
+    if (adopted) return adopted;
+
+    const stdio = loggingChildStdio(getDaemonStdioLogPath());
+    let child: ChildProcess;
+    try {
+      const launch = getAimuxCliLaunchCommand(["daemon", "run"]);
+      child = spawn(launch.command, launch.args, {
+        detached: true,
+        env: loggingChildEnv(),
+        stdio: stdio.stdio,
+      });
+    } catch (error) {
+      stdio.close();
+      throw error;
+    }
+    child.once("exit", stdio.close);
+    child.unref();
+    log.info("spawned daemon", "daemon", { pid: child.pid });
+
+    const deadline = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const info = loadDaemonInfo();
+      if (info) {
+        try {
+          const health = await requestDaemonJson("/health");
+          if (health?.pid === info.pid && isMatchingDaemonHealth(health)) return info;
+        } catch {}
+      }
+      await sleep(100);
+    }
+
+    throw new Error("timed out waiting for aimux daemon to start");
+  } finally {
+    releaseDaemonStartLock(lockPath);
+  }
 }
 
 export async function ensureProjectService(projectRoot: string): Promise<ProjectServiceState> {
@@ -448,6 +645,16 @@ export class AimuxDaemon {
     this.relayClient?.disconnect();
     this.relayClient = null;
     for (const entry of Object.values(this.state.projects)) {
+      const child = this.children.get(entry.projectId);
+      const trackedChild = child?.pid === entry.pid;
+      if (!trackedChild && !isAimuxProjectServiceProcess(entry.pid, entry)) {
+        log.warn("skipping unverified project service pid during daemon shutdown", "daemon", {
+          projectId: entry.projectId,
+          projectRoot: entry.projectRoot,
+          pid: entry.pid,
+        });
+        continue;
+      }
       try {
         process.kill(entry.pid, "SIGTERM");
       } catch {}
@@ -495,7 +702,14 @@ export class AimuxDaemon {
     const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
     let child: ChildProcess;
     try {
-      child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
+      const launch = getAimuxCliLaunchCommand([
+        "__project-service-internal",
+        "--project-id",
+        projectId,
+        "--project-root",
+        projectRoot,
+      ]);
+      child = spawn(launch.command, launch.args, {
         cwd: projectRoot,
         env: loggingChildEnv(),
         stdio: stdio.stdio,
@@ -541,6 +755,74 @@ export class AimuxDaemon {
     return state;
   }
 
+  private async waitForProjectServiceReady(
+    resolvedRoot: string,
+    projectId: string,
+    state: ProjectServiceState,
+  ): Promise<ProjectServiceState> {
+    const deadline = Date.now() + PROJECT_SERVICE_STARTUP_GRACE_MS;
+    let lastError = "metadata endpoint was not written";
+    while (Date.now() < deadline) {
+      if (!isPidAlive(state.pid)) {
+        throw new Error(`project service exited before it became ready: pid ${state.pid}`);
+      }
+      const endpoint = loadMetadataEndpoint(resolvedRoot);
+      if (!endpoint) {
+        await sleep(PROJECT_SERVICE_READY_POLL_MS);
+        continue;
+      }
+      if (endpoint.pid !== state.pid) {
+        lastError = `metadata endpoint pid ${endpoint.pid} did not match spawned pid ${state.pid}`;
+        await sleep(PROJECT_SERVICE_READY_POLL_MS);
+        continue;
+      }
+      try {
+        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
+          timeoutMs: PROJECT_SERVICE_HEALTH_TIMEOUT_MS,
+        });
+        if (status >= 200 && status < 300 && json?.ok !== false && json?.pid === state.pid) {
+          if (manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) {
+            return {
+              ...state,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          lastError = "health manifest did not match current build";
+        } else {
+          lastError = json?.error || `health request failed: ${status}`;
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+      await sleep(PROJECT_SERVICE_READY_POLL_MS);
+    }
+    throw new Error(`project service did not become ready: ${lastError}`);
+  }
+
+  private async spawnReadyProjectService(resolvedRoot: string, projectId: string): Promise<ProjectServiceState> {
+    const spawned = this.spawnProjectService(resolvedRoot, projectId);
+    try {
+      const ready = await this.waitForProjectServiceReady(resolvedRoot, projectId, spawned);
+      this.state.projects[projectId] = ready;
+      this.refreshState();
+      return ready;
+    } catch (error) {
+      log.warn("spawned project service failed readiness check", "daemon", {
+        projectId,
+        projectRoot: resolvedRoot,
+        pid: spawned.pid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.terminateProjectService(projectId, spawned);
+      const current = this.state.projects[projectId];
+      if (current?.pid === spawned.pid) {
+        delete this.state.projects[projectId];
+        this.refreshState();
+      }
+      throw error;
+    }
+  }
+
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
     const resolvedRoot = pathResolve(projectRoot);
     const projectId = getProjectIdFor(resolvedRoot);
@@ -584,11 +866,42 @@ export class AimuxDaemon {
         return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       try {
+        if (endpoint.pid !== existing.pid) {
+          if (withinStartupGrace) return refreshExisting();
+          log.warn("project service metadata endpoint pid mismatch", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            endpointPid: endpoint.pid,
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
+        }
         const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
           timeoutMs: PROJECT_SERVICE_HEALTH_TIMEOUT_MS,
         });
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
+        }
+        if (json?.pid !== existing.pid) {
+          if (withinStartupGrace) return refreshExisting();
+          log.warn("project service health pid mismatch", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            healthPid: json?.pid,
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
+        }
+        const expectedManifest = getProjectServiceManifest();
+        if (!manifestsMatch(expectedManifest, json?.serviceInfo)) {
+          log.warn("project service manifest mismatch", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            expected: expectedManifest,
+            actual: json.serviceInfo,
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
         }
       } catch (error) {
         if (withinStartupGrace) {
@@ -615,7 +928,7 @@ export class AimuxDaemon {
       this.projectHealthFailures.delete(projectId);
       return refreshExisting();
     }
-    return this.spawnProjectService(resolvedRoot, projectId);
+    return this.spawnReadyProjectService(resolvedRoot, projectId);
   }
 
   private async replaceProjectServiceAfterExit(
@@ -642,11 +955,20 @@ export class AimuxDaemon {
       this.children.delete(projectId);
     }
     this.refreshState();
-    return this.spawnProjectService(resolvedRoot, projectId);
+    return this.spawnReadyProjectService(resolvedRoot, projectId);
   }
 
   private async terminateProjectService(projectId: string, existing: ProjectServiceState): Promise<boolean> {
     const child = this.children.get(projectId);
+    const trackedChild = child?.pid === existing.pid;
+    if (!trackedChild && !isAimuxProjectServiceProcess(existing.pid, existing)) {
+      log.warn("skipping unverified project service pid during replacement", "daemon", {
+        projectId,
+        projectRoot: existing.projectRoot,
+        pid: existing.pid,
+      });
+      return true;
+    }
     log.info("terminating project service", "daemon", {
       projectId,
       projectRoot: existing.projectRoot,
@@ -703,9 +1025,19 @@ export class AimuxDaemon {
     const projectId = getProjectIdFor(pathResolve(projectRoot));
     const existing = this.state.projects[projectId];
     if (!existing) return null;
-    try {
-      process.kill(existing.pid, "SIGTERM");
-    } catch {}
+    const child = this.children.get(projectId);
+    const trackedChild = child?.pid === existing.pid;
+    if (trackedChild || isAimuxProjectServiceProcess(existing.pid, existing)) {
+      try {
+        process.kill(existing.pid, "SIGTERM");
+      } catch {}
+    } else {
+      log.warn("skipping unverified project service pid during project stop", "daemon", {
+        projectId,
+        projectRoot: existing.projectRoot,
+        pid: existing.pid,
+      });
+    }
     delete this.state.projects[projectId];
     this.projectHealthFailures.delete(projectId);
     if (this.children.get(projectId)?.pid === existing.pid) {
@@ -731,7 +1063,16 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === "/health") {
-      return { status: 200, body: { ok: true, pid: process.pid, port: getDaemonPort() } };
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          kind: DAEMON_HEALTH_KIND,
+          pid: process.pid,
+          port: getDaemonPort(),
+          serviceInfo: getProjectServiceManifest(),
+        },
+      };
     }
 
     if (method === "GET" && pathname === "/relay/status") {
@@ -815,6 +1156,35 @@ export class AimuxDaemon {
     }
 
     return { status: 404, body: { ok: false, error: "not found" } };
+  }
+
+  resolveProjectEventStream(
+    path: string,
+    headers?: Record<string, string>,
+  ): { ok: true; url: string; headers?: Record<string, string> } | { ok: false; status: number; error: string } {
+    this.refreshState();
+    const routeUrl = new URL(path, getDaemonBaseUrl());
+    const pathname = routeUrl.pathname;
+    const actor = parseRemoteActor(headers);
+    const access = assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
+    if (!access.ok) {
+      return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
+    }
+
+    const proxyMatch = pathname.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
+    if (!proxyMatch) return { ok: false, status: 404, error: "project event stream not found" };
+    const [, host, portStr, subPath] = proxyMatch;
+    if (!PROXY_ALLOWED_HOSTS.has(host)) {
+      return { ok: false, status: 403, error: "proxy host not allowed" };
+    }
+    if (subPath !== PROJECT_API_ROUTES.events) {
+      return { ok: false, status: 403, error: "route is not a project event stream" };
+    }
+    return {
+      ok: true,
+      url: `http://${host}:${portStr}${subPath}${routeUrl.search}`,
+      headers,
+    };
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {

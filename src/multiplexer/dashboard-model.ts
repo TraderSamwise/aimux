@@ -1,26 +1,22 @@
 import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
 import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
-import {
-  loadMetadataEndpoint,
-  loadMetadataState,
-  removeMetadataEndpoint,
-  resolveProjectServiceEndpoint,
-} from "../metadata-store.js";
+import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
+import { getRepoRoot } from "../paths.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
+import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
-import { summarizeUnreadNotificationsBySession } from "../notifications.js";
-import { requestJson } from "../http-client.js";
+import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
+import { isNotificationStale } from "../coordination-model.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
-import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
-import { isDashboardWindowName } from "../tmux/runtime-manager.js";
+import { isDashboardWindowName, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type {
@@ -33,12 +29,65 @@ import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } fr
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
+import { log } from "../debug.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import { getOrCreateTuiApiRuntime, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
+import {
+  captureDashboardLifecycle,
+  type DashboardLifecycleToken,
+  isDashboardLifecycleCurrent,
+} from "./dashboard-lifecycle.js";
 
 type DashboardModelHost = any;
+export interface DashboardModelRefreshOptions {
+  lifecycle?: DashboardLifecycleToken;
+}
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
+interface DashboardStateSnapshotOptions {
+  includeRuntimeInfo?: boolean;
+  managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
+}
 
 const METADATA_PENDING_SETTLE_TIMEOUT_MS = 10_000;
 const METADATA_PENDING_SETTLE_INTERVAL_MS = 100;
+const DESKTOP_STATE_REFRESH_TIMEOUT_MS = 3_000;
+const DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS = 5_000;
+
+function projectRootFor(host: DashboardModelHost): string {
+  const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  if (configuredProjectRoot) return configuredProjectRoot;
+  try {
+    return getRepoRoot();
+  } catch {
+    return process.cwd();
+  }
+}
+
+function hasUnhydratedLiveAgentWindow(
+  host: DashboardModelHost,
+  managedWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>,
+): boolean {
+  const runtimeIds = new Set((host.sessions ?? []).map((session: any) => session.id).filter(Boolean));
+  return managedWindows.some(({ target, metadata }) => {
+    if (isDashboardWindowName(target.windowName)) return false;
+    if (metadata.kind !== "agent" || !metadata.sessionId) return false;
+    if (!runtimeIds.has(metadata.sessionId)) return true;
+    return !host.sessionWorktreePaths?.has?.(metadata.sessionId) || !host.sessionTmuxTargets?.has?.(metadata.sessionId);
+  });
+}
+
+function hydrateLiveAgentWindowsForSnapshot(
+  host: DashboardModelHost,
+  managedWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>,
+): Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> {
+  if (!hasUnhydratedLiveAgentWindow(host, managedWindows)) return managedWindows;
+  if (typeof host.restoreTmuxSessionsFromTopology === "function") {
+    host.restoreTmuxSessionsFromTopology();
+  } else {
+    host.syncSessionsFromTopology?.();
+  }
+  return host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host));
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,8 +113,8 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
   return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
 
-function shouldRelaunchFreshSession(sessionId: string): boolean {
-  const derived = loadMetadataState().sessions[sessionId]?.derived;
+function shouldRelaunchFreshSession(host: DashboardModelHost, sessionId: string): boolean {
+  const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
   return derived?.activity === "error" || derived?.attention === "error";
 }
 
@@ -98,6 +147,7 @@ function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
     index: typeof seed.index === "number" ? seed.index : -1,
     id: seed.id,
     command: seed.command,
+    toolConfigKey: seed.toolConfigKey,
     label: seed.label,
     status: seed.status ?? (seed.lifecycle === "offline" ? "offline" : "running"),
     active: Boolean(seed.active),
@@ -136,6 +186,7 @@ function buildMetadataPendingSessionSeed(input: {
     index: -1,
     id: input.sessionId,
     command: input.tool,
+    toolConfigKey: input.tool,
     label: input.tool,
     createdAt: new Date().toISOString(),
     status: "waiting",
@@ -171,7 +222,7 @@ async function waitForMetadataCondition(
 function hasLiveManagedAgentWindow(host: DashboardModelHost, sessionId: string): boolean {
   try {
     if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
-    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+    return host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host)).some(({ target, metadata }: any) => {
       if (isDashboardWindowName(target.windowName)) return false;
       if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) return false;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
@@ -185,7 +236,7 @@ function hasLiveManagedAgentWindow(host: DashboardModelHost, sessionId: string):
 function hasLiveManagedServiceWindow(host: DashboardModelHost, serviceId: string): boolean {
   try {
     if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
-    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+    return host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host)).some(({ target, metadata }: any) => {
       if (isDashboardWindowName(target.windowName)) return false;
       if (metadata.kind !== "service" || metadata.sessionId !== serviceId) return false;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
@@ -248,6 +299,21 @@ async function settleMetadataPending<T>(
   }
 }
 
+function scheduleDashboardModelReconcile(host: DashboardModelHost): void {
+  const lifecycle = captureDashboardLifecycle(host);
+  const refresh =
+    typeof host.refreshDashboardModelFromService === "function"
+      ? host.refreshDashboardModelFromService.bind(host)
+      : refreshDashboardModelFromService.bind(null, host);
+  void refresh(true, { lifecycle })
+    .then((applied: boolean) => {
+      if (applied && isDashboardLifecycleCurrent(host, lifecycle) && host.isDashboardScreen?.("dashboard")) {
+        host.renderDashboard?.();
+      }
+    })
+    .catch(() => {});
+}
+
 function clearMetadataSessionPendingAfterSettle<T>(
   host: DashboardModelHost,
   sessionId: string,
@@ -261,9 +327,11 @@ function clearMetadataSessionPendingAfterSettle<T>(
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
         host.reapplyDashboardPendingActions?.();
+        scheduleDashboardModelReconcile(host);
       }
     } else if (host.dashboardPendingActions?.getSessionAction?.(sessionId) === kind) {
       setPendingDashboardSessionAction(host, sessionId, null);
+      scheduleDashboardModelReconcile(host);
     }
   })();
 }
@@ -281,9 +349,11 @@ function clearMetadataServicePendingAfterSettle<T>(
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
         host.reapplyDashboardPendingActions?.();
+        scheduleDashboardModelReconcile(host);
       }
     } else if (host.dashboardPendingActions?.getServiceAction?.(serviceId) === kind) {
       setPendingDashboardServiceAction(host, serviceId, null);
+      scheduleDashboardModelReconcile(host);
     }
   })();
 }
@@ -311,9 +381,11 @@ export async function withMetadataSessionPending<T>(
       if (typeof token === "number") {
         if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
           host.reapplyDashboardPendingActions?.();
+          scheduleDashboardModelReconcile(host);
         }
       } else {
         setPendingDashboardSessionAction(host, sessionId, null);
+        scheduleDashboardModelReconcile(host);
       }
     }
     throw error;
@@ -337,6 +409,7 @@ export async function withMetadataServicePending<T>(
   } catch (error) {
     if (host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
       host.reapplyDashboardPendingActions?.();
+      scheduleDashboardModelReconcile(host);
     }
     throw error;
   }
@@ -380,7 +453,7 @@ async function resumeOfflineAgentWithPending(
               : { ...offline, backendSessionId: reconciledBackendSessionId };
         }
       }
-      if (!shouldRelaunchFreshSession(sessionId)) {
+      if (!shouldRelaunchFreshSession(host, sessionId)) {
         assertSessionRestorable(offline, loadConfig().tools);
       }
       host.resumeOfflineSession(offline);
@@ -611,17 +684,29 @@ export function invalidateDesktopStateSnapshot(host: DashboardModelHost): void {
   host.desktopStateSnapshot = null;
 }
 
-export function refreshDesktopStateSnapshot(host: DashboardModelHost): void {
-  host.desktopStateSnapshot = buildDesktopStateSnapshot(host);
+export function refreshDesktopStateSnapshot(
+  host: DashboardModelHost,
+  options: DashboardStateSnapshotOptions = {},
+): void {
+  host.desktopStateSnapshot = buildDesktopStateSnapshot(host, options);
 }
 
 export function computeDashboardSessions(
   host: DashboardModelHost,
-  options: { includeTeammates?: boolean } = {},
+  options: {
+    includeTeammates?: boolean;
+    includeRuntimeInfo?: boolean;
+    managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
+  } = {},
 ): DashboardSession[] {
-  const lastUsedState = loadLastUsedState(process.cwd());
-  const metadata = loadMetadataState().sessions;
-  const threadSummaries = listThreadSummaries();
+  const includeRuntimeInfo = options.includeRuntimeInfo !== false;
+  const projectRoot = projectRootFor(host);
+  const lastUsedState = loadLastUsedState(projectRoot);
+  const metadata = loadMetadataState(projectRoot).sessions;
+  // Notification records are exchange threads tagged `notification`; they are surfaced by the
+  // per-session unread-notification count, so excluding them here keeps the dashboard's
+  // thread chips from double-counting the same needs-input record.
+  const threadSummaries = listThreadSummaries().filter((summary) => !summary.thread.tags?.includes(NOTIFICATION_TAG));
   const threadStats = new Map<
     string,
     {
@@ -700,12 +785,13 @@ export function computeDashboardSessions(
   }
   let mainRepoPath: string | undefined;
   try {
-    mainRepoPath = findMainRepo();
+    mainRepoPath = findMainRepo(projectRoot);
   } catch {}
   const sessions = buildDashboardSessions({
     sessions: host.sessions.map((session: any) => ({
       id: session.id,
       command: session.command,
+      toolConfigKey: host.sessionToolKeys?.get?.(session.id),
       backendSessionId: session.backendSessionId,
       team: session.team,
       createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
@@ -727,9 +813,12 @@ export function computeDashboardSessions(
   });
   const metadataBySessionId = new Map<string, { createdAt?: string; target?: { windowIndex?: number } }>();
   const notificationsBySessionId = summarizeUnreadNotificationsBySession();
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
+  for (const { target, metadata } of managedWindows) {
     if (metadata.kind !== "agent") continue;
-    if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
+    if (includeRuntimeInfo && host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) {
+      continue;
+    }
     metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
   }
   return sessions.map((session) => {
@@ -738,7 +827,24 @@ export function computeDashboardSessions(
     const metadata = metadataBySessionId.get(session.id);
     const target = host.sessionTmuxTargets.get(session.id) ?? metadata?.target;
     const notifications = notificationsBySessionId.get(session.id);
-    const runtimeInfo = target ? readTmuxProcessInfo(host, target) : {};
+    const runtimeInfo = includeRuntimeInfo && target ? readTmuxProcessInfo(host, target) : {};
+    const semantic = deriveSessionSemantics({
+      status: session.status,
+      pendingAction: session.pendingAction,
+      activity: session.activity,
+      attention: session.attention,
+      unseenCount: session.unseenCount,
+      notificationUnreadCount: notifications?.unreadCount ?? 0,
+      latestNotification: notifications?.latestUnread,
+      threadUnreadCount: stats?.unread ?? 0,
+      threadPendingCount: stats?.pending ?? 0,
+      threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
+      threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
+      workflowOnMeCount: workflow?.onMe ?? 0,
+      workflowBlockedCount: workflow?.blocked ?? 0,
+      workflowFamilyCount: workflow?.families.size ?? 0,
+      hasActiveTask: Boolean(session.taskDescription),
+    });
     return {
       ...session,
       tmuxWindowIndex: target?.windowIndex,
@@ -760,24 +866,12 @@ export function computeDashboardSessions(
       workflowTopLabel: workflow?.topLabel,
       workflowNextAction: workflow?.nextAction,
       notificationUnreadCount: notifications?.unreadCount ?? 0,
+      notificationNeedsInputUnreadCount: notifications?.needsInputUnreadCount ?? 0,
       latestNotificationText: notifications?.latestUnread?.body || notifications?.latestUnread?.title,
-      semantic: deriveSessionSemantics({
-        status: session.status,
-        pendingAction: session.pendingAction,
-        activity: session.activity,
-        attention: session.attention,
-        unseenCount: session.unseenCount,
-        notificationUnreadCount: notifications?.unreadCount ?? 0,
-        latestNotification: notifications?.latestUnread,
-        threadUnreadCount: stats?.unread ?? 0,
-        threadPendingCount: stats?.pending ?? 0,
-        threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
-        threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
-        workflowOnMeCount: workflow?.onMe ?? 0,
-        workflowBlockedCount: workflow?.blocked ?? 0,
-        workflowFamilyCount: workflow?.families.size ?? 0,
-        hasActiveTask: Boolean(session.taskDescription),
-      }),
+      notificationStale:
+        semantic.runtime.isAlive &&
+        isNotificationStale(semantic.user.label, (notifications?.needsInputUnreadCount ?? 0) > 0),
+      semantic,
     };
   });
 }
@@ -785,22 +879,29 @@ export function computeDashboardSessions(
 export function computeDashboardServices(
   host: DashboardModelHost,
   worktrees = host.listDesktopWorktrees(),
+  options: {
+    includeRuntimeInfo?: boolean;
+    managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
+  } = {},
 ): DashboardService[] {
+  const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
-  const lastUsedState = loadLastUsedState(process.cwd());
-  const sessionMetadata = loadMetadataState().sessions;
+  const projectRoot = projectRootFor(host);
+  const lastUsedState = loadLastUsedState(projectRoot);
+  const sessionMetadata = loadMetadataState(projectRoot).sessions;
   const offlineServiceIds = new Set(host.offlineServices.map((service: any) => service.id));
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
   );
-  const liveServices = host.tmuxRuntimeManager
-    .listProjectManagedWindows(process.cwd())
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
+  const liveServices = managedWindows
     .filter(({ target, metadata }: any) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
     .filter(({ metadata }: any) => !offlineServiceIds.has(metadata.sessionId))
     .filter(({ metadata }: any) => !(metadata.worktreePath && hiddenWorktreePaths.has(metadata.worktreePath)))
     .map(({ target, metadata }: any) => {
       const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
-      const info = readTmuxProcessInfo(host, target);
+      const alive = includeRuntimeInfo ? host.tmuxRuntimeManager.isWindowAlive(target) : target.paneDead !== true;
+      const info = includeRuntimeInfo ? readTmuxProcessInfo(host, target) : {};
       const shellMetadata = sessionMetadata[metadata.sessionId]?.derived;
       return {
         id: metadata.sessionId,
@@ -813,10 +914,12 @@ export function computeDashboardServices(
         worktreePath: metadata.worktreePath,
         worktreeName: worktree?.name,
         worktreeBranch: worktree?.branch,
-        status: host.tmuxRuntimeManager.isWindowAlive(target) ? ("running" as const) : ("exited" as const),
+        status: alive ? ("running" as const) : ("exited" as const),
         active: false,
         label: metadata.label,
-        cwd: host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
+        cwd: includeRuntimeInfo
+          ? (host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath)
+          : metadata.worktreePath,
         foregroundCommand: info.command,
         shellCommand: shellMetadata?.shellCommand,
         shellCommandState: shellMetadata?.shellCommandState,
@@ -877,9 +980,14 @@ export function readTmuxProcessInfo(
   };
 }
 
-export function buildDesktopStateSnapshot(host: DashboardModelHost) {
-  host.syncSessionsFromTopology();
+export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
+  if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
+  let managedWindows =
+    options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host));
+  if (!options.managedWindows) {
+    managedWindows = hydrateLiveAgentWindowsForSnapshot(host, managedWindows);
+  }
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
   );
@@ -894,96 +1002,173 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost) {
   let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
   let mainCheckoutPath: string | undefined;
   try {
-    mainCheckoutPath = findMainRepo();
+    mainCheckoutPath = findMainRepo(projectRootFor(host));
   } catch {}
   const mainWorktree =
     (mainCheckoutPath ? worktrees.find((wt: any) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
   if (mainWorktree) {
     mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
   }
+  const sessionOptions = { ...options, managedWindows };
+  const sessions = computeDashboardSessions(host, sessionOptions);
+  const teammates = computeDashboardSessions(host, { ...sessionOptions, includeTeammates: true }).filter((session) =>
+    isTeammateSession(session),
+  );
+  const services = computeDashboardServices(host, worktrees, { ...options, managedWindows });
+  const worktreeGroups = buildDashboardWorktreeGroups(host, sessions, services, worktrees, mainCheckoutPath);
   return {
-    sessions: computeDashboardSessions(host),
-    teammates: computeDashboardSessions(host, { includeTeammates: true }).filter((session) =>
-      isTeammateSession(session),
-    ),
-    services: computeDashboardServices(host, worktrees),
+    sessions,
+    teammates,
+    services,
     worktrees,
+    worktreeGroups,
     operationFailures,
     mainCheckoutInfo,
     mainCheckoutPath,
   };
 }
 
-export async function refreshDashboardModelFromService(host: DashboardModelHost, force = false): Promise<boolean> {
+function isMainCheckoutInfo(value: any): value is { name: string; branch: string } {
+  return Boolean(value) && typeof value.name === "string" && typeof value.branch === "string";
+}
+
+function isDashboardWorktreeGroup(value: any): value is WorktreeGroup {
+  return (
+    Boolean(value) &&
+    typeof value.name === "string" &&
+    typeof value.branch === "string" &&
+    (value.path === undefined || typeof value.path === "string") &&
+    (value.status === "active" || value.status === "offline") &&
+    Array.isArray(value.sessions) &&
+    Array.isArray(value.services)
+  );
+}
+
+function isDesktopStateDashboardModel(value: any): value is {
+  ok?: boolean;
+  sessions: DashboardSession[];
+  teammates: DashboardSession[];
+  services: DashboardService[];
+  worktreeGroups: WorktreeGroup[];
+  operationFailures?: DashboardOperationFailure[];
+  mainCheckoutInfo: { name: string; branch: string };
+} {
+  return (
+    Boolean(value) &&
+    value.ok === true &&
+    Array.isArray(value.sessions) &&
+    Array.isArray(value.teammates) &&
+    Array.isArray(value.services) &&
+    Array.isArray(value.worktreeGroups) &&
+    value.worktreeGroups.every(isDashboardWorktreeGroup) &&
+    (value.operationFailures === undefined || Array.isArray(value.operationFailures)) &&
+    isMainCheckoutInfo(value.mainCheckoutInfo)
+  );
+}
+
+function listLiveTmuxAgentIds(host: DashboardModelHost): string[] {
+  try {
+    const entries = host.tmuxRuntimeManager?.listProjectManagedWindows?.(projectRootFor(host));
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap((entry: any) => {
+      if (entry?.metadata?.kind !== "agent") return [];
+      if (typeof host.tmuxRuntimeManager?.isWindowAlive === "function") {
+        if (!host.tmuxRuntimeManager.isWindowAlive(entry.target)) return [];
+      } else if (entry?.target?.paneDead === true) {
+        return [];
+      }
+      if (isDashboardWindowName(entry?.target?.windowName)) return [];
+      return typeof entry?.metadata?.sessionId === "string" && entry.metadata.sessionId
+        ? [entry.metadata.sessionId]
+        : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function isContradictoryDesktopState(
+  host: DashboardModelHost,
+  json: { sessions: DashboardSession[]; teammates: DashboardSession[] },
+): boolean {
+  const liveIds = listLiveTmuxAgentIds(host);
+  if (liveIds.length === 0) return false;
+  const payloadIds = new Set([...json.sessions, ...json.teammates].map((entry) => entry.id).filter(Boolean));
+  return liveIds.some((id) => !payloadIds.has(id));
+}
+
+function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, error?: unknown): false {
+  (host as any).dashboardModelServiceRefreshError =
+    error instanceof Error ? error : new Error(error ? String(error) : "dashboard service refresh failed");
+  if (force) scheduleTuiApiRecovery(host, { immediate: true });
+  return false;
+}
+
+function isDashboardModelRefreshLifecycleCurrent(
+  host: DashboardModelHost,
+  options: DashboardModelRefreshOptions,
+): boolean {
+  return !options.lifecycle || isDashboardLifecycleCurrent(host, options.lifecycle);
+}
+
+export async function refreshDashboardModelFromService(
+  host: DashboardModelHost,
+  force = false,
+  options: DashboardModelRefreshOptions = {},
+): Promise<boolean> {
   if (host.mode !== "dashboard") return false;
   if (!force && host.dashboardModelRefreshedAt > 0 && Date.now() - host.dashboardModelRefreshedAt < 750) {
     return false;
   }
-  if (host.dashboardServiceSnapshotRefreshing) return false;
-  host.dashboardServiceSnapshotRefreshing = true;
-  const deadline = force ? Date.now() + 8000 : Date.now();
   try {
-    for (;;) {
-      const endpoint = resolveProjectServiceEndpoint(process.cwd());
-      if (endpoint) {
-        try {
-          const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-            timeoutMs: force ? 2000 : 750,
-          });
-          if (status >= 200 && status < 300) {
-            const body = json as {
-              ok?: boolean;
-              sessions?: DashboardSession[];
-              teammates?: DashboardSession[];
-              services?: DashboardService[];
-              worktrees?: Array<{
-                name: string;
-                path: string;
-                branch: string;
-                isBare: boolean;
-                pending?: boolean;
-                removing?: boolean;
-                pendingAction?: Extract<PendingWorktreeActionKind, "creating" | "removing" | "graveyarding">;
-                operationFailure?: DashboardOperationFailure;
-              }>;
-              operationFailures?: DashboardOperationFailure[];
-              mainCheckoutInfo?: { name: string; branch: string };
-              mainCheckoutPath?: string;
-            };
-            const dashSessions = body.sessions ?? [];
-            const dashTeammates = body.teammates ?? [];
-            const dashServices = body.services ?? [];
-            const worktrees = body.worktrees ?? [];
-            const worktreeGroups = buildDashboardWorktreeGroups(
-              host,
-              dashSessions,
-              dashServices,
-              worktrees,
-              body.mainCheckoutPath,
-            );
-            return applyDashboardModel(
-              host,
-              dashSessions,
-              dashTeammates,
-              dashServices,
-              worktreeGroups,
-              body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
-              body.operationFailures ?? [],
-            );
-          }
-        } catch {
-          await ensureDashboardControlPlane(host);
-        }
-      } else if (force) {
-        await ensureDashboardControlPlane(host);
-      }
-      if (!force || Date.now() >= deadline) return false;
-      await new Promise((resolve) => setTimeout(resolve, 150));
+    if (typeof host.getFromProjectService !== "function") {
+      if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
+      return failDashboardServiceRefresh(host, force);
     }
-  } catch {
-    return false;
-  } finally {
-    host.dashboardServiceSnapshotRefreshing = false;
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      "desktop-state",
+      PROJECT_API_ROUTES.desktopState,
+      (json) => {
+        if (!isDesktopStateDashboardModel(json)) throw new Error("invalid desktop-state payload");
+        return json;
+      },
+      {
+        timeoutMs: force ? DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS : DESKTOP_STATE_REFRESH_TIMEOUT_MS,
+        supersede: force,
+      },
+    );
+    if (!result.ok && result.error === undefined) return false;
+    if (!result.ok || !result.value) {
+      if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
+      return failDashboardServiceRefresh(host, force, result.error);
+    }
+    if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
+    const json = result.value;
+    if (isContradictoryDesktopState(host, json)) {
+      return failDashboardServiceRefresh(
+        host,
+        force,
+        "project service returned incomplete state while tmux has live agents",
+      );
+    }
+    (host as any).dashboardModelServiceRefreshedAt = Date.now();
+    (host as any).dashboardModelServiceRefreshError = undefined;
+    const applied = applyDashboardModel(
+      host,
+      json.sessions,
+      json.teammates,
+      json.services,
+      json.worktreeGroups,
+      json.mainCheckoutInfo,
+      json.operationFailures ?? [],
+    );
+    if (applied && (host as any).runtimeGuardState?.kind && (host as any).runtimeGuardState.kind !== "ok") {
+      scheduleTuiApiRecovery(host, { immediate: true });
+    }
+    return applied;
+  } catch (error) {
+    if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
+    return failDashboardServiceRefresh(host, force, error);
   }
 }
 
@@ -1013,8 +1198,11 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
   host.projectServiceUiRefreshPending = false;
   host.metadataServer = new MetadataServer({
     events: { bus: host.eventBus },
+    diagnostics: {
+      pluginStatuses: () => host.pluginRuntime?.getPluginStatuses() ?? [],
+    },
     desktop: {
-      getState: () => host.buildDesktopState(),
+      getState: () => host.buildDesktopState({ includeStatusline: false, includeRuntimeInfo: false }),
       listWorktrees: () => host.listProjectedDesktopWorktrees(),
       getSessionDisplayContext: (sessionId: string) => {
         const session =
@@ -1182,6 +1370,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           findDashboardSessionSeed(host, input.sessionId),
         ),
       interruptAgent: (input: any) => host.interruptAgent(input.sessionId),
+      resizeAgentPane: (input: any) => host.resizeAgentPane(input.sessionId, input.cols, input.rows),
       renameAgent: (input: any) => host.renameAgent(input.sessionId, input.label),
       migrateAgent: (input: any) =>
         withMetadataSessionPending(
@@ -1223,16 +1412,55 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
         scheduleProjectServiceUiRefresh(host);
       },
     );
-    await host.pluginRuntime.start();
-    host.loopWatcher = new LoopWatcher({
-      config: loadConfig().loop,
+    try {
+      await host.pluginRuntime.start();
+    } catch (error) {
+      log.warn("project service plugin runtime disabled after startup failure", "plugin", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      await Promise.resolve(host.pluginRuntime.stop?.()).catch(() => {});
+      host.pluginRuntime = null;
+    }
+    try {
+      host.loopWatcher = new LoopWatcher({
+        config: loadConfig().loop,
+        loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
+        loadMetadata: () => loadMetadataState(projectRootFor(host)),
+        hasPendingInteraction: (sessionId: string) =>
+          (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
+        sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
+      });
+      host.loopWatcher.start();
+    } catch (error) {
+      log.warn("project service loop watcher disabled after startup failure", "runtime", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      host.loopWatcher?.stop?.();
+      host.loopWatcher = null;
+    }
+  }
+  // The reconciler talks to host.metadataServer in-process, so it must start with
+  // the project service regardless of whether the HTTP endpoint bound — it is not
+  // gated on `endpoint` like the plugin runtime and loop watcher above.
+  try {
+    host.transcriptReconciler = new TranscriptReconciler({
+      loadMetadata: () => loadMetadataState(projectRootFor(host)),
       loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
-      loadMetadata: () => loadMetadataState(),
       hasPendingInteraction: (sessionId: string) =>
         (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
-      sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
+      settleActivity: (sessionId: string) => host.metadataServer?.reconcileSettleActivity(sessionId),
+      clearStaleResponse: (sessionId: string) => host.metadataServer?.reconcileClearResponse(sessionId),
     });
-    host.loopWatcher.start();
+    host.transcriptReconciler.start();
+  } catch (error) {
+    log.warn("project service transcript reconciler disabled after startup failure", "runtime", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    host.transcriptReconciler?.stop?.();
+    host.transcriptReconciler = null;
   }
   host.projectServiceStartupMetadataSettling = false;
   if (host.projectServiceUiRefreshPending) {
@@ -1257,22 +1485,8 @@ export async function stopProjectServices(host: DashboardModelHost): Promise<voi
   }
   host.loopWatcher?.stop?.();
   host.loopWatcher = null;
+  host.transcriptReconciler?.stop?.();
+  host.transcriptReconciler = null;
   await host.pluginRuntime?.stop?.();
   host.pluginRuntime = null;
-}
-
-async function ensureDashboardControlPlane(host: DashboardModelHost): Promise<void> {
-  if (host.dashboardServiceRecovery) {
-    await host.dashboardServiceRecovery;
-    return;
-  }
-  host.dashboardServiceRecovery = (async () => {
-    await ensureDaemonRunning();
-    await ensureProjectService(process.cwd());
-  })();
-  try {
-    await host.dashboardServiceRecovery;
-  } finally {
-    host.dashboardServiceRecovery = null;
-  }
 }

@@ -16,6 +16,12 @@ import {
 import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+} from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type RuntimeStateHost = any;
 
@@ -29,6 +35,10 @@ const idleNotificationCandidates = new WeakMap<
   Map<string, { idleSince: number; notified: boolean }>
 >();
 
+function projectRootFor(host: RuntimeStateHost): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+}
+
 function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
   if (!worktreePath) return true;
   if (graveyardPaths.has(worktreePath)) return false;
@@ -39,7 +49,7 @@ function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return [];
   const graveyardPaths = listWorktreeGraveyardPaths();
   const windows: ManagedAgentWindow[] = [];
-  for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
     const { target, metadata } = entry;
     if (isDashboardWindowName(target.windowName)) continue;
     if (metadata.kind !== "agent") continue;
@@ -75,7 +85,7 @@ function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
       return;
     }
     if (host.mode === "dashboard" || host.mode === "project-service") {
-      markLastUsed(process.cwd(), {
+      markLastUsed(projectRootFor(host), {
         itemId,
         clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
       });
@@ -93,24 +103,20 @@ function isIntentionalOfflineSession(session: any): boolean {
 
 export function renderCurrentDashboardView(host: RuntimeStateHost): void {
   host.reconcileDashboardRenderState();
-  if (host.isDashboardScreen("activity")) {
-    host.renderActivityDashboard();
+  if (host.isDashboardScreen("coordination")) {
+    host.renderCoordination();
     return;
   }
-  if (host.isDashboardScreen("workflow")) {
-    host.renderWorkflow();
+  if (host.isDashboardScreen("project")) {
+    host.renderProject();
     return;
   }
-  if (host.isDashboardScreen("notifications")) {
-    host.renderNotifications();
+  if (host.isDashboardScreen("library")) {
+    host.renderLibrary();
     return;
   }
-  if (host.isDashboardScreen("threads")) {
-    host.renderThreads();
-    return;
-  }
-  if (host.isDashboardScreen("plans")) {
-    host.renderPlans();
+  if (host.isDashboardScreen("topology")) {
+    host.renderTopology();
     return;
   }
   if (host.isDashboardScreen("help")) {
@@ -163,11 +169,32 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
       const now = Date.now();
       if (now >= host.dashboardNextBackgroundRefreshAt) {
         host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
-        void host.refreshDashboardModelFromService().then((refreshed: boolean) => {
-          if (refreshed || dashboardNeedsRender) {
-            host.renderCurrentDashboardView();
-          }
-        });
+        if (dashboardNeedsRender) {
+          host.renderCurrentDashboardView();
+        }
+        const modelLifecycle = captureDashboardLifecycle(host);
+        const renderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+        void refreshDashboardModelThroughApi(host, { lifecycle: modelLifecycle })
+          .then((refreshed: boolean) => {
+            if (
+              isDashboardLifecycleCurrent(host, renderLifecycle) &&
+              host.isDashboardScreen?.("coordination") &&
+              typeof host.refreshCoordinationFromService === "function"
+            ) {
+              startDashboardLifecycleTask(
+                host,
+                { inputEpoch: true, screen: "coordination" },
+                (token) => host.refreshCoordinationFromService({ lifecycle: token }),
+                {
+                  onSuccess: () => host.renderCurrentDashboardView(),
+                },
+              );
+            }
+            if (refreshed && isDashboardLifecycleCurrent(host, renderLifecycle)) {
+              host.renderCurrentDashboardView();
+            }
+          })
+          .catch(() => undefined);
       } else if (dashboardNeedsRender) {
         host.renderCurrentDashboardView();
       }
@@ -306,7 +333,7 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 
   const liveServiceIds = new Set(
     host.tmuxRuntimeManager
-      .listProjectManagedWindows(process.cwd())
+      .listProjectManagedWindows(projectRootFor(host))
       .filter(
         ({ target, metadata }: any) =>
           !isDashboardWindowName(target.windowName) &&
@@ -343,7 +370,7 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   const seen = new Set<string>();
   const graveyardPaths = listWorktreeGraveyardPaths();
   const liveServices: any[] = [];
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
     if (metadata.kind !== "service") continue;
     if (!host.tmuxRuntimeManager.isWindowAlive(target)) continue;
     if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
@@ -600,6 +627,16 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
       delete next.progress;
       return next;
     });
+  } else if (useBackendResume && derived?.activity === "running") {
+    // A reattached agent is sitting at its prompt, not mid-generation. Restoring
+    // the stale "running" from disk would read as "working" forever (the
+    // dropped-stop-hook trap). Settle it to idle so it derives "ready"; a real
+    // prompt-submit hook re-marks it running the moment work resumes. Genuine
+    // needs_input/blocked (activity "waiting") is preserved for the resumed agent.
+    updateSessionMetadata(session.id, (current: any) => ({
+      ...current,
+      derived: current.derived ? { ...current.derived, activity: "idle" } : current.derived,
+    }));
   }
 
   const preservedLabel = session.label ?? host.getSessionLabel(session.id);
@@ -687,6 +724,8 @@ export function recordSessionBackendSessionId(
 
 export function startHeartbeat(host: RuntimeStateHost): void {
   host.runtimeSync.startHeartbeat();
+  // Probe the guard immediately so drift/disconnect is caught at startup, not after the first tick.
+  void host.refreshRuntimeGuard?.();
 }
 
 export function stopHeartbeat(host: RuntimeStateHost): void {

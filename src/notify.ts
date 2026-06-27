@@ -4,6 +4,7 @@ import type { AlertEvent } from "./project-events.js";
 import { shouldSuppressNotification } from "./notification-context.js";
 import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
 import { sendDesktopNotification } from "./desktop-notifier.js";
+import { externalNotificationsDisabled } from "./external-notifications.js";
 
 let cachedConfig: NotificationConfig | null = null;
 
@@ -22,12 +23,20 @@ export function resetNotifyConfig(): void {
 function send(title: string, message: string): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
+  if (externalNotificationsDisabled()) {
+    debug(`external notification suppressed by AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS: ${message}`, "notify");
+    return;
+  }
 
   sendDesktopNotification({ title, message, sound: true });
   debug(`notification: ${message}`, "notify");
 }
 
 function sendSecurity(title: string, message: string): void {
+  if (externalNotificationsDisabled()) {
+    debug(`external security notification suppressed by AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS: ${message}`, "notify");
+    return;
+  }
   sendDesktopNotification({ title, message, sound: true });
   debug(`security notification: ${message}`, "notify");
 }
@@ -53,7 +62,7 @@ export function notifyComplete(sessionId: string): void {
 export function notifyAlert(event: AlertEvent): boolean {
   const config = getNotifyConfig();
   if (!config.enabled) return false;
-  if (shouldSuppressNotification(event)) return false;
+  if (shouldSuppressNotification(event, event.projectRoot)) return false;
   if (event.kind === "interaction_request" && event.interaction?.telemetry) return false;
 
   if (
@@ -73,7 +82,7 @@ export function notifyAlert(event: AlertEvent): boolean {
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return false;
 
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
-  forwardAlertToMobilePush(event);
+  if (!externalNotificationsDisabled()) forwardAlertToMobilePush(event);
   return true;
 }
 

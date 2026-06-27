@@ -6,6 +6,7 @@ import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { ApiError, getPlan, putPlan } from "@/lib/api";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { singleRouteParam } from "@/lib/route-params";
 import { selectedProjectAtom } from "@/stores/projects";
 
@@ -22,17 +23,20 @@ export default function PlanEditorScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const serviceEndpoint = project?.serviceEndpoint ?? null;
+  const serviceEndpoint = getProjectServiceEndpoint(project);
+  const serviceEndpointHost = serviceEndpoint?.host;
+  const serviceEndpointPort = serviceEndpoint?.port;
 
   useEffect(() => {
-    if (!serviceEndpoint || !sessionId) return;
+    if (!serviceEndpointHost || !serviceEndpointPort || !sessionId) return;
+    const currentEndpoint = { host: serviceEndpointHost, port: serviceEndpointPort };
     let cancelled = false;
     setLoading(true);
     setError(null);
     (async () => {
       try {
         const token = await getToken();
-        const res = await getPlan(serviceEndpoint, sessionId, { token });
+        const res = await getPlan(currentEndpoint, sessionId, { token });
         if (cancelled) return;
         setContent(res.content);
         setOriginalContent(res.content);
@@ -51,7 +55,7 @@ export default function PlanEditorScreen() {
     return () => {
       cancelled = true;
     };
-  }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, getToken]);
+  }, [serviceEndpointHost, serviceEndpointPort, sessionId, getToken]);
 
   async function handleSave() {
     if (!serviceEndpoint || !sessionId) return;

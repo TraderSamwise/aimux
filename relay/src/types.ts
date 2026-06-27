@@ -31,6 +31,37 @@ export interface RelayRequest {
   body?: unknown;
 }
 
+export interface RelayProjectEventsSubscribe {
+  id: string;
+  type: "project_events_subscribe";
+  path: string;
+  headers?: Record<string, string>;
+}
+
+export interface RelayProjectEventsUnsubscribe {
+  id: string;
+  type: "project_events_unsubscribe";
+}
+
+export interface RelayProjectEventsSubscribed {
+  id: string;
+  type: "project_events_subscribed";
+}
+
+export interface RelayProjectEvent {
+  id: string;
+  type: "project_event";
+  event: string;
+  data: unknown;
+}
+
+export interface RelayProjectEventsError {
+  id: string;
+  type: "project_events_error";
+  status?: number;
+  message: string;
+}
+
 export interface RelayResponse {
   id: string;
   type: "response";
@@ -65,6 +96,11 @@ export interface RelayNotificationPushControl {
 
 export type RelayMessage =
   | RelayRequest
+  | RelayProjectEventsSubscribe
+  | RelayProjectEventsUnsubscribe
+  | RelayProjectEventsSubscribed
+  | RelayProjectEvent
+  | RelayProjectEventsError
   | RelayResponse
   | RelayControl
   | RelaySecurityEventControl

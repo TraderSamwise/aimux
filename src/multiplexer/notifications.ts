@@ -1,186 +1,147 @@
-import type { NotificationRecord } from "../notifications.js";
-import { parseKeys } from "../key-parser.js";
-import { renderNotificationsScreen } from "../tui/screens/subscreen-renderers.js";
-import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
-import { markThreadSeen } from "../threads.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import {
+  type CoordinationModel,
+  type CoordinationReachability,
+  type CoordinationWorklist,
+  type WorklistItem,
+} from "../coordination-model.js";
+import { type WorkflowEntry } from "../workflow.js";
+import {
+  captureDashboardLifecycle,
+  type DashboardApiViewRefreshOptions,
+  isDashboardLifecycleCurrent,
+  startDashboardLifecycleTask,
+} from "./dashboard-lifecycle.js";
+import { mutateDashboardApi } from "./dashboard-api-client.js";
+import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
+const COORDINATION_WORKLIST_RESOURCE = "coordination-worklist";
 
-export function showNotificationPanel(host: NotificationHost): void {
-  const entries = loadNotificationEntries(host).slice(0, 40);
-  host.notificationPanelState = {
-    entries,
-    index: entries.length > 0 ? 0 : -1,
-  };
-  host.openDashboardOverlay("notification-panel");
-  host.syncTuiNotificationContext(true);
-  host.renderDashboard();
+/** Per-row reconciliation flags, index-aligned with host.notificationEntries. */
+export interface NotificationRowMeta {
+  reachability: CoordinationReachability;
+  stale: boolean;
+  actionable: boolean;
 }
 
-export function closeNotificationPanel(host: NotificationHost): void {
-  host.notificationPanelState = null;
-  host.clearDashboardOverlay();
-  host.syncTuiNotificationContext(false);
-  host.renderDashboard();
+/** Reconciled coordination payload. */
+interface CoordinationPayload {
+  model: CoordinationModel;
+  worklist: CoordinationWorklist;
+  threads: WorkflowEntry[];
 }
 
-export function renderNotificationPanel(host: NotificationHost): void {
-  host.renderNotificationPanel();
+function validateCoordinationPayload(value: unknown): CoordinationPayload {
+  const res = value as any;
+  if (
+    !res?.ok ||
+    !Array.isArray(res.model?.items) ||
+    !Array.isArray(res.worklist?.items) ||
+    (res.threads != null && !Array.isArray(res.threads))
+  ) {
+    throw new Error("invalid coordination payload");
+  }
+  return { model: res.model, worklist: res.worklist, threads: res.threads ?? [] };
 }
 
-export function handleNotificationPanelKey(host: NotificationHost, data: Buffer): void {
-  const panel = host.notificationPanelState;
-  if (!panel) return;
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const key = events[0].name || events[0].char;
-
-  if (key === "escape" || key === "enter" || key === "return") {
-    closeNotificationPanel(host);
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (panel.entries.length > 1) {
-      panel.index = (panel.index + 1) % panel.entries.length;
-      host.renderDashboard();
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (panel.entries.length > 1) {
-      panel.index = (panel.index - 1 + panel.entries.length) % panel.entries.length;
-      host.renderDashboard();
-    }
-    return;
-  }
-  if (key === "r") {
-    const selected = panel.entries[panel.index];
-    if (!selected) return;
-    markRuntimeInboxEntriesDone({ id: selected.id });
-    panel.entries = loadNotificationEntries(host).slice(0, 40);
-    if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-    host.renderDashboard();
-    return;
-  }
-  if (key === "c") {
-    const selected = panel.entries[panel.index];
-    if (!selected) return;
-    markRuntimeInboxEntriesDone({ id: selected.id });
-    panel.entries = loadNotificationEntries(host).slice(0, 40);
-    if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-    host.renderDashboard();
-    return;
-  }
-  if (key === "C") {
-    markRuntimeInboxEntriesDone();
-    panel.entries = [];
-    panel.index = -1;
-    host.renderDashboard();
-  }
-}
-
-function hasNotificationTarget(host: NotificationHost, participantId: string): boolean {
-  return Boolean(
-    findNotificationSessionTarget(host, participantId) ?? findNotificationServiceTarget(host, participantId),
+// Apply a reconciled service payload to the host: legacy notificationEntries/meta (open path
+// + reply overlay), the full unfiltered worklist, then the filtered view.
+export function applyCoordinationModel(host: NotificationHost, payload: CoordinationPayload): void {
+  host.threadEntries = payload.threads;
+  host.coordinationModel = payload.model;
+  host.notificationEntries = payload.model.items.flatMap((item) => item.notifications);
+  host.notificationRowMeta = payload.model.items.flatMap((item) =>
+    item.notifications.map(
+      (): NotificationRowMeta => ({
+        reachability: item.reachability,
+        stale: item.stale,
+        actionable: item.actionable,
+      }),
+    ),
   );
+  host.coordinationWorklistAll = payload.worklist.items;
+  host.coordinationLoaded = true;
+  applyCoordinationFilter(host);
 }
 
-function notificationTargetSessionId(host: NotificationHost, participantId: string): string | undefined {
-  return hasNotificationTarget(host, participantId) ? participantId : undefined;
-}
-
-function loadNotificationEntries(host: NotificationHost): NotificationRecord[] {
-  const exchange = createRuntimeExchangeStore().read();
-  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
-  const taskById = new Map(exchange.tasks.map((task) => [task.id, task] as const));
-  const latestMessageByThread = new Map<string, (typeof exchange.messages)[number]>();
-  for (const message of exchange.messages) {
-    const existing = latestMessageByThread.get(message.threadId);
-    if (!existing || existing.ts < message.ts) latestMessageByThread.set(message.threadId, message);
+// Derive the filtered worklist from the full set and clamp the selection indices. Cheap and
+// synchronous so the Tab filter toggle re-applies without a rebuild or a service round-trip.
+export function applyCoordinationFilter(host: NotificationHost): void {
+  const all: WorklistItem[] = host.coordinationWorklistAll ?? [];
+  host.coordinationWorklist =
+    host.coordinationFilter === "threads" ? all.filter((item) => item.kind === "thread") : all;
+  const length = host.coordinationWorklist.length;
+  if (host.coordinationIndex == null || host.coordinationIndex >= length) {
+    host.coordinationIndex = length > 0 ? Math.max(0, length - 1) : -1;
   }
-  return exchange.inbox
-    .filter((entry) => entry.state !== "done")
-    .map((entry): NotificationRecord | undefined => {
-      if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-        const thread = threadById.get(entry.subjectId);
-        if (!thread) return undefined;
-        const message = latestMessageByThread.get(thread.id);
-        return {
-          id: entry.id,
-          title: thread.title,
-          subtitle: `${thread.kind} · ${thread.status}`,
-          body: message?.body ?? thread.title,
-          sessionId: notificationTargetSessionId(host, entry.participantId),
-          targetKind: notificationTargetSessionId(host, entry.participantId)
-            ? ("session" as const)
-            : ("generic" as const),
-          kind: entry.subjectKind,
-          unread: true,
-          cleared: false,
-          createdAt: entry.updatedAt,
-          updatedAt: entry.updatedAt,
-        };
-      }
-      const task = taskById.get(entry.subjectId);
-      if (!task) return undefined;
-      return {
-        id: entry.id,
-        title: task.description,
-        subtitle: `${task.type ?? "task"} · ${task.status}`,
-        body: task.result ?? task.error ?? task.prompt,
-        sessionId: notificationTargetSessionId(host, entry.participantId),
-        targetKind: notificationTargetSessionId(host, entry.participantId)
-          ? ("session" as const)
-          : ("generic" as const),
-        kind: entry.subjectKind,
-        unread: true,
-        cleared: false,
-        createdAt: entry.updatedAt,
-        updatedAt: entry.updatedAt,
-      };
-    })
-    .filter((entry): entry is NotificationRecord => Boolean(entry))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, 200);
-}
-
-function markRuntimeInboxEntriesDone(input: { id?: string } = {}): void {
-  const store = createRuntimeExchangeStore();
-  const entries = store.read().inbox.filter((entry) => !input.id || entry.id === input.id);
-  for (const entry of entries) {
-    if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-      markThreadSeen(entry.subjectId, entry.participantId);
-    }
+  const notificationCount = Array.isArray(host.notificationEntries) ? host.notificationEntries.length : 0;
+  if (host.notificationIndex >= notificationCount) {
+    host.notificationIndex = Math.max(0, notificationCount - 1);
   }
-  store.update((exchange) => ({
-    ...exchange,
-    inbox: exchange.inbox.map((entry) => (!input.id || entry.id === input.id ? { ...entry, state: "done" } : entry)),
-  }));
 }
 
-function refreshNotificationEntries(host: NotificationHost): void {
-  host.notificationEntries = loadNotificationEntries(host);
-  if (host.notificationIndex >= host.notificationEntries.length) {
-    host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
+// Prefer the service's reconciled worklist (the single authority, shared with the app). On
+// failure preserve the last service payload so version skew cannot silently fork the view.
+export async function refreshCoordinationFromService(
+  host: NotificationHost,
+  options: DashboardApiViewRefreshOptions = {},
+): Promise<boolean> {
+  if (typeof host.getFromProjectService !== "function") return false;
+  try {
+    const result = await getOrCreateTuiApiRuntime(host).refreshJson(
+      COORDINATION_WORKLIST_RESOURCE,
+      PROJECT_API_ROUTES.coordinationWorklist,
+      validateCoordinationPayload,
+      { supersede: options.force },
+    );
+    if (!result.ok || !result.value) return false;
+    if (options.lifecycle && !isDashboardLifecycleCurrent(host, options.lifecycle)) return false;
+    applyCoordinationModel(host, result.value);
+    return true;
+  } catch {
+    return false;
   }
 }
 
 export function hydrateDashboardNotificationScreenState(host: NotificationHost): void {
-  if (!host.isDashboardScreen?.("notifications")) return;
-  refreshNotificationEntries(host);
+  if (!host.isDashboardScreen?.("coordination")) return;
+  startDashboardLifecycleTask(
+    host,
+    { inputEpoch: true, screen: "coordination" },
+    (token) => host.refreshCoordinationFromService?.({ lifecycle: token }) ?? Promise.resolve(false),
+    {
+      onSuccess: () => host.renderCurrentDashboardView?.(),
+    },
+  );
   host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
 }
 
-function ensureNotificationState(host: NotificationHost): void {
+export function ensureNotificationState(host: NotificationHost): void {
   if (!Array.isArray(host.notificationEntries)) {
     host.notificationEntries = [];
+  }
+  if (!Array.isArray(host.notificationRowMeta)) {
+    host.notificationRowMeta = [];
+  }
+  if (!Array.isArray(host.coordinationWorklist)) {
+    host.coordinationWorklist = [];
+  }
+  if (!Array.isArray(host.coordinationWorklistAll)) {
+    host.coordinationWorklistAll = [];
+  }
+  if (host.coordinationFilter !== "threads") {
+    host.coordinationFilter = "all";
+  }
+  if (typeof host.coordinationIndex !== "number" || Number.isNaN(host.coordinationIndex)) {
+    host.coordinationIndex = host.coordinationWorklist.length > 0 ? 0 : -1;
   }
   if (typeof host.notificationIndex !== "number" || Number.isNaN(host.notificationIndex)) {
     host.notificationIndex = host.notificationEntries.length > 0 ? 0 : -1;
   }
 }
 
-function findNotificationSessionTarget(host: NotificationHost, sessionId: string): any | undefined {
+export function findNotificationSessionTarget(host: NotificationHost, sessionId: string): any | undefined {
   return (
     host.getDashboardSessions?.().find((entry: any) => entry.id === sessionId) ??
     (host.dashboardTeammatesCache ?? []).find((entry: any) => entry.id === sessionId)
@@ -191,19 +152,8 @@ function findNotificationServiceTarget(host: NotificationHost, sessionId: string
   return host.getDashboardServices?.().find((entry: any) => entry.id === sessionId);
 }
 
-export function showNotifications(host: NotificationHost): void {
-  host.clearDashboardSubscreens();
-  refreshNotificationEntries(host);
-  host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
-  host.setDashboardScreen("notifications");
-  host.writeStatuslineFile();
-  renderNotifications(host);
-}
-
-export function renderNotifications(host: NotificationHost): void {
-  ensureNotificationState(host);
-  refreshNotificationEntries(host);
-  renderNotificationsScreen(host);
+function activationSucceeded(result: unknown): boolean {
+  return result === undefined || result === "opened";
 }
 
 export function notificationTargetLabel(host: NotificationHost, sessionId?: string): string | null {
@@ -226,7 +176,7 @@ export function notificationTargetState(
   if (!sessionId) return "none";
   const session = findNotificationSessionTarget(host, sessionId);
   if (session) {
-    return session.status === "offline" ? "offline" : "live";
+    return session.status === "offline" || session.status === "exited" ? "offline" : "live";
   }
   const service = findNotificationServiceTarget(host, sessionId);
   if (service) {
@@ -235,141 +185,99 @@ export function notificationTargetState(
   return "missing";
 }
 
-async function openSelectedNotification(host: NotificationHost): Promise<void> {
-  const entry = host.notificationEntries[host.notificationIndex];
-  if (!entry) return;
-  if (!entry.sessionId) {
-    if (entry.unread) {
-      markRuntimeInboxEntriesDone({ id: entry.id });
-      refreshNotificationEntries(host);
+export function notificationMutationInputForItem(item: WorklistItem): { sessionId?: string; ids?: string[] } | null {
+  const note = item.notification;
+  if (!note) return null;
+  if (item.sessionId) return { sessionId: item.sessionId };
+  return { ids: note.notifications.map((record) => record.id).filter(Boolean) };
+}
+
+// Mark a notification rollup read through the service so it stays the sole writer.
+export async function markCoordinationItemRead(host: NotificationHost, item: WorklistItem): Promise<void> {
+  const input = notificationMutationInputForItem(item);
+  if (!input) return;
+  await mutateDashboardApi(host, PROJECT_API_ROUTES.notifications.read, input);
+}
+
+export async function openCoordinationNotification(host: NotificationHost, item: WorklistItem): Promise<void> {
+  const note = item.notification;
+  if (!note) return;
+  const actionLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+  const actionIsCurrent = () => isDashboardLifecycleCurrent(host, actionLifecycle);
+  const coordinationIsCurrent = () => isDashboardLifecycleCurrent(host, lifecycle);
+  const unread = note.unreadCount > 0;
+  const settle = async () => {
+    if (!unread) return;
+    try {
+      await markCoordinationItemRead(host, item);
+      await host.refreshCoordinationFromService?.({ force: true, lifecycle });
+    } catch {
+      if (!coordinationIsCurrent()) return;
+      host.footerFlash = "Notification update failed";
+      host.footerFlashTicks = 3;
+      if (typeof host.refreshCoordinationFromService === "function") {
+        await host.refreshCoordinationFromService({ force: true, lifecycle }).catch(() => {});
+      }
     }
-    renderNotifications(host);
+  };
+  if (!item.sessionId) {
+    await settle();
+    if (!coordinationIsCurrent()) return;
+    host.renderCoordination();
     return;
   }
-  const targetState = notificationTargetState(host, entry.sessionId);
+  const targetState = notificationTargetState(host, item.sessionId);
   if (targetState === "missing") {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
-    renderNotifications(host);
+    host.renderCoordination();
     return;
   }
-  const session = findNotificationSessionTarget(host, entry.sessionId);
+  // Waking an offline target resumes its tmux session, which renders the dashboard as it
+  // restores; we switch to the dashboard screen first (just before activation) so that render —
+  // and any failure feedback — lands on the screen we actually end up on, not coordination.
+  const offline = targetState === "offline";
+  const failOpen = (): void => {
+    if (!actionIsCurrent()) return;
+    host.footerFlash = "Failed to open notification target";
+    host.footerFlashTicks = 3;
+    if (offline) host.renderDashboard();
+    else if (coordinationIsCurrent()) host.renderCoordination();
+  };
+  const session = findNotificationSessionTarget(host, item.sessionId);
   if (session) {
+    if (offline) host.setDashboardScreen("dashboard");
     try {
-      await host.activateDashboardEntry(session, {
-        preserveDashboardSelection: Boolean(session.team),
-      });
+      const result = await host.activateDashboardEntry(session, { preserveDashboardSelection: Boolean(session.team) });
+      if (!activationSucceeded(result)) {
+        failOpen();
+        return;
+      }
     } catch {
-      host.footerFlash = "Failed to open notification target";
-      host.footerFlashTicks = 3;
-      renderNotifications(host);
+      failOpen();
       return;
     }
-    if (entry.unread) {
-      markRuntimeInboxEntriesDone({ id: entry.id });
-      refreshNotificationEntries(host);
-    }
+    await settle();
     return;
   }
-  const service = findNotificationServiceTarget(host, entry.sessionId);
+  const service = findNotificationServiceTarget(host, item.sessionId);
   if (!service) {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;
-    renderNotifications(host);
+    host.renderCoordination();
     return;
   }
+  if (offline) host.setDashboardScreen("dashboard");
   try {
-    await host.activateDashboardService(service);
+    const result = await host.activateDashboardService(service);
+    if (!activationSucceeded(result)) {
+      failOpen();
+      return;
+    }
   } catch {
-    host.footerFlash = "Failed to open notification target";
-    host.footerFlashTicks = 3;
-    renderNotifications(host);
+    failOpen();
     return;
   }
-  if (entry.unread) {
-    markRuntimeInboxEntriesDone({ id: entry.id });
-    refreshNotificationEntries(host);
-  }
-}
-
-export function handleNotificationsKey(host: NotificationHost, data: Buffer): void {
-  const events = parseKeys(data);
-  if (events.length === 0) return;
-  const event = events[0];
-  const key = event.name || event.char;
-  const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-  if (isTabToggle) {
-    host.dashboardState.toggleDetailsSidebar();
-    renderNotifications(host);
-    return;
-  }
-  if (key === "q") {
-    host.exitDashboardClientOrProcess();
-    return;
-  }
-  if (key === "escape" || key === "d") {
-    host.setDashboardScreen("dashboard");
-    host.renderDashboard();
-    return;
-  }
-  if (host.handleDashboardSubscreenNavigationKey(key, "notifications")) return;
-  if (key === "?") {
-    host.showHelp();
-    return;
-  }
-  if (key === "down" || key === "j") {
-    if (host.notificationEntries.length > 1) {
-      host.notificationIndex = (host.notificationIndex + 1) % host.notificationEntries.length;
-      renderNotifications(host);
-    }
-    return;
-  }
-  if (key === "up" || key === "k") {
-    if (host.notificationEntries.length > 1) {
-      host.notificationIndex =
-        (host.notificationIndex - 1 + host.notificationEntries.length) % host.notificationEntries.length;
-      renderNotifications(host);
-    }
-    return;
-  }
-  if (key >= "1" && key <= "9") {
-    const idx = parseInt(key, 10) - 1;
-    if (idx < host.notificationEntries.length) {
-      host.notificationIndex = idx;
-      renderNotifications(host);
-    }
-    return;
-  }
-  if (key === "r") {
-    const entry = host.notificationEntries[host.notificationIndex];
-    if (!entry) return;
-    markRuntimeInboxEntriesDone({ id: entry.id });
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "R") {
-    markRuntimeInboxEntriesDone();
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "c") {
-    const entry = host.notificationEntries[host.notificationIndex];
-    if (!entry) return;
-    markRuntimeInboxEntriesDone({ id: entry.id });
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "C") {
-    markRuntimeInboxEntriesDone();
-    refreshNotificationEntries(host);
-    renderNotifications(host);
-    return;
-  }
-  if (key === "enter" || key === "return") {
-    void openSelectedNotification(host);
-  }
+  await settle();
 }

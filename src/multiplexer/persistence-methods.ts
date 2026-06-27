@@ -12,9 +12,9 @@ import {
 import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
-import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
+import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
-import { writeJsonAtomic, writeTextAtomic } from "../atomic-write.js";
+import { writeJsonAtomic, writeTextAtomicFast } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import {
   buildGraveyardCleanupPlan,
@@ -23,6 +23,9 @@ import {
   runGraveyardCleanup,
   type GraveyardCleanupRunResult,
 } from "../graveyard-cleanup.js";
+import { buildInboxCleanupPlan, runInboxCleanup, type InboxCleanupRunResult } from "../inbox-cleanup.js";
+import { buildCoordinationModel } from "../coordination-model.js";
+import { listNotifications } from "../notifications.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
@@ -30,6 +33,7 @@ import {
   listWorktreeGraveyardEntries as listWorktreeGraveyardEntriesImpl,
   listWorktreeGraveyardPaths,
 } from "./worktree-graveyard.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
@@ -64,6 +68,34 @@ function normalizeGraveyardCleanupIntervalMs(value: unknown): number {
   const intervalMs = Number(value);
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) return DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS;
   return Math.max(MIN_GRAVEYARD_CLEANUP_INTERVAL_MS, intervalMs);
+}
+
+const DEFAULT_INBOX_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MIN_INBOX_CLEANUP_INTERVAL_MS = 60_000;
+
+function normalizeInboxCleanupIntervalMs(value: unknown): number {
+  const intervalMs = Number(value);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return DEFAULT_INBOX_CLEANUP_INTERVAL_MS;
+  return Math.max(MIN_INBOX_CLEANUP_INTERVAL_MS, intervalMs);
+}
+
+// Unread notifications for agents that still genuinely want attention; the cleanup must
+// never archive these even when trimming to maxSize.
+function actionableUnreadNotificationIds(host: any): Set<string> {
+  const model = buildCoordinationModel({
+    sessions: host.getDashboardSessions?.() ?? [],
+    teammates: host.dashboardTeammatesCache ?? [],
+    services: host.getDashboardServices?.() ?? [],
+    notifications: listNotifications(),
+    threads: host.threadEntries ?? [],
+  });
+  const ids = new Set<string>();
+  for (const item of model.actionable) {
+    for (const notification of item.notifications) {
+      if (notification.unread) ids.add(notification.id);
+    }
+  }
+  return ids;
 }
 
 function refreshAfterGraveyardCleanup(host: any): void {
@@ -183,15 +215,56 @@ export const persistenceMethods = {
     clearInterval(this.graveyardCleanupInterval);
     this.graveyardCleanupInterval = null;
   },
-  writeStatuslineFile(this: any, input?: { force?: boolean }): void {
+  async cleanupInbox(this: any, input?: { dryRun?: boolean; now?: Date | string }): Promise<InboxCleanupRunResult> {
+    const plan = buildInboxCleanupPlan({ now: input?.now, protectedIds: actionableUnreadNotificationIds(this) });
+    const result = runInboxCleanup(plan, {}, { dryRun: input?.dryRun === true });
+    const changed = result.results.some((item) => item.status === "cleared");
+    if (changed && input?.dryRun !== true) {
+      this.metadataServer?.notifyChange?.();
+      if (this.isDashboardScreen?.("coordination")) {
+        const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true, screen: "coordination" });
+        void this.refreshCoordinationFromService?.({ lifecycle })
+          .then(() => {
+            if (isDashboardLifecycleCurrent(this, lifecycle)) this.renderCurrentDashboardView?.();
+          })
+          .catch(() => {});
+      }
+    }
+    return result;
+  },
+  startInboxCleanup(this: any): void {
+    if (this.inboxCleanupInterval) return;
+    const inboxConfig = loadConfig().inbox;
+    if (inboxConfig.cleanupEnabled === false) return;
+    const intervalMs = normalizeInboxCleanupIntervalMs(inboxConfig.cleanupIntervalMs);
+    this.inboxCleanupInterval = setInterval(() => {
+      if (this.inboxCleanupRunning) return;
+      this.inboxCleanupRunning = true;
+      void this.cleanupInbox()
+        .catch((error: unknown) => {
+          debug(`inbox cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "notification");
+        })
+        .finally(() => {
+          this.inboxCleanupRunning = false;
+        });
+    }, intervalMs);
+  },
+  stopInboxCleanup(this: any): void {
+    if (!this.inboxCleanupInterval) return;
+    clearInterval(this.inboxCleanupInterval);
+    this.inboxCleanupInterval = null;
+  },
+  writeStatuslineFile(this: any, input?: { force?: boolean; repairTmux?: boolean; refreshTmux?: boolean }): void {
     try {
       if (this.mode !== "project-service") return;
-      this.repairManagedTmuxTargets();
-      for (const session of this.sessions) {
-        this.syncTmuxWindowMetadata(session.id);
+      if (input?.repairTmux) {
+        this.repairManagedTmuxTargets();
+        for (const session of this.sessions) {
+          this.syncTmuxWindowMetadata(session.id);
+        }
       }
       this.dashboardUiStateStore.loadSharedState(this.dashboardState);
-      this.refreshDesktopStateSnapshot();
+      this.refreshDesktopStateSnapshot({ includeRuntimeInfo: false });
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const data = this.buildStatuslineSnapshot();
@@ -201,9 +274,11 @@ export const persistenceMethods = {
         return;
       }
       this.lastStatuslineSnapshotKey = snapshotKey;
-      writeTextAtomic(filePath, JSON.stringify(data) + "\n");
+      writeTextAtomicFast(filePath, JSON.stringify(data) + "\n");
       this.writePrecomputedTmuxStatuslineFiles(data);
-      this.tmuxRuntimeManager.refreshStatus();
+      if (input?.refreshTmux) {
+        this.tmuxRuntimeManager.refreshStatus();
+      }
     } catch {}
   },
 
@@ -229,9 +304,8 @@ export const persistenceMethods = {
       invalidateTmuxStatuslineArtifacts(process.cwd());
       this.lastStatuslineSnapshotKey = null;
     }
-    this.repairManagedTmuxTargets();
     this.invalidateDesktopStateSnapshot();
-    this.writeStatuslineFile({ force: _input?.force === true });
+    this.writeStatuslineFile({ force: _input?.force === true, repairTmux: true, refreshTmux: true });
     return { ok: true };
   },
 
@@ -243,7 +317,7 @@ export const persistenceMethods = {
     // Cosmetic per-window statusline text, written concurrently from the refresh
     // path: unique-temp atomic write (never a shared ".tmp"), and never fatal.
     try {
-      writeTextAtomic(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
+      writeTextAtomicFast(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
     } catch (error) {
       debug(
         `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -416,32 +490,52 @@ export const persistenceMethods = {
     };
   },
 
-  buildDesktopState(this: any): {
+  buildDesktopState(
+    this: any,
+    input: { includeStatusline?: boolean; includeRuntimeInfo?: boolean } = {},
+  ): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
     services: DashboardService[];
-    statusline: ReturnType<any["buildStatuslineSnapshot"]>;
+    statusline?: ReturnType<any["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    worktreeGroups: WorktreeGroup[];
     operationFailures: DashboardOperationFailure[];
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    if (!this.desktopStateSnapshot) {
-      this.refreshDesktopStateSnapshot();
+    let desktopState;
+    if (input.includeRuntimeInfo === false) {
+      desktopState = this.buildDesktopStateSnapshot({ includeRuntimeInfo: false });
+    } else {
+      if (!this.desktopStateSnapshot) this.refreshDesktopStateSnapshot();
+      desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     }
-    const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
-    return {
-      sessions: this.dashboardPendingActions.applyToSessions(desktopState.sessions),
-      teammates: this.dashboardPendingActions
-        .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
-        .filter((session: DashboardSession) => isTeammateSession(session)),
-      services: this.dashboardPendingActions.applyToServices(desktopState.services),
-      statusline: this.buildStatuslineSnapshot(),
-      worktrees: this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees),
+    const sessions = this.dashboardPendingActions.applyToSessions(desktopState.sessions);
+    const teammates = this.dashboardPendingActions
+      .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
+      .filter((session: DashboardSession) => isTeammateSession(session));
+    const services = this.dashboardPendingActions.applyToServices(desktopState.services);
+    const worktrees = this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees);
+    const worktreeGroups = composeDashboardWorktreeGroups(
+      this.dashboardPendingActions.applyToWorktrees(desktopState.worktreeGroups ?? desktopState.worktrees),
+      sessions,
+      services,
+    );
+    const state = {
+      sessions,
+      teammates,
+      services,
+      worktrees,
+      worktreeGroups,
       operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
     };
+    if (input.includeStatusline !== false) {
+      return { ...state, statusline: this.buildStatuslineSnapshot() };
+    }
+    return state;
   },
 
   reapplyDashboardPendingActions(this: any): void {
@@ -656,7 +750,17 @@ export const persistenceMethods = {
         (worktree: any) => worktree.path === targetPath && !worktree.pending && !worktree.operationFailure,
       )
     ) {
-      throw new Error(`Worktree "${name}" already exists`);
+      const message = `Worktree "${name}" already exists`;
+      recordDashboardFailure(this, {
+        targetKind: "worktree",
+        operation: "create",
+        title: `Failed to create worktree "${name}"`,
+        message,
+        worktreePath: targetPath,
+        worktreeName: name,
+      });
+      refreshDashboardWorktreeProjection(this);
+      throw new Error(message);
     }
     clearDashboardOperationFailures({ targetKind: "worktree", operation: "create", worktreePath: targetPath });
 

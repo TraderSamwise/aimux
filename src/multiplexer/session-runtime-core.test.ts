@@ -9,6 +9,7 @@ import {
   handleSessionRuntimeEvent,
   registerManagedSession,
   resolveLiveSessionTmuxTarget,
+  resizeAgentPane,
   sendAgentInput,
   updateSessionLabel,
 } from "./session-runtime-core.js";
@@ -22,6 +23,7 @@ describe("session runtime prompt submission", () => {
   it("does not apply dashboard rename locally when project-service rename fails", async () => {
     const host: any = {
       mode: "dashboard",
+      dashboardInputEpoch: 0,
       sessionLabels: new Map([["codex-1", "old"]]),
       offlineSessions: [],
       dashboardSessionsCache: [{ id: "codex-1", label: "old" }],
@@ -41,20 +43,69 @@ describe("session runtime prompt submission", () => {
     expect(host.sessionLabels.get("codex-1")).toBe("old");
     expect(host.dashboardSessionsCache[0].label).toBe("old");
     expect(host.footerFlash).toBe("Rename failed: boom");
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }) }),
+    );
     expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
+  });
+
+  it("does not clear newer dashboard rename pending state from a stale rename", async () => {
+    let token = 0;
+    const pending = new Map<string, { kind: string; token: number }>();
+    let rejectRename!: (error: unknown) => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      sessionLabels: new Map([["codex-1", "old"]]),
+      offlineSessions: [],
+      dashboardSessionsCache: [{ id: "codex-1", label: "old" }],
+      dashboardWorktreeGroupsCache: [{ sessions: [{ id: "codex-1", label: "old" }] }],
+      dashboardState: { worktreeSessions: [{ id: "codex-1", label: "old" }] },
+      dashboardPendingActions: {
+        clearSessionActionIfToken: vi.fn((sessionId: string, clearToken: number) => {
+          if (pending.get(sessionId)?.token !== clearToken) return false;
+          pending.delete(sessionId);
+          return true;
+        }),
+      },
+      setPendingDashboardSessionAction: vi.fn((sessionId: string, kind: string | null) => {
+        if (!kind) {
+          pending.delete(sessionId);
+          return undefined;
+        }
+        token += 1;
+        pending.set(sessionId, { kind, token });
+        return token;
+      }),
+      reapplyDashboardPendingActions: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      postToProjectService: vi.fn(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRename = reject;
+          }),
+      ),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+    };
+
+    const rename = updateSessionLabel(host, "codex-1", "new");
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    host.setPendingDashboardSessionAction("codex-1", "renaming");
+    rejectRename(new Error("late failure"));
+    await rename;
+
+    expect(pending.get("codex-1")).toEqual({ kind: "renaming", token: 2 });
+    expect(host.footerFlash).toBeUndefined();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("submits tmux-backed chat input through the carriage-return prompt path", async () => {
     vi.useFakeTimers();
     const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
-    const captures = [
-      "› line one line two",
-      "› line one line two",
-      "› line one line two",
-      "› line one line two",
-      "",
-    ];
+    const captures = ["› line one line two", "› line one line two", "› line one line two", "› line one line two", ""];
     const tmuxRuntimeManager = {
       sendText: vi.fn(),
       sendKey: vi.fn(),
@@ -88,6 +139,52 @@ describe("session runtime prompt submission", () => {
     } finally {
       transport.destroy();
     }
+  });
+
+  it("retargets tmux-backed sessions before resizing", async () => {
+    const staleTarget = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const liveTarget = { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "codex" };
+    const tmuxRuntimeManager = {
+      sendText: vi.fn(),
+      sendKey: vi.fn(),
+      sendEnter: vi.fn(),
+      resizeTarget: vi.fn(),
+      getTargetByWindowId: vi.fn(() => liveTarget),
+      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
+      isWindowAlive: vi.fn(() => true),
+    };
+    const transport = new TmuxSessionTransport("codex-1", "codex", staleTarget, tmuxRuntimeManager as any, 80, 24);
+    const runtime = {
+      id: "codex-1",
+      command: "codex",
+      transport,
+      resize: vi.fn((cols: number, rows: number) => transport.resize(cols, rows)),
+    };
+    const host: any = {
+      sessions: [runtime],
+      sessionTmuxTargets: new Map([["codex-1", staleTarget]]),
+      tmuxRuntimeManager,
+    };
+
+    try {
+      await expect(resizeAgentPane(host, "codex-1", 100, 32)).resolves.toEqual({
+        sessionId: "codex-1",
+        cols: 100,
+        rows: 32,
+      });
+      expect(runtime.resize).toHaveBeenCalledWith(100, 32);
+      expect(tmuxRuntimeManager.resizeTarget).toHaveBeenCalledWith(liveTarget, 100, 32);
+      expect(host.sessionTmuxTargets.get("codex-1")).toEqual(liveTarget);
+    } finally {
+      transport.destroy();
+    }
+  });
+
+  it("rejects invalid resize dimensions before resolving sessions", async () => {
+    const host: any = { sessions: [] };
+
+    await expect(resizeAgentPane(host, "codex-1", 0, 32)).rejects.toThrow("cols must be a positive integer");
+    await expect(resizeAgentPane(host, "codex-1", 100, 10.5)).rejects.toThrow("rows must be a positive integer");
   });
 
   it("does not re-add graveyarded live sessions as offline when their process exits", () => {
@@ -152,6 +249,25 @@ describe("session runtime prompt submission", () => {
     };
 
     expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toBeUndefined();
+    expect(host.sessionTmuxTargets.has("claude-1")).toBe(false);
+  });
+
+  it("removes a stale cached tmux target before adopting a scanned replacement", () => {
+    const staleTarget = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
+    const replacement = { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" };
+    const host: any = {
+      sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
+      tmuxRuntimeManager: {
+        getTargetByWindowId: vi.fn(() => undefined),
+        getWindowMetadata: vi.fn(() => null),
+        listProjectManagedWindows: vi.fn(() => [
+          { target: replacement, metadata: { kind: "agent", sessionId: "claude-1" } },
+        ]),
+      },
+    };
+
+    expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toEqual(replacement);
+    expect(host.sessionTmuxTargets.get("claude-1")).toEqual(replacement);
   });
 
   it("does not publish metadata backend ids to tmux metadata", async () => {

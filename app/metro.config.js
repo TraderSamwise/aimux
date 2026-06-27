@@ -1,7 +1,10 @@
 const { getDefaultConfig } = require("expo/metro-config");
 const { withNativeWind } = require("nativewind/metro");
+const path = require("path");
 
 const config = getDefaultConfig(__dirname);
+
+config.watchFolders = Array.from(new Set([...(config.watchFolders ?? []), path.resolve(__dirname, "..")]));
 
 // Jotai's ESM files use import.meta.env which Metro's non-module web bundle can't run.
 // Force jotai (and jotai-optics) to resolve to their CJS files on web by rewriting

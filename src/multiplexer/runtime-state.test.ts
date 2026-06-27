@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { upsertTopologyService } from "../runtime-core/topology-services.js";
@@ -91,6 +91,99 @@ describe("startStatusRefresh", () => {
     stopStatusRefresh(host);
 
     expect(host.publishAlert).not.toHaveBeenCalled();
+  });
+
+  it("does not render an in-flight background dashboard refresh after leaving dashboard mode", async () => {
+    vi.useFakeTimers();
+    let resolveRefresh!: (value: boolean) => void;
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "dashboard",
+      dashboardNextBackgroundRefreshAt: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      refreshDashboardModelFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    host.mode = "session";
+    resolveRefresh(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.refreshCoordinationFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("does not render an in-flight background dashboard refresh after input changes", async () => {
+    vi.useFakeTimers();
+    let resolveRefresh!: (value: boolean) => void;
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "dashboard",
+      dashboardInputEpoch: 1,
+      dashboardNextBackgroundRefreshAt: 0,
+      isDashboardScreen: vi.fn((screen: string) => screen === "coordination"),
+      refreshDashboardModelFromService: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      refreshCoordinationFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    host.dashboardInputEpoch = 2;
+    resolveRefresh(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.refreshCoordinationFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("renders heartbeat-only dashboard feedback without waiting for background refresh", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => true) },
+      mode: "dashboard",
+      dashboardNextBackgroundRefreshAt: 0,
+      refreshDashboardModelFromService: vi.fn(() => new Promise<boolean>(() => undefined)),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 });
 
@@ -188,6 +281,68 @@ describe("resumeOfflineSession", () => {
       true,
       team,
     ]);
+  });
+
+  it("settles a stale running activity to idle on backend resume", () => {
+    updateSessionMetadata("codex-1", (current) => ({
+      ...current,
+      derived: { ...(current.derived ?? {}), activity: "running", attention: "normal" },
+    }));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => true) },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession: vi.fn(),
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(loadMetadataState().sessions["codex-1"]?.derived?.activity).toBe("idle");
+  });
+
+  it("preserves a needs_input agent's waiting activity on resume", () => {
+    updateSessionMetadata("codex-1", (current) => ({
+      ...current,
+      derived: { ...(current.derived ?? {}), activity: "waiting", attention: "needs_input" },
+    }));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => true) },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession: vi.fn(),
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    const derived = loadMetadataState().sessions["codex-1"]?.derived;
+    expect(derived?.activity).toBe("waiting");
+    expect(derived?.attention).toBe("needs_input");
   });
 
   it("does not use display metadata when resuming an incomplete offline row", () => {
@@ -1325,6 +1480,46 @@ describe("resumeOfflineSession", () => {
 
     expect(host.sessions[0].backendSessionId).toBe("backend-live");
     expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("codex-live");
+  });
+
+  it("rehydrates live tmux windows from the host project root", () => {
+    const host: any = {
+      projectRoot: repoRoot,
+      sessions: [],
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn((projectRoot: string) => {
+          expect(projectRoot).toBe(repoRoot);
+          return [
+            {
+              target: {
+                sessionName: "aimux-test",
+                windowId: "@1",
+                windowIndex: 1,
+                windowName: "claude",
+              },
+              metadata: {
+                kind: "agent",
+                sessionId: "claude-live",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: repoRoot,
+              },
+            },
+          ];
+        }),
+      },
+      registerManagedSession: vi.fn((session: any) => host.sessions.push(session)),
+      sessionLabels: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromTopology(host);
+
+    expect(host.sessions.map((session: any) => session.id)).toEqual(["claude-live"]);
+    expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalledWith(repoRoot);
   });
 
   it("evicts in-memory runtimes that no longer have matching live tmux metadata", () => {

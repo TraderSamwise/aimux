@@ -48,6 +48,18 @@ describe("notifications store", () => {
     expect(listNotifications({ includeCleared: true, sessionId: "claude-1" })).toHaveLength(2);
   });
 
+  it("mutates explicit notification id batches atomically", () => {
+    const first = addNotification({ title: "One", body: "First", sessionId: "claude-1" });
+    const second = addNotification({ title: "Two", body: "Second", sessionId: "claude-2" });
+    addNotification({ title: "Three", body: "Third", sessionId: "claude-3" });
+
+    expect(markNotificationsRead({ ids: [first.id, second.id] })).toBe(2);
+    expect(listNotifications({ unreadOnly: true })).toHaveLength(1);
+
+    expect(clearNotifications({ ids: [first.id, second.id] })).toBe(2);
+    expect(listNotifications({ includeCleared: true }).filter((record) => record.cleared)).toHaveLength(2);
+  });
+
   it("upserts user-facing notifications by session target", () => {
     const first = upsertNotification({
       title: "codex needs input",
@@ -138,6 +150,31 @@ describe("notifications store", () => {
       categoryLabel: "Needs input",
       reasonLabel: "Agent is waiting for input",
     });
+  });
+
+  it("publishes project_update invalidation after live alert events", () => {
+    const bus = new ProjectEventBus();
+    const events: unknown[] = [];
+    const unsubscribe = bus.subscribe((event) => events.push(event));
+
+    bus.publishAlert({
+      kind: "message_waiting",
+      sessionId: "codex-1",
+      title: "Message waiting",
+      message: "Please review",
+    });
+    unsubscribe();
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "alert", sessionId: "codex-1" }),
+      expect.objectContaining({
+        type: "project_update",
+        sessionId: "codex-1",
+        views: expect.arrayContaining(["coordination-worklist", "notifications"]),
+      }),
+    ]);
+    const projectUpdate = events[1] as { views?: string[] };
+    expect(projectUpdate.views ?? []).not.toContain("inbox");
   });
 
   it("does not treat dashboard row selection as direct session focus", () => {

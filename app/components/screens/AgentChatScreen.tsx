@@ -13,6 +13,9 @@ import {
   X,
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { AgentActions } from "@/components/agent-actions";
+import { AgentManagementPanel } from "@/components/agent-management-panel";
+import { TeammatePanel } from "@/components/teammate-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -20,17 +23,17 @@ import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import {
   createShareInvite,
-  getAgentOutput,
   getShare,
   leaveShare,
   listShares,
   removeShareParticipant,
-  sendAgentInput,
+  sendLivePaneInput,
   uploadImageAttachment,
   type SharedSessionSummary,
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
@@ -42,13 +45,12 @@ import {
   outputBufferFamily,
   parsedOutputFamily,
 } from "@/stores/chat";
-import { desktopStateFamily } from "@/stores/desktopState";
+import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
 
-const RELAY_CHAT_POLL_INTERVAL_MS = 2000;
 const SPLIT_VIEW_MIN_WIDTH = 900;
 const NARROW_TERMINAL_DIVIDER_WIDTH = 36;
 const WIDE_TERMINAL_DIVIDER_WIDTH = 96;
@@ -57,6 +59,7 @@ const TERMINAL_HORIZONTAL_PADDING = 32;
 const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
+const CHAT_HEARTBEAT_RECONNECT_MS = 3000;
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
@@ -68,12 +71,11 @@ export default function ChatScreen() {
   const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
+  const worktreeGroups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
-  const setOutput = useSetAtom(outputBufferFamily(sessionKey));
   const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
-  const setParsedOutput = useSetAtom(parsedOutputFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
@@ -125,69 +127,53 @@ export default function ChatScreen() {
     };
   }, [getToken]);
 
-  const serviceEndpoint = project?.serviceEndpoint ?? null;
-  const useRelayPolling = relayConfigured && relayStatus === "connected";
+  const serviceEndpoint = getProjectServiceEndpoint(project);
+  const endpointKey = serviceEndpoint ? `${serviceEndpoint.host}:${serviceEndpoint.port}` : null;
+  const heartbeatReady = !relayConfigured || relayStatus === "connected";
 
-  // Subscribe to /events for local sessions. Hosted/relay deployments cannot
-  // reach the project service EventSource directly, so they poll through the
-  // relay-aware API in the effect below.
   useEffect(() => {
-    if (!serviceEndpoint || !sessionId || useRelayPolling || relayConfigured) return;
-    const handle = startHeartbeat({
-      serviceEndpoint,
-      sessionId,
-      token,
-      onEvent: (event) => {
-        ingestEvent(event);
-      },
-      onError: (err) => {
-        console.warn("heartbeat error:", err);
-      },
-    });
-    return () => handle.stop();
-  }, [serviceEndpoint, sessionId, token, ingestEvent, useRelayPolling, relayConfigured]);
-
-  // Relay-mode live updates use request/response polling. This keeps the MVP
-  // working over the existing Durable Object relay without requiring an SSE
-  // streaming bridge.
-  useEffect(() => {
-    if (!serviceEndpoint || !sessionId || !useRelayPolling) return;
+    if (!serviceEndpoint || !sessionId || !heartbeatReady) return;
+    const endpoint = serviceEndpoint;
+    const activeSessionId = sessionId;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let handle: { stop: () => void } | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    async function poll() {
-      if (cancelled) return;
-      try {
-        const outputResult = await getAgentOutput(serviceEndpoint!, sessionId!, undefined, {
-          token,
-        });
-        if (cancelled) return;
-        setOutput(outputResult.output ?? "");
-        setParsedOutput(outputResult.parsed ?? null);
-      } catch (err) {
-        if (!cancelled) console.warn("relay transcript poll failed:", err);
-      }
-      if (cancelled) return;
-      timer = setTimeout(poll, RELAY_CHAT_POLL_INTERVAL_MS);
+    function scheduleReconnect() {
+      if (cancelled || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        handle?.stop();
+        handle = null;
+        connect();
+      }, CHAT_HEARTBEAT_RECONNECT_MS);
     }
 
-    void poll();
+    function connect() {
+      handle = startHeartbeat({
+        serviceEndpoint: endpoint,
+        sessionId: activeSessionId,
+        token,
+        onEvent: (event) => {
+          ingestEvent(event);
+        },
+        onError: (err) => {
+          if (cancelled) return;
+          console.warn("heartbeat error:", err);
+          scheduleReconnect();
+        },
+      });
+    }
+
+    connect();
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      handle?.stop();
     };
-    // serviceEndpoint is read inside the poll loop; host/port primitives keep
-    // this effect stable across project-list reconciles.
+    // serviceEndpoint object identity changes during project-list reconciles.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    serviceEndpoint?.host,
-    serviceEndpoint?.port,
-    sessionId,
-    token,
-    useRelayPolling,
-    setOutput,
-    setParsedOutput,
-  ]);
+  }, [endpointKey, sessionId, token, ingestEvent, heartbeatReady]);
 
   const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
@@ -319,7 +305,7 @@ export default function ChatScreen() {
           uploadedAttachmentId: uploaded.attachment.id,
         };
       }
-      await sendAgentInput(serviceEndpoint, sessionId, text, {
+      await sendLivePaneInput(serviceEndpoint, sessionId, text, {
         token,
         attachmentIds: attachments
           .map((attachment) => attachment.uploadedAttachmentId)
@@ -504,6 +490,18 @@ export default function ChatScreen() {
               </Text>
             </View>
             <View className="flex-row items-center">
+              {session ? (
+                <View className="mr-2">
+                  <AgentActions
+                    session={session}
+                    endpoint={serviceEndpoint}
+                    token={token}
+                    compact
+                    mainCheckoutPath={desktopState?.mainCheckoutPath}
+                    onKilled={goBack}
+                  />
+                </View>
+              ) : null}
               <Pressable
                 onPress={() => setSharePanelOpen((open) => !open)}
                 accessibilityLabel="Invite collaborator"
@@ -539,6 +537,23 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           </View>
+          {session ? (
+            <>
+              <AgentManagementPanel
+                key={`${session.id}:management`}
+                session={session}
+                endpoint={serviceEndpoint}
+                token={token}
+                groups={worktreeGroups}
+              />
+              <TeammatePanel
+                key={`${session.id}:teammates`}
+                session={session}
+                endpoint={serviceEndpoint}
+                token={token}
+              />
+            </>
+          ) : null}
           {sharePanelOpen ? (
             <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
               {activeShare ? (

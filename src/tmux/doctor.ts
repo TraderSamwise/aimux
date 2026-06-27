@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { resolveDashboardTarget } from "../dashboard/targets.js";
 import { getProjectStateDirFor } from "../paths.js";
+import { isTmuxClientSessionForHost } from "./session-names.js";
 
 export interface TmuxDoctorOptions {
   projectRoot: string;
@@ -341,13 +342,13 @@ export function repairTmuxRuntime(
   const managedSessions = new Set<string>([hostSession]);
 
   for (const sessionName of tmux.listSessionNames()) {
-    if (sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`)) {
+    if (sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession)) {
       managedSessions.add(sessionName);
     }
   }
   if (
     currentClientSession &&
-    (currentClientSession === hostSession || currentClientSession.startsWith(`${hostSession}-client-`))
+    (currentClientSession === hostSession || isTmuxClientSessionForHost(currentClientSession, hostSession))
   ) {
     managedSessions.add(currentClientSession);
   }

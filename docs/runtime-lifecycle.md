@@ -1,27 +1,26 @@
 # Runtime Lifecycle
 
-Aimux has two user-facing recovery levels and one narrow dashboard-only reload:
+Aimux has one normal repair command. The lower-level repair/reset commands exist for debugging, but they are not the user recovery path.
 
 - `aimux`
   - open or attach to the current project runtime
-- `aimux dashboard-reload --open`
-  - recreate and reopen the dashboard window only
-- `aimux repair`
-  - repair the current project runtime in place
-- `aimux restart-runtime --open`
-  - hard restart the current project runtime
+- `aimux restart`
+  - repair daemon/service/dashboard/tmux drift and reload existing dashboard windows
+- `aimux doctor versions`
+  - inspect daemon, project service, and dashboard build coherence
 - `aimux stop`
   - stop the current project runtime
 
 ## Mental Model
 
-For a single project, Aimux runtime is made of:
+Aimux runtime is made of:
 
-1. project service
-2. managed tmux host/client/dashboard topology
-3. managed agent and service windows
+1. the global daemon
+2. one daemon-supervised project service per active project
+3. managed tmux host/client/dashboard topology
+4. managed agent and service windows
 
-The global daemon still exists, but it is an advanced/internal layer. Most users should think in terms of the current project's runtime, not the daemon.
+The daemon and project services form the local control plane. The tmux runtime owns execution and same-machine focus/open behavior. `aimux restart` is the coherence repair command for daemon/service/dashboard version drift and managed tmux contract drift; it preserves agent windows.
 
 ## Command Guide
 
@@ -34,9 +33,68 @@ What it does:
 - starts missing project runtime pieces if needed
 - attaches or switches into the current project's dashboard
 
+### `aimux restart`
+
+Use when code was rebuilt, dashboards are stale across projects, the daemon was upgraded, a dashboard reports drift, or you are unsure which projects/TUIs are on which build.
+
+What it does:
+
+- inventories known projects from daemon state and managed tmux sessions
+- restarts the global daemon
+- re-ensures known project services on the new daemon
+- repairs managed tmux contract drift in place
+- force-reloads dashboard windows that already existed
+- records repair diagnostics in `~/.aimux/projects/<project-id>/logs/repairs.jsonl`
+- preserves managed agent windows and project tmux sessions
+
+What it does not do:
+
+- does not kill running agents
+- does not remove project tmux sessions
+- does not create dashboards for every daemon-known project unless scoped with `--project`
+
+Related:
+
+```bash
+aimux doctor versions
+aimux restart --project /abs/path/to/repo
+```
+
+### `aimux stop`
+
+Use when you want the current project's runtime off.
+
+What it does:
+
+- stops the current project's project service
+- tears down the current project's managed tmux runtime sessions
+
+It keeps persisted state that Aimux already stores for later re-entry.
+
+### `aimux stop <sessionId>`
+
+This is the agent lifecycle form, not the project runtime form.
+
+What it does:
+
+- stops a specific running agent
+- moves it to offline state
+
+## Advanced Commands
+
+These still exist, but they are not the primary user model:
+
+- `aimux repair`
+- `aimux dashboard-reload --open`
+- `aimux restart-runtime --open`
+- `aimux host ...`
+- `aimux daemon ...`
+
+Use them only when debugging the repair system itself or deliberately testing a lower-level runtime path.
+
 ### `aimux dashboard-reload --open`
 
-Use when only the dashboard window itself is stale, missing, or visually wrong.
+Advanced narrow repair for one dashboard window.
 
 What it does:
 
@@ -89,41 +147,11 @@ Recommended form:
 aimux restart-runtime --open
 ```
 
-### `aimux stop`
-
-Use when you want the current project's runtime off.
-
-What it does:
-
-- stops the current project's project service
-- tears down the current project's managed tmux runtime sessions
-
-It keeps persisted state that Aimux already stores for later re-entry.
-
-### `aimux stop <sessionId>`
-
-This is the agent lifecycle form, not the project runtime form.
-
-What it does:
-
-- stops a specific running agent
-- moves it to offline state
-
 ## Recovery Order
 
-When something feels wrong, prefer this order:
+When something feels wrong, use:
 
-1. `aimux dashboard-reload --open`
-2. `aimux repair`
-3. `aimux restart-runtime --open`
+1. `aimux restart`
+2. `aimux doctor versions`
 
-Use the advanced daemon commands only if the daemon itself is wedged or a build mismatch persists after a project runtime restart.
-
-## Advanced Commands
-
-These still exist, but they are not the primary user model:
-
-- `aimux host ...`
-- `aimux daemon ...`
-
-They are advanced compatibility/debugging surfaces around the global daemon and project-service internals.
+If that does not explain or fix the issue, inspect the repair log for the affected project and debug the lower-level command intentionally. `aimux daemon restart` is a compatibility alias for the coherent `aimux restart` path.

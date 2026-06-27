@@ -15,13 +15,16 @@ import { codexLaunchHookArgs, installCodexHooks } from "../codex-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
-import { updateNotificationContext } from "../notification-context.js";
-import { markNotificationsRead } from "../notifications.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
+import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
+import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 
 type SessionLaunchHost = any;
 
@@ -178,27 +181,27 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       host.handleDashboardFocusIn();
       return;
     }
+    host.dashboardInputEpoch = (host.dashboardInputEpoch ?? 0) + 1;
     if (host.handleActiveDashboardOverlayKey(data)) {
       return;
     }
-    if (host.isDashboardScreen("activity")) {
-      host.handleActivityKey(data);
+    if (host.handleRuntimeGuardKey(data)) {
       return;
     }
-    if (host.isDashboardScreen("workflow")) {
-      host.handleWorkflowKey(data);
+    if (host.isDashboardScreen("coordination")) {
+      host.handleCoordinationKey(data);
       return;
     }
-    if (host.isDashboardScreen("notifications")) {
-      host.handleNotificationsKey(data);
+    if (host.isDashboardScreen("project")) {
+      host.handleProjectKey(data);
       return;
     }
-    if (host.isDashboardScreen("threads")) {
-      host.handleThreadsKey(data);
+    if (host.isDashboardScreen("library")) {
+      host.handleLibraryKey(data);
       return;
     }
-    if (host.isDashboardScreen("plans")) {
-      host.handlePlansKey(data);
+    if (host.isDashboardScreen("topology")) {
+      host.handleTopologyKey(data);
       return;
     }
     if (host.isDashboardScreen("help")) {
@@ -233,23 +236,56 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   }, 40);
 
   host.mode = "dashboard";
+  const dashboardRunGeneration = (host.dashboardRunGeneration ?? 0) + 1;
+  host.dashboardRunGeneration = dashboardRunGeneration;
+  if (typeof host.dashboardInputEpoch !== "number") host.dashboardInputEpoch = 0;
   host.loadDashboardUiState();
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
-  const primed = await host.refreshDashboardModelFromService(true);
+  const startupModelLifecycle = captureDashboardLifecycle(host);
+  const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupModelLifecycle });
   if (!primed) {
-    host.refreshLocalDashboardModel();
+    const startupBusyState = {
+      title: "Connecting Aimux",
+      lines: ["Loading project state from the local service."],
+      spinnerFrame: 0,
+      startedAt: Date.now(),
+    };
+    host.dashboardBusyState = startupBusyState;
+    const repairModelLifecycle = captureDashboardLifecycle(host);
+    const repairRenderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const isRepairLifecycleCurrent = () =>
+      host.dashboardRunGeneration === dashboardRunGeneration &&
+      isDashboardLifecycleCurrent(host, repairRenderLifecycle);
     void host
       .ensureDashboardControlPlane()
       .then(async () => {
-        const refreshed = await host.refreshDashboardModelFromService(true);
-        if (refreshed && host.mode === "dashboard") {
-          host.renderCurrentDashboardView();
+        if (!isRepairLifecycleCurrent()) {
+          if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+          return;
         }
+        const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: repairModelLifecycle });
+        if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+        if (!isRepairLifecycleCurrent()) return;
+        if (refreshed || !host.dashboardModelServiceRefreshError) {
+          host.renderCurrentDashboardView();
+          return;
+        }
+        host.showDashboardError?.("Aimux repair failed", [
+          host.dashboardModelServiceRefreshError instanceof Error
+            ? host.dashboardModelServiceRefreshError.message
+            : String(host.dashboardModelServiceRefreshError),
+        ]);
+        host.renderCurrentDashboardView();
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+        if (!isRepairLifecycleCurrent()) return;
+        host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
+      });
   }
   host.terminalHost.enterAlternateScreen(true);
+  startDashboardProjectEventStream(host);
   host.startStatusRefresh();
   host.renderCurrentDashboardView();
 
@@ -264,8 +300,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
+  host.tmuxRuntimeManager?.repairLegacyProjectSessionNames?.(process.cwd());
   reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
+  host.refreshDesktopStateSnapshot();
   await host.startProjectServices();
   host.startStatusRefresh();
   host.startGraveyardCleanup?.();
@@ -280,7 +318,18 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
         host.graveyardCleanupRunning = false;
       });
   }
-  host.refreshDesktopStateSnapshot();
+  host.startInboxCleanup?.();
+  if (host.cleanupInbox && !host.inboxCleanupRunning) {
+    host.inboxCleanupRunning = true;
+    void host
+      .cleanupInbox()
+      .catch((error: unknown) => {
+        debug(`inbox cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "notification");
+      })
+      .finally(() => {
+        host.inboxCleanupRunning = false;
+      });
+  }
   host.writeStatuslineFile();
 
   const exitCode = await new Promise<number>((resolve) => {
@@ -723,30 +772,31 @@ export function getScopedSessionEntries(host: SessionLaunchHost): Array<{ sessio
   return host.sessions.map((session: any, index: number) => ({ session, index }));
 }
 
+function markFocusedSession(host: SessionLaunchHost, index: number, sessionId: string): void {
+  host.activeIndex = index;
+  host.sessionMRU = [sessionId, ...host.sessionMRU.filter((id: string) => id !== sessionId)];
+  queueTuiNotificationContext(host, {
+    screen: "agent",
+    sessionId,
+    panelOpen: false,
+  });
+  host.noteLastUsedItem(sessionId);
+  queueTuiSessionSeen(host, sessionId);
+}
+
 export function focusSession(host: SessionLaunchHost, index: number): void {
   if (index < 0 || index >= host.sessions.length) return;
 
-  host.activeIndex = index;
   const session = host.sessions[index];
   const sid = session.id;
-  host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
-  host.agentTracker.markSeen(sid);
-  updateNotificationContext("tui", {
-    focused: true,
-    screen: "agent",
-    sessionId: sid,
-    panelOpen: false,
-  });
-  host.noteLastUsedItem(sid);
-  markNotificationsRead({ sessionId: sid });
-  host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
     try {
-      const resolved = host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
+      const resolved = resolveLiveSessionTmuxTarget(host, sid, target);
       if (resolved) {
-        host.saveState();
         host.selectLinkedOrOpenTarget(resolved);
+        markFocusedSession(host, index, sid);
+        host.saveState();
         return;
       }
     } catch {}
@@ -754,6 +804,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
     const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
     if (result === "opened") {
+      markFocusedSession(host, index, sid);
       host.saveState();
     }
   }
@@ -764,11 +815,14 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "dashboard":
       host.openTmuxDashboardTarget();
       break;
-    case "notifications":
+    case "coordination":
       host.clearDashboardSubscreens();
-      host.setDashboardScreen("notifications");
+      host.setDashboardScreen("coordination");
+      // This path bypasses showCoordination, so request the service-backed view explicitly.
+      host.coordinationLoaded = false;
       host.persistDashboardUiState();
       host.openTmuxDashboardTarget();
+      void host.refreshCoordinationFromService?.().catch(() => {});
       break;
     case "help":
       host.showHelp();

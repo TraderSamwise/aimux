@@ -2,48 +2,30 @@ import { randomUUID } from "node:crypto";
 import { deriveRuntimeExchangeIndexes } from "./runtime-core/exchange-derived.js";
 import {
   createRuntimeExchangeStore,
+  type RuntimeExchangeStore,
   type RuntimeExchange,
   type RuntimeExchangeInboxEntry,
   type RuntimeExchangeMessage,
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
 import type { InteractionType } from "./interaction-requests.js";
+import type { NotificationInteractionRecord, NotificationRecord } from "./project-api-contract.js";
+import { getReadOnlyProjectPathsFor } from "./paths.js";
 
-export interface NotificationInteractionRecord {
-  id: string;
-  type: InteractionType;
-  summary?: string;
-  telemetry?: boolean;
-  toolName?: string;
-  toolInputJSON?: string;
-}
-
-export interface NotificationRecord {
-  id: string;
-  title: string;
-  subtitle?: string;
-  body: string;
-  sessionId?: string;
-  targetKey?: string;
-  targetKind?: "session" | "generic";
-  kind?: string;
-  projectName?: string;
-  projectRoot?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  branch?: string;
-  categoryLabel?: string;
-  reasonLabel?: string;
-  unread: boolean;
-  cleared: boolean;
-  createdAt: string;
-  updatedAt: string;
-  dedupeKey?: string;
-  interaction?: NotificationInteractionRecord;
-}
+export type { NotificationInteractionRecord, NotificationRecord } from "./project-api-contract.js";
 
 const PROJECT_NOTIFICATION_PARTICIPANT = "project";
-const NOTIFICATION_TAG = "notification";
+/** Tag marking an exchange thread as a notification record (not a workflow thread). */
+export const NOTIFICATION_TAG = "notification";
+
+interface NotificationStoreOptions {
+  projectRoot?: string;
+}
+
+function notificationStore(projectRoot?: string): RuntimeExchangeStore {
+  const root = projectRoot?.trim();
+  return createRuntimeExchangeStore(root ? getReadOnlyProjectPathsFor(root).runtimeExchangePath : undefined);
+}
 
 function normalizeTargetKey(input: { targetKey?: string; sessionId?: string }): string | undefined {
   const targetKey = input.targetKey?.trim();
@@ -221,7 +203,7 @@ function writeNotification(input: {
     },
   };
   let record: NotificationRecord | undefined;
-  createRuntimeExchangeStore().update((exchange) => {
+  notificationStore(input.projectRoot).update((exchange) => {
     const next = deriveRuntimeExchangeIndexes({
       ...exchange,
       generatedAt: now,
@@ -290,12 +272,14 @@ export function upsertNotification(input: {
   return writeNotification({ ...input, replaceTarget: Boolean(normalizeTargetKey(input)) });
 }
 
-export function listNotifications(opts?: {
-  unreadOnly?: boolean;
-  includeCleared?: boolean;
-  sessionId?: string;
-}): NotificationRecord[] {
-  return notificationRecords().filter((record) => {
+export function listNotifications(
+  opts?: {
+    unreadOnly?: boolean;
+    includeCleared?: boolean;
+    sessionId?: string;
+  } & NotificationStoreOptions,
+): NotificationRecord[] {
+  return notificationRecords(notificationStore(opts?.projectRoot).read()).filter((record) => {
     if (!opts?.includeCleared && record.cleared) return false;
     if (opts?.unreadOnly && !record.unread) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
@@ -303,10 +287,14 @@ export function listNotifications(opts?: {
   });
 }
 
-export function markNotificationsRead(opts?: { id?: string; sessionId?: string }): number {
-  const store = createRuntimeExchangeStore();
+export function markNotificationsRead(
+  opts?: { id?: string; ids?: string[]; sessionId?: string } & NotificationStoreOptions,
+): number {
+  const store = notificationStore(opts?.projectRoot);
+  const ids = opts?.ids ? new Set(opts.ids) : undefined;
   const records = notificationRecords(store.read()).filter((record) => {
     if (record.cleared || !record.unread) return false;
+    if (ids && !ids.has(record.id)) return false;
     if (opts?.id && record.id !== opts.id) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
     return true;
@@ -332,10 +320,14 @@ export function markNotificationsRead(opts?: { id?: string; sessionId?: string }
   return records.length;
 }
 
-export function clearNotifications(opts?: { id?: string; sessionId?: string }): number {
-  const store = createRuntimeExchangeStore();
+export function clearNotifications(
+  opts?: { id?: string; ids?: string[]; sessionId?: string } & NotificationStoreOptions,
+): number {
+  const store = notificationStore(opts?.projectRoot);
+  const ids = opts?.ids ? new Set(opts.ids) : undefined;
   const records = notificationRecords(store.read()).filter((record) => {
     if (record.cleared) return false;
+    if (ids && !ids.has(record.id)) return false;
     if (opts?.id && record.id !== opts.id) return false;
     if (opts?.sessionId && record.sessionId !== opts.sessionId) return false;
     return true;
@@ -366,28 +358,33 @@ export function clearNotifications(opts?: { id?: string; sessionId?: string }): 
   return records.length;
 }
 
-export function unreadNotificationCount(opts?: { sessionId?: string }): number {
-  return listNotifications({ unreadOnly: true, sessionId: opts?.sessionId }).length;
+export function unreadNotificationCount(opts?: { sessionId?: string } & NotificationStoreOptions): number {
+  return listNotifications({ unreadOnly: true, sessionId: opts?.sessionId, projectRoot: opts?.projectRoot }).length;
 }
 
 export interface SessionNotificationSummary {
   unreadCount: number;
   latestUnread?: NotificationRecord;
+  /** How many unread notifications for this session are needs-input requests. */
+  needsInputUnreadCount: number;
 }
 
 export function summarizeUnreadNotificationsBySession(): Map<string, SessionNotificationSummary> {
   const summaries = new Map<string, SessionNotificationSummary>();
   for (const notification of listNotifications({ unreadOnly: true })) {
     if (!notification.sessionId) continue;
+    const needsInput = notification.kind === "needs_input" ? 1 : 0;
     const current = summaries.get(notification.sessionId);
     if (!current) {
       summaries.set(notification.sessionId, {
         unreadCount: 1,
         latestUnread: notification,
+        needsInputUnreadCount: needsInput,
       });
       continue;
     }
     current.unreadCount += 1;
+    current.needsInputUnreadCount += needsInput;
     if (!current.latestUnread || Date.parse(notification.createdAt) > Date.parse(current.latestUnread.createdAt)) {
       current.latestUnread = notification;
     }

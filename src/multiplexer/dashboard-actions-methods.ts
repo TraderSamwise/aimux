@@ -4,6 +4,8 @@ import {
   getSelectedDashboardSessionForActions as getSelectedDashboardSessionForActionsImpl,
   getSelectedDashboardWorktreeEntry as getSelectedDashboardWorktreeEntryImpl,
   handleActiveDashboardOverlayKey as handleActiveDashboardOverlayKeyImpl,
+  handleRuntimeGuardKey as handleRuntimeGuardKeyImpl,
+  refreshRuntimeGuard as refreshRuntimeGuardImpl,
   handleDashboardSubscreenNavigationKey as handleDashboardSubscreenNavigationKeyImpl,
   handleOrchestrationInputKey as handleOrchestrationInputKeyImpl,
   handleOrchestrationRoutePickerKey as handleOrchestrationRoutePickerKeyImpl,
@@ -14,6 +16,7 @@ import {
   waitAndOpenLiveTmuxWindowForEntry as waitAndOpenLiveTmuxWindowForEntryImpl,
   waitAndOpenLiveTmuxWindowForService as waitAndOpenLiveTmuxWindowForServiceImpl,
   postToProjectService as postToProjectServiceImpl,
+  getFromProjectService as getFromProjectServiceImpl,
   buildActiveDashboardOverlayOutput as buildActiveDashboardOverlayOutputImpl,
   renderActiveDashboardOverlay as renderActiveDashboardOverlayImpl,
   renderOrchestrationInput as renderOrchestrationInputImpl,
@@ -25,39 +28,38 @@ import {
   updateWorktreeSessions as updateWorktreeSessionsImpl,
 } from "./dashboard-control.js";
 import {
-  handleNotificationsKey as handleNotificationsKeyImpl,
   notificationTargetLabel as notificationTargetLabelImpl,
-  renderNotifications as renderNotificationsImpl,
-  showNotifications as showNotificationsImpl,
   notificationTargetState as notificationTargetStateImpl,
+  refreshCoordinationFromService as refreshCoordinationFromServiceImpl,
 } from "./notifications.js";
+import { type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
+import {
+  handleCoordinationKey as handleCoordinationKeyImpl,
+  renderCoordination as renderCoordinationImpl,
+  showCoordination as showCoordinationImpl,
+} from "./coordination.js";
+import {
+  handleProjectKey as handleProjectKeyImpl,
+  renderProject as renderProjectImpl,
+  showProject as showProjectImpl,
+} from "./project.js";
+import {
+  handleTopologyKey as handleTopologyKeyImpl,
+  renderTopology as renderTopologyImpl,
+  showTopology as showTopologyImpl,
+} from "./topology.js";
 import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
-  buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
-  cycleWorkflowFilter as cycleWorkflowFilterImpl,
   describeHandoffState as describeHandoffStateImpl,
-  describeWorkflowFilter as describeWorkflowFilterImpl,
-  getActivityEntries as getActivityEntriesImpl,
   getPreferredThreadIndexForParticipant as getPreferredThreadIndexForParticipantImpl,
-  handleActivityKey as handleActivityKeyImpl,
   handleThreadReplyKey as handleThreadReplyKeyImpl,
-  handleThreadsKey as handleThreadsKeyImpl,
-  handleWorkflowKey as handleWorkflowKeyImpl,
   openRelevantThreadForSession as openRelevantThreadForSessionImpl,
-  renderActivityDashboard as renderActivityDashboardImpl,
-  renderThreadDetailsForHost as renderThreadDetailsForHostImpl,
   renderThreadReply as renderThreadReplyImpl,
-  renderThreads as renderThreadsImpl,
-  renderWorkflow as renderWorkflowImpl,
-  renderWorkflowDetailsForHost as renderWorkflowDetailsForHostImpl,
   runReviewLifecycleAction as runReviewLifecycleActionImpl,
   runTaskLifecycleAction as runTaskLifecycleActionImpl,
   runThreadHandoffAction as runThreadHandoffActionImpl,
   runThreadStatusAction as runThreadStatusActionImpl,
-  showActivityDashboard as showActivityDashboardImpl,
-  showThreads as showThreadsImpl,
-  showWorkflow as showWorkflowImpl,
 } from "./subscreens.js";
 import {
   handleToolOptionsKey as handleToolOptionsKeyImpl,
@@ -66,22 +68,11 @@ import {
   runSelectedTool as runSelectedToolImpl,
   showToolPicker as showToolPickerImpl,
 } from "./tool-picker.js";
+import { getJsonWithTuiApiRuntime, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 export const dashboardActionMethods = {
   attentionScore(this: any, entry: any): number {
     return attentionScoreImpl(this, entry);
-  },
-  getActivityEntries(this: any): any[] {
-    return getActivityEntriesImpl(this);
-  },
-  showActivityDashboard(this: any): void {
-    showActivityDashboardImpl(this);
-  },
-  showNotifications(this: any): void {
-    showNotificationsImpl(this);
-  },
-  renderNotifications(this: any): void {
-    renderNotificationsImpl(this);
   },
   notificationTargetLabel(this: any, sessionId?: string): string | null {
     return notificationTargetLabelImpl(this, sessionId);
@@ -89,47 +80,38 @@ export const dashboardActionMethods = {
   notificationTargetState(this: any, sessionId?: string): "live" | "offline" | "missing" | "none" {
     return notificationTargetStateImpl(this, sessionId);
   },
-  buildWorkflowEntries(this: any): any[] {
-    return buildWorkflowEntriesForHostImpl(this);
+  showCoordination(this: any): void {
+    showCoordinationImpl(this);
   },
-  showWorkflow(this: any): void {
-    showWorkflowImpl(this);
+  renderCoordination(this: any): void {
+    renderCoordinationImpl(this);
   },
-  renderWorkflow(this: any): void {
-    renderWorkflowImpl(this);
+  handleCoordinationKey(this: any, data: Buffer): void {
+    handleCoordinationKeyImpl(this, data);
   },
-  renderWorkflowDetails(this: any, width: number, height: number): string[] {
-    return renderWorkflowDetailsForHostImpl(this, width, height);
+  showProject(this: any): void {
+    showProjectImpl(this);
   },
-  handleWorkflowKey(this: any, data: Buffer): void {
-    handleWorkflowKeyImpl(this, data);
+  renderProject(this: any): void {
+    renderProjectImpl(this);
   },
-  renderActivityDashboard(this: any): void {
-    renderActivityDashboardImpl(this);
+  handleProjectKey(this: any, data: Buffer): void {
+    handleProjectKeyImpl(this, data);
   },
-  handleActivityKey(this: any, data: Buffer): void {
-    handleActivityKeyImpl(this, data);
+  showTopology(this: any): void {
+    showTopologyImpl(this);
   },
-  handleNotificationsKey(this: any, data: Buffer): void {
-    handleNotificationsKeyImpl(this, data);
+  renderTopology(this: any): void {
+    renderTopologyImpl(this);
   },
-  showThreads(this: any): void {
-    showThreadsImpl(this);
+  handleTopologyKey(this: any, data: Buffer): void {
+    handleTopologyKeyImpl(this, data);
   },
   getPreferredThreadIndexForParticipant(this: any, participantId: string, entries: any[]): number {
     return getPreferredThreadIndexForParticipantImpl(this, participantId, entries);
   },
-  openRelevantThreadForSession(this: any, sessionId: string): void {
-    openRelevantThreadForSessionImpl(this, sessionId);
-  },
-  renderThreads(this: any): void {
-    renderThreadsImpl(this);
-  },
-  renderThreadDetails(this: any, width: number, height: number): string[] {
-    return renderThreadDetailsForHostImpl(this, width, height);
-  },
-  handleThreadsKey(this: any, data: Buffer): void {
-    handleThreadsKeyImpl(this, data);
+  async openRelevantThreadForSession(this: any, sessionId: string): Promise<void> {
+    await openRelevantThreadForSessionImpl(this, sessionId);
   },
   renderThreadReply(this: any): void {
     renderThreadReplyImpl(this);
@@ -153,12 +135,6 @@ export const dashboardActionMethods = {
   async runReviewLifecycleAction(this: any, mode: "approve" | "request_changes", taskId: string): Promise<void> {
     await runReviewLifecycleActionImpl(this, mode, taskId);
   },
-  describeWorkflowFilter(this: any): string {
-    return describeWorkflowFilterImpl(this);
-  },
-  cycleWorkflowFilter(this: any): void {
-    cycleWorkflowFilterImpl(this);
-  },
   handleThreadReplyKey(this: any, data: Buffer): void {
     handleThreadReplyKeyImpl(this, data);
   },
@@ -179,6 +155,12 @@ export const dashboardActionMethods = {
   },
   handleActiveDashboardOverlayKey(this: any, data: Buffer): boolean {
     return handleActiveDashboardOverlayKeyImpl(this, data);
+  },
+  handleRuntimeGuardKey(this: any, data: Buffer): boolean {
+    return handleRuntimeGuardKeyImpl(this, data);
+  },
+  refreshRuntimeGuard(this: any): Promise<void> {
+    return refreshRuntimeGuardImpl(this);
   },
   renderActiveDashboardOverlay(this: any): boolean {
     return renderActiveDashboardOverlayImpl(this);
@@ -237,7 +219,13 @@ export const dashboardActionMethods = {
     renderOrchestrationRoutePickerImpl(this);
   },
   async postToProjectService(this: any, path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<any> {
-    return postToProjectServiceImpl(this, path, body, opts);
+    return postJsonWithTuiApiRuntime(this, path, body, opts, postToProjectServiceImpl);
+  },
+  async getFromProjectService(this: any, path: string, opts?: { timeoutMs?: number }): Promise<any> {
+    return getJsonWithTuiApiRuntime(this, path, opts, getFromProjectServiceImpl);
+  },
+  async refreshCoordinationFromService(this: any, options?: DashboardApiViewRefreshOptions): Promise<boolean> {
+    return refreshCoordinationFromServiceImpl(this, options);
   },
   async ensureDashboardControlPlane(this: any): Promise<void> {
     await ensureDashboardControlPlaneImpl(this);

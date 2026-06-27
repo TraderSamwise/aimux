@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { derivedStatusLabel, type DashboardViewModel } from "../../dashboard/index.js";
 import { deriveSessionSemantics } from "../../session-semantics.js";
 import { stripAnsi } from "../render/text.js";
-import { renderDashboardFrame } from "./dashboard-renderers.js";
+import { buildDashboardFooterHints, renderDashboardFrame } from "./dashboard-renderers.js";
 
 function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): DashboardViewModel {
   return {
@@ -26,6 +26,77 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
     ...overrides,
   };
 }
+
+describe("buildDashboardFooterHints", () => {
+  const keys = (vm: Partial<DashboardViewModel>) =>
+    new Set(buildDashboardFooterHints(baseDashboardViewModel(vm)).map((h) => h[0]));
+  const sess = (over: Record<string, unknown> = {}) => [{ id: "a", status: "running", ...over } as never];
+
+  it("returns a flat, ordered list (nav first, system last)", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: sess() }),
+    );
+    expect(hints[0][0]).toBe("↑↓/jk");
+    expect(hints.at(-2)).toEqual(["?", "help"]);
+    expect(hints.at(-1)).toEqual(["q", "quit"]);
+  });
+
+  it("tags the destructive kill key as danger", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({ hasWorktrees: false, sessions: sess(), selectedSessionId: "a" }),
+    );
+    expect(hints.find((h) => h[0] === "x")).toEqual(["x", "stop", "danger"]);
+  });
+
+  it("shows every active key per state variant", () => {
+    // no sessions, no worktrees
+    expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
+      new Set(["u", "Tab", "n", "v", "f", "s", "H", "T", "o", "R", "?", "q"]),
+    );
+    // worktree level
+    expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
+      new Set(["↑↓/jk", "1-9", "Enter/l", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
+    );
+    // session level with worktrees + a selected session + a teammate
+    expect(
+      keys({
+        hasWorktrees: true,
+        navLevel: "sessions",
+        sessions: sess(),
+        selectedSessionId: "a",
+        selectedTeammates: sess(),
+      }),
+    ).toEqual(
+      new Set([
+        "↑↓/jk",
+        "⇧↑↓",
+        "1-9",
+        "Enter/l",
+        "Esc/h",
+        "u",
+        "Tab",
+        "n",
+        "v",
+        "f",
+        "s",
+        "H",
+        "T",
+        "o",
+        "R",
+        "e",
+        "m",
+        "r",
+        "x",
+        "?",
+        "q",
+      ]),
+    );
+    // flat session list with a selected session
+    expect(keys({ hasWorktrees: false, navLevel: "sessions", sessions: sess(), selectedSessionId: "a" })).toEqual(
+      new Set(["↑↓/jk", "Enter/l", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "R", "x", "r", "?", "q"]),
+    );
+  });
+});
 
 describe("renderDashboardFrame worktree progress", () => {
   it("shows a simple creating state for creating worktrees", () => {
@@ -91,6 +162,17 @@ describe("renderDashboardFrame worktree progress", () => {
               activity: "running",
             }),
           },
+          {
+            index: 2,
+            id: "codex-ready",
+            command: "codex",
+            status: "running",
+            active: false,
+            role: "coder",
+            semantic: deriveSessionSemantics({
+              status: "running",
+            }),
+          },
         ],
         worktreeGroups: [
           {
@@ -109,9 +191,72 @@ describe("renderDashboardFrame worktree progress", () => {
     const plain = stripAnsi(frame);
     expect(plain).toContain("NEEDS INPUT");
     expect(plain).toContain("WORKING");
+    expect(plain).toContain("Ready");
     expect(plain).toContain("1 unread");
     expect(frame).toContain("\x1b[1;33;7m NEEDS INPUT \x1b[0m");
     expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
+  });
+
+  it("suppresses the unread chip when the needs-input state already conveys it", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "claude-1",
+        sessions: [
+          {
+            index: 0,
+            id: "claude-1",
+            command: "claude",
+            status: "running",
+            active: true,
+            attention: "needs_input",
+            notificationUnreadCount: 1,
+            notificationNeedsInputUnreadCount: 1,
+            semantic: deriveSessionSemantics({
+              status: "running",
+              attention: "needs_input",
+              notificationUnreadCount: 1,
+            }),
+          },
+        ],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      120,
+      40,
+    );
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("NEEDS INPUT");
+    expect(plain).not.toContain("unread");
+  });
+
+  it("still shows non-needs-input unread alongside the needs-input state", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "claude-1",
+        sessions: [
+          {
+            index: 0,
+            id: "claude-1",
+            command: "claude",
+            status: "running",
+            active: true,
+            attention: "needs_input",
+            notificationUnreadCount: 2,
+            notificationNeedsInputUnreadCount: 1,
+            semantic: deriveSessionSemantics({
+              status: "running",
+              attention: "needs_input",
+              notificationUnreadCount: 2,
+            }),
+          },
+        ],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      120,
+      40,
+    );
+    expect(stripAnsi(frame)).toContain("1 unread");
   });
 
   it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
@@ -510,6 +655,48 @@ describe("renderDashboardFrame worktree progress", () => {
     const after = left.slice(titleIdx).join("\n");
     expect(after).toMatch(/\[3\]\s+claude/);
     expect(after).toContain("╰");
+  });
+
+  it("mutes activity chips for offline agents but keeps them colored for live ones", () => {
+    const mk = (id: string, status: "offline" | "running") => ({
+      index: 0,
+      id,
+      command: "codex",
+      worktreePath: `/repo/.aimux/worktrees/${id}`,
+      worktreeName: id,
+      status,
+      active: status === "running",
+      unseenCount: 9,
+      threadPendingCount: 1,
+      semantic: deriveSessionSemantics(
+        status === "running" ? { status: "running", activity: "running" } : { status: "offline" },
+      ),
+    });
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions: [mk("off", "offline"), mk("on", "running")],
+        worktreeGroups: [
+          {
+            name: "off",
+            branch: "x",
+            path: "/repo/.aimux/worktrees/off",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+          { name: "on", branch: "y", path: "/repo/.aimux/worktrees/on", status: "active", sessions: [], services: [] },
+        ],
+        detailsPaneVisible: false,
+      }),
+      140,
+      30,
+    );
+    const offlineRow = frame.split("\r\n").find((l) => l.includes("1 pending") && l.includes("Offline"))!;
+    const liveRow = frame.split("\r\n").find((l) => l.includes("1 pending") && l.includes("WORKING"))!;
+    // Offline chips use the muted 256-color fg (245); live chips keep accent fg.
+    expect(offlineRow).toContain("38;5;245");
+    expect(offlineRow).not.toContain("38;5;174"); // not the danger "pending" accent
+    expect(liveRow).toContain("38;5;174"); // danger "pending" accent retained
   });
 
   it("renders pending teammate labels even when semantic state is stale", () => {

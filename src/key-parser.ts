@@ -20,6 +20,11 @@ export interface KeyEvent {
   raw: string;
 }
 
+export function commandKey(event: KeyEvent): string {
+  const key = event.name || event.char;
+  return key.length === 1 ? key.toLowerCase() : key;
+}
+
 // Modifier bitmask (shared by xterm and standard CSI):
 // 1=none, 2=shift, 3=alt, 4=shift+alt, 5=ctrl, 6=ctrl+shift, 7=ctrl+alt, 8=ctrl+shift+alt
 function parseModifier(mod: number): { shift: boolean; ctrl: boolean; alt: boolean } {

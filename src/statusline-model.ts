@@ -76,15 +76,7 @@ export interface StatuslineMetadataEntry {
 
 export interface StatuslineData {
   project?: string;
-  dashboardScreen?:
-    | "dashboard"
-    | "plans"
-    | "graveyard"
-    | "activity"
-    | "threads"
-    | "notifications"
-    | "workflow"
-    | "help";
+  dashboardScreen?: "dashboard" | "graveyard" | "coordination" | "project" | "library" | "topology" | "help";
   sessions?: StatuslineSession[];
   teammates?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;
@@ -109,14 +101,14 @@ export interface ResolvedStatuslineSession extends StatuslineSession {
 export const DASHBOARD_SCREEN_TABS: Array<{
   key: NonNullable<StatuslineData["dashboardScreen"]>;
   label: string;
+  hotkey: string;
 }> = [
-  { key: "dashboard", label: "dashboard" },
-  { key: "activity", label: "activity" },
-  { key: "notifications", label: "inbox" },
-  { key: "threads", label: "threads" },
-  { key: "workflow", label: "workflow" },
-  { key: "plans", label: "plans" },
-  { key: "graveyard", label: "graveyard" },
+  { key: "dashboard", label: "Dashboard", hotkey: "d" },
+  { key: "coordination", label: "Coordination", hotkey: "c" },
+  { key: "project", label: "Project", hotkey: "p" },
+  { key: "library", label: "Library", hotkey: "l" },
+  { key: "topology", label: "Topology", hotkey: "t" },
+  { key: "graveyard", label: "Graveyard", hotkey: "g" },
 ];
 
 export function trim(text: string, max: number): string {
@@ -196,9 +188,18 @@ export function renderSessionCompactHint(session: {
 
 export function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"]): string[] {
   const active = activeScreen ?? "dashboard";
-  return DASHBOARD_SCREEN_TABS.map((screen) =>
-    screen.key === active ? `#[fg=black,bg=yellow] ${screen.label} #[default]` : screen.label,
-  );
+  return DASHBOARD_SCREEN_TABS.map((screen) => {
+    if (screen.key === active) {
+      return `#[fg=black,bg=yellow] ${screen.label} #[default]`;
+    }
+    // Accent the hotkey letter within the label to signal the screen's shortcut.
+    const idx = screen.label.toLowerCase().indexOf(screen.hotkey.toLowerCase());
+    if (idx < 0) return screen.label;
+    const before = screen.label.slice(0, idx);
+    const hot = screen.label.slice(idx, idx + 1);
+    const after = screen.label.slice(idx + 1);
+    return `${before}#[fg=yellow,bold]${hot}#[default]${after}`;
+  });
 }
 
 export function currentPathContext(currentPath: string | undefined): { worktreeName?: string; branch?: string } | null {
