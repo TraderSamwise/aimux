@@ -48,6 +48,34 @@ describe("buildDashboardFooterHints", () => {
     expect(hints.find((h) => h[0] === "x")).toEqual(["x", "stop", "danger"]);
   });
 
+  it("does not advertise resume for blocked offline sessions", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({
+        hasWorktrees: true,
+        navLevel: "sessions",
+        sessions: sess({
+          status: "offline",
+          restoreState: "blocked",
+          restoreBlockedReason: "missing exact resumable backend session id",
+        }),
+        selectedSessionId: "a",
+      }),
+    );
+    expect(hints.find((h) => h[0] === "Enter/l")).toEqual(["Enter/l", "unavailable"]);
+  });
+
+  it("advertises resume for restorable exited sessions", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({
+        hasWorktrees: true,
+        navLevel: "sessions",
+        sessions: sess({ status: "exited", restoreState: "available" }),
+        selectedSessionId: "a",
+      }),
+    );
+    expect(hints.find((h) => h[0] === "Enter/l")).toEqual(["Enter/l", "resume"]);
+  });
+
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(

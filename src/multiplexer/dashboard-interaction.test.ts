@@ -557,6 +557,38 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("does not resume a blocked offline dashboard agent", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      command: "codex",
+      label: "Codex",
+      restoreState: "blocked",
+      restoreBlockedReason: "missing exact resumable backend session id",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      resumeOfflineSessionWithFeedback: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("blocked");
+
+    expect(host.resumeOfflineSessionWithFeedback).not.toHaveBeenCalled();
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Cannot restore Codex: missing exact resumable backend session id");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("does not open or render an offline dashboard agent after newer input invalidates activation", async () => {
     const entry = {
       id: "codex-1",
