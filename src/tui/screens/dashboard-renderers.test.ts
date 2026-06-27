@@ -41,6 +41,18 @@ describe("buildDashboardFooterHints", () => {
     expect(hints.at(-1)).toEqual(["q", "quit"]);
   });
 
+  it("labels numeric shortcuts by the active dashboard navigation level", () => {
+    const sessionLevel = buildDashboardFooterHints(
+      baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: sess() }),
+    );
+    const worktreeLevel = buildDashboardFooterHints(
+      baseDashboardViewModel({ hasWorktrees: true, navLevel: "worktrees" }),
+    );
+
+    expect(sessionLevel.find((h) => h[0] === "1-9")).toEqual(["1-9", "entry"]);
+    expect(worktreeLevel.find((h) => h[0] === "1-9")).toEqual(["1-9", "worktree"]);
+  });
+
   it("tags the destructive kill key as danger", () => {
     const hints = buildDashboardFooterHints(
       baseDashboardViewModel({ hasWorktrees: false, sessions: sess(), selectedSessionId: "a" }),

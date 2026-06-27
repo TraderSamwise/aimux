@@ -1,10 +1,8 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "./index.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
-import { HOTKEY_TIMEOUT_MS } from "../hotkeys.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "./sort.js";
 
-export const DASHBOARD_QUICK_JUMP_TIMEOUT_MS = HOTKEY_TIMEOUT_MS;
 export const DASHBOARD_QUICK_JUMP_LIMIT = 9;
 
 export interface DashboardQuickJumpEntry {

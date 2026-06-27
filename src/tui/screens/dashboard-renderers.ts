@@ -387,7 +387,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     if (killVerb) manage.push(["x", killVerb, "danger"]);
     return [
       ["↑↓/jk", "items"],
-      ["1-9", "jump"],
+      ["1-9", "entry"],
       ["Enter/l", enterVerb],
       ["Tab", "details"],
       ["u", "attention"],
@@ -406,7 +406,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   if (state.hasWorktrees) {
     return [
       ["↑↓/jk", "worktrees"],
-      ["1-9", "jump"],
+      ["1-9", "worktree"],
       ["Enter/l", "step in"],
       ["Tab", "details"],
       ["u", "attention"],
