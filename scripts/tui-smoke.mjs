@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global clearTimeout, console, process, setTimeout */
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
