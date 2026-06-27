@@ -161,8 +161,12 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
 
-  it("stops a service through the project service when a fresh snapshot has no model changes", async () => {
-    const services = [[{ id: "svc-1", status: "running" }]];
+  it("stops a service through the project service after the service row settles offline", async () => {
+    const services = [
+      [{ id: "svc-1", status: "running" }],
+      [{ id: "svc-1", status: "offline", foregroundCommand: "zsh", previewLine: "prompt" }],
+    ];
+    let serviceIndex = 0;
     const host = {
       dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
@@ -177,10 +181,11 @@ describe("dashboard-ops", () => {
       postToProjectService: vi.fn(async () => undefined),
       refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
         expect(opts?.lifecycle?.requiresInputEpoch).not.toBe(true);
+        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
         host.dashboardModelServiceRefreshedAt += 1;
         return false;
       }),
-      getDashboardServices: vi.fn(() => services[0]),
+      getDashboardServices: vi.fn(() => services[serviceIndex]),
       showDashboardError: vi.fn(),
     };
 
@@ -230,9 +235,10 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("stops an agent through the project service when a fresh snapshot has no model changes", async () => {
+  it("stops an agent through the project service after the session row settles offline", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
-    const sessions = [[{ ...session, status: "running" }]];
+    const sessions = [[{ ...session, status: "running" }], [{ ...session, status: "offline" }]];
+    let sessionIndex = 0;
     const host = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -248,10 +254,11 @@ describe("dashboard-ops", () => {
       getSessionLabel: vi.fn(() => "claude"),
       postToProjectService: vi.fn(async () => undefined),
       refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
         host.dashboardModelServiceRefreshedAt += 1;
         return false;
       }),
-      getDashboardSessions: vi.fn(() => sessions[0]),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
       showDashboardError: vi.fn(),
     };
 
@@ -852,8 +859,10 @@ describe("dashboard-ops", () => {
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
+    const projectRoot = "/repo";
     const host = {
       mode: "dashboard",
+      projectRoot: ` ${projectRoot} `,
       dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -868,21 +877,24 @@ describe("dashboard-ops", () => {
       refreshDashboardModelFromService: vi.fn(async () => true),
       waitForSessionStart: vi.fn(async () => false),
       tmuxRuntimeManager: {
-        listProjectManagedWindows: vi.fn(() => [
-          {
-            target: {
-              sessionName: "aimux-repo",
-              windowId: "@3",
-              windowIndex: 3,
-              windowName: "claude",
+        listProjectManagedWindows: vi.fn((root: string) => {
+          expect(root).toBe(projectRoot);
+          return [
+            {
+              target: {
+                sessionName: "aimux-repo",
+                windowId: "@3",
+                windowIndex: 3,
+                windowName: "claude",
+              },
+              metadata: {
+                kind: "agent",
+                sessionId: "sess-1",
+                command: "claude",
+              },
             },
-            metadata: {
-              kind: "agent",
-              sessionId: "sess-1",
-              command: "claude",
-            },
-          },
-        ]),
+          ];
+        }),
         isWindowAlive: vi.fn(() => true),
       },
       getDashboardSessions: vi.fn(() => sessions[0]),

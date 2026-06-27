@@ -1482,6 +1482,46 @@ describe("resumeOfflineSession", () => {
     expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("codex-live");
   });
 
+  it("rehydrates live tmux windows from the host project root", () => {
+    const host: any = {
+      projectRoot: repoRoot,
+      sessions: [],
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn((projectRoot: string) => {
+          expect(projectRoot).toBe(repoRoot);
+          return [
+            {
+              target: {
+                sessionName: "aimux-test",
+                windowId: "@1",
+                windowIndex: 1,
+                windowName: "claude",
+              },
+              metadata: {
+                kind: "agent",
+                sessionId: "claude-live",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: repoRoot,
+              },
+            },
+          ];
+        }),
+      },
+      registerManagedSession: vi.fn((session: any) => host.sessions.push(session)),
+      sessionLabels: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromTopology(host);
+
+    expect(host.sessions.map((session: any) => session.id)).toEqual(["claude-live"]);
+    expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalledWith(repoRoot);
+  });
+
   it("evicts in-memory runtimes that no longer have matching live tmux metadata", () => {
     const host: any = {
       sessions: [{ id: "codex-stale", command: "codex", transport: {} }],

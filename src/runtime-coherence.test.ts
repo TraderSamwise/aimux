@@ -427,6 +427,63 @@ describe("runtime coherence report", () => {
     expect(renderRuntimeCoherenceReport(report)).not.toContain("aimux-beta-222-client-stale");
   });
 
+  it("ignores tmux client placeholder dashboard windows", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => ["aimux-beta-222", "aimux-beta-222-client-deadbeef"]),
+        listWindows: vi.fn((sessionName: string) => {
+          if (sessionName === "aimux-beta-222") {
+            return [{ id: "@2", index: 0, name: "dashboard", active: true }];
+          }
+          if (sessionName === "aimux-beta-222-client-deadbeef") {
+            return [
+              { id: "@2", index: 0, name: "dashboard", active: true },
+              { id: "@3", index: 1, name: "dashboard", active: false },
+            ];
+          }
+          return [];
+        }),
+        displayMessage: vi.fn((_format: string, target: string) =>
+          target === "@3" ? "sh -lc tail -f /dev/null" : "node /current/dist/main.js --tmux-dashboard-internal",
+        ),
+        getWindowOption: vi.fn((target: { windowId: string }, key: string) => {
+          if (target.windowId === "@3") return null;
+          if (key === "@aimux-dashboard-build") return "dashboard-new";
+          if (key === TMUX_DASHBOARD_OWNER_OPTION) return "owner-new";
+          return null;
+        }),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          beta: {
+            projectId: "beta",
+            projectRoot: "/repo/beta",
+            pid: 1002,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43212,
+        pid: 1002,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson: vi.fn(async () => ({
+        status: 200,
+        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+      })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.summary).toEqual({ projects: 1, ok: 1, needsRestart: 0, runtimeRebuildRequired: 0 });
+    expect(report.projects[0]?.dashboards.map((dashboard) => dashboard.windowId)).toEqual(["@2"]);
+  });
+
   it("does not require runtime rebuild for daemon-only projects without a tmux host session", async () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({

@@ -3,6 +3,7 @@ import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
+import { getRepoRoot } from "../paths.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
 import { TranscriptReconciler } from "./transcript-reconciler.js";
@@ -52,6 +53,42 @@ const METADATA_PENDING_SETTLE_INTERVAL_MS = 100;
 const DESKTOP_STATE_REFRESH_TIMEOUT_MS = 3_000;
 const DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS = 5_000;
 
+function projectRootFor(host: DashboardModelHost): string {
+  const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  if (configuredProjectRoot) return configuredProjectRoot;
+  try {
+    return getRepoRoot();
+  } catch {
+    return process.cwd();
+  }
+}
+
+function hasUnhydratedLiveAgentWindow(
+  host: DashboardModelHost,
+  managedWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>,
+): boolean {
+  const runtimeIds = new Set((host.sessions ?? []).map((session: any) => session.id).filter(Boolean));
+  return managedWindows.some(({ target, metadata }) => {
+    if (isDashboardWindowName(target.windowName)) return false;
+    if (metadata.kind !== "agent" || !metadata.sessionId) return false;
+    if (!runtimeIds.has(metadata.sessionId)) return true;
+    return !host.sessionWorktreePaths?.has?.(metadata.sessionId) || !host.sessionTmuxTargets?.has?.(metadata.sessionId);
+  });
+}
+
+function hydrateLiveAgentWindowsForSnapshot(
+  host: DashboardModelHost,
+  managedWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>,
+): Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> {
+  if (!hasUnhydratedLiveAgentWindow(host, managedWindows)) return managedWindows;
+  if (typeof host.restoreTmuxSessionsFromTopology === "function") {
+    host.restoreTmuxSessionsFromTopology();
+  } else {
+    host.syncSessionsFromTopology?.();
+  }
+  return host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host));
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -76,8 +113,8 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
   return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
 
-function shouldRelaunchFreshSession(sessionId: string): boolean {
-  const derived = loadMetadataState().sessions[sessionId]?.derived;
+function shouldRelaunchFreshSession(host: DashboardModelHost, sessionId: string): boolean {
+  const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
   return derived?.activity === "error" || derived?.attention === "error";
 }
 
@@ -185,7 +222,7 @@ async function waitForMetadataCondition(
 function hasLiveManagedAgentWindow(host: DashboardModelHost, sessionId: string): boolean {
   try {
     if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
-    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+    return host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host)).some(({ target, metadata }: any) => {
       if (isDashboardWindowName(target.windowName)) return false;
       if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) return false;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
@@ -199,7 +236,7 @@ function hasLiveManagedAgentWindow(host: DashboardModelHost, sessionId: string):
 function hasLiveManagedServiceWindow(host: DashboardModelHost, serviceId: string): boolean {
   try {
     if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
-    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+    return host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host)).some(({ target, metadata }: any) => {
       if (isDashboardWindowName(target.windowName)) return false;
       if (metadata.kind !== "service" || metadata.sessionId !== serviceId) return false;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
@@ -416,7 +453,7 @@ async function resumeOfflineAgentWithPending(
               : { ...offline, backendSessionId: reconciledBackendSessionId };
         }
       }
-      if (!shouldRelaunchFreshSession(sessionId)) {
+      if (!shouldRelaunchFreshSession(host, sessionId)) {
         assertSessionRestorable(offline, loadConfig().tools);
       }
       host.resumeOfflineSession(offline);
@@ -663,8 +700,9 @@ export function computeDashboardSessions(
   } = {},
 ): DashboardSession[] {
   const includeRuntimeInfo = options.includeRuntimeInfo !== false;
-  const lastUsedState = loadLastUsedState(process.cwd());
-  const metadata = loadMetadataState().sessions;
+  const projectRoot = projectRootFor(host);
+  const lastUsedState = loadLastUsedState(projectRoot);
+  const metadata = loadMetadataState(projectRoot).sessions;
   // Notification records are exchange threads tagged `notification`; they are surfaced by the
   // per-session unread-notification count, so excluding them here keeps the dashboard's
   // thread chips from double-counting the same needs-input record.
@@ -747,7 +785,7 @@ export function computeDashboardSessions(
   }
   let mainRepoPath: string | undefined;
   try {
-    mainRepoPath = findMainRepo();
+    mainRepoPath = findMainRepo(projectRoot);
   } catch {}
   const sessions = buildDashboardSessions({
     sessions: host.sessions.map((session: any) => ({
@@ -775,7 +813,7 @@ export function computeDashboardSessions(
   });
   const metadataBySessionId = new Map<string, { createdAt?: string; target?: { windowIndex?: number } }>();
   const notificationsBySessionId = summarizeUnreadNotificationsBySession();
-  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
   for (const { target, metadata } of managedWindows) {
     if (metadata.kind !== "agent") continue;
     if (includeRuntimeInfo && host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) {
@@ -848,13 +886,14 @@ export function computeDashboardServices(
 ): DashboardService[] {
   const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
-  const lastUsedState = loadLastUsedState(process.cwd());
-  const sessionMetadata = loadMetadataState().sessions;
+  const projectRoot = projectRootFor(host);
+  const lastUsedState = loadLastUsedState(projectRoot);
+  const sessionMetadata = loadMetadataState(projectRoot).sessions;
   const offlineServiceIds = new Set(host.offlineServices.map((service: any) => service.id));
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
   );
-  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
   const liveServices = managedWindows
     .filter(({ target, metadata }: any) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
     .filter(({ metadata }: any) => !offlineServiceIds.has(metadata.sessionId))
@@ -944,7 +983,11 @@ export function readTmuxProcessInfo(
 export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
   if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
-  const managedWindows = options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+  let managedWindows =
+    options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host));
+  if (!options.managedWindows) {
+    managedWindows = hydrateLiveAgentWindowsForSnapshot(host, managedWindows);
+  }
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
   );
@@ -959,7 +1002,7 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost, options: Das
   let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
   let mainCheckoutPath: string | undefined;
   try {
-    mainCheckoutPath = findMainRepo();
+    mainCheckoutPath = findMainRepo(projectRootFor(host));
   } catch {}
   const mainWorktree =
     (mainCheckoutPath ? worktrees.find((wt: any) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
@@ -1025,7 +1068,7 @@ function isDesktopStateDashboardModel(value: any): value is {
 
 function listLiveTmuxAgentIds(host: DashboardModelHost): string[] {
   try {
-    const entries = host.tmuxRuntimeManager?.listProjectManagedWindows?.(process.cwd());
+    const entries = host.tmuxRuntimeManager?.listProjectManagedWindows?.(projectRootFor(host));
     if (!Array.isArray(entries)) return [];
     return entries.flatMap((entry: any) => {
       if (entry?.metadata?.kind !== "agent") return [];
@@ -1383,7 +1426,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       host.loopWatcher = new LoopWatcher({
         config: loadConfig().loop,
         loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
-        loadMetadata: () => loadMetadataState(),
+        loadMetadata: () => loadMetadataState(projectRootFor(host)),
         hasPendingInteraction: (sessionId: string) =>
           (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
         sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
@@ -1403,7 +1446,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
   // gated on `endpoint` like the plugin runtime and loop watcher above.
   try {
     host.transcriptReconciler = new TranscriptReconciler({
-      loadMetadata: () => loadMetadataState(),
+      loadMetadata: () => loadMetadataState(projectRootFor(host)),
       loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
       hasPendingInteraction: (sessionId: string) =>
         (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
