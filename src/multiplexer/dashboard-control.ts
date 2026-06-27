@@ -8,7 +8,7 @@ import type { DashboardScreen } from "../dashboard/state.js";
 import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
-import { commandKey, parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys, printableInputText } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
 import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
@@ -1321,44 +1321,47 @@ export async function ensureDashboardControlPlane(
 export function handleOrchestrationInputKey(host: DashboardControlHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
-  const event = events[0];
-  const key = commandKey(event);
 
-  if (key === "escape") {
-    host.clearDashboardOverlay();
-    host.orchestrationInputBuffer = "";
-    host.orchestrationInputMode = null;
-    host.orchestrationInputTarget = null;
-    host.renderDashboard();
-    return;
-  }
+  for (const event of events) {
+    const key = commandKey(event);
 
-  if (key === "enter" || key === "return") {
-    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
-    const mode = host.orchestrationInputMode;
-    const target = host.orchestrationInputTarget;
-    const body = host.orchestrationInputBuffer.trim();
-    host.clearDashboardOverlay();
-    host.orchestrationInputBuffer = "";
-    host.orchestrationInputMode = null;
-    host.orchestrationInputTarget = null;
-    if (!mode || !target || !body) {
+    if (key === "escape") {
+      host.clearDashboardOverlay();
+      host.orchestrationInputBuffer = "";
+      host.orchestrationInputMode = null;
+      host.orchestrationInputTarget = null;
       host.renderDashboard();
       return;
     }
-    void host.submitDashboardOrchestrationAction(mode, target, body, lifecycle);
-    return;
-  }
 
-  if (key === "backspace" || key === "delete") {
-    host.orchestrationInputBuffer = host.orchestrationInputBuffer.slice(0, -1);
-    host.renderOrchestrationInput();
-    return;
-  }
+    if (key === "enter" || key === "return") {
+      const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+      const mode = host.orchestrationInputMode;
+      const target = host.orchestrationInputTarget;
+      const body = host.orchestrationInputBuffer.trim();
+      host.clearDashboardOverlay();
+      host.orchestrationInputBuffer = "";
+      host.orchestrationInputMode = null;
+      host.orchestrationInputTarget = null;
+      if (!mode || !target || !body) {
+        host.renderDashboard();
+        return;
+      }
+      void host.submitDashboardOrchestrationAction(mode, target, body, lifecycle);
+      return;
+    }
 
-  if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-    host.orchestrationInputBuffer += event.char;
-    host.renderOrchestrationInput();
+    if (key === "backspace" || key === "delete") {
+      host.orchestrationInputBuffer = host.orchestrationInputBuffer.slice(0, -1);
+      host.renderOrchestrationInput();
+      continue;
+    }
+
+    const text = printableInputText(event);
+    if (text) {
+      host.orchestrationInputBuffer += text;
+      host.renderOrchestrationInput();
+    }
   }
 }
 

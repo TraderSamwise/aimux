@@ -92,6 +92,7 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
         applyRawWorktrees(host, pending, [
           {
@@ -126,6 +127,51 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.settleDashboardCreatePending).not.toHaveBeenCalled();
     expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("accepts pasted worktree names before submit in the same input chunk", async () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      worktreeInputBuffer: "",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      redrawDashboardWithOverlay: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        applyRawWorktrees(host, pending, [
+          {
+            name: "demo",
+            branch: "demo",
+            path: "/repo/.aimux/worktrees/demo",
+            sessions: [],
+            services: [],
+          },
+        ]);
+        return true;
+      }),
+      settleDashboardCreatePending: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("demo\r"));
+
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalled());
+
+    expect(postToProjectService).toHaveBeenCalledWith(
+      host,
+      "/worktrees/create",
+      { name: "demo" },
+      { timeoutMs: 180_000 },
+    );
   });
 
   it("clears pending create state without stale UI after leaving the dashboard", async () => {

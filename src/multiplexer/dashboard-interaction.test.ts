@@ -116,6 +116,23 @@ describe("dashboardInteractionMethods", () => {
     ]);
   });
 
+  it("accepts pasted service commands before submit in the same input chunk", () => {
+    const host: any = {
+      mode: "dashboard",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      showDashboardError: vi.fn(),
+      createDashboardServiceWithFeedback: vi.fn(),
+      renderServiceInput: vi.fn(),
+      serviceInputBuffer: "",
+      dashboardState: { focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+    };
+
+    dashboardInteractionMethods.handleServiceInputKey.call(host, Buffer.from("yarn dev\r"));
+
+    expect(host.createDashboardServiceWithFeedback).toHaveBeenCalledWith("yarn dev", "/repo/.aimux/worktrees/demo");
+  });
+
   it("blocks stepping into a removing worktree", () => {
     const host: any = {
       dashboardState: {
