@@ -1254,6 +1254,35 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showLibrary).not.toHaveBeenCalled();
   });
 
+  it("resets stale worktree focus before hjkl worktree navigation", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/deleted",
+        worktreeNavOrder: ["/repo", "/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboardWorktreeGroupsCache: [
+        { path: "/repo", name: "main", sessions: [], services: [] },
+        { path: "/repo/.aimux/worktrees/demo", name: "demo", sessions: [], services: [] },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      renderDashboard: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("j"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
+
+    host.dashboardState.focusedWorktreePath = "/repo/.aimux/worktrees/deleted";
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
+  });
+
   it("uses lowercase hjkl for session-level dashboard navigation before commands", () => {
     const host: any = {
       dashboardState: {

@@ -3,6 +3,7 @@ import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
+import { getRepoRoot } from "../paths.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
 import { TranscriptReconciler } from "./transcript-reconciler.js";
@@ -53,7 +54,13 @@ const DESKTOP_STATE_REFRESH_TIMEOUT_MS = 3_000;
 const DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS = 5_000;
 
 function projectRootFor(host: DashboardModelHost): string {
-  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+  const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  if (configuredProjectRoot) return configuredProjectRoot;
+  try {
+    return getRepoRoot();
+  } catch {
+    return process.cwd();
+  }
 }
 
 function hasUnhydratedLiveAgentWindow(
@@ -63,7 +70,9 @@ function hasUnhydratedLiveAgentWindow(
   const runtimeIds = new Set((host.sessions ?? []).map((session: any) => session.id).filter(Boolean));
   return managedWindows.some(({ target, metadata }) => {
     if (isDashboardWindowName(target.windowName)) return false;
-    return metadata.kind === "agent" && Boolean(metadata.sessionId) && !runtimeIds.has(metadata.sessionId);
+    if (metadata.kind !== "agent" || !metadata.sessionId) return false;
+    if (!runtimeIds.has(metadata.sessionId)) return true;
+    return !host.sessionWorktreePaths?.has?.(metadata.sessionId) || !host.sessionTmuxTargets?.has?.(metadata.sessionId);
   });
 }
 
@@ -104,8 +113,8 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
   return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
 
-function shouldRelaunchFreshSession(sessionId: string): boolean {
-  const derived = loadMetadataState().sessions[sessionId]?.derived;
+function shouldRelaunchFreshSession(host: DashboardModelHost, sessionId: string): boolean {
+  const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
   return derived?.activity === "error" || derived?.attention === "error";
 }
 
@@ -444,7 +453,7 @@ async function resumeOfflineAgentWithPending(
               : { ...offline, backendSessionId: reconciledBackendSessionId };
         }
       }
-      if (!shouldRelaunchFreshSession(sessionId)) {
+      if (!shouldRelaunchFreshSession(host, sessionId)) {
         assertSessionRestorable(offline, loadConfig().tools);
       }
       host.resumeOfflineSession(offline);
@@ -693,7 +702,7 @@ export function computeDashboardSessions(
   const includeRuntimeInfo = options.includeRuntimeInfo !== false;
   const projectRoot = projectRootFor(host);
   const lastUsedState = loadLastUsedState(projectRoot);
-  const metadata = loadMetadataState().sessions;
+  const metadata = loadMetadataState(projectRoot).sessions;
   // Notification records are exchange threads tagged `notification`; they are surfaced by the
   // per-session unread-notification count, so excluding them here keeps the dashboard's
   // thread chips from double-counting the same needs-input record.
@@ -879,7 +888,7 @@ export function computeDashboardServices(
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
   const projectRoot = projectRootFor(host);
   const lastUsedState = loadLastUsedState(projectRoot);
-  const sessionMetadata = loadMetadataState().sessions;
+  const sessionMetadata = loadMetadataState(projectRoot).sessions;
   const offlineServiceIds = new Set(host.offlineServices.map((service: any) => service.id));
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
@@ -1417,7 +1426,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       host.loopWatcher = new LoopWatcher({
         config: loadConfig().loop,
         loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
-        loadMetadata: () => loadMetadataState(),
+        loadMetadata: () => loadMetadataState(projectRootFor(host)),
         hasPendingInteraction: (sessionId: string) =>
           (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
         sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
@@ -1437,7 +1446,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
   // gated on `endpoint` like the plugin runtime and loop watcher above.
   try {
     host.transcriptReconciler = new TranscriptReconciler({
-      loadMetadata: () => loadMetadataState(),
+      loadMetadata: () => loadMetadataState(projectRootFor(host)),
       loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
       hasPendingInteraction: (sessionId: string) =>
         (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
