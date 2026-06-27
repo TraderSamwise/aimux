@@ -224,7 +224,15 @@ export async function sendAgentInput(
   host: SessionRuntimeHost,
   sessionId: string,
   text: string,
+  opts?: { waitForSubmit?: boolean },
 ): Promise<{ sessionId: string; accepted: true }> {
+  // Default true preserves the blocking behavior the TUI and loop-watcher rely
+  // on. The HTTP `input` route passes false: it returns once the input is
+  // accepted and lets the submit-confirmation finish in the background, because
+  // agent output is delivered over the SSE event stream, not this response.
+  // Blocking the response on the (up to ~10s) tmux confirmation is what made the
+  // app's send time out on prompts that flood the pane immediately.
+  const waitForSubmit = opts?.waitForSubmit ?? true;
   const session = resolveRunningSession(host, sessionId);
   if (session.transport instanceof TmuxSessionTransport) {
     const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
@@ -232,12 +240,16 @@ export async function sendAgentInput(
     session.transport.retarget(target);
     const prompt = normalizeSubmittedPrompt(host.sessionToolKeys.get(sessionId), text, true);
     session.transport.write(prompt);
-    await waitForTmuxPromptSubmit({
+    const confirmSubmit = waitForTmuxPromptSubmit({
       tmuxRuntimeManager: host.tmuxRuntimeManager,
       target,
       draft: prompt,
       isTargetCurrent: () => resolveLiveSessionTmuxTarget(host, sessionId, target)?.windowId === target.windowId,
     });
+    // waitForTmuxPromptSubmit always resolves (never rejects), so backgrounding
+    // it cannot produce an unhandled rejection.
+    if (waitForSubmit) await confirmSubmit;
+    else void confirmSubmit;
   } else {
     session.write(text);
     session.write("\r");
