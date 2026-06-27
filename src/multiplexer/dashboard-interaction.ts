@@ -1,10 +1,6 @@
 import { execSync } from "node:child_process";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
-import {
-  DASHBOARD_QUICK_JUMP_TIMEOUT_MS,
-  buildDashboardQuickJumpWorktrees,
-  resolveDashboardQuickJumpTarget,
-} from "../dashboard/quick-jump.js";
+import { buildDashboardQuickJumpWorktrees } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { commandKey, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
@@ -459,10 +455,6 @@ function teammatePickerVisibleCount(total: number): number {
 
 export const dashboardInteractionMethods = {
   clearDashboardQuickJump(this: any): void {
-    if (this.dashboardQuickJumpTimeout) {
-      clearTimeout(this.dashboardQuickJumpTimeout);
-      this.dashboardQuickJumpTimeout = null;
-    }
     this.dashboardState.quickJumpDigits = "";
   },
 
@@ -521,57 +513,34 @@ export const dashboardInteractionMethods = {
     void this.activateDashboardEntry(dashEntry);
   },
 
-  commitDashboardQuickJump(this: any, digits?: string): boolean {
-    const buffered = digits ?? this.dashboardState.quickJumpDigits;
-    this.clearDashboardQuickJump();
-    if (!buffered) return false;
-    const target = resolveDashboardQuickJumpTarget(
-      buildDashboardQuickJumpWorktrees({
-        sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
-        services: this.dashboardServicesCache,
-        worktreeGroups: this.dashboardWorktreeGroupsCache,
-        mainCheckout: this.dashboardMainCheckoutInfoCache,
-      }),
-      buffered,
-    );
-    if (!target) return false;
-    if (target.kind === "entry") {
-      this.focusDashboardQuickJumpEntry(target.worktree.path, target.entryIndex, { render: false });
-      this.activateSelectedDashboardWorktreeEntry();
-    } else {
-      this.focusDashboardQuickJumpWorktree(target.worktree.path);
-    }
-    return true;
-  },
-
   handleDashboardQuickJumpDigit(this: any, key: string): boolean {
     if (key < "1" || key > "9") return false;
-    const nextDigits = `${this.dashboardState.quickJumpDigits}${key}`.slice(0, 2);
     this.clearDashboardQuickJump();
-    if (nextDigits.length === 1) {
-      const target = resolveDashboardQuickJumpTarget(
-        buildDashboardQuickJumpWorktrees({
-          sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
-          services: this.dashboardServicesCache,
-          worktreeGroups: this.dashboardWorktreeGroupsCache,
-          mainCheckout: this.dashboardMainCheckoutInfoCache,
-        }),
-        nextDigits,
-      );
-      if (target?.kind === "worktree") {
-        this.dashboardRenderOptions = {
-          skipStatusline: true,
-          skipPersist: true,
-        };
-        this.focusDashboardQuickJumpWorktree(target.worktree.path);
-      }
-      this.dashboardState.quickJumpDigits = nextDigits;
-      this.dashboardQuickJumpTimeout = setTimeout(() => {
-        void this.commitDashboardQuickJump(nextDigits);
-      }, DASHBOARD_QUICK_JUMP_TIMEOUT_MS);
+    const digit = Number.parseInt(key, 10);
+    const worktrees = buildDashboardQuickJumpWorktrees({
+      sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
+      services: this.dashboardServicesCache,
+      worktreeGroups: this.dashboardWorktreeGroupsCache,
+      mainCheckout: this.dashboardMainCheckoutInfoCache,
+    });
+
+    if (this.dashboardState.level === "sessions") {
+      const worktree = worktrees.find((entry) => entry.path === this.dashboardState.focusedWorktreePath);
+      const entryIndex = worktree?.entries.findIndex((entry) => entry.digit === digit) ?? -1;
+      if (!worktree || entryIndex < 0) return true;
+      this.focusDashboardQuickJumpEntry(worktree.path, entryIndex, { render: false });
+      this.activateSelectedDashboardWorktreeEntry();
       return true;
     }
-    return this.commitDashboardQuickJump(nextDigits);
+
+    const worktree = worktrees.find((entry) => entry.digit === digit);
+    if (!worktree) return true;
+    this.dashboardRenderOptions = {
+      skipStatusline: true,
+      skipPersist: true,
+    };
+    this.focusDashboardQuickJumpWorktree(worktree.path);
+    return true;
   },
 
   handleDashboardKey(this: any, data: Buffer): void {
@@ -581,12 +550,19 @@ export const dashboardInteractionMethods = {
       for (const event of events) {
         const beforeMode = this.mode;
         const beforeOverlay = this.dashboardOverlayState?.kind ?? "none";
-        dashboardInteractionMethods.handleDashboardKey.call(this, Buffer.from(event.raw));
         const key = commandKey(event);
+        const activatesVisibleDashboardEntry =
+          this.isDashboardScreen("dashboard") &&
+          this.dashboardState?.hasWorktrees?.() &&
+          this.dashboardState.level === "sessions" &&
+          key >= "1" &&
+          key <= "9";
+        dashboardInteractionMethods.handleDashboardKey.call(this, Buffer.from(event.raw));
         const afterOverlay = this.dashboardOverlayState?.kind ?? "none";
         if (
           this.mode !== beforeMode ||
           afterOverlay !== beforeOverlay ||
+          activatesVisibleDashboardEntry ||
           key === "enter" ||
           key === "right" ||
           key === "l" ||
@@ -602,10 +578,6 @@ export const dashboardInteractionMethods = {
     const key = commandKey(event);
     const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
-
-    if (hasWorktrees && this.dashboardState.quickJumpDigits && !(key >= "1" && key <= "9")) {
-      this.commitDashboardQuickJump();
-    }
 
     if (hasWorktrees && this.isDashboardScreen("dashboard") && this.handleDashboardQuickJumpDigit(key)) {
       return;
