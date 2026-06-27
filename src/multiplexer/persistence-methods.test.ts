@@ -256,9 +256,7 @@ describe("persistenceMethods", () => {
       metadataServer: { notifyChange: vi.fn() },
     };
 
-    expect(() => persistenceMethods.createDesktopWorktree.call(host, "demo")).toThrow(
-      'Worktree "demo" already exists',
-    );
+    expect(() => persistenceMethods.createDesktopWorktree.call(host, "demo")).toThrow('Worktree "demo" already exists');
 
     expect(addFailureMock).toHaveBeenCalledWith(
       expect.objectContaining({

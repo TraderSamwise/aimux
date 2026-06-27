@@ -4,7 +4,8 @@ import { commandArgValueMatches } from "./process-args.js";
 
 describe("commandArgValueMatches", () => {
   it("requires exact flag values instead of prefix matches", () => {
-    const args = "node /opt/aimux/dist/main.js __project-service-internal --project-id repo-old --project-root /repo-old";
+    const args =
+      "node /opt/aimux/dist/main.js __project-service-internal --project-id repo-old --project-root /repo-old";
 
     expect(commandArgValueMatches(args, "--project-id", "repo")).toBe(false);
     expect(commandArgValueMatches(args, "--project-root", "/repo")).toBe(false);

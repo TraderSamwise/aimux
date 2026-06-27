@@ -709,15 +709,11 @@ export class AimuxDaemon {
         "--project-root",
         projectRoot,
       ]);
-      child = spawn(
-        launch.command,
-        launch.args,
-        {
-          cwd: projectRoot,
-          env: loggingChildEnv(),
-          stdio: stdio.stdio,
-        },
-      );
+      child = spawn(launch.command, launch.args, {
+        cwd: projectRoot,
+        env: loggingChildEnv(),
+        stdio: stdio.stdio,
+      });
     } catch (error) {
       stdio.close();
       throw error;

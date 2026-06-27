@@ -124,10 +124,13 @@ describe("TmuxSessionTransport", () => {
       renameWindow: vi.fn(),
       openTarget: vi.fn(),
       isInsideTmux: vi.fn().mockReturnValue(false),
-      getTargetByWindowId: vi.fn().mockReturnValueOnce(createTarget()).mockReturnValueOnce({
-        ...createTarget(),
-        paneDead: true,
-      }),
+      getTargetByWindowId: vi
+        .fn()
+        .mockReturnValueOnce(createTarget())
+        .mockReturnValueOnce({
+          ...createTarget(),
+          paneDead: true,
+        }),
       isWindowAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
     } as unknown as TmuxRuntimeManager;
 

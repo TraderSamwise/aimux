@@ -490,7 +490,10 @@ export const persistenceMethods = {
     };
   },
 
-  buildDesktopState(this: any, input: { includeStatusline?: boolean; includeRuntimeInfo?: boolean } = {}): {
+  buildDesktopState(
+    this: any,
+    input: { includeStatusline?: boolean; includeRuntimeInfo?: boolean } = {},
+  ): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
     services: DashboardService[];

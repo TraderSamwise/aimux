@@ -155,7 +155,10 @@ function buildSwitchableAgentItems(
       const existingIndex = allManagedWindows.findIndex(({ target }) => target.windowId === entry.target.windowId);
       if (existingIndex >= 0) {
         const existing = allManagedWindows[existingIndex];
-        if (tmux.isClientSessionName(existing.target.sessionName) && !tmux.isClientSessionName(entry.target.sessionName)) {
+        if (
+          tmux.isClientSessionName(existing.target.sessionName) &&
+          !tmux.isClientSessionName(entry.target.sessionName)
+        ) {
           allManagedWindows[existingIndex] = entry;
         }
         continue;
