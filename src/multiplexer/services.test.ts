@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths } from "../paths.js";
+import { getStatePath, initPaths } from "../paths.js";
 import {
   createService,
   getServiceLaunchCommandLine,
@@ -34,6 +34,10 @@ describe("services", () => {
     expect(getServiceLaunchCommandLine({ command: "shell", args: ["-l"] })).toBe("");
   });
 
+  function readSavedServices(): any[] {
+    return JSON.parse(readFileSync(getStatePath(), "utf-8")).services ?? [];
+  }
+
   it("kills lingering managed tmux windows when removing an offline service", () => {
     const killWindow = vi.fn();
     const host = {
@@ -64,10 +68,42 @@ describe("services", () => {
       windowName: "shell",
     });
     expect(host.offlineServices).toEqual([]);
-    expect(host.saveState).toHaveBeenCalledOnce();
+    expect(host.saveState).not.toHaveBeenCalled();
+    expect(readSavedServices()).toEqual([]);
   });
 
-  it("stops a running service by interrupting and retaining its tmux window", () => {
+  it("preserves unrelated state keys when committing services", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify({
+        savedAt: "old",
+        cwd: "/old",
+        sessions: { "codex-1": { id: "codex-1" } },
+        services: [{ id: "svc-1", label: "shell", status: "offline" }],
+      }),
+    );
+    const host = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        findManagedWindow: vi.fn(() => null),
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      adjustAfterRemove: vi.fn(),
+      dashboardWorktreeGroupsCache: [],
+      noteLastUsedItem: vi.fn(),
+    };
+
+    removeOfflineService(host, "svc-1");
+
+    const state = JSON.parse(readFileSync(getStatePath(), "utf-8"));
+    expect(state.sessions).toEqual({ "codex-1": { id: "codex-1" } });
+    expect(state.services).toEqual([]);
+  });
+
+  it("stops a running service by interrupting and retaining its tmux window", async () => {
     const killWindow = vi.fn();
     const sendKey = vi.fn();
     const target = { sessionName: "aimux-repo", windowId: "@7", windowIndex: 7, windowName: "shell" };
@@ -106,6 +142,8 @@ describe("services", () => {
     expect(result).toEqual({ serviceId: "svc-1", status: "stopped" });
     expect(killWindow).not.toHaveBeenCalled();
     expect(sendKey).toHaveBeenCalledWith(target, "C-c");
+    expect(host.tmuxRuntimeManager.setWindowMetadata).not.toHaveBeenCalled();
+    expect(host.tmuxRuntimeManager.applyManagedAgentWindowPolicy).not.toHaveBeenCalled();
     expect(host.noteLastUsedItem).toHaveBeenCalledWith("svc-1");
     expect(host.offlineServices).toMatchObject([
       {
@@ -123,6 +161,11 @@ describe("services", () => {
         tmuxTarget: target,
       },
     ]);
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.adjustAfterRemove).not.toHaveBeenCalled();
+    expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
+    expect(host.saveState).not.toHaveBeenCalled();
+    expect(readSavedServices()).toMatchObject([{ id: "svc-1", retained: true }]);
   });
 
   it("kills a retained service window when removing an offline service", () => {
@@ -147,6 +190,7 @@ describe("services", () => {
 
     expect(killWindow).toHaveBeenCalledWith(target);
     expect(host.offlineServices).toEqual([]);
+    expect(host.saveState).not.toHaveBeenCalled();
     expect(listTopologyServiceStates()).toEqual([]);
   });
 
@@ -233,7 +277,7 @@ describe("services", () => {
     ]);
   });
 
-  it("restarts a retained service command in its existing tmux window", () => {
+  it("restarts a retained service command in its existing tmux window", async () => {
     const target = { sessionName: "aimux-repo", windowId: "@12", windowIndex: 12, windowName: "dev" };
     const sendText = vi.fn();
     const sendEnter = vi.fn();
@@ -256,7 +300,6 @@ describe("services", () => {
         getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
         ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
         findManagedWindow: vi.fn(() => ({ target, metadata: { kind: "service", sessionId: "svc-1" } })),
-        hasWindow: vi.fn(() => true),
         createWindow,
         killWindow,
         sendText,
@@ -277,13 +320,23 @@ describe("services", () => {
     expect(killWindow).not.toHaveBeenCalled();
     expect(sendText).toHaveBeenCalledWith(target, "yarn dev");
     expect(sendEnter).toHaveBeenCalledWith(target);
+    expect(host.tmuxRuntimeManager.setWindowMetadata).not.toHaveBeenCalled();
+    expect(host.tmuxRuntimeManager.applyManagedAgentWindowPolicy).not.toHaveBeenCalled();
     expect(host.offlineServices).toEqual([]);
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.updateWorktreeSessions).not.toHaveBeenCalled();
+    expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
+    expect(host.saveState).not.toHaveBeenCalled();
+    expect(readSavedServices()).toMatchObject([{ id: "svc-1" }]);
+    expect(readSavedServices()[0]).not.toHaveProperty("retained", true);
   });
 
   it("creates a new window when a retained service window is gone", () => {
+    const staleTarget = { sessionName: "aimux-repo", windowId: "@12", windowIndex: 12, windowName: "dev" };
     const target = { sessionName: "aimux-repo", windowId: "@13", windowIndex: 13, windowName: "dev" };
     const createWindow = vi.fn(() => target);
     const respawnWindow = vi.fn();
+    const setWindowMetadata = vi.fn();
     const host = {
       offlineServices: [
         {
@@ -292,7 +345,7 @@ describe("services", () => {
           worktreePath: repoRoot,
           cwd: join(repoRoot, "apps/web"),
           launchCommandLine: "yarn dev",
-          tmuxTarget: { sessionName: "aimux-repo", windowId: "@12", windowIndex: 12, windowName: "dev" },
+          tmuxTarget: staleTarget,
           retained: true,
         },
       ],
@@ -300,10 +353,9 @@ describe("services", () => {
         getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
         ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
         findManagedWindow: vi.fn(() => null),
-        hasWindow: vi.fn(() => false),
         createWindow,
         respawnWindow,
-        setWindowMetadata: vi.fn(),
+        setWindowMetadata,
         applyManagedAgentWindowPolicy: vi.fn(),
       },
       saveState: vi.fn(),
@@ -316,6 +368,7 @@ describe("services", () => {
     resumeOfflineService(host, host.offlineServices[0]);
 
     expect(respawnWindow).not.toHaveBeenCalled();
+    expect(setWindowMetadata).not.toHaveBeenCalledWith(staleTarget, expect.any(Object));
     expect(createWindow).toHaveBeenCalledWith(
       "aimux-repo",
       "dev",

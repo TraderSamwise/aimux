@@ -5,7 +5,7 @@ import {
   TmuxRuntimeManager,
 } from "./runtime-manager.js";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { resolveDashboardTarget } from "../dashboard/targets.js";
@@ -86,6 +86,14 @@ function buildCheck(expected: string, observed: string | null): TmuxDoctorCheck 
   return { expected, observed, ok: observed === expected };
 }
 
+function canonicalizeProjectRoot(projectRoot: string): string {
+  try {
+    return realpathSync(projectRoot);
+  } catch {
+    return projectRoot;
+  }
+}
+
 function resolveStatuslineScriptPath(): string {
   return fileURLToPath(new URL("../../scripts/tmux-statusline.sh", import.meta.url));
 }
@@ -134,6 +142,7 @@ export function buildTmuxDoctorReport(
   tmux: TmuxRuntimeManager,
   { projectRoot, sessionName, windowId, env = process.env }: TmuxDoctorOptions,
 ): TmuxDoctorReport {
+  const canonicalProjectRoot = canonicalizeProjectRoot(projectRoot);
   const available = tmux.isAvailable();
   const insideTmux = tmux.isInsideTmux(env);
   const currentClientSession = available && insideTmux ? tmux.currentClientSession() : null;
@@ -141,7 +150,7 @@ export function buildTmuxDoctorReport(
     sessionName ??
     (insideTmux && currentClientSession && tmux.isManagedSessionName(currentClientSession)
       ? currentClientSession
-      : tmux.getProjectSession(projectRoot).sessionName);
+      : tmux.getProjectSession(canonicalProjectRoot).sessionName);
   const currentWindowId = available ? (windowId ?? (insideTmux ? tmux.displayMessage("#{window_id}") : null)) : null;
   const currentWindowName = available ? (insideTmux ? tmux.displayMessage("#{window_name}") : null) : null;
   const sessionExists = available ? tmux.hasSession(resolvedSessionName) : false;
@@ -217,7 +226,7 @@ export function buildTmuxDoctorReport(
       }))
     : [];
 
-  const projectStateDir = getProjectStateDirFor(projectRoot);
+  const projectStateDir = getProjectStateDirFor(canonicalProjectRoot);
   const statuslineScript = resolveStatuslineScriptPath();
   const bottomDashboardClientPath = currentClientSession
     ? `${projectStateDir}/tmux-statusline/bottom-dashboard-${currentClientSession}.txt`
@@ -336,13 +345,22 @@ export function repairTmuxRuntime(
     throw new Error("tmux is not installed or not available in PATH");
   }
 
-  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
-  const { dashboardCommand } = getDashboardCommandSpec(projectRoot);
+  const canonicalProjectRoot = canonicalizeProjectRoot(projectRoot);
+  const hostSession = tmux.getProjectSession(canonicalProjectRoot).sessionName;
+  const { dashboardCommand } = getDashboardCommandSpec(canonicalProjectRoot);
   const currentClientSession = tmux.isInsideTmux(env) ? tmux.currentClientSession() : null;
   const managedSessions = new Set<string>([hostSession]);
 
   for (const sessionName of tmux.listSessionNames()) {
     if (sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession)) {
+      managedSessions.add(sessionName);
+      continue;
+    }
+    if (!tmux.isManagedSessionName(sessionName)) {
+      continue;
+    }
+    const storedProjectRoot = tmux.getSessionOption(sessionName, "@aimux-project-root");
+    if (storedProjectRoot && canonicalizeProjectRoot(storedProjectRoot) === canonicalProjectRoot) {
       managedSessions.add(sessionName);
     }
   }
@@ -353,18 +371,20 @@ export function repairTmuxRuntime(
     managedSessions.add(currentClientSession);
   }
 
-  tmux.ensureProjectSession(projectRoot, dashboardCommand);
+  tmux.ensureProjectSession(canonicalProjectRoot, dashboardCommand);
   for (const sessionName of managedSessions) {
     if (!tmux.hasSession(sessionName)) continue;
-    tmux.configureManagedSession(sessionName, projectRoot);
+    tmux.configureManagedSession(sessionName, canonicalProjectRoot);
   }
 
-  const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+  const { dashboardSession, dashboardTarget } = resolveDashboardTarget(canonicalProjectRoot, tmux, {
+    forceReload: true,
+  });
   managedSessions.add(dashboardSession.sessionName);
   managedSessions.add(dashboardTarget.sessionName);
   for (const sessionName of managedSessions) {
     if (!tmux.hasSession(sessionName)) continue;
-    tmux.configureManagedSession(sessionName, projectRoot);
+    tmux.configureManagedSession(sessionName, canonicalProjectRoot);
   }
 
   const repairedWindows = new Set<string>();
@@ -377,7 +397,7 @@ export function repairTmuxRuntime(
   }
 
   return {
-    projectRoot,
+    projectRoot: canonicalProjectRoot,
     sessionName: hostSession,
     repairedSessions: [...managedSessions].filter((sessionName) => tmux.hasSession(sessionName)),
     repairedWindows: [...repairedWindows],

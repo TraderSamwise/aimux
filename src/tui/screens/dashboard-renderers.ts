@@ -45,6 +45,10 @@ const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   renaming: "Renaming",
 };
 
+function rowStateLabel(value: string): string {
+  return ROW_STATE_LABELS[value as SessionRowState] ?? value;
+}
+
 // Status cells render as attention pills; the rest use plain colored/dim text.
 const PILL_STATES = new Set<SessionRowState>([
   "needs_input",
@@ -75,6 +79,21 @@ const COL_INDEX = 4;
 const COL_IDENTITY = 16;
 const COL_STATUS = 14;
 const COL_TIME = 16;
+
+function canRestoreSession(session: DashboardSession | undefined): boolean {
+  return Boolean(
+    session && (session.status === "offline" || session.status === "exited") && session.restoreState !== "blocked",
+  );
+}
+
+function dashboardEnterVerb(session: DashboardSession | undefined, service: DashboardService | undefined): string {
+  if (service) return "open";
+  if (!session) return "focus";
+  if (session.status === "offline" || session.status === "exited") {
+    return canRestoreSession(session) ? "resume" : "unavailable";
+  }
+  return "focus";
+}
 
 function parseTimestamp(value: string | undefined): number | null {
   if (!value) return null;
@@ -339,7 +358,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   const selectedService = state.selectedServiceId
     ? state.services.find((s) => s.id === state.selectedServiceId)
     : undefined;
-  const enterVerb = selectedService ? "open" : selectedSession?.status === "offline" ? "resume" : "focus";
+  const enterVerb = dashboardEnterVerb(selectedSession, selectedService);
   const killVerb = selectedService
     ? "stop"
     : selectedSession?.status === "offline"
@@ -599,6 +618,8 @@ export function renderDashboardFrame(
       }
       lines.push(...wrapKeyValue("Agents", String(focusedSessions.length), width));
       lines.push(...wrapKeyValue("Services", String(focusedServices.length), width));
+      const activeSessions = focusedSessions.filter((session) => !isSessionOffline(session));
+      const runningServices = focusedServices.filter((service) => service.status === "running");
       const activeWorktreeRemoval =
         state.worktreeRemoval?.path === focusedWorktreePath ? state.worktreeRemoval : undefined;
       if (activeWorktreeRemoval) {
@@ -614,11 +635,11 @@ export function renderDashboardFrame(
           lines.push(...wrapKeyValue("Progress", detailLines.join(" | "), width));
         }
       }
-      if (focusedSessions.length > 0) {
+      if (activeSessions.length > 0) {
         lines.push(
           ...wrapKeyValue(
             "Active",
-            focusedSessions
+            activeSessions
               .map((session) => session.label ?? session.command)
               .slice(0, 3)
               .join(", "),
@@ -626,11 +647,11 @@ export function renderDashboardFrame(
           ),
         );
       }
-      if (focusedServices.length > 0) {
+      if (runningServices.length > 0) {
         lines.push(
           ...wrapKeyValue(
             "Running",
-            focusedServices
+            runningServices
               .map((service) => service.label ?? service.command)
               .slice(0, 3)
               .join(", "),
@@ -673,7 +694,11 @@ export function renderDashboardFrame(
         );
       }
       if (selectedService.cwd) lines.push(...wrapKeyValue("CWD", selectedService.cwd, width));
-      lines.push(...wrapKeyValue("Status", selectedService.status, width));
+      if (selectedService.pendingAction) {
+        lines.push(...wrapKeyValue("State", rowStateLabel(selectedService.pendingAction), width));
+      } else {
+        lines.push(...wrapKeyValue("Status", selectedService.status, width));
+      }
       if (selectedService.previewLine) lines.push(...wrapKeyValue("Preview", selectedService.previewLine, width));
       return finish("DETAILS", "info", lines);
     }
@@ -704,7 +729,7 @@ export function renderDashboardFrame(
     if (selected.repoRemote) lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
     if (selected.pendingAction) {
-      lines.push(...wrapKeyValue("State", ROW_STATE_LABELS[selected.pendingAction], width));
+      lines.push(...wrapKeyValue("State", rowStateLabel(selected.pendingAction), width));
       if (selected.pendingStartedAt) {
         const startedRecency = formatRelativeRecency(selected.pendingStartedAt);
         if (startedRecency) lines.push(...wrapKeyValue("Started", startedRecency, width));

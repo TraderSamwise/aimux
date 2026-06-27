@@ -150,6 +150,10 @@ async function refreshDashboardModelForSettlement(
   return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
 }
 
+function hasDashboardModelServiceRefreshError(host: DashboardOpsHost): boolean {
+  return Boolean(host.dashboardModelServiceRefreshError);
+}
+
 async function waitForStableDashboardSessionAbsence(
   host: DashboardOpsHost,
   sessionId: string,
@@ -160,17 +164,22 @@ async function waitForStableDashboardSessionAbsence(
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
-    const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+    const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
+    if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
+    const session = getDashboardSessionEntry(host, sessionId);
     if (session) {
       missingSince = null;
-    } else {
+    } else if (refreshed || missingSince !== null) {
       missingSince ??= Date.now();
       if (Date.now() - missingSince >= stableMs) return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
+}
+
+function getDashboardSessionEntry(host: DashboardOpsHost, sessionId: string): any | undefined {
+  return host.getDashboardSessions?.().find((candidate: any) => candidate.id === sessionId);
 }
 
 function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
@@ -202,6 +211,19 @@ function hasLiveManagedAgentWindow(host: DashboardOpsHost, sessionId: string): b
   }
 }
 
+function isDashboardSessionResumeSettled(host: DashboardOpsHost, sessionId: string): boolean {
+  return (
+    isLiveDashboardSessionEntry(getDashboardSessionEntry(host, sessionId)) || hasLiveManagedAgentWindow(host, sessionId)
+  );
+}
+
+function isDashboardSessionStopSettled(host: DashboardOpsHost, sessionId: string): boolean {
+  const hasLiveWindow = hasLiveManagedAgentWindow(host, sessionId);
+  const entry = getDashboardSessionEntry(host, sessionId);
+  if (!entry) return !hasLiveWindow;
+  return !hasLiveWindow && entry.status !== "running";
+}
+
 async function waitForDashboardSessionResumeSettle(
   host: DashboardOpsHost,
   sessionId: string,
@@ -211,31 +233,31 @@ async function waitForDashboardSessionResumeSettle(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
-    const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
+    await refreshDashboardModelForSettlement(host, modelLifecycle);
+    const entry = getDashboardSessionEntry(host, sessionId);
     if (isLiveDashboardSessionEntry(entry)) {
       if (entry?.status === "offline" || entry?.pendingAction === "starting") {
         renderDashboardDuringSettlement(host, renderLifecycle);
       }
       return true;
     }
+    if (hasDashboardModelServiceRefreshError(host) && !hasLiveManagedAgentWindow(host, sessionId)) return false;
     if (
       typeof host.waitForSessionStart === "function" &&
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
     ) {
-      if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
+      await refreshDashboardModelForSettlement(host, modelLifecycle);
       renderDashboardDuringSettlement(host, renderLifecycle);
-      const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
-      if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
+      if (isDashboardSessionResumeSettled(host, sessionId)) return true;
     }
     if (hasLiveManagedAgentWindow(host, sessionId)) {
-      if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
+      await refreshDashboardModelForSettlement(host, modelLifecycle);
       renderDashboardDuringSettlement(host, renderLifecycle);
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return false;
+  return isDashboardSessionResumeSettled(host, sessionId);
 }
 
 async function waitForDashboardSessionStopSettle(
@@ -247,21 +269,24 @@ async function waitForDashboardSessionStopSettle(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
-    const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
-    if (!entry) return true;
-    const hasLiveWindow = hasLiveManagedAgentWindow(host, sessionId);
-    if (!hasLiveWindow && !isLiveDashboardSessionEntry(entry) && entry.status !== "running") return true;
+    await refreshDashboardModelForSettlement(host, modelLifecycle);
+    const entry = getDashboardSessionEntry(host, sessionId);
+    if (isDashboardSessionStopSettled(host, sessionId)) return true;
+    if (hasDashboardModelServiceRefreshError(host)) return false;
     if (entry.pendingAction === "stopping") {
       renderDashboardDuringSettlement(host, renderLifecycle);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return false;
+  return isDashboardSessionStopSettled(host, sessionId);
 }
 
 function isLiveDashboardServiceEntry(entry: any | undefined): boolean {
   return isLiveDashboardServiceRuntimeEntry(entry);
+}
+
+function getDashboardServiceEntry(host: DashboardOpsHost, serviceId: string): any | undefined {
+  return host.getDashboardServices?.().find((entry: any) => entry.id === serviceId);
 }
 
 async function waitForRenderedDashboardServiceState(
@@ -274,8 +299,8 @@ async function waitForRenderedDashboardServiceState(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
-    const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
+    await refreshDashboardModelForSettlement(host, modelLifecycle);
+    const service = getDashboardServiceEntry(host, serviceId);
     if (predicate(service)) {
       if (
         isLiveDashboardServiceEntry(service) &&
@@ -285,9 +310,10 @@ async function waitForRenderedDashboardServiceState(
       }
       return true;
     }
+    if (hasDashboardModelServiceRefreshError(host)) return false;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return false;
+  return predicate(getDashboardServiceEntry(host, serviceId));
 }
 
 async function waitForDashboardServiceStopSettle(
@@ -315,11 +341,12 @@ async function waitForStableDashboardServiceAbsence(
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForSettlement(host, modelLifecycle))) return false;
-    const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
+    const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
+    if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
+    const service = getDashboardServiceEntry(host, serviceId);
     if (service) {
       missingSince = null;
-    } else {
+    } else if (refreshed || missingSince !== null) {
       missingSince ??= Date.now();
       if (Date.now() - missingSince >= stableMs) return true;
     }

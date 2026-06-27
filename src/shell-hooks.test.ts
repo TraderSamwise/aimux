@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -93,6 +93,36 @@ describe("shell hooks", () => {
     expect(readFileSync(bash.integrationScriptPath, "utf8")).toContain(
       '_aimux_report_shell_state running "$BASH_COMMAND"',
     );
+  });
+
+  it("decrements shell-state suppression markers before reporting prompt state", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-shell-hooks-suppress-"));
+    try {
+      const prepared = prepareShellIntegration(projectRoot, "/bin/bash");
+      const suppressFile = join(getProjectStateDirFor(projectRoot), "shell-state-suppress", "service-1");
+      mkdirSync(dirname(suppressFile), { recursive: true });
+      writeFileSync(suppressFile, "2");
+
+      execFileSync(
+        "/bin/bash",
+        [
+          "-lc",
+          [
+            `source ${prepared.integrationScriptPath}`,
+            "AIMUX_SESSION_ID=service-1",
+            "AIMUX_TOOL=service",
+            `AIMUX_SHELL_STATE_SUPPRESS_FILE=${suppressFile}`,
+            "_aimux_report_shell_state prompt",
+            "_aimux_report_shell_state prompt",
+          ].join("; "),
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(existsSync(suppressFile)).toBe(false);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it.skipIf(!existsSync("/bin/zsh"))("executes zsh shells with both zshenv and zshrc from the user's HOME", () => {

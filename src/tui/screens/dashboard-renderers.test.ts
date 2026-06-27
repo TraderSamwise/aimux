@@ -48,6 +48,34 @@ describe("buildDashboardFooterHints", () => {
     expect(hints.find((h) => h[0] === "x")).toEqual(["x", "stop", "danger"]);
   });
 
+  it("does not advertise resume for blocked offline sessions", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({
+        hasWorktrees: true,
+        navLevel: "sessions",
+        sessions: sess({
+          status: "offline",
+          restoreState: "blocked",
+          restoreBlockedReason: "missing exact resumable backend session id",
+        }),
+        selectedSessionId: "a",
+      }),
+    );
+    expect(hints.find((h) => h[0] === "Enter/l")).toEqual(["Enter/l", "unavailable"]);
+  });
+
+  it("advertises resume for restorable exited sessions", () => {
+    const hints = buildDashboardFooterHints(
+      baseDashboardViewModel({
+        hasWorktrees: true,
+        navLevel: "sessions",
+        sessions: sess({ status: "exited", restoreState: "available" }),
+        selectedSessionId: "a",
+      }),
+    );
+    expect(hints.find((h) => h[0] === "Enter/l")).toEqual(["Enter/l", "resume"]);
+  });
+
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
@@ -517,6 +545,79 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("review(reviewer)");
     expect(frame).toContain("working");
     expect(frame).toContain("scan(explorer)");
+  });
+
+  it("does not list offline worktree entries as active in details", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/wt",
+        sessions: [
+          {
+            index: 0,
+            id: "codex-offline",
+            command: "codex",
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            status: "offline",
+            active: false,
+          },
+        ],
+        services: [
+          {
+            id: "svc-offline",
+            command: "shell",
+            args: [],
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            status: "offline",
+            active: false,
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "wt",
+            branch: "wt",
+            path: "/repo/.aimux/worktrees/wt",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      140,
+      40,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("Agents: 1");
+    expect(plain).toContain("Services: 1");
+    expect(plain).not.toContain("Active:");
+    expect(plain).not.toContain("Running:");
+  });
+
+  it("shows pending service state instead of raw status in details", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedServiceId: "svc-creating",
+        services: [
+          {
+            id: "svc-creating",
+            command: "shell",
+            args: [],
+            status: "running",
+            active: false,
+            pendingAction: "creating",
+          },
+        ],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      140,
+      40,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("State: Creating");
+    expect(plain).not.toContain("Status: running");
   });
 
   it("renders a dedicated Overseer line above the worktrees when an overseer exists", () => {
