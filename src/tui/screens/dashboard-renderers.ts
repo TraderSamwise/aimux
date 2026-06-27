@@ -367,13 +367,12 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     if (selectedSession) manage.push(["r", "name"]);
     if (killVerb) manage.push(["x", killVerb, "danger"]);
     return [
-      ["↑↓", "items"],
+      ["↑↓/jk", "items"],
       ["1-9", "jump"],
-      ["Enter", enterVerb],
+      ["Enter/l", enterVerb],
       ["Tab", "details"],
       ["u", "attention"],
-      ["Esc", "back"],
-      ["hjkl", "nav"],
+      ["Esc/h", "back"],
       ["⇧↑↓", "reorder"],
       ["n", "agent"],
       ["v", "service"],

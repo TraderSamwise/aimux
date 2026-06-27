@@ -183,8 +183,8 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       case "j": {
         const order = host.dashboardState.worktreeNavOrder;
         if (order.length === 0) return true;
-        const curIdx = Math.max(0, order.indexOf(host.dashboardState.focusedWorktreePath));
-        host.dashboardState.focusedWorktreePath = order[(curIdx + 1) % order.length];
+        const curIdx = order.indexOf(host.dashboardState.focusedWorktreePath);
+        host.dashboardState.focusedWorktreePath = order[curIdx < 0 ? 0 : (curIdx + 1) % order.length];
         host.renderDashboard();
         return true;
       }
@@ -192,8 +192,8 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       case "k": {
         const order = host.dashboardState.worktreeNavOrder;
         if (order.length === 0) return true;
-        const curIdx = Math.max(0, order.indexOf(host.dashboardState.focusedWorktreePath));
-        host.dashboardState.focusedWorktreePath = order[(curIdx - 1 + order.length) % order.length];
+        const curIdx = order.indexOf(host.dashboardState.focusedWorktreePath);
+        host.dashboardState.focusedWorktreePath = order[curIdx < 0 ? 0 : (curIdx - 1 + order.length) % order.length];
         host.renderDashboard();
         return true;
       }

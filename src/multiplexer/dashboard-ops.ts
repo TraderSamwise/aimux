@@ -189,8 +189,8 @@ function renderDashboardDuringSettlement(host: DashboardOpsHost, lifecycle: Dash
 function hasLiveManagedAgentWindow(host: DashboardOpsHost, sessionId: string): boolean {
   try {
     if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
-    const projectRoot =
-      typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+    const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+    const projectRoot = configuredProjectRoot || process.cwd();
     return host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot).some(({ target, metadata }: any) => {
       if (isDashboardWindowName(target.windowName)) return false;
       if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) return false;

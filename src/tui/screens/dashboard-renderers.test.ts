@@ -36,7 +36,7 @@ describe("buildDashboardFooterHints", () => {
     const hints = buildDashboardFooterHints(
       baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: sess() }),
     );
-    expect(hints[0][0]).toBe("↑↓");
+    expect(hints[0][0]).toBe("↑↓/jk");
     expect(hints.at(-2)).toEqual(["?", "help"]);
     expect(hints.at(-1)).toEqual(["q", "quit"]);
   });
@@ -68,12 +68,11 @@ describe("buildDashboardFooterHints", () => {
       }),
     ).toEqual(
       new Set([
-        "↑↓",
+        "↑↓/jk",
         "⇧↑↓",
         "1-9",
-        "Enter",
-        "Esc",
-        "hjkl",
+        "Enter/l",
+        "Esc/h",
         "u",
         "Tab",
         "n",

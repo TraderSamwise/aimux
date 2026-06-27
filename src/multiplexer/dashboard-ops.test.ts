@@ -859,8 +859,10 @@ describe("dashboard-ops", () => {
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
+    const projectRoot = "/repo";
     const host = {
       mode: "dashboard",
+      projectRoot: ` ${projectRoot} `,
       dashboardInputEpoch: 0,
       dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -875,21 +877,24 @@ describe("dashboard-ops", () => {
       refreshDashboardModelFromService: vi.fn(async () => true),
       waitForSessionStart: vi.fn(async () => false),
       tmuxRuntimeManager: {
-        listProjectManagedWindows: vi.fn(() => [
-          {
-            target: {
-              sessionName: "aimux-repo",
-              windowId: "@3",
-              windowIndex: 3,
-              windowName: "claude",
+        listProjectManagedWindows: vi.fn((root: string) => {
+          expect(root).toBe(projectRoot);
+          return [
+            {
+              target: {
+                sessionName: "aimux-repo",
+                windowId: "@3",
+                windowIndex: 3,
+                windowName: "claude",
+              },
+              metadata: {
+                kind: "agent",
+                sessionId: "sess-1",
+                command: "claude",
+              },
             },
-            metadata: {
-              kind: "agent",
-              sessionId: "sess-1",
-              command: "claude",
-            },
-          },
-        ]),
+          ];
+        }),
         isWindowAlive: vi.fn(() => true),
       },
       getDashboardSessions: vi.fn(() => sessions[0]),

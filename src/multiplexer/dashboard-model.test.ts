@@ -1286,6 +1286,16 @@ describe("computeDashboardSessions thread stats", () => {
       mkdirSync(join(repoRoot, ".git"), { recursive: true });
       mkdirSync(join(cwdRepoRoot, ".git"), { recursive: true });
       await initPaths(repoRoot);
+      updateSessionMetadata(
+        "claude-1",
+        (current) => ({ ...current, context: { cwd: join(repoRoot, "correct") } }),
+        repoRoot,
+      );
+      updateSessionMetadata(
+        "claude-1",
+        (current) => ({ ...current, context: { cwd: join(cwdRepoRoot, "wrong") } }),
+        cwdRepoRoot,
+      );
       process.chdir(cwdRepoRoot);
       const tmuxRuntimeManager = {
         listProjectManagedWindows: vi.fn((projectRoot: string) => {
@@ -1319,6 +1329,7 @@ describe("computeDashboardSessions thread stats", () => {
 
       expect(snapshot.sessions.map((session) => session.id)).toEqual(["claude-1"]);
       expect(snapshot.sessions[0]?.worktreePath).toBeUndefined();
+      expect(snapshot.sessions[0]?.cwd).toBe(join(repoRoot, "correct"));
       expect(tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalledWith(repoRoot);
     } finally {
       process.chdir(originalCwd);
@@ -1369,6 +1380,57 @@ describe("computeDashboardSessions thread stats", () => {
           });
           host.sessionToolKeys.set("claude-live", "claude");
           host.sessionOriginalArgs.set("claude-live", ["--resume", "backend-live"]);
+          host.sessionWorktreePaths.set("claude-live", repoRoot);
+          host.sessionTmuxTargets.set("claude-live", liveWindow.target);
+        }),
+        syncSessionsFromTopology: vi.fn(),
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions.map((session) => [session.id, session.status, session.worktreePath])).toEqual([
+        ["claude-live", "running", repoRoot],
+      ]);
+      expect(host.restoreTmuxSessionsFromTopology).toHaveBeenCalledTimes(1);
+      expect(host.syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("hydrates existing session rows when tmux-backed maps are empty", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-partial-service-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const liveWindow = {
+        target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" },
+        metadata: {
+          kind: "agent",
+          sessionId: "claude-live",
+          command: "claude",
+          args: [],
+          toolConfigKey: "claude",
+          worktreePath: repoRoot,
+          createdAt: "2026-04-21T00:00:00.000Z",
+        },
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-live", command: "claude", status: "running" }]),
+        projectRoot: repoRoot,
+        sessionToolKeys: new Map(),
+        sessionOriginalArgs: new Map(),
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        tmuxRuntimeManager: {
+          listProjectManagedWindows: vi.fn((projectRoot: string) => {
+            expect(projectRoot).toBe(repoRoot);
+            return [liveWindow];
+          }),
+          isWindowAlive: vi.fn(() => true),
+        },
+        restoreTmuxSessionsFromTopology: vi.fn(() => {
+          host.sessionToolKeys.set("claude-live", "claude");
           host.sessionWorktreePaths.set("claude-live", repoRoot);
           host.sessionTmuxTargets.set("claude-live", liveWindow.target);
         }),
