@@ -1278,6 +1278,56 @@ describe("computeDashboardSessions thread stats", () => {
     }
   });
 
+  it("includes offline topology sessions when the host offline cache is empty", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-topology-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      saveRuntimeTopologySessions({
+        projectRoot: repoRoot,
+        sessions: [
+          {
+            id: "codex-1",
+            tool: "codex",
+            toolConfigKey: "codex",
+            command: "codex",
+            args: [],
+            lifecycle: "offline",
+            createdAt: "2026-05-09T12:00:00.000Z",
+            worktreePath: repoRoot,
+          },
+        ],
+      });
+      const syncSessionsFromTopology = vi.fn(() => {
+        throw new Error("should not sync runtime state");
+      });
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology,
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions).toEqual([
+        expect.objectContaining({
+          id: "codex-1",
+          command: "codex",
+          status: "offline",
+          worktreePath: repoRoot,
+          restoreState: "blocked",
+          restoreBlockedReason: "missing exact resumable backend session id",
+        }),
+      ]);
+      expect(syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("builds API desktop snapshots from the host project root", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-project-root-"));
     const cwdRepoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-cwd-root-"));
