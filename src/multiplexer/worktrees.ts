@@ -1,6 +1,8 @@
+import { realpathSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import { getWorktreeCreatePath } from "../worktree.js";
 import { debug } from "../debug.js";
-import { commandKey, parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys, printableInputText } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
   buildWorktreeListOverlayOutput,
@@ -61,10 +63,23 @@ async function refreshDashboardModelForWorktreeSettlement(
 
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
-    ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => entry.path === path)
+    ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path))
     : undefined;
   if (raw) return raw;
-  return host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+  return host.dashboardWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path));
+}
+
+function canonicalWorktreePath(path: string | undefined): string | undefined {
+  if (!path) return path;
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return pathResolve(path);
+  }
+}
+
+function sameWorktreePath(left: string | undefined, right: string | undefined): boolean {
+  return canonicalWorktreePath(left) === canonicalWorktreePath(right);
 }
 
 async function waitForRenderedDashboardWorktreeState(
@@ -178,11 +193,15 @@ function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, pa
 }
 
 function findDashboardWorktreeCreateFailure(host: WorktreeHost, path: string): any | undefined {
-  const groupFailure = host.dashboardWorktreeGroupsCache?.find((group: any) => group.path === path)?.operationFailure;
+  const groupFailure = host.dashboardWorktreeGroupsCache?.find((group: any) =>
+    sameWorktreePath(group.path, path),
+  )?.operationFailure;
   if (groupFailure) return groupFailure;
   return (host.dashboardOperationFailuresCache ?? []).find(
     (failure: any) =>
-      failure.targetKind === "worktree" && failure.operation === "create" && failure.worktreePath === path,
+      failure.targetKind === "worktree" &&
+      failure.operation === "create" &&
+      sameWorktreePath(failure.worktreePath, path),
   );
 }
 
@@ -201,10 +220,37 @@ async function waitForRenderedDashboardWorktreeCreate(
   renderLifecycle?: DashboardLifecycleToken,
 ): Promise<{ ok: true } | { ok: false; error: Error }> {
   const deadline = Date.now() + timeoutMs;
+  const snapshotUnavailableTimeoutMs = host.dashboardWorktreeSettlementSnapshotUnavailableTimeoutMs ?? 5_000;
+  let snapshotUnavailableSince: number | undefined;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
-      return { ok: false, error: new Error("project service snapshot unavailable") };
+    if (!isDashboardLifecycleCurrent(host, modelLifecycle)) {
+      return { ok: true };
     }
+    const existingFailure = findDashboardWorktreeCreateFailure(host, path);
+    if (existingFailure) {
+      const message = typeof existingFailure.message === "string" ? existingFailure.message : "worktree create failed";
+      return { ok: false, error: new Error(message) };
+    }
+    if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
+      return { ok: true };
+    }
+    if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
+      const failure = findDashboardWorktreeCreateFailure(host, path);
+      if (failure) {
+        const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
+        return { ok: false, error: new Error(message) };
+      }
+      if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
+        return { ok: true };
+      }
+      snapshotUnavailableSince ??= Date.now();
+      if (Date.now() - snapshotUnavailableSince >= snapshotUnavailableTimeoutMs) {
+        return { ok: false, error: new Error("project service snapshot unavailable") };
+      }
+      await sleep(250);
+      continue;
+    }
+    snapshotUnavailableSince = undefined;
     const failure = findDashboardWorktreeCreateFailure(host, path);
     if (failure) {
       const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
@@ -268,77 +314,86 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
 
-  const event = events[0];
-  const key = commandKey(event);
+  for (const event of events) {
+    const key = commandKey(event);
 
-  if (key === "escape") {
-    host.clearDashboardOverlay();
-    host.restoreDashboardAfterOverlayDismiss();
-    return;
-  }
-
-  if (key === "enter" || key === "return") {
-    host.clearDashboardOverlay();
-    const name = host.worktreeInputBuffer.trim();
-    if (name) {
-      if (host.mode !== "dashboard") {
-        host.showDashboardError("Failed to create worktree", ["Worktree creation requires the project service."]);
-        return;
-      }
-      const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
-      const settleLifecycle = captureDashboardLifecycle(host);
-      const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
-      host.renderDashboard();
-      void (async () => {
-        try {
-          await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.create, { name }, { timeoutMs: 180_000 });
-          const result = await waitForRenderedDashboardWorktreeCreate(
-            host,
-            name,
-            targetPath,
-            180_000,
-            settleLifecycle,
-            uiLifecycle,
-          );
-          if (!result.ok) {
-            throw result.error;
-          }
-          debug(`worktree created from UI: ${name}`, "worktree");
-          host.dashboardPendingActions.clearWorktreeAction(targetPath);
-          host.reapplyDashboardPendingActions?.();
-          host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
-          await refreshDashboardModelThroughApi(host, { force: true, lifecycle: settleLifecycle });
-          if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
-            return;
-          host.dashboardState.focusedWorktreePath = targetPath;
-          host.dashboardUiStateStore.markSelectionDirty();
-          host.renderDashboard();
-        } catch (err) {
-          host.dashboardPendingActions.clearWorktreeAction(targetPath);
-          host.reapplyDashboardPendingActions?.();
-          host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
-          debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-          await refreshDashboardWorktreeCreateFailure(host, targetPath, settleLifecycle);
-          if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
-            return;
-          showDashboardWorktreeCreateFailure(host, name, targetPath, err);
-        }
-      })();
+    if (key === "escape") {
+      host.clearDashboardOverlay();
+      host.restoreDashboardAfterOverlayDismiss();
       return;
     }
-    host.restoreDashboardAfterOverlayDismiss();
-    return;
-  }
 
-  if (key === "backspace" || key === "delete") {
-    host.worktreeInputBuffer = host.worktreeInputBuffer.slice(0, -1);
-    renderWorktreeInput(host);
-    return;
-  }
+    if (key === "enter" || key === "return") {
+      host.clearDashboardOverlay();
+      const name = host.worktreeInputBuffer.trim();
+      if (name) {
+        if (host.mode !== "dashboard") {
+          host.showDashboardError("Failed to create worktree", ["Worktree creation requires the project service."]);
+          return;
+        }
+        const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
+        const settleLifecycle = captureDashboardLifecycle(host);
+        const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+        host.renderDashboard();
+        void (async () => {
+          try {
+            await postWorktreeMutation(
+              host,
+              PROJECT_API_ROUTES.worktreeActions.create,
+              {
+                name,
+              },
+              { timeoutMs: 180_000 },
+            );
+            const result = await waitForRenderedDashboardWorktreeCreate(
+              host,
+              name,
+              targetPath,
+              180_000,
+              settleLifecycle,
+              uiLifecycle,
+            );
+            if (!result.ok) {
+              throw result.error;
+            }
+            debug(`worktree created from UI: ${name}`, "worktree");
+            host.dashboardPendingActions.clearWorktreeAction(targetPath);
+            host.reapplyDashboardPendingActions?.();
+            host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
+            await refreshDashboardModelThroughApi(host, { force: true, lifecycle: settleLifecycle });
+            if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
+              return;
+            host.dashboardState.focusedWorktreePath = targetPath;
+            host.dashboardUiStateStore.markSelectionDirty();
+            host.renderDashboard();
+          } catch (err) {
+            host.dashboardPendingActions.clearWorktreeAction(targetPath);
+            host.reapplyDashboardPendingActions?.();
+            host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
+            debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
+            await refreshDashboardWorktreeCreateFailure(host, targetPath, settleLifecycle);
+            if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
+              return;
+            showDashboardWorktreeCreateFailure(host, name, targetPath, err);
+          }
+        })();
+        return;
+      }
+      host.restoreDashboardAfterOverlayDismiss();
+      return;
+    }
 
-  if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-    host.worktreeInputBuffer += event.char;
-    renderWorktreeInput(host);
+    if (key === "backspace" || key === "delete") {
+      host.worktreeInputBuffer = host.worktreeInputBuffer.slice(0, -1);
+      renderWorktreeInput(host);
+      continue;
+    }
+
+    const text = printableInputText(event);
+    if (text) {
+      host.worktreeInputBuffer += text;
+      renderWorktreeInput(host);
+    }
   }
 }
 

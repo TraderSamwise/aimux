@@ -853,10 +853,27 @@ export class AimuxDaemon {
         this.refreshState();
         return next;
       };
+      const waitForExistingReady = async (): Promise<ProjectServiceState> => {
+        try {
+          const ready = await this.waitForProjectServiceReady(resolvedRoot, projectId, existing);
+          this.projectHealthFailures.delete(projectId);
+          this.state.projects[projectId] = ready;
+          this.refreshState();
+          return ready;
+        } catch (error) {
+          log.warn("just-started project service failed readiness check", "daemon", {
+            projectId,
+            projectRoot: resolvedRoot,
+            pid: existing.pid,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
+        }
+      };
       const endpoint = loadMetadataEndpoint(resolvedRoot);
       if (!endpoint) {
         if (withinStartupGrace) {
-          return refreshExisting();
+          return waitForExistingReady();
         }
         log.warn("project service missing metadata endpoint after startup grace", "daemon", {
           projectId,
@@ -867,7 +884,7 @@ export class AimuxDaemon {
       }
       try {
         if (endpoint.pid !== existing.pid) {
-          if (withinStartupGrace) return refreshExisting();
+          if (withinStartupGrace) return waitForExistingReady();
           log.warn("project service metadata endpoint pid mismatch", "daemon", {
             projectId,
             projectRoot: resolvedRoot,
@@ -883,7 +900,7 @@ export class AimuxDaemon {
           throw new Error(json?.error || `health request failed: ${status}`);
         }
         if (json?.pid !== existing.pid) {
-          if (withinStartupGrace) return refreshExisting();
+          if (withinStartupGrace) return waitForExistingReady();
           log.warn("project service health pid mismatch", "daemon", {
             projectId,
             projectRoot: resolvedRoot,
@@ -905,7 +922,7 @@ export class AimuxDaemon {
         }
       } catch (error) {
         if (withinStartupGrace) {
-          return refreshExisting();
+          return waitForExistingReady();
         }
         const failures = (this.projectHealthFailures.get(projectId) ?? 0) + 1;
         this.projectHealthFailures.set(projectId, failures);

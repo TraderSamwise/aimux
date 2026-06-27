@@ -156,6 +156,7 @@ function addKnownProject(
 
 function collectKnownProjects(input: {
   daemonState: RuntimeCoherenceDaemonState;
+  expectedRuntimeOwner: string;
   tmux: RuntimeCoherenceTmux;
   tmuxAvailable: boolean;
   sessionNames: string[];
@@ -167,6 +168,10 @@ function collectKnownProjects(input: {
   if (input.tmuxAvailable) {
     for (const sessionName of input.sessionNames) {
       if (!input.tmux.isManagedSessionName(sessionName)) continue;
+      const runtimeOwner = input.tmux.getSessionOption(sessionName, TMUX_RUNTIME_OWNER_OPTION);
+      if (runtimeOwner && runtimeOwner !== input.expectedRuntimeOwner) {
+        continue;
+      }
       addKnownProject(projects, input.tmux.getSessionOption(sessionName, "@aimux-project-root"), "tmux");
     }
   }
@@ -487,7 +492,13 @@ export async function buildRuntimeCoherenceReport(
   const listProcessArgs = options.listProcessArgs ?? defaultListProcessArgs;
   const tmuxAvailable = tmux.isAvailable();
   const sessionNames = tmuxAvailable ? tmux.listSessionNames() : [];
-  const knownProjects = collectKnownProjects({ daemonState, tmux, tmuxAvailable, sessionNames });
+  const knownProjects = collectKnownProjects({
+    daemonState,
+    expectedRuntimeOwner,
+    tmux,
+    tmuxAvailable,
+    sessionNames,
+  });
   const projects: RuntimeCoherenceProjectReport[] = [];
 
   for (const knownProject of knownProjects) {

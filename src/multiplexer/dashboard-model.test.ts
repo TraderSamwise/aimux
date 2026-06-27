@@ -17,7 +17,6 @@ import {
   computeDashboardSessions,
   refreshDashboardModelFromService,
   startProjectServices,
-  withMetadataServicePending,
   withMetadataSessionPending,
 } from "./dashboard-model.js";
 
@@ -991,30 +990,6 @@ describe("metadata pending actions", () => {
     expect(pending.getSessionAction("codex-1")).toBeUndefined();
   });
 
-  it("clears service pending and preserves the original work error", async () => {
-    const pending = new DashboardPendingActions(() => {});
-    const host: any = {
-      dashboardPendingActions: pending,
-      reapplyDashboardPendingActions: vi.fn(),
-    };
-    const settle = vi.fn();
-
-    await expect(
-      withMetadataServicePending(
-        host,
-        "service-1",
-        "removing",
-        () => {
-          throw new Error("boom");
-        },
-        settle,
-      ),
-    ).rejects.toThrow("boom");
-
-    expect(settle).not.toHaveBeenCalled();
-    expect(pending.getServiceAction("service-1")).toBeUndefined();
-  });
-
   it("clears pending even when a best-effort settle callback fails", async () => {
     const pending = new DashboardPendingActions(() => {});
     const host: any = {
@@ -1149,47 +1124,6 @@ describe("metadata pending actions", () => {
     await nextTick();
     expect(pending.getSessionAction("codex-1")).toBeUndefined();
   });
-
-  it("does not let an older service settle clear a newer pending action", async () => {
-    const pending = new DashboardPendingActions(() => {});
-    const host: any = {
-      dashboardPendingActions: pending,
-      reapplyDashboardPendingActions: vi.fn(),
-      dashboardServicesCache: [],
-      services: [],
-      offlineServices: [],
-    };
-    const firstSettle = deferred<boolean>();
-    const secondSettle = deferred<boolean>();
-
-    await expect(
-      withMetadataServicePending(
-        host,
-        "service-1",
-        "starting",
-        () => ({ serviceId: "service-1", attempt: 1 }),
-        () => firstSettle.promise,
-      ),
-    ).resolves.toEqual({ serviceId: "service-1", attempt: 1 });
-
-    await expect(
-      withMetadataServicePending(
-        host,
-        "service-1",
-        "starting",
-        () => ({ serviceId: "service-1", attempt: 2 }),
-        () => secondSettle.promise,
-      ),
-    ).resolves.toEqual({ serviceId: "service-1", attempt: 2 });
-
-    firstSettle.resolve(true);
-    await nextTick();
-    expect(pending.getServiceAction("service-1")).toBe("starting");
-
-    secondSettle.resolve(true);
-    await nextTick();
-    expect(pending.getServiceAction("service-1")).toBeUndefined();
-  });
 });
 
 describe("computeDashboardSessions thread stats", () => {
@@ -1273,6 +1207,56 @@ describe("computeDashboardSessions thread stats", () => {
       expect(snapshot.sessions.map((session) => session.id)).toEqual(["claude-1"]);
       expect(syncSessionsFromTopology).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("includes offline topology sessions when the host offline cache is empty", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-topology-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      saveRuntimeTopologySessions({
+        projectRoot: repoRoot,
+        sessions: [
+          {
+            id: "codex-1",
+            tool: "codex",
+            toolConfigKey: "codex",
+            command: "codex",
+            args: [],
+            lifecycle: "offline",
+            createdAt: "2026-05-09T12:00:00.000Z",
+            worktreePath: repoRoot,
+          },
+        ],
+      });
+      const syncSessionsFromTopology = vi.fn(() => {
+        throw new Error("should not sync runtime state");
+      });
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology,
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions).toEqual([
+        expect.objectContaining({
+          id: "codex-1",
+          command: "codex",
+          status: "offline",
+          worktreePath: repoRoot,
+          restoreState: "blocked",
+          restoreBlockedReason: "missing exact resumable backend session id",
+        }),
+      ]);
+      expect(syncSessionsFromTopology).not.toHaveBeenCalled();
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

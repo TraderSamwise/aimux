@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isExitedProcessState, restartAimuxControlPlane, renderRuntimeRestartResult } from "./runtime-restart.js";
+import {
+  cleanupStaleDashboardLinks,
+  isExitedProcessState,
+  restartAimuxControlPlane,
+  renderRuntimeRestartResult,
+} from "./runtime-restart.js";
 import type { RuntimeCoherenceReport } from "./runtime-coherence.js";
 
 const execFileSyncMock = vi.hoisted(() => vi.fn());
@@ -206,6 +211,32 @@ function staleHookCoherenceReport(): RuntimeCoherenceReport {
     projects: report.projects.length,
     ok: report.projects.length,
     needsRestart: 0,
+    runtimeRebuildRequired: 0,
+  };
+  return report;
+}
+
+function foreignDashboardCoherenceReport(): RuntimeCoherenceReport {
+  const report = okCoherenceReport();
+  report.expected.runtimeOwner = "owner-isolated";
+  report.projects[0] = {
+    ...report.projects[0]!,
+    status: "needs-restart",
+    runtime: {
+      ...report.projects[0]!.runtime,
+      rebuildRequired: false,
+    },
+    dashboards: report.projects[0]!.dashboards.map((dashboard) => ({
+      ...dashboard,
+      owner: "owner-stable",
+      runtimeOwner: "owner-stable",
+      status: "mismatch",
+    })),
+  };
+  report.summary = {
+    projects: report.projects.length,
+    ok: 1,
+    needsRestart: 1,
     runtimeRebuildRequired: 0,
   };
   return report;
@@ -531,6 +562,50 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
+  it("does not reload or mutate dashboards owned by another runtime owner", async () => {
+    const ensureProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+    const resolveDashboardTarget = vi.fn();
+    const setSessionOption = vi.fn();
+    const report = foreignDashboardCoherenceReport();
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce(report);
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService,
+      createTmux: () => ({
+        isAvailable: () => true,
+        getProjectSession: vi.fn((projectRoot: string) => ({
+          sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+        })),
+        getSessionOption: vi.fn((sessionName: string, key: string) =>
+          sessionName === "aimux-alpha-111" && key === "@aimux-runtime-owner" ? "owner-stable" : null,
+        ),
+        setSessionOption,
+      }),
+      resolveDashboardTarget,
+      isPidAlive: () => false,
+    });
+
+    expect(resolveDashboardTarget).not.toHaveBeenCalled();
+    expect(setSessionOption).not.toHaveBeenCalledWith("aimux-alpha-111", expect.any(String), expect.any(String));
+    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(result.projects[0]?.runtime.status).toBe("skipped");
+    expect(result.projects[0]?.dashboard.status).toBe("skipped");
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary).toMatchObject({ dashboardsReloaded: 0, failures: 0 });
+  });
+
   it("records and notifies restart repair diagnostics", async () => {
     const repairNotifier = {
       record: vi.fn(),
@@ -636,16 +711,15 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/alpha", "/repo/beta"]);
-    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(result.projects.map((project) => project.projectRoot)).toEqual(["/repo/beta"]);
+    expect(ensureProjectService).not.toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
     expect(resolveDashboardTarget).toHaveBeenCalledOnce();
     expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/beta", expect.any(Object), {
       forceReload: true,
       openInHostSession: true,
     });
-    expect(result.projects[0]?.dashboard.status).toBe("skipped");
-    expect(result.projects[1]?.dashboard.status).toBe("reloaded");
+    expect(result.projects[0]?.dashboard.status).toBe("reloaded");
     expect(killWindow).not.toHaveBeenCalled();
     expect(renderRuntimeRestartResult(result)).toContain("dashboards reloaded: 1");
   });
@@ -835,6 +909,7 @@ describe("restartAimuxControlPlane", () => {
         sessionName,
         windowIndex: windowIndex ?? 2,
       })),
+      unlinkWindow: vi.fn(),
       selectWindow: vi.fn(),
     };
 
@@ -859,6 +934,67 @@ describe("restartAimuxControlPlane", () => {
     });
 
     expect(tmux.linkWindowToSession).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef", dashboardTarget, 0);
+    expect(tmux.listWindows).toHaveBeenCalledWith("aimux-alpha-111-client-deadbeef");
+    expect(tmux.unlinkWindow).toHaveBeenCalledWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@stale",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
+  });
+
+  it("removes stale duplicate dashboard links from client sessions", () => {
+    const tmux = {
+      listWindows: vi.fn(() => [
+        { id: "@437", index: 0, name: "dashboard", active: true },
+        { id: "@438", index: 1, name: "dashboard", active: false },
+        { id: "@441", index: 2, name: "claude", active: false },
+      ]),
+      unlinkWindow: vi.fn(),
+    };
+
+    const errors = cleanupStaleDashboardLinks(tmux, "aimux-alpha-111-client-deadbeef", {
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@437",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
+
+    expect(errors).toEqual([]);
+    expect(tmux.unlinkWindow).toHaveBeenCalledExactlyOnceWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@438",
+      windowIndex: 1,
+      windowName: "dashboard",
+    });
+  });
+
+  it("kills stale duplicate dashboards when tmux cannot unlink the only link", () => {
+    const tmux = {
+      listWindows: vi.fn(() => [
+        { id: "@437", index: 0, name: "dashboard", active: true },
+        { id: "@438", index: 1, name: "dashboard", active: false },
+      ]),
+      unlinkWindow: vi.fn(() => {
+        throw new Error("window only linked to one session");
+      }),
+      killWindow: vi.fn(),
+    };
+
+    const errors = cleanupStaleDashboardLinks(tmux, "aimux-alpha-111-client-deadbeef", {
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@437",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
+
+    expect(errors).toEqual([]);
+    expect(tmux.killWindow).toHaveBeenCalledExactlyOnceWith({
+      sessionName: "aimux-alpha-111-client-deadbeef",
+      windowId: "@438",
+      windowIndex: 1,
+      windowName: "dashboard",
+    });
   });
 
   it("fails dashboard relink without appending when slot zero relink fails", async () => {
@@ -1381,6 +1517,110 @@ describe("restartAimuxControlPlane", () => {
 
     expect(buildRuntimeCoherenceReport).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledWith(250);
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.failures).toBe(0);
+  });
+
+  it("repairs unhealthy project services during post-restart verification", async () => {
+    const transient = okCoherenceReport();
+    transient.projects[0] = {
+      ...transient.projects[0]!,
+      status: "needs-restart",
+      service: {
+        ...transient.projects[0]!.service,
+        status: "unreachable",
+        endpoint: null,
+        pid: 1003,
+        error: "daemon state exists but project service endpoint is missing",
+      },
+    };
+    transient.summary = { projects: 2, ok: 1, needsRestart: 1, runtimeRebuildRequired: 0 };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(coherenceReport())
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(okCoherenceReport());
+    const ensureProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1005 : 1004,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 1000,
+      verificationIntervalMs: 250,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService,
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      sleep: vi.fn(async () => {}),
+    });
+
+    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(ensureProjectService).toHaveBeenCalledTimes(3);
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.failures).toBe(0);
+  });
+
+  it("uses a startup-grace default for post-restart verification", async () => {
+    const transient = okCoherenceReport();
+    transient.projects[0] = {
+      ...transient.projects[0]!,
+      status: "needs-restart",
+      service: {
+        ...transient.projects[0]!.service,
+        status: "unreachable",
+        error: "metadata endpoint missing",
+      },
+    };
+    transient.summary = { projects: 2, ok: 1, needsRestart: 1, runtimeRebuildRequired: 0 };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(coherenceReport())
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(okCoherenceReport());
+    const sleep = vi.fn(async () => {});
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationIntervalMs: 1000,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      sleep,
+    });
+
+    expect(buildRuntimeCoherenceReport).toHaveBeenCalledTimes(8);
+    expect(sleep).toHaveBeenCalledTimes(6);
     expect(result.verification.status).toBe("ok");
     expect(result.summary.failures).toBe(0);
   });

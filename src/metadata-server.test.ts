@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
+import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
 import { loadNotificationContexts } from "./notification-context.js";
@@ -182,7 +182,7 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
-  it("caches desktop-state reads but refreshes immediately after project changes", async () => {
+  it("caches desktop-state reads and refreshes dirty snapshots off the request path", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
       teammates: [],
@@ -210,7 +210,42 @@ describe("MetadataServer threads API", () => {
 
     server.notifyChange();
     const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
-    expect(third.seq).toBe(2);
+    expect(third.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    await vi.waitFor(() => expect(getState).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    const refreshed = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) =>
+      response.json(),
+    );
+    expect(refreshed.seq).toBe(2);
+  });
+
+  it("forces dirty desktop-state reads to bypass the stale cache", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+
+    server.notifyChange();
+    const stale = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(stale.seq).toBe(1);
+
+    const forced = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state?force=1`).then((response) =>
+      response.json(),
+    );
+    expect(forced.seq).toBe(2);
     expect(getState).toHaveBeenCalledTimes(2);
   });
 
@@ -3412,12 +3447,17 @@ describe("MetadataServer threads API", () => {
     });
     expect(runningRes.ok).toBe(true);
 
-    let derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
-    expect(derived?.activity).toBe("running");
-    expect(derived?.attention).toBe("normal");
-    expect(derived?.unseenCount).toBe(0);
-    expect(derived?.shellCommand).toBe("yarn devp");
-    expect(derived?.shellCommandState).toBe("running");
+    await vi.waitFor(
+      () => {
+        const derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
+        expect(derived?.activity).toBe("running");
+        expect(derived?.attention).toBe("normal");
+        expect(derived?.unseenCount).toBe(0);
+        expect(derived?.shellCommand).toBe("yarn devp");
+        expect(derived?.shellCommandState).toBe("running");
+      },
+      { timeout: 2_500 },
+    );
 
     const promptRes = await fetch(`${base}/shell-state`, {
       method: "POST",
@@ -3430,11 +3470,62 @@ describe("MetadataServer threads API", () => {
     });
     expect(promptRes.ok).toBe(true);
 
-    derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
-    expect(derived?.activity).toBe("idle");
-    expect(derived?.attention).toBe("normal");
-    expect(derived?.shellCommand).toBe("yarn devp");
-    expect(derived?.shellCommandState).toBe("prompt");
+    await vi.waitFor(
+      () => {
+        const derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
+        expect(derived?.activity).toBe("idle");
+        expect(derived?.attention).toBe("normal");
+        expect(derived?.shellCommand).toBe("yarn devp");
+        expect(derived?.shellCommandState).toBe("prompt");
+      },
+      { timeout: 2_500 },
+    );
+  });
+
+  it("suppresses the next prompt shell-state report when a service stop marker exists", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const suppressDir = join(getProjectStateDir(), "shell-state-suppress");
+    mkdirSync(suppressDir, { recursive: true });
+    writeFileSync(join(suppressDir, "shell-1"), "stop");
+
+    const promptRes = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state: "prompt",
+        sessionId: "shell-1",
+        tool: "shell",
+      }),
+    });
+    const body = await promptRes.json();
+
+    expect(promptRes.status).toBe(202);
+    expect(body).toMatchObject({ ok: true, suppressed: true, sessionId: "shell-1", state: "prompt" });
+    await vi.waitFor(() => {
+      expect(loadMetadataState(repoRoot).sessions["shell-1"]).toBeUndefined();
+    });
+  });
+
+  it("rejects malformed shell-state payloads before queueing", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const invalidState = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state: "done", sessionId: "shell-1", tool: "shell" }),
+    });
+    const missingSession = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state: "prompt", tool: "shell" }),
+    });
+
+    expect(invalidState.status).toBe(400);
+    expect(missingSession.status).toBe(400);
   });
 
   it("streams session chat events over SSE", async () => {
@@ -4162,6 +4253,9 @@ describe("MetadataServer threads API", () => {
     });
     expect(promptRes.ok).toBe(true);
 
+    await vi.waitFor(() => expect(listNotifications({ projectRoot: repoRoot })).toHaveLength(1), {
+      timeout: 2_500,
+    });
     const listRes = await fetch(`${base}/notifications`);
     const listed = (await listRes.json()) as {
       ok: boolean;

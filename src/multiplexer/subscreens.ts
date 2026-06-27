@@ -1,4 +1,4 @@
-import { commandKey, parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys, printableInputText } from "../key-parser.js";
 import { type OrchestrationThread, type ThreadStatus } from "../threads.js";
 import { type ThreadEntry } from "../workflow.js";
 import { applyCoordinationFilter } from "./notifications.js";
@@ -260,49 +260,54 @@ export async function runReviewLifecycleAction(
 export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
-  const event = events[0];
-  const key = commandKey(event);
 
-  if (key === "escape") {
-    host.clearDashboardOverlay();
-    host.threadReplyBuffer = "";
-    host.renderCoordination();
-    return;
-  }
+  for (const event of events) {
+    const key = commandKey(event);
 
-  if (key === "enter" || key === "return") {
-    const body = host.threadReplyBuffer.trim();
-    const entry = host.threadEntries[host.threadIndex];
-    host.clearDashboardOverlay();
-    host.threadReplyBuffer = "";
-    if (!entry || !body) {
+    if (key === "escape") {
+      host.clearDashboardOverlay();
+      host.threadReplyBuffer = "";
       host.renderCoordination();
       return;
     }
-    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
-    void postCoordinationMutation(host, PROJECT_API_ROUTES.threads.send, {
-      threadId: entry.thread.id,
-      from: "user",
-      kind: "reply",
-      body,
-    })
-      .then(() => refreshCoordinationThreads(host, lifecycle))
-      .catch((error: unknown) => {
-        if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
-        host.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
-      });
-    return;
-  }
 
-  if (key === "backspace" || key === "delete") {
-    host.threadReplyBuffer = host.threadReplyBuffer.slice(0, -1);
-    renderThreadReply(host);
-    return;
-  }
+    if (key === "enter" || key === "return") {
+      const body = host.threadReplyBuffer.trim();
+      const entry = host.threadEntries[host.threadIndex];
+      host.clearDashboardOverlay();
+      host.threadReplyBuffer = "";
+      if (!entry || !body) {
+        host.renderCoordination();
+        return;
+      }
+      const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true, screen: "coordination" });
+      void postCoordinationMutation(host, PROJECT_API_ROUTES.threads.send, {
+        threadId: entry.thread.id,
+        from: "user",
+        kind: "reply",
+        body,
+      })
+        .then(() => refreshCoordinationThreads(host, lifecycle))
+        .catch((error: unknown) => {
+          if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+          host.showDashboardError("Failed to reply in thread", [
+            error instanceof Error ? error.message : String(error),
+          ]);
+        });
+      return;
+    }
 
-  if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-    host.threadReplyBuffer += event.char;
-    renderThreadReply(host);
+    if (key === "backspace" || key === "delete") {
+      host.threadReplyBuffer = host.threadReplyBuffer.slice(0, -1);
+      renderThreadReply(host);
+      continue;
+    }
+
+    const text = printableInputText(event);
+    if (text) {
+      host.threadReplyBuffer += text;
+      renderThreadReply(host);
+    }
   }
 }
 

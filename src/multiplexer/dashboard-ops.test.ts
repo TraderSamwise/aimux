@@ -1113,6 +1113,34 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("settles spawn from an already-live dashboard row when the forced refresh reports stale", async () => {
+    const sessions = [[{ id: "codex-live1", status: "running", tmuxWindowId: "@42" }]];
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => sessions[0]),
+      showDashboardError: vi.fn(),
+    };
+
+    await spawnDashboardAgentWithFeedback(host, {
+      sessionId: "codex-live1",
+      tool: "codex",
+      worktreePath: "/repo",
+    });
+
+    expect(host.dashboardPendingActions.getSessionAction("codex-live1")).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("forks an agent through the project service in dashboard mode and waits for the row to appear", async () => {
     const sessions = [[], [{ id: "codex-fork12", status: "running", tmuxWindowId: "@43" }]];
     let sessionIndex = 0;
