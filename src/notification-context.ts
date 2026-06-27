@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { writeJsonAtomic } from "./atomic-write.js";
-import { getNotificationContextPath } from "./paths.js";
+import { getNotificationContextPath, getReadOnlyProjectPathsFor } from "./paths.js";
 import type { AlertEvent } from "./project-events.js";
 
 export type NotificationContextSource = "desktop" | "tui";
@@ -24,8 +24,14 @@ interface NotificationContextState {
 // sessions to start accumulating "unread" as if they were backgrounded.
 const CONTEXT_FRESH_MS = 15 * 60_000;
 
-function loadState(): NotificationContextState {
-  const path = getNotificationContextPath();
+function notificationContextPath(projectRoot?: string): string {
+  return projectRoot?.trim()
+    ? getReadOnlyProjectPathsFor(projectRoot).notificationContextPath
+    : getNotificationContextPath();
+}
+
+function loadState(projectRoot?: string): NotificationContextState {
+  const path = notificationContextPath(projectRoot);
   if (!existsSync(path)) return { version: 1, contexts: {} };
   try {
     const raw = readFileSync(path, "utf8");
@@ -39,8 +45,8 @@ function loadState(): NotificationContextState {
   }
 }
 
-function saveState(state: NotificationContextState): void {
-  writeJsonAtomic(getNotificationContextPath(), state);
+function saveState(state: NotificationContextState, projectRoot?: string): void {
+  writeJsonAtomic(notificationContextPath(projectRoot), state);
 }
 
 function isFresh(entry: NotificationContextEntry | undefined): boolean {
@@ -56,8 +62,9 @@ function isDirectSessionFocus(entry: NotificationContextEntry, sessionId: string
 export function updateNotificationContext(
   source: NotificationContextSource,
   patch: Partial<Omit<NotificationContextEntry, "source" | "updatedAt">>,
+  projectRoot?: string,
 ): NotificationContextEntry {
-  const state = loadState();
+  const state = loadState(projectRoot);
   const previous = state.contexts[source];
   const has = (key: keyof typeof patch) => Object.prototype.hasOwnProperty.call(patch, key);
   const nextSessionId = has("sessionId") ? patch.sessionId : previous?.sessionId;
@@ -71,17 +78,17 @@ export function updateNotificationContext(
     updatedAt: new Date().toISOString(),
   };
   state.contexts[source] = next;
-  saveState(state);
+  saveState(state, projectRoot);
   return next;
 }
 
-export function loadNotificationContexts(): NotificationContextState {
-  return loadState();
+export function loadNotificationContexts(projectRoot?: string): NotificationContextState {
+  return loadState(projectRoot);
 }
 
-export function isSessionNotificationFocused(sessionId: string): boolean {
+export function isSessionNotificationFocused(sessionId: string, projectRoot?: string): boolean {
   if (!sessionId) return false;
-  const { contexts } = loadState();
+  const { contexts } = loadState(projectRoot);
   for (const entry of Object.values(contexts)) {
     if (!entry || !isFresh(entry) || !entry.focused) continue;
     if (isDirectSessionFocus(entry, sessionId)) return true;
@@ -89,9 +96,9 @@ export function isSessionNotificationFocused(sessionId: string): boolean {
   return false;
 }
 
-export function shouldSuppressNotification(event: AlertEvent): boolean {
+export function shouldSuppressNotification(event: AlertEvent, projectRoot?: string): boolean {
   if (event.forceNotify) return false;
-  const { contexts } = loadState();
+  const { contexts } = loadState(projectRoot);
   for (const entry of Object.values(contexts)) {
     if (!entry || !isFresh(entry) || !entry.focused) continue;
     if (event.sessionId && isDirectSessionFocus(entry, event.sessionId)) return true;

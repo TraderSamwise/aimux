@@ -1,25 +1,27 @@
 # aimux
 
-Native CLI agent multiplexer — run multiple AI coding tools side-by-side with their native TUIs intact.
+Native CLI agent multiplexer with an API-first control plane — run multiple AI coding tools side-by-side with their native TUIs intact, then control them from the terminal dashboard, web app, mobile app, CLI, or scripts through the same daemon/project-service APIs.
 
-aimux uses `tmux` as its terminal runtime substrate. Each project gets its own managed tmux runtime session, each terminal gets its own dashboard client session/window, and each agent runs in its own tmux window while aimux keeps orchestration, worktrees, plans, and metadata on top.
+aimux uses `tmux` as its local execution substrate. Each project gets one managed tmux runtime session, each agent runs in its own tmux window, and each terminal gets its own dashboard client window. Shared project state lives behind the project service, so the terminal TUI is a client of the same HTTP/SSE control plane used by the web and mobile app.
 
 ## Features
 
-- **tmux-backed runtime** — real scrollback, attach/detach, repaint, and terminal compatibility come from tmux instead of a custom multiplexer
-- **Dashboard clients** — each terminal gets its own dashboard tmux client session/window while agent runtime stays shared per project
+- **tmux-backed execution** — real PTYs, scrollback, attach/detach, repaint, and terminal compatibility come from tmux instead of a custom multiplexer
+- **API-first control plane** — the daemon and per-project service expose typed HTTP/SSE APIs used by the terminal TUI, Expo web/mobile app, CLI helpers, and scripts
+- **Single-writer project service** — notifications, threads, tasks, handoffs, reviews, Coordination, project views, and lifecycle mutations are owned by the project service
+- **Thin dashboard clients** — each terminal gets its own dashboard tmux client session/window while shared project state stays service-backed
 - **Agent windows** — each agent gets its own tmux window with its native TUI intact
-- **tmux status integration** — the native tmux status line shows aimux session, task, headline, and metadata state
-- **Metadata API** — scripts and agents can push status, progress, logs, and notifications into the tmux status line
+- **tmux status integration** — the native tmux status line shows aimux session, task, headline, and metadata state from service-written snapshots
+- **Metadata and plugin APIs** — scripts, agents, and local watchers can publish status, progress, logs, and notifications through the project service
 - **Plugin/watcher seam** — local plugins can watch files or external tools and publish metadata without patching aimux core
 - **Leader key switching in dashboard** — `Ctrl+A` prefix for dashboard actions like create/kill/switch while you are in the aimux dashboard window
 - **Dashboard view** — see all running, offline, and remote agents at a glance
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
 - **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
-- **Task delegation** — agents can create explicit handoff records in `.aimux/tasks/`; users and control-plane clients can coordinate teammate work through the metadata API
-- **Threaded orchestration** — direct messages, handoffs, and task assignment all flow through durable `.aimux/threads/` state and explicit user/agent workflow actions
+- **Coordination inbox** — the project service builds one "needs-you" worklist from notifications, threads, tasks, handoffs, reviews, and live agent reachability
+- **Threaded orchestration** — direct messages, handoffs, task assignment, and review flows go through durable runtime-exchange state and explicit user/agent workflow actions
 - **Dashboard orchestration actions** — from the main dashboard, use `S` to send a message, `H` to send a handoff, `T` to assign a task, `o` to jump to the most relevant thread, and `R` to reply when something is waiting on you
-- **Workflow view** — a dedicated workflow screen groups related task/review/revision chains, supports actionable filters, and exposes explicit accept/block/complete/reopen/review controls
+- **Workflow actions everywhere** — TUI and web/mobile clients use the same API routes for accept/block/complete/reopen/reply/review actions
 - **Next-action guidance** — dashboard rows and details surface `on me`, `blocked`, family-chain pressure, and the single most relevant next orchestration step
 - **Context sharing** — agents can read each other's conversation history via `.aimux/context/`
 - **Session resume** — resume previous sessions using each tool's native resume (`--resume`) or injected history (`--restore`)
@@ -27,7 +29,7 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **Fully config-driven** — all tool behavior (prompt detection, session capture, resume, compaction) is declarative config, not code
 - **Configurable** — global (`~/.aimux/config.json`) and project-level (`.aimux/config.json`) configuration with deep merge
 - **Notifications** — cross-platform notifications (macOS, Linux, Windows) when agents need attention or complete tasks
-- **Project event stream** — each project service exposes an SSE stream for ephemeral alerts and other live GUI/web events
+- **Project event stream** — each project service exposes an SSE stream for project updates, alerts, and remote-client refreshes
 - **Custom instructions** — `~/AIMUX.md` (global) and `./AIMUX.md` (project) are injected into every agent's preamble
 
 ## Install
@@ -51,6 +53,10 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 
 This installs the bundled release under `~/.aimux/native/` and links `aimux` into `~/.local/bin`.
 It still requires Node.js >= 24 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
+When replacing an existing install, the installer automatically runs the safe `aimux restart`
+repair: daemon restart, project-service re-ensure, managed tmux contract repair, and dashboard
+reloads. It does not kill agent tmux windows. If Aimux has to repair itself, it records the reason
+in the project repair log and sends a quiet desktop notification.
 
 To install a specific version:
 
@@ -61,11 +67,18 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 To install a frozen local build from the current checkout:
 
 ```bash
-AIMUX_RELEASE_VERSION=0.1.16-local.$(git rev-parse --short HEAD) yarn release:asset
-scripts/install.sh release/aimux-darwin-arm64.tar.gz
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
 ```
 
-That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository.
+That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository. The installer updates `~/.local/bin/aimux` to point at the installed bundle.
+
+For development, remember the distinction:
+
+- `yarn build` updates this checkout's `dist/`, so `node dist/main.js ...` sees source changes.
+- Plain `aimux ...` runs the installed bundle behind `~/.local/bin/aimux`, so it will not see source changes until you build and install a local release archive.
+- Reinstalling a local release archive automatically runs the safe `aimux restart` repair. Set `AIMUX_SKIP_POST_INSTALL_RESTART=1` only when testing the installer itself.
 
 ### Build from source
 
@@ -76,8 +89,11 @@ cd aimux
 yarn install
 yarn build
 
-# Link globally
-yarn link
+# Install this checkout as the plain `aimux` command
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
+aimux doctor versions
 ```
 
 Requires Node.js >= 24 and `tmux` in `PATH`.
@@ -89,18 +105,19 @@ The browser/mobile client lives in `app/` and talks to the local aimux daemon.
 ```bash
 yarn install
 cp app/.env.example app/.env
-yarn dev:gui:web      # web app + local daemon
-yarn dev:gui:ios      # build/install/open iOS simulator dev build
-yarn dev:gui:android  # build/install/open Android emulator dev build
+cd app
+yarn dev:web:local      # web client on http://localhost:8081
+yarn dev:native:local   # Metro for an installed native dev build
+yarn dev:ios:local      # build/install/open iOS simulator dev build
+yarn dev:android:local  # build/install/open Android emulator dev build
 ```
 
-Use `aimux-dev` for repo-linked Aimux development. It uses `~/.aimux-dev`, daemon port `43191`, development defaults, and the local web app at `http://localhost:8081`. Keep `aimux` reserved for stable/prod-like project work and remote auth against `https://aimux.app`.
+Use the installed `aimux` command for local development too. Backend changes must be built into a local release asset, installed with `scripts/install.sh`, and activated with `aimux restart`; do not point `~/.local/bin/aimux` directly at this checkout.
 
 For an already-installed native dev build:
 
 ```bash
-yarn build
-node bin/aimux-dev daemon ensure
+aimux daemon ensure
 cd app
 yarn dev:native:local
 ```
@@ -127,56 +144,64 @@ The per-project tmux session is the long-lived runtime substrate. Aimux no longe
 
 ## Architecture
 
-Aimux now distinguishes between:
+Aimux separates local execution from the shared control plane.
 
-- `tmux` runtime
-- project runtime
-- advanced global daemon internals
-- terminal/desktop/service clients
+Runtime layers:
 
-`tmux` still owns the actual agent runtime:
+1. **Global daemon** — one local host service for project discovery, project activation, and supervision of project services. `aimux` uses port `43190` by default; explicit environment overrides can target another port for rare sandboxing.
+2. **Per-project service** — the project-local HTTP/SSE authority, implemented by the metadata server. It is the single writer for shared project control-plane state.
+3. **tmux runtime** — the managed per-project tmux session that owns agent/service/dashboard windows, PTYs, scrollback, attach/detach, and same-machine focus/open behavior.
+4. **Clients** — the terminal TUI dashboard, Expo web/mobile app, CLI commands, scripts, and plugins. Clients read and mutate shared project state through daemon/project-service APIs.
 
-- agent windows
-- PTYs
-- scrollback
-- attach/detach
+The project service owns:
 
-The global daemon owns shared control-plane responsibilities:
+- live project state and API lifecycle
+- notifications, threads, tasks, handoffs, reviews, and Coordination worklists
+- lifecycle mutations such as spawn, stop, kill, fork, worktree, graveyard, and workflow actions
+- `/events` SSE project updates and alerts for TUI, web, and mobile clients
+- plugin runtime and project-scoped metadata sidecars
+- derived `statusline.json` snapshots for tmux status/debugging
 
-- project discovery and activation
-- supervision of daemon-managed project services
-- desktop/service-facing project discovery
+The terminal dashboard is API-backed for shared workflows. It still owns terminal-local UI state such as current screen, selection, filters, text buffers, overlays, and render timing. It also participates in same-machine tmux behavior, because focusing a local tmux window is inherently different from a remote web/mobile deep link or pane stream.
 
-Each active project may have one daemon-managed project service. That project service owns:
+There is no per-project host election. Dashboard windows are clients, not control-plane owners.
 
-- metadata API lifecycle
-- plugin runtime
-- project `statusline.json` writing
-- project-scoped control-plane sidecars
+Client/write boundary:
 
-There is no per-project host election anymore. Dashboard processes are clients, not control-plane owners.
+- TUI shared reads use project-service APIs such as `/desktop-state`, `/coordination-worklist`, topology, project, library, graveyard, and worktree routes.
+- TUI shared mutations use project-service APIs for notifications, threads, tasks, handoffs, reviews, agent lifecycle, services, worktrees, and graveyard actions.
+- CLI lifecycle and workflow writes also require the project service; read-only CLI inspection and hook safety fallbacks are the narrow exceptions.
+- The project service still computes local runtime models in-process because it is the API authority for those routes.
 
-The user-facing client (browser + mobile) at `app/` talks to the live control plane directly:
+The user-facing app at `app/` talks to the same live control plane:
 
-- daemon HTTP is used for project discovery / service discovery
-- project-service HTTP is used for live project state and awaited lifecycle actions
-- `statusline.json` remains a derived artifact for tmux/status/debugging, not the client's primary transport
+- daemon HTTP is used for project discovery and service discovery
+- project-service HTTP is used for live project state and awaited lifecycle/workflow actions
+- project-service `/events` SSE is used for heartbeat reconciliation, alerts, and refreshes
+- `statusline.json` is a derived artifact for tmux/status/debugging, not a client transport
 - client loading state should clear on heartbeat reconciliation of the expected state change, not on HTTP return alone
 
 Terminal clients are isolated from each other:
 
 - the shared per-project tmux runtime session owns agent windows
 - each terminal gets its own tmux client session and dashboard window
-- dashboard tab, pointer, and load state are terminal-local
-- orchestration, metadata, and plugin sidecars are project-scoped through the daemon-managed project service
+- dashboard tab, pointer, filter, and load state are terminal-local
+- orchestration, metadata, notifications, and workflow state are project-scoped through the daemon-managed project service
+
+Cross-project terminal surfaces follow the same split:
+
+- semantic product state belongs to daemon/project-service APIs
+- tmux owns terminal mechanics: pane capture, window focus, client switching, window linking, and same-machine open behavior
+- tmux metadata is a bridge for identity only: project root, worktree path, session id, window id, tool, label, and lightweight status hints
+- Exposé and the meta dashboard may use local tmux metadata for live previews and jumps, but they must not become a second writer or second source of truth for notifications, threads, workflow state, health, or lifecycle
+- web/mobile parity for terminal actions requires pane streaming or deep links; it does not mean remote clients should learn raw tmux switching
 
 Runtime lifecycle:
 
 ```bash
 aimux                         # open or attach to the current project runtime
-aimux dashboard-reload --open # recreate/reopen the dashboard window only
-aimux repair                  # repair the current project runtime in place
-aimux restart-runtime --open  # hard restart the current project runtime
+aimux restart                 # repair daemon/services/tmux contracts and reload known dashboards
+aimux doctor versions         # inspect daemon/service/dashboard build coherence
 aimux stop                    # stop the current project runtime
 ```
 
@@ -218,8 +243,8 @@ aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
 aimux worktree list --project /abs/path/to/repo --json
 aimux worktree create feature-x --project /abs/path/to/repo --json
 
-# Focus a live agent in tmux
-desktop terminal focus now uses the thin tmux fast-control entrypoint via the project service and terminal client tty
+# Focus a live agent in a same-machine tmux client
+terminal focus uses the thin tmux fast-control entrypoint via the project service and terminal client tty
 ```
 
 HTTP-backed agent output helpers:
@@ -241,7 +266,7 @@ curl -N http://127.0.0.1:<project-service-port>/events
 
 These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the tmux pane capture path through the project HTTP service.
 
-For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
+For GUI, remote, and script callers, prefer explicit `--project` usage instead of relying on launcher cwd.
 
 Example:
 
@@ -270,6 +295,7 @@ AIMUX_LOG=1 AIMUX_LOG_CATEGORIES=daemon,session,tmux aimux
 ```
 
 - Project logs are written under `~/.aimux/projects/<project-id>/logs/aimux.jsonl`.
+- Automatic repair diagnostics are written under `~/.aimux/projects/<project-id>/logs/repairs.jsonl`.
 - Daemon logs are written under `~/.aimux/daemon/logs/daemon.jsonl`.
 - Child stdout/stderr is captured separately as `daemon-stdio.log` or `project-service-stdio.log` when logging is enabled.
 
@@ -281,12 +307,19 @@ aimux logs tail --daemon
 aimux logs clear
 ```
 
-- Manual recovery is now:
+- Normal recovery is now:
+
+```bash
+aimux restart
+aimux doctor versions
+```
+
+- Advanced/debug repair commands still exist, but they are not the normal user path:
 
 ```bash
 aimux repair
-# or, for a full project-scoped rebuild
 aimux restart-runtime --open
+aimux dashboard-reload --open
 ```
 
 Daemon rebuild quirk:
@@ -295,15 +328,14 @@ Daemon rebuild quirk:
 - If you change project-service HTTP behavior, rebuild first with `yarn build`.
 - More generally: if you change any `src/*.ts` runtime or CLI behavior, rebuild before testing or asking someone else to test.
 - `yarn vitest` / `yarn typecheck` validate source, but they do not update the runtime artifact that `aimux` actually executes.
-- If a daemon is already running, restart the project runtime first.
-- If a build mismatch persists after `aimux restart-runtime --open`, use the advanced daemon path.
+- If a daemon or project dashboard is already running, run the coherent restart after rebuilding.
+- `aimux restart` restarts the daemon, re-ensures known project services, repairs managed tmux contract drift in place, and reloads existing dashboard windows without killing agent tmux windows.
+- Lower-level repair commands are advanced/debug plumbing; user-facing stale dashboard and tmux drift handling should route through `aimux restart`.
 
 ```bash
 yarn build
-aimux restart-runtime --open
-
-# Advanced fallback if the daemon itself is stale
-aimux daemon restart
+aimux restart
+aimux doctor versions
 ```
 
 Navigation ownership rule:
@@ -316,13 +348,14 @@ Navigation ownership rule:
   - [src/tmux/control-script.test.ts](src/tmux/control-script.test.ts)
 - Do not clone “similar” ordering logic in the Node runtime for live-pane shortcuts. If the user is pointing at the visible live footer chips and references `n/p`, the shortcut belongs to the tmux layer unless there is a strong reason otherwise.
 
-The browser/mobile client at `app/` exposes these flows directly over daemon (port 43190) and per-project metadata-server HTTP:
+The browser/mobile client at `app/` exposes these flows over daemon (port 43190 by default) and per-project metadata-server HTTP:
 
-- dashboard monitoring and read-only session views
-- graveyard browsing
-- worktree create + remove
-- activity, workflow, threads, plans, and graveyard secondary screens
-- thread and workflow visibility
+- project discovery, dashboard monitoring, topology, and session views
+- agent lifecycle: spawn, stop, kill, fork, rename, migrate, graveyard, and resurrect
+- worktree create/list/remove helpers
+- pane read and live pane streaming for remote terminal views
+- notifications, Coordination worklist, threads, tasks, handoffs, reviews, and workflow actions
+- project `/events` SSE updates for heartbeat, alerts, and refreshes
 
 For the lifecycle model, see [docs/runtime-lifecycle.md](docs/runtime-lifecycle.md).
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
@@ -333,12 +366,13 @@ For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-
 
 The user-facing browser and native clients live in `app/` as a single Expo Router + React Native project. The same code targets web (browser), iOS, and Android.
 
-For GUI and daemon development, use the isolated `aimux-dev` runtime so your real
-`aimux` daemon and active work sessions keep running:
+For GUI and daemon development, use the installed `aimux` runtime. Backend changes
+need a local release install before the daemon or project services can run them:
 
 ```bash
-aimux-dev daemon restart
-aimux-dev daemon project-ensure --project /Users/sam/cs/glyde-frontend
+AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
+ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
+scripts/install.sh "$ASSET"
 cd app
 yarn dev:web:local
 ```
@@ -370,8 +404,8 @@ the loopback daemon is running, and injects local runtime config for the daemon
 port. The UI server binds to `127.0.0.1:43192` by default; use `--port` to choose
 a different local UI port.
 
-For simulator-local development, the helper scripts use `http://127.0.0.1:43191`
-for iOS and `http://10.0.2.2:43191` for Android. For mobile use against a remote
+For simulator-local development, the helper scripts use `http://127.0.0.1:43190`
+for iOS and `http://10.0.2.2:43190` for Android. For mobile use against a remote
 machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.
 
 Release pipeline (uses the shared `@tradersamwise/eas-release` CLI). Two paths,
@@ -452,9 +486,12 @@ Dashboard hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A 1-9` | Focus agent by number from the dashboard |
 | `Ctrl+A d` | Return to dashboard window |
 | `Ctrl+A g` | Exposé: tile live previews of agents; press `1`-`9` to jump, `g` to zoom out |
+| `Ctrl+A m` | Meta dashboard: cross-project tmux dashboard for running projects |
 | `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
 
-When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` (Exposé) also works inside an agent window, where it scopes to that agent's worktree instead of all worktrees (configurable via `expose.forceGlobalScope`). With Exposé open, pressing `g` zooms the scope out one level — worktree → project (all worktrees) → all projects — so you can widen the view without leaving the overlay; the zoom is per-session and resets next time you open it.
+When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` (Exposé) also works inside an agent window, where it scopes to that agent's worktree by default; set `expose.initialScope` to `worktree`, `project`, or `global` to choose the starting scope. With Exposé open, pressing `g` zooms the scope out one level — worktree → project (all worktrees) → all projects — so you can widen the view without leaving the overlay; the zoom is per-session and resets next time you open it.
+
+The meta dashboard is a local tmux window named `meta-dashboard`. It lists registered projects for the current `AIMUX_HOME`, groups running projects by worktree, refreshes from local tmux state, and jumps by switching the real terminal client into the target project's per-client session. Opening Exposé from the meta dashboard starts in `global` scope, showing live tiles across all running projects.
 
 Main dashboard orchestration shortcuts:
 
@@ -508,9 +545,19 @@ When extending the footer/status UI, treat both as first-class render sources. T
 
 For future tool wiring and continuity expectations, see [docs/tool-integration.md](docs/tool-integration.md).
 
-## Metadata API
+## Project Service API
 
-Inspired by opensessions, aimux exposes a small project-local metadata API from the daemon-managed project service. The tmux status line reads this state and shows it for the active session.
+The daemon-managed project service is the shared API surface for a project. The terminal dashboard, web/mobile app, CLI helpers, scripts, and plugins use it instead of writing shared project state directly.
+
+Core routes include:
+
+- health and state: `GET /health`, `GET /desktop-state`, `GET /coordination-worklist`, `GET /events`
+- notifications: list, mark read, clear, and alert routes
+- threads and workflow actions: mark seen, open, reply, update status, handoff/task/review actions
+- lifecycle and topology: spawn, stop, kill, fork, rename, migrate, worktrees, graveyard, pane read, pane stream
+- metadata: status, progress, logs, and plugin/watch sidecar updates
+
+The metadata API is still available as the low-level status/progress/log surface. The tmux status line reads service-written metadata snapshots and shows them for the active session.
 
 CLI helpers:
 
@@ -522,7 +569,7 @@ aimux metadata log <session> "Tests passed" --source ci --tone success
 aimux metadata clear-log <session>
 ```
 
-The project-service HTTP API also exposes:
+The metadata subset of the project-service HTTP API exposes:
 
 - `GET /health`
 - `GET /state`
@@ -534,7 +581,7 @@ The project-service HTTP API also exposes:
 
 Use `aimux metadata endpoint` to get the local base URL for the current project service.
 
-Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI. Programmatic teammate lifecycle routes are control-plane internals; agents should use `.aimux/tasks/*.json` handoff records unless the user gives an explicit CLI/API command.
+Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI. Programmatic teammate lifecycle routes are control-plane internals; agents should use explicit aimux task, handoff, or thread commands only when the user asks for delegation or handoff.
 
 Dashboard navigation exposes only the selected parent's direct team:
 
@@ -627,7 +674,6 @@ aimux records each agent's conversation and makes it available to other agents:
 - **`.aimux/context/{session-id}/summary.checkpoints.jsonl`** — append-only compaction checkpoints
 - **`.aimux/history/{session-id}.jsonl`** — full raw conversation log
 - **`.aimux/plans/{session-id}.md`** — canonical shared plan for that agent
-- **`.aimux/tasks/{task-id}.json`** — explicit handoff records when the user asks for delegation
 
 Agents are told about these files in their startup preamble.
 
@@ -684,51 +730,32 @@ Each new session gets a stub plan file. Agents are instructed to keep it current
 
 ## Task Delegation
 
-Agents can coordinate handoffs through `.aimux/tasks/*.json` when the user explicitly asks for delegation or handoff. These files are a shared record format; they are not an alternate live agent lifecycle or persistence layer.
+Agents coordinate through aimux task, handoff, review, and thread commands backed by the runtime exchange and exposed through the project service API. They should not invent a separate delegation file format or spawn other agents directly unless the user gives an explicit CLI/API instruction.
 
-### How it works
+Common flows:
 
-1. **Agent A** creates a task file in `.aimux/tasks/`:
-   ```json
-   {
-     "id": "add-login-form",
-     "status": "pending",
-     "assignedBy": "claude-abc123",
-     "description": "Add a login form component",
-     "prompt": "Create a React login form at src/components/LoginForm.tsx with email and password fields, validation, and submit handler.",
-     "createdAt": "2025-01-15T10:30:00Z",
-     "updatedAt": "2025-01-15T10:30:00Z"
-   }
-   ```
+```bash
+aimux message send "Need UI review on the login flow" --assignee ui
+aimux handoff send "Take over the sidebar polish from here" --tool claude
+aimux task assign "Audit the websocket reconnect path" --assignee reviewer
+aimux handoff accept <threadId>
+aimux handoff complete <threadId>
+aimux task accept <taskId>
+aimux task block <taskId> --reason "Waiting on API decision"
+aimux task complete <taskId>
+aimux task reopen <taskId>
+aimux review approve <taskId>
+aimux review request-changes <taskId> --body "Handle reconnect backoff edge cases"
+```
 
-2. **A target agent or user picks it up** through an explicit handoff or manual coordination
+The project service builds Coordination from the durable runtime-exchange records plus live agent reachability and notification state. TUI, web, mobile, CLI, and scripts all see the same worklist and use the same workflow action routes.
 
-3. **The receiving agent works from the task prompt** and treats the task file as durable coordination state
-
-4. **The agent completes the work** and updates the task file with `"status": "done"` and a `"result"` summary
-
-5. **The original agent or user reviews** the result from the shared task record
-
-### Targeting
-
-Tasks can carry routing metadata:
-
-- **Specific agent**: set `assignedTo` to the intended aimux session ID
-- **By tool type**: set `tool` to `"claude"`, `"codex"`, or `"aider"` as a preferred tool hint
-- **Untargeted**: omit both fields for a general handoff record
-
-### Dashboard indicators
-
-The dashboard and metadata APIs expose teammate and task workflow state where those flows are active. The runtime topology remains authoritative for session lifecycle.
-
-### Using it
-
-Ask your agent to delegate or hand off when you want a task file created. For example:
+Ask your agent to delegate or hand off when you want a coordination record created. For example:
 
 > "Delegate the test writing to another agent"
 > "Hand off the CSS cleanup to the codex agent"
 
-The agent creates the task file. Control-plane callers may expose teammate workflow APIs where configured, but agents should not call aimux metadata APIs themselves. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
+Control-plane callers may expose teammate workflow APIs where configured, but agents should not call aimux metadata APIs themselves. This is separate from any native task system in the underlying tools, such as Claude Code's internal tasks.
 
 ## Custom Instructions
 
@@ -844,11 +871,9 @@ Run aimux in multiple terminal tabs or through the dashboard for the same projec
 - Remote/share presence belongs to relay/share transport state unless explicitly mirrored from topology.
 - `--resume` does not use instance-registry session refs for ownership decisions.
 - When a runtime exits, topology-backed offline rows keep agents visible to other clients.
-- `aimux` and `aimux-dev` are separate runtime lanes. They use different `AIMUX_HOME`
-  directories and daemon ports, so switching lanes stops the other lane's project
-  service for that checkout but does not delete its topology or graveyard state.
-  Agents from the inactive lane should disappear from the active lane and reappear
-  when that lane owns the project again.
+- `aimux` has one normal runtime lane under `~/.aimux` on daemon port `43190`.
+  Use explicit `AIMUX_HOME` and `AIMUX_DAEMON_PORT` overrides only for rare
+  sandboxing, and do not create a second named CLI lane.
 - A visible offline agent row must come from topology. If the row has an exact
   backend session id, restore is marked ready. If that id is missing for a tool
   that requires exact backend resume, the row remains visible but restore is

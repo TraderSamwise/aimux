@@ -68,7 +68,7 @@ describe("DashboardUiStateStore", () => {
       "dashboard",
       "client-b",
       Object.assign(new DashboardState(), {
-        screen: "workflow",
+        screen: "coordination",
         detailsSidebarVisible: false,
         focusedWorktreePath: "/repo/wt-b",
         level: "sessions",
@@ -82,9 +82,28 @@ describe("DashboardUiStateStore", () => {
     store.loadInto(state, "client-b");
 
     expect(state.detailsSidebarVisible).toBe(false);
-    expect(state.screen).toBe("workflow");
+    expect(state.screen).toBe("coordination");
     expect(state.focusedWorktreePath).toBe("/repo/wt-b");
     expect(state.level).toBe("sessions");
+  });
+
+  it("migrates a pre-merge persisted screen (workflow/threads/notifications) onto coordination", () => {
+    const store = new DashboardUiStateStore();
+    store.persist("dashboard", "legacy", Object.assign(new DashboardState(), { screen: "workflow" as any }), 0, []);
+
+    const state = new DashboardState();
+    store.loadInto(state, "legacy");
+    expect(state.screen).toBe("coordination");
+  });
+
+  it("falls back to the dashboard for an unrecognized persisted screen", () => {
+    const store = new DashboardUiStateStore();
+    store.persist("dashboard", "weird", Object.assign(new DashboardState(), { screen: "bogus" as any }), 0, []);
+
+    const state = new DashboardState();
+    state.screen = "activity";
+    store.loadInto(state, "weird");
+    expect(state.screen).toBe("dashboard");
   });
 
   it("re-arms selection restore when a preferred entry is loaded from client state", () => {

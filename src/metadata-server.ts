@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
+import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir, getRepoRoot } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import {
   type MetadataTone,
@@ -31,6 +31,7 @@ import {
   unreadNotificationCount,
 } from "./notifications.js";
 import { updateNotificationContext } from "./notification-context.js";
+import { markSessionViewed } from "./session-viewed.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { InteractionRegistry } from "./interaction-requests.js";
@@ -66,11 +67,24 @@ import {
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
-import { buildWorkflowEntries } from "./workflow.js";
-import { markLastUsed } from "./last-used.js";
+import { buildCoordinationThreadEntries } from "./workflow.js";
+import { buildCoordinationView } from "./coordination-model.js";
+import { buildProjectObservability } from "./project-observability.js";
+import { buildProjectTopology } from "./project-topology.js";
+import {
+  type DashboardControlScreen,
+  PROJECT_API_EVENT_NAMES,
+  PROJECT_API_ROUTES,
+  type OrchestrationRouteOption,
+  type ProjectApiView,
+} from "./project-api-contract.js";
+import { loadLastUsedState, markLastUsed } from "./last-used.js";
+import { log } from "./debug.js";
+import { loadLibraryEntries } from "./library.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createUploadedAttachment,
   getAttachment,
@@ -81,7 +95,9 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
-import { isTeammateSession, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
+import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
+import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,
@@ -89,20 +105,17 @@ import {
   resolvePrevAgent,
   serializeFastControlItem,
 } from "./fast-control.js";
-import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
-import type { TmuxTarget } from "./tmux/runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
-import {
-  createRuntimeExchangeStore,
-  type RuntimeExchangeInboxEntry,
-  type RuntimeExchangeMessage,
-  type RuntimeExchangeTask,
-  type RuntimeExchangeThread,
-} from "./runtime-core/exchange-store.js";
+import { isUsableDashboardTarget } from "./dashboard/targets.js";
+import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
+import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 
 const LIBRARY_DOC_ALLOWLIST = [
   { path: "AGENTS.md", kind: "instructions", title: "AGENTS.md" },
@@ -110,6 +123,109 @@ const LIBRARY_DOC_ALLOWLIST = [
   { path: "CODEX.md", kind: "adapter", title: "CODEX.md" },
   { path: "README.md", kind: "project", title: "README.md" },
 ] as const;
+
+function buildTopologyWorktreesFromDesktopState(state: {
+  sessions?: any[];
+  teammates?: any[];
+  services?: any[];
+  worktrees?: any[];
+}): any[] {
+  const sessions = [...(state.sessions ?? []), ...(state.teammates ?? [])];
+  const services = state.services ?? [];
+  return (state.worktrees ?? []).map((worktree, index) => {
+    const worktreeSessions = sessions.filter(
+      (session) => session.worktreePath === worktree.path || (!session.worktreePath && index === 0),
+    );
+    const worktreeServices = services.filter(
+      (service) => service.worktreePath === worktree.path || (!service.worktreePath && index === 0),
+    );
+    return {
+      ...worktree,
+      status: worktree.status ?? (worktreeSessions.length > 0 || worktreeServices.length > 0 ? "active" : "offline"),
+      sessions: worktreeSessions,
+      services: worktreeServices,
+    };
+  });
+}
+
+function formatRoutePreview(recipientIds: string[]): string {
+  if (recipientIds.length === 0) return "";
+  const preview = recipientIds.slice(0, 2).join(", ");
+  const remainder = recipientIds.length > 2 ? `, +${recipientIds.length - 2}` : "";
+  return ` [${recipientIds.length}: ${preview}${remainder}]`;
+}
+
+function orchestrationCandidateFromSession(session: any): RoutingCandidate {
+  const status = session.semantic?.user?.label ?? session.status;
+  const runtime = session.semantic?.runtime;
+  return {
+    id: session.id,
+    tool: session.tool ?? session.toolConfigKey ?? session.command,
+    role: session.role ?? session.team?.role,
+    worktreePath: session.worktreePath,
+    status,
+    canReceiveInput: runtime?.canReceiveInput ?? (status === "running" || status === "idle" || status === "waiting"),
+    isAlive: runtime?.isAlive ?? (status !== "exited" && status !== "offline"),
+    workflowPressure:
+      (session.workflowOnMeCount ?? 0) * 5 +
+      (session.workflowBlockedCount ?? 0) * 6 +
+      (session.threadPendingCount ?? 0) * 3 +
+      (session.notificationUnreadCount ?? 0) * 2 +
+      (session.threadWaitingOnThemCount ?? 0),
+    exited: Boolean(session.exited) || status === "exited",
+  };
+}
+
+function buildOrchestrationRouteOptions(input: {
+  state: { sessions?: any[]; teammates?: any[] };
+  selectedSessionId?: string;
+  worktreePath?: string;
+}): OrchestrationRouteOption[] {
+  const sessions = [...(input.state.sessions ?? []), ...(input.state.teammates ?? [])];
+  const candidates = sessions.map(orchestrationCandidateFromSession);
+  const options: OrchestrationRouteOption[] = [];
+  const selected = input.selectedSessionId ? sessions.find((session) => session.id === input.selectedSessionId) : null;
+  if (selected) {
+    options.push({
+      label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
+      sessionId: selected.id,
+    });
+  }
+
+  const team = loadTeamConfig();
+  for (const [role, cfg] of Object.entries(team.roles as Record<string, { description?: string }>)) {
+    const recipientIds = resolveOrchestrationRecipients({
+      candidates,
+      assignee: role,
+      worktreePath: input.worktreePath,
+    });
+    if (recipientIds.length === 0) continue;
+    options.push({
+      label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${formatRoutePreview(recipientIds)}`,
+      assignee: role,
+      worktreePath: input.worktreePath,
+      recipientIds,
+    });
+  }
+
+  const config = loadConfig();
+  for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
+    if (!toolCfg.enabled) continue;
+    const recipientIds = resolveOrchestrationRecipients({
+      candidates,
+      tool: toolKey,
+      worktreePath: input.worktreePath,
+    });
+    if (recipientIds.length === 0) continue;
+    options.push({
+      label: `Tool: ${toolKey}${formatRoutePreview(recipientIds)}`,
+      tool: toolKey,
+      worktreePath: input.worktreePath,
+      recipientIds,
+    });
+  }
+  return options;
+}
 
 function isLibraryPathExposed(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").toLowerCase();
@@ -143,10 +259,21 @@ function listLibraryDocuments(projectRoot = process.cwd()) {
   });
 }
 
+function metadataProjectRoot(): string | undefined {
+  try {
+    return getRepoRoot();
+  } catch {
+    return undefined;
+  }
+}
+
 interface MetadataServerOptions {
   onChange?: () => void;
   events?: {
     bus?: ProjectEventBus;
+  };
+  diagnostics?: {
+    pluginStatuses?: () => PluginRuntimePluginStatus[];
   };
   desktop?: {
     getState?: () => Record<string, unknown>;
@@ -314,6 +441,13 @@ interface MetadataServerOptions {
       | {
           sessionId: string;
         };
+    resizeAgentPane?: (input: {
+      sessionId: string;
+      cols: number;
+      rows: number;
+    }) =>
+      | Promise<{ sessionId: string; cols: number; rows: number }>
+      | { sessionId: string; cols: number; rows: number };
     renameAgent?: (input: { sessionId: string; label?: string }) =>
       | Promise<{ sessionId: string; label?: string }>
       | {
@@ -455,6 +589,22 @@ function persistDashboardClientPreference(
   writeJsonAtomic(path, snapshot);
 }
 
+function parseDashboardControlScreen(input: unknown): DashboardControlScreen | undefined {
+  if (typeof input !== "string") return undefined;
+  const screen = input.trim();
+  if (
+    screen === "dashboard" ||
+    screen === "coordination" ||
+    screen === "project" ||
+    screen === "library" ||
+    screen === "topology" ||
+    screen === "graveyard"
+  ) {
+    return screen;
+  }
+  return undefined;
+}
+
 function persistDashboardReturnSelection(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
@@ -468,6 +618,13 @@ function persistDashboardReturnSelection(
       .listProjectManagedWindows(projectRoot)
       .find((entry) => entry.target.windowId === currentWindowId);
     if (!match) return;
+    if (!tmux.isWindowAlive(match.target)) {
+      delete snapshot.focusedWorktreePath;
+      delete snapshot.level;
+      delete snapshot.selectedEntryKind;
+      delete snapshot.selectedEntryId;
+      return;
+    }
     snapshot.focusedWorktreePath = match.metadata.worktreePath;
     snapshot.level = "sessions";
     snapshot.selectedEntryKind = match.metadata.kind === "service" ? "service" : "session";
@@ -481,29 +638,38 @@ function markActiveWindowFocused(
   currentClientSession: string | undefined,
   currentWindow: string | undefined,
   currentWindowId: string | undefined,
-  tracker: AgentTracker,
 ): boolean {
-  if (currentWindow && /^dashboard/.test(currentWindow)) {
-    updateNotificationContext("tui", {
-      focused: true,
-      screen: "dashboard",
-      panelOpen: false,
-      sessionId: undefined,
-    });
+  if (currentWindow && isDashboardWindowName(currentWindow)) {
+    if (!currentWindowId) return false;
+    const dashboardTarget = findExistingDashboardTarget(tmux, projectRoot, currentClientSession);
+    if (dashboardTarget?.windowId !== currentWindowId) return false;
+    updateNotificationContext(
+      "tui",
+      {
+        focused: true,
+        screen: "dashboard",
+        panelOpen: false,
+        sessionId: undefined,
+      },
+      metadataProjectRoot() ?? projectRoot,
+    );
     return true;
   }
   if (!currentWindowId) return false;
-  const match = tmux.listProjectManagedWindows(projectRoot).find((entry) => entry.target.windowId === currentWindowId);
+  const match = findProjectManagedWindow(tmux, projectRoot, { windowId: currentWindowId });
   if (!match) return false;
-  updateNotificationContext("tui", {
-    focused: true,
-    screen: match.metadata.kind === "service" ? "service" : "agent",
-    sessionId: match.metadata.sessionId,
-    panelOpen: false,
-  });
+  updateNotificationContext(
+    "tui",
+    {
+      focused: true,
+      screen: match.metadata.kind === "service" ? "service" : "agent",
+      sessionId: match.metadata.sessionId,
+      panelOpen: false,
+    },
+    metadataProjectRoot() ?? projectRoot,
+  );
   if (match.metadata.kind === "agent") {
-    tracker.markSeen(match.metadata.sessionId);
-    markNotificationsRead({ sessionId: match.metadata.sessionId });
+    markSessionViewed(match.metadata.sessionId, metadataProjectRoot() ?? projectRoot);
   }
   markTargetUsed(tmux, projectRoot, match.target, currentClientSession, match.metadata.sessionId);
   return true;
@@ -537,6 +703,34 @@ function desiredPort(): number {
 // conservative charset (no whitespace, no separators, no traversal) and
 // cap length so we don't produce surprising filenames.
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+const PROJECT_SERVICE_SLOW_REQUEST_MS = 250;
+const PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT = 25;
+const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
+  PROJECT_API_ROUTES.events,
+  PROJECT_API_ROUTES.agents.outputStream,
+  PROJECT_API_ROUTES.agents.interactionStream,
+  PROJECT_API_ROUTES.agents.interactionRequest,
+  PROJECT_API_ROUTES.agents.interactionWait,
+]);
+const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
+
+interface ProjectServiceResourceSnapshot {
+  uptimeMs: number;
+  memoryRssBytes: number;
+  memoryHeapUsedBytes: number;
+  activeHandles?: number;
+  activeRequests?: number;
+  openFileDescriptors?: number;
+}
+
+interface ProjectServiceSlowRequest {
+  ts: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+  resources: ProjectServiceResourceSnapshot;
+}
 
 function validateSessionId(raw: string): { ok: true; value: string } | { ok: false } {
   if (!SESSION_ID_PATTERN.test(raw)) return { ok: false };
@@ -573,6 +767,172 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.end(body);
 }
 
+function countOpenFileDescriptors(): number | undefined {
+  try {
+    return readdirSync("/dev/fd").length;
+  } catch {
+    return undefined;
+  }
+}
+
+function activeProcessCount(kind: "_getActiveHandles" | "_getActiveRequests"): number | undefined {
+  const fn = (process as unknown as Record<string, unknown>)[kind];
+  if (typeof fn !== "function") return undefined;
+  try {
+    const value = (fn as () => unknown[])();
+    return Array.isArray(value) ? value.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function projectServiceResourceSnapshot(
+  options: { includeFileDescriptors?: boolean } = {},
+): ProjectServiceResourceSnapshot {
+  const memory = process.memoryUsage();
+  return {
+    uptimeMs: Math.round(process.uptime() * 1000),
+    memoryRssBytes: memory.rss,
+    memoryHeapUsedBytes: memory.heapUsed,
+    activeHandles: activeProcessCount("_getActiveHandles"),
+    activeRequests: activeProcessCount("_getActiveRequests"),
+    ...(options.includeFileDescriptors ? { openFileDescriptors: countOpenFileDescriptors() } : {}),
+  };
+}
+
+function controlFocusRequested(body: Record<string, unknown>, url: URL): boolean {
+  const raw = body.focus ?? url.searchParams.get("focus");
+  return raw === true || raw === "true" || raw === "1";
+}
+
+function isProjectClientSession(tmux: TmuxRuntimeManager, projectRoot: string, sessionName: string): boolean {
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  return sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession);
+}
+
+function validateProjectClientSession(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+): string | undefined {
+  if (!currentClientSession) return undefined;
+  if (!isProjectClientSession(tmux, projectRoot, currentClientSession) || !tmux.hasSession(currentClientSession)) {
+    return "currentClientSession is not a project client";
+  }
+  return undefined;
+}
+
+function validateControlFocusContext(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+  clientTty: string | undefined,
+  focus: boolean,
+): string | undefined {
+  if (!focus) return undefined;
+  if (!clientTty) return "clientTty is required";
+  const client = tmux.findClientByTty(clientTty);
+  if (!client) return "clientTty is not attached";
+  if (!isProjectClientSession(tmux, projectRoot, client.sessionName)) {
+    return "clientTty is not attached to this project";
+  }
+  return undefined;
+}
+
+function resolveControlFocusClientSession(
+  tmux: TmuxRuntimeManager,
+  currentClientSession: string | undefined,
+  clientTty: string | undefined,
+  focus: boolean,
+): string | undefined {
+  if (!focus) return currentClientSession;
+  return (clientTty ? tmux.findClientByTty(clientTty)?.sessionName : undefined) ?? currentClientSession;
+}
+
+function findExistingDashboardTarget(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+): TmuxTarget | null {
+  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  const sessionNames = tmux
+    .listSessionNames()
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession));
+  const orderedSessionNames = [
+    ...(currentClientSession && sessionNames.includes(currentClientSession) ? [currentClientSession] : []),
+    ...sessionNames,
+  ].filter((sessionName, index, array) => array.indexOf(sessionName) === index);
+
+  for (const sessionName of orderedSessionNames) {
+    for (const window of tmux.listWindows(sessionName)) {
+      if (!isDashboardWindowName(window.name)) continue;
+      const target = {
+        sessionName,
+        windowId: window.id,
+        windowIndex: window.index,
+        windowName: window.name,
+      };
+      if (!isUsableDashboardTarget(tmux, projectRoot, dashboardBuildStamp, target)) continue;
+      return target;
+    }
+  }
+  return null;
+}
+
+function findProjectManagedWindow(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  matcher: { windowId?: string; sessionId?: string },
+): { target: TmuxTarget; metadata: TmuxWindowMetadata } | null {
+  return (
+    tmux
+      .listProjectManagedWindows(projectRoot)
+      .find(
+        (entry) =>
+          (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
+          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true) &&
+          tmux.isWindowAlive(entry.target),
+      ) ?? null
+  );
+}
+
+function serializeControlTarget(target: TmuxTarget): Record<string, unknown> {
+  return {
+    sessionName: target.sessionName,
+    windowId: target.windowId,
+    windowIndex: target.windowIndex,
+    windowName: target.windowName,
+  };
+}
+
+function focusControlTarget(
+  tmux: TmuxRuntimeManager,
+  target: TmuxTarget,
+  currentClientSession: string | undefined,
+  clientTty: string | undefined,
+  focus: boolean,
+): { focused: boolean; focusMode?: string } {
+  if (!focus) return { focused: false };
+  return openTargetForClient(tmux, target, currentClientSession, clientTty);
+}
+
+function sendControlAction(
+  res: ServerResponse,
+  action: string,
+  target: TmuxTarget | undefined,
+  focusResult: { focused: boolean; focusMode?: string },
+  itemId?: string,
+): void {
+  send(res, 200, {
+    ok: true,
+    action,
+    ...focusResult,
+    ...(target ? { target: serializeControlTarget(target) } : {}),
+    ...(itemId ? { itemId } : {}),
+  });
+}
+
 function formatAgentInputWithAttachments(text: string, attachments: AttachmentRecord[]): string {
   const trimmedText = text.trim();
   if (attachments.length === 0) return text;
@@ -588,6 +948,41 @@ function formatAgentInputWithAttachments(text: string, attachments: AttachmentRe
 function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function parseOptionalInteger(
+  raw: string | null,
+  field: string,
+): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === null || raw.trim() === "") return { ok: true };
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) return { ok: false, error: `${field} must be an integer` };
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value)) return { ok: false, error: `${field} must be a safe integer` };
+  return { ok: true, value };
+}
+
+function parseIntegerValue(value: unknown, field: string): { ok: true; value: number } | { ok: false; error: string } {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) return { ok: false, error: `${field} must be an integer` };
+    return { ok: true, value };
+  }
+  if (typeof value !== "string") return { ok: false, error: `${field} must be an integer` };
+  const trimmed = value.trim();
+  if (!/^-?\d+$/.test(trimmed)) return { ok: false, error: `${field} must be an integer` };
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) return { ok: false, error: `${field} must be a safe integer` };
+  return { ok: true, value: parsed };
+}
+
+function parsePositiveInteger(
+  value: unknown,
+  field: string,
+): { ok: true; value: number } | { ok: false; error: string } {
+  const parsed = parseIntegerValue(value, field);
+  if (!parsed.ok) return parsed;
+  if (parsed.value < 1) return { ok: false, error: `${field} must be an integer >= 1` };
+  return parsed;
 }
 
 type DesktopSessionRecord = Record<string, unknown> & {
@@ -661,103 +1056,21 @@ function optionalStringOrFirst(value: unknown): string | undefined {
   return value.map(optionalString).find(Boolean);
 }
 
-function runtimeInboxEntries(
-  input: { unreadOnly?: boolean; participantId?: string; includeDone?: boolean; includeNotifications?: boolean } = {},
-): Array<Record<string, unknown>> {
-  const exchange = createRuntimeExchangeStore().read();
-  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
-  const taskById = new Map(exchange.tasks.map((task) => [task.id, task] as const));
-  const latestMessageByThread = new Map<string, (typeof exchange.messages)[number]>();
-  for (const message of exchange.messages) {
-    const existing = latestMessageByThread.get(message.threadId);
-    if (!existing || existing.ts < message.ts) latestMessageByThread.set(message.threadId, message);
+function optionalStringArray(value: unknown): string[] {
+  if (typeof value === "string") {
+    const entry = optionalString(value);
+    return entry ? [entry] : [];
   }
-  const entries = exchange.inbox
-    .filter((entry) => !input.participantId || entry.participantId === input.participantId)
-    .filter(
-      (entry) => input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true,
-    )
-    .filter((entry) => input.includeDone || entry.state !== "done")
-    .filter((entry) => !input.unreadOnly || entry.state !== "done")
-    .map((entry) => runtimeInboxEntry(entry, threadById, taskById, latestMessageByThread))
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
-  return entries.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  if (!Array.isArray(value)) return [];
+  return value.map(optionalString).filter((entry): entry is string => Boolean(entry));
 }
 
-function runtimeInboxEntry(
-  entry: RuntimeExchangeInboxEntry,
-  threadById: Map<string, RuntimeExchangeThread>,
-  taskById: Map<string, RuntimeExchangeTask>,
-  latestMessageByThread: Map<string, RuntimeExchangeMessage>,
-): Record<string, unknown> | undefined {
-  if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-    const thread = threadById.get(entry.subjectId);
-    if (!thread) return undefined;
-    const message = latestMessageByThread.get(thread.id);
-    return {
-      id: entry.id,
-      subjectKind: entry.subjectKind,
-      subjectId: entry.subjectId,
-      participantId: entry.participantId,
-      sessionId: entry.participantId,
-      title: thread.title,
-      subtitle: `${thread.kind} · ${thread.status}`,
-      body: message?.body ?? thread.title,
-      createdAt: entry.updatedAt,
-      unread: entry.state !== "done",
-      state: entry.state,
-      urgency: entry.urgency,
-    };
-  }
-  const task = taskById.get(entry.subjectId);
-  if (!task) return undefined;
-  return {
-    id: entry.id,
-    subjectKind: entry.subjectKind,
-    subjectId: entry.subjectId,
-    participantId: entry.participantId,
-    sessionId: entry.participantId,
-    title: task.description,
-    subtitle: `${task.type ?? "task"} · ${task.status}`,
-    body: task.result ?? task.error ?? task.prompt,
-    createdAt: entry.updatedAt,
-    unread: entry.state !== "done",
-    state: entry.state,
-    urgency: entry.urgency,
-  };
-}
-
-function markRuntimeInboxRead(
-  input: { id?: string; participantId?: string; includeNotifications?: boolean } = {},
-): number {
-  const store = createRuntimeExchangeStore();
-  const exchange = store.read();
-  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
-  const entries = store
-    .read()
-    .inbox.filter((entry) => !input.id || entry.id === input.id)
-    .filter((entry) => !input.participantId || entry.participantId === input.participantId)
-    .filter(
-      (entry) => input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true,
-    );
-  let updated = 0;
-  for (const entry of entries) {
-    if (entry.state !== "done") updated += 1;
-    if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-      markThreadSeen(entry.subjectId, entry.participantId);
-    }
-  }
-  store.update((exchange) => ({
-    ...exchange,
-    inbox: exchange.inbox.map((entry) =>
-      (!input.id || entry.id === input.id) &&
-      (!input.participantId || entry.participantId === input.participantId) &&
-      (input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true)
-        ? { ...entry, state: "done" }
-        : entry,
-    ),
-  }));
-  return updated;
+function routeRecipients(input: { to?: unknown; assignee?: unknown; tool?: unknown }): string[] {
+  const explicit = optionalStringArray(input.to);
+  if (explicit.length > 0) return explicit;
+  return [optionalString(input.assignee), optionalString(input.tool)].filter((entry): entry is string =>
+    Boolean(entry),
+  );
 }
 
 function teammateApiRecord(session: DesktopSessionRecord): Record<string, unknown> {
@@ -788,11 +1101,17 @@ export class MetadataServer {
   private interactionWatchers = 0;
   private readonly eventBus: ProjectEventBus;
   private unsubscribeAlertSink: (() => void) | null = null;
+  private readonly recentSlowRequests: ProjectServiceSlowRequest[] = [];
+  private desktopStateCache: { ts: number; state: Record<string, unknown> } | null = null;
+  private desktopStateCacheDirty = false;
+  private desktopStateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private desktopStateRefreshing = false;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
+      this.scheduleDesktopStateRefresh();
       notifyAlert(event);
     });
   }
@@ -816,6 +1135,9 @@ export class MetadataServer {
   stop(): void {
     this.server?.close();
     this.server = null;
+    if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
+    this.desktopStateRefreshTimer = null;
+    this.desktopStateRefreshing = false;
     this.unsubscribeAlertSink?.();
     this.unsubscribeAlertSink = null;
   }
@@ -835,8 +1157,78 @@ export class MetadataServer {
     return this.interactions.listPending(sessionId);
   }
 
-  notifyChange(): void {
+  private notifyProjectChanged(
+    input: {
+      views?: ProjectApiView[];
+      reason?: string;
+      sessionId?: string;
+      worktreePath?: string;
+    } = {},
+  ): void {
+    this.desktopStateCacheDirty = true;
+    this.scheduleDesktopStateRefresh();
+    this.eventBus.publishProjectUpdate(input);
     this.options.onChange?.();
+  }
+
+  private refreshDesktopStateCache(): Record<string, unknown> {
+    if (this.desktopStateRefreshTimer) {
+      clearTimeout(this.desktopStateRefreshTimer);
+      this.desktopStateRefreshTimer = null;
+    }
+    const state = this.options.desktop?.getState?.() ?? {};
+    this.desktopStateCache = { ts: Date.now(), state };
+    this.desktopStateCacheDirty = false;
+    return state;
+  }
+
+  private scheduleDesktopStateRefresh(delayMs = 0): void {
+    if (!this.options.desktop?.getState || this.desktopStateRefreshTimer || this.desktopStateRefreshing) return;
+    this.desktopStateRefreshTimer = setTimeout(() => {
+      this.desktopStateRefreshTimer = null;
+      this.desktopStateRefreshing = true;
+      try {
+        this.refreshDesktopStateCache();
+      } catch (error) {
+        log.warn("desktop-state refresh failed", "api", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        this.desktopStateRefreshing = false;
+      }
+    }, delayMs);
+    this.desktopStateRefreshTimer.unref?.();
+  }
+
+  private getDesktopStateSnapshot(): Record<string, unknown> {
+    const now = Date.now();
+    if (
+      this.desktopStateCache &&
+      !this.desktopStateCacheDirty &&
+      now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS
+    ) {
+      return this.desktopStateCache.state;
+    }
+    return this.refreshDesktopStateCache();
+  }
+
+  // Settle a session the transcript reconciler found stuck "working": drop the
+  // stale activity to idle so it derives "ready". Not a task_done — this is a
+  // correction, so it must not bump unseen counts or fire a completion alert.
+  reconcileSettleActivity(sessionId: string): void {
+    this.tracker.setActivity(sessionId, "idle");
+    this.notifyProjectChanged({ sessionId, reason: "reconcile-settle-activity" });
+  }
+
+  // Clear a needs_response attention stranded by a lost in-memory interaction
+  // registry (e.g. after a daemon restart) once no live interaction remains.
+  reconcileClearResponse(sessionId: string): void {
+    this.tracker.setAttention(sessionId, "normal");
+    this.notifyProjectChanged({ sessionId, reason: "reconcile-clear-response" });
+  }
+
+  notifyChange(): void {
+    this.notifyProjectChanged({ reason: "notify-change" });
   }
 
   private resolveDirectTeammates(parentSessionId: string):
@@ -968,6 +1360,19 @@ export class MetadataServer {
     this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
   }
 
+  private interactionDedupeKey(input: {
+    sessionId: string;
+    type: InteractionType;
+    payload: InteractionPayload;
+    summary?: string;
+  }): string {
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ type: input.type, summary: input.summary ?? "", payload: input.payload }))
+      .digest("base64url")
+      .slice(0, 12);
+    return `interaction:${input.sessionId}:${input.type}:${fingerprint}`;
+  }
+
   private beginInteraction(input: {
     sessionId: string;
     type: InteractionType;
@@ -975,11 +1380,13 @@ export class MetadataServer {
     summary?: string;
     id?: string;
   }): InteractionRequest {
+    const dedupeKey = this.interactionDedupeKey(input);
     const request = this.interactions.register({
       sessionId: input.sessionId,
       type: input.type,
       payload: input.payload,
       projectRoot: process.cwd(),
+      dedupeKey,
       id: input.id,
     });
     this.tracker.setAttention(input.sessionId, "needs_response");
@@ -990,10 +1397,11 @@ export class MetadataServer {
       title: display.title,
       message: display.message,
       interaction: { id: request.id, type: input.type, summary: display.summary },
-      dedupeKey: `interaction:${request.id}`,
+      dedupeKey,
+      cooldownMs: 60_000,
       forceNotify: true,
     });
-    this.options.onChange?.();
+    this.notifyChange();
     return request;
   }
 
@@ -1113,7 +1521,36 @@ export class MetadataServer {
     return [...new Set(fallbackRecipients.map((value) => value?.trim()).filter(Boolean))];
   }
 
+  private recordSlowRequest(entry: ProjectServiceSlowRequest): void {
+    this.recentSlowRequests.push(entry);
+    while (this.recentSlowRequests.length > PROJECT_SERVICE_RECENT_SLOW_REQUEST_LIMIT) {
+      this.recentSlowRequests.shift();
+    }
+    log.warn("slow project service request", "api", { ...entry });
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const startedAt = Date.now();
+    const method = req.method ?? "GET";
+    const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    if (!PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS.has(path)) {
+      res.once("finish", () => {
+        const durationMs = Date.now() - startedAt;
+        if (durationMs < PROJECT_SERVICE_SLOW_REQUEST_MS) return;
+        this.recordSlowRequest({
+          ts: new Date().toISOString(),
+          method,
+          path,
+          statusCode: res.statusCode,
+          durationMs,
+          resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
+        });
+      });
+    }
+    await this.handleRoute(req, res);
+  }
+
+  private async handleRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -1126,22 +1563,25 @@ export class MetadataServer {
 
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
-    if (req.method === "GET" && url.pathname === "/events") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.events) {
       const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
-      const startLine =
-        startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
-      if (startLineRaw !== null && Number.isNaN(startLine)) {
-        send(res, 400, { ok: false, error: "startLine must be an integer" });
+      const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
+      if (!parsedStartLine.ok) {
+        send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
-      const intervalMs =
-        intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
-      if (Number.isNaN(intervalMs) || intervalMs < 100) {
+      const startLine = parsedStartLine.value;
+      const parsedIntervalMs =
+        intervalMsRaw === null || intervalMsRaw.trim() === ""
+          ? ({ ok: true, value: 500 } as const)
+          : parsePositiveInteger(intervalMsRaw, "intervalMs");
+      if (!parsedIntervalMs.ok || parsedIntervalMs.value < 100) {
         send(res, 400, { ok: false, error: "intervalMs must be an integer >= 100" });
         return;
       }
+      const intervalMs = parsedIntervalMs.value;
       res.statusCode = 200;
       res.setHeader("content-type", "text/event-stream");
       res.setHeader("cache-control", "no-cache, no-transform");
@@ -1183,7 +1623,7 @@ export class MetadataServer {
           if (closed) return;
           if (result.output !== lastOutput) {
             lastOutput = result.output;
-            sendSseEvent(res, "agent_output", {
+            sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
@@ -1191,7 +1631,7 @@ export class MetadataServer {
             });
           }
         } catch (error) {
-          sendSseEvent(res, "error", {
+          sendSseEvent(res, PROJECT_API_EVENT_NAMES.error, {
             sessionId: sessionFilter,
             error: error instanceof Error ? error.message : String(error),
           });
@@ -1199,7 +1639,7 @@ export class MetadataServer {
         }
       };
 
-      sendSseEvent(res, "ready", {
+      sendSseEvent(res, PROJECT_API_EVENT_NAMES.ready, {
         projectId: getProjectId(),
         ts: new Date().toISOString(),
         sessionId: sessionFilter,
@@ -1221,7 +1661,7 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/notifications") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.notifications.list) {
       const unreadOnly = url.searchParams.get("unread") === "1";
       const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
       const notifications = listNotifications({ unreadOnly, sessionId });
@@ -1233,29 +1673,37 @@ export class MetadataServer {
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/library") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.orchestration.routes) {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const selectedSessionId = url.searchParams.get("selectedSessionId")?.trim() || undefined;
+      const worktreePath = url.searchParams.get("worktreePath")?.trim() || undefined;
+      const state = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[] };
+      send(res, 200, {
+        ok: true,
+        serviceInfo: getProjectServiceManifest(),
+        options: buildOrchestrationRouteOptions({ state, selectedSessionId, worktreePath }),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.library) {
+      const plansDir = getPlansDir();
       send(res, 200, {
         ok: true,
         documents: listLibraryDocuments(),
+        entries: loadLibraryEntries({
+          repoRoot: dirname(dirname(plansDir)),
+          plansDir,
+          resolveLabel: (sessionId) => this.options.desktop?.getSessionDisplayContext?.(sessionId)?.label ?? undefined,
+        }),
       });
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/inbox") {
-      const unreadOnly = url.searchParams.get("unread") === "1";
-      const participantId = url.searchParams.get("participant")?.trim() || undefined;
-      const includeDone = url.searchParams.get("includeDone") === "1";
-      const includeNotifications = url.searchParams.get("includeNotifications") === "1";
-      const inbox = runtimeInboxEntries({ unreadOnly, participantId, includeDone, includeNotifications });
-      send(res, 200, {
-        ok: true,
-        inbox,
-        unreadCount: inbox.filter((entry) => entry.unread).length,
-      });
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname === "/health") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.health) {
       send(res, 200, {
         ok: true,
         projectStateDir: getProjectStateDir(),
@@ -1264,11 +1712,23 @@ export class MetadataServer {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/state") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.diagnostics) {
+      send(res, 200, {
+        ok: true,
+        projectStateDir: getProjectStateDir(),
+        pid: process.pid,
+        serviceInfo: getProjectServiceManifest(),
+        resources: projectServiceResourceSnapshot({ includeFileDescriptors: true }),
+        recentSlowRequests: this.recentSlowRequests.slice(-10),
+        plugins: this.options.diagnostics?.pluginStatuses?.() ?? [],
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.state) {
       send(res, 200, loadMetadataState());
       return;
     }
-    if (req.method === "GET" && url.pathname === "/desktop-state") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.desktopState) {
       if (!this.options.desktop?.getState) {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
@@ -1277,11 +1737,70 @@ export class MetadataServer {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
         pendingInteractions: this.interactions.listPending(),
-        ...this.options.desktop.getState(),
+        ...this.getDesktopStateSnapshot(),
       });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/statusline/refresh") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.coordinationWorklist) {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const participant = url.searchParams.get("participant")?.trim() || "user";
+      const state = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[]; services?: any[] };
+      const threads = buildCoordinationThreadEntries(participant);
+      const { model, worklist } = buildCoordinationView({
+        sessions: state.sessions ?? [],
+        teammates: state.teammates ?? [],
+        services: state.services ?? [],
+        notifications: listNotifications(),
+        threads,
+        currentParticipant: participant,
+      });
+      send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), worklist, model, threads });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.projectObservability) {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const state = this.options.desktop.getState() as {
+        sessions?: any[];
+        teammates?: any[];
+        services?: any[];
+        worktrees?: any[];
+      };
+      const project = buildProjectObservability({
+        sessions: [...(state.sessions ?? []), ...(state.teammates ?? [])],
+        services: state.services ?? [],
+        worktrees: state.worktrees ?? [],
+        tasks: readAllTasks(),
+        notifications: listNotifications(),
+      });
+      send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), project });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.topology) {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      const state = this.options.desktop.getState() as {
+        mainCheckoutInfo?: { name?: string };
+        sessions?: any[];
+        teammates?: any[];
+        services?: any[];
+        worktrees?: any[];
+      };
+      const topology = buildProjectTopology({
+        projectName: state.mainCheckoutInfo?.name ?? "project",
+        worktrees: buildTopologyWorktreesFromDesktopState(state),
+      });
+      send(res, 200, { ok: true, serviceInfo: getProjectServiceManifest(), topology });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.statuslineRefresh) {
       if (!this.options.desktop?.refreshStatusline) {
         send(res, 501, { ok: false, error: "statusline refresh not supported by this service" });
         return;
@@ -1294,7 +1813,7 @@ export class MetadataServer {
       send(res, 200, { ok: true });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/worktrees") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.worktrees) {
       if (!this.options.desktop?.listWorktrees) {
         send(res, 501, { ok: false, error: "worktree listing not supported by this service" });
         return;
@@ -1302,19 +1821,31 @@ export class MetadataServer {
       send(res, 200, { ok: true, worktrees: this.options.desktop.listWorktrees() });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/graveyard") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.graveyard) {
       if (!this.options.desktop?.listGraveyard) {
         send(res, 501, { ok: false, error: "graveyard listing not supported by this service" });
         return;
       }
+      const entries = this.options.desktop.listGraveyard();
+      const worktrees = this.options.desktop.listWorktreeGraveyard?.() ?? [];
+      const state = this.options.desktop.getState?.() as
+        | { sessions?: any[]; teammates?: any[]; services?: any[] }
+        | undefined;
       send(res, 200, {
         ok: true,
-        entries: this.options.desktop.listGraveyard(),
-        worktrees: this.options.desktop.listWorktreeGraveyard?.() ?? [],
+        entries,
+        worktrees,
+        viewModel: buildGraveyardViewModel({
+          agents: entries as any[],
+          worktrees: worktrees as any[],
+          parentSessions: [...(state?.sessions ?? []), ...(state?.teammates ?? [])],
+          teammates: state?.teammates ?? [],
+          lastUsedById: loadLastUsedState(process.cwd()).items,
+        }),
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/agents") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.list) {
       const metadataState = loadMetadataState();
       const tasks = readAllTasks();
       const activeTaskFor = (sessionId: string) =>
@@ -1341,15 +1872,11 @@ export class MetadataServer {
       send(res, 200, { ok: true, agents });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/threads") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.threads.list) {
       send(res, 200, listThreadSummaries(url.searchParams.get("session") ?? undefined));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/workflow") {
-      send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/tasks") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.tasks.list) {
       const sessionId = url.searchParams.get("session")?.trim();
       const status = url.searchParams.get("status")?.trim();
       const tasks = readAllTasks()
@@ -1358,7 +1885,7 @@ export class MetadataServer {
       send(res, 200, { ok: true, tasks });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/usage/mark") {
+    if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.usageMark) {
       const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
       const itemId = body.itemId?.trim() || "";
       if (!itemId) {
@@ -1376,7 +1903,7 @@ export class MetadataServer {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/control/switchable-agents") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.controls.switchableAgents) {
       const currentClientSession = url.searchParams.get("currentClientSession")?.trim() || undefined;
       const currentWindow = url.searchParams.get("currentWindow")?.trim() || undefined;
       const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
@@ -1397,7 +1924,8 @@ export class MetadataServer {
       send(res, 200, { ok: true, items });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/agents/output/stream") {
+    if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.outputStream) {
+      const outputEventName = "output";
       const sessionId = url.searchParams.get("sessionId")?.trim();
       const startLineRaw = url.searchParams.get("startLine");
       const intervalMsRaw = url.searchParams.get("intervalMs");
@@ -1410,19 +1938,22 @@ export class MetadataServer {
         return;
       }
 
-      const startLine =
-        startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
-      if (startLineRaw !== null && Number.isNaN(startLine)) {
-        send(res, 400, { ok: false, error: "startLine must be an integer" });
+      const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
+      if (!parsedStartLine.ok) {
+        send(res, 400, { ok: false, error: parsedStartLine.error });
         return;
       }
+      const startLine = parsedStartLine.value;
 
-      const intervalMs =
-        intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
-      if (Number.isNaN(intervalMs) || intervalMs < 100) {
+      const parsedIntervalMs =
+        intervalMsRaw === null || intervalMsRaw.trim() === ""
+          ? ({ ok: true, value: 500 } as const)
+          : parsePositiveInteger(intervalMsRaw, "intervalMs");
+      if (!parsedIntervalMs.ok || parsedIntervalMs.value < 100) {
         send(res, 400, { ok: false, error: "intervalMs must be an integer >= 100" });
         return;
       }
+      const intervalMs = parsedIntervalMs.value;
 
       res.statusCode = 200;
       res.setHeader("content-type", "text/event-stream");
@@ -1455,7 +1986,7 @@ export class MetadataServer {
           if (closed) return;
           if (result.output !== lastOutput) {
             lastOutput = result.output;
-            sendSseEvent(res, "output", {
+            sendSseEvent(res, outputEventName, {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
@@ -1481,10 +2012,11 @@ export class MetadataServer {
       pollTimer.unref?.();
       return;
     }
-    if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
+    const threadRoutePrefix = `${PROJECT_API_ROUTES.threads.list}/`;
+    if (req.method === "GET" && url.pathname.startsWith(threadRoutePrefix)) {
       let threadId: string;
       try {
-        threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+        threadId = decodeURIComponent(url.pathname.slice(threadRoutePrefix.length));
       } catch {
         send(res, 400, { ok: false, error: "invalid threadId" });
         return;
@@ -1497,10 +2029,11 @@ export class MetadataServer {
       send(res, 200, { thread, messages: readMessages(threadId) });
       return;
     }
-    if (req.method === "GET" && url.pathname.startsWith("/tasks/")) {
+    const taskRoutePrefix = `${PROJECT_API_ROUTES.tasks.list}/`;
+    if (req.method === "GET" && url.pathname.startsWith(taskRoutePrefix)) {
       let taskId: string;
       try {
-        taskId = decodeURIComponent(url.pathname.slice("/tasks/".length));
+        taskId = decodeURIComponent(url.pathname.slice(taskRoutePrefix.length));
       } catch {
         send(res, 400, { ok: false, error: "invalid taskId" });
         return;
@@ -1517,10 +2050,11 @@ export class MetadataServer {
     }
 
     try {
-      if (req.method === "GET" && url.pathname.startsWith("/plans/")) {
+      const planRoutePrefix = `${PROJECT_API_ROUTES.plans}/`;
+      if (req.method === "GET" && url.pathname.startsWith(planRoutePrefix)) {
         let raw: string;
         try {
-          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+          raw = decodeURIComponent(url.pathname.slice(planRoutePrefix.length));
         } catch {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
@@ -1546,10 +2080,10 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "PUT" && url.pathname.startsWith("/plans/")) {
+      if (req.method === "PUT" && url.pathname.startsWith(planRoutePrefix)) {
         let raw: string;
         try {
-          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+          raw = decodeURIComponent(url.pathname.slice(planRoutePrefix.length));
         } catch {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
@@ -1581,24 +2115,29 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-status") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setStatus) {
         const body = (await readJson(req)) as { session: string; text: string; tone?: MetadataTone };
         updateSessionMetadata(body.session, (current) => ({
           ...current,
           status: { text: body.text, tone: body.tone },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-dashboard") {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.openDashboard
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
                 currentClientSession?: string;
                 clientTty?: string;
                 currentWindowId?: string;
+                focus?: boolean;
+                screen?: string;
               })
             : {};
         const currentClientSession =
@@ -1606,70 +2145,83 @@ export class MetadataServer {
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
-        if (!currentClientSession) {
-          send(res, 400, { ok: false, error: "currentClientSession is required" });
+        const rawScreen = body.screen ?? url.searchParams.get("screen") ?? undefined;
+        const screen = parseDashboardControlScreen(rawScreen);
+        if (rawScreen != null && !screen) {
+          send(res, 400, { ok: false, error: "invalid dashboard screen" });
           return;
         }
-        persistDashboardReturnSelection(new TmuxRuntimeManager(), process.cwd(), currentClientSession, currentWindowId);
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const tmux = new TmuxRuntimeManager();
+        if (!focus) {
+          const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+          if (sessionError) {
+            send(res, 400, { ok: false, error: sessionError });
+            return;
+          }
+          const target = findExistingDashboardTarget(tmux, process.cwd(), currentClientSession);
+          if (!target) {
+            send(res, 404, { ok: false, error: "dashboard window not found" });
+            return;
+          }
+          if (screen && currentClientSession) {
+            persistDashboardClientPreference(currentClientSession, (snapshot) => {
+              snapshot.screen = screen;
+            });
+          }
+          sendControlAction(res, "open-dashboard", target, { focused: false });
+          return;
+        }
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusClientSession = resolveControlFocusClientSession(tmux, currentClientSession, clientTty, focus);
+        if (focusClientSession) {
+          persistDashboardReturnSelection(tmux, process.cwd(), focusClientSession, currentWindowId);
+          if (screen) {
+            persistDashboardClientPreference(focusClientSession, (snapshot) => {
+              snapshot.screen = screen;
+            });
+          }
+        }
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
-        const openSessionName = tmux.hasSession(currentClientSession)
-          ? currentClientSession
-          : tmux.getOpenSessionName(dashboardSession.sessionName);
+        const openSessionName =
+          focusClientSession && tmux.hasSession(focusClientSession)
+            ? focusClientSession
+            : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
+        const currentOwner = getRuntimeOwnerId();
+        if (
+          !tmux.isWindowAlive(target) ||
+          currentBuildStamp !== dashboardBuildStamp ||
+          currentDashboardOwner !== currentOwner
+        ) {
           tmux.respawnWindow(target, dashboardCommand);
-          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
-        openTargetForClient(tmux, target, currentClientSession, clientTty);
-        send(res, 200, { ok: true });
+        tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
+        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
+        const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
+        sendControlAction(res, "open-dashboard", target, focusResult);
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-inbox") {
-        const body =
-          req.method === "POST"
-            ? ((await readJson(req)) as {
-                currentClientSession?: string;
-                clientTty?: string;
-              })
-            : {};
-        const currentClientSession =
-          body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
-        const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
-        if (!currentClientSession) {
-          send(res, 400, { ok: false, error: "currentClientSession is required" });
-          return;
-        }
-        persistDashboardClientPreference(currentClientSession, (snapshot) => {
-          snapshot.screen = "notifications";
-        });
-        const tmux = new TmuxRuntimeManager();
-        const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
-        const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
-        const openSessionName = tmux.hasSession(currentClientSession)
-          ? currentClientSession
-          : tmux.getOpenSessionName(dashboardSession.sessionName);
-        const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
-        const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
-          tmux.respawnWindow(target, dashboardCommand);
-          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
-        }
-        openTargetForClient(tmux, target, currentClientSession, clientTty);
-        send(res, 200, { ok: true });
-        return;
-      }
-
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-notification-target") {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.openNotificationTarget
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
                 sessionId?: string;
                 currentClientSession?: string;
                 clientTty?: string;
+                focus?: boolean;
               })
             : {};
         const sessionId = body.sessionId?.trim() || url.searchParams.get("sessionId")?.trim() || undefined;
@@ -1684,27 +2236,45 @@ export class MetadataServer {
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         const desktop = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[]; services?: any[] };
         const session = [...(desktop.sessions ?? []), ...(desktop.teammates ?? [])].find(
           (entry) => entry.id === sessionId,
         );
         const service = (desktop.services ?? []).find((entry) => entry.id === sessionId);
         const tmux = new TmuxRuntimeManager();
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusClientSession = resolveControlFocusClientSession(tmux, currentClientSession, clientTty, focus);
 
         const openWindowId = (windowId: string, itemId?: string) => {
-          const sessionName = currentClientSession || tmux.getProjectSession(process.cwd()).sessionName;
-          const target =
-            tmux.getTargetByWindowId(sessionName, windowId) ??
-            tmux.getTargetByWindowId(tmux.getProjectSession(process.cwd()).sessionName, windowId);
-          if (!target) {
+          const match = findProjectManagedWindow(tmux, process.cwd(), { windowId, sessionId: itemId });
+          if (!match) {
             send(res, 404, { ok: false, error: "window not found" });
             return;
           }
-          openTargetForClient(tmux, target, currentClientSession, clientTty);
-          markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
-          send(res, 200, { ok: true });
+          const focusResult = focusControlTarget(tmux, match.target, focusClientSession, clientTty, focus);
+          if (focus && itemId && session?.id === itemId) {
+            markSessionViewed(itemId, metadataProjectRoot());
+          }
+          if (focus) {
+            markTargetUsed(tmux, process.cwd(), match.target, focusClientSession, itemId);
+            this.notifyChange();
+          }
+          sendControlAction(res, "open-notification-target", match.target, focusResult, itemId);
         };
 
+        if (service && service.status !== "running") {
+          send(res, 409, { ok: false, error: "service is offline", itemId: service.id });
+          return;
+        }
+        if (session && (session.status === "offline" || session.status === "exited")) {
+          send(res, 409, { ok: false, error: "agent is offline", itemId: session.id });
+          return;
+        }
         if (session?.tmuxWindowId) {
           openWindowId(session.tmuxWindowId, session.id);
           return;
@@ -1713,111 +2283,115 @@ export class MetadataServer {
           openWindowId(service.tmuxWindowId, service.id);
           return;
         }
-        if (service && service.status !== "running") {
-          if (!this.options.desktop.resumeService) {
-            send(res, 409, { ok: false, error: "service is offline" });
-            return;
-          }
-          await this.options.desktop.resumeService({ serviceId: service.id });
-          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
-            sessionId: service.id,
-          });
-          if (!match) {
-            send(res, 404, { ok: false, error: "service window not found after resume" });
-            return;
-          }
-          openTargetForClient(tmux, match.target, currentClientSession, clientTty);
-          markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, service.id);
-          send(res, 200, { ok: true });
-          return;
-        }
-        if (session && session.status === "offline") {
-          if (!this.options.desktop.resumeAgent) {
-            send(res, 409, { ok: false, error: "agent is offline" });
-            return;
-          }
-          await this.options.desktop.resumeAgent({ sessionId: session.id });
-          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
-            sessionId: session.id,
-          });
-          if (!match) {
-            send(res, 404, { ok: false, error: "agent window not found after resume" });
-            return;
-          }
-          openTargetForClient(tmux, match.target, currentClientSession, clientTty);
-          markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, session.id);
-          send(res, 200, { ok: true });
-          return;
-        }
         send(res, 404, { ok: false, error: "notification target is no longer available" });
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/focus-window") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.focusWindow) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
                 currentClientSession?: string;
                 clientTty?: string;
                 windowId?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const windowId = body.windowId?.trim() || url.searchParams.get("windowId")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
         if (!windowId) {
           send(res, 400, { ok: false, error: "windowId is required" });
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        const sessionName = currentClientSession || tmux.getProjectSession(process.cwd()).sessionName;
-        const target =
-          tmux.getTargetByWindowId(sessionName, windowId) ??
-          tmux.getTargetByWindowId(tmux.getProjectSession(process.cwd()).sessionName, windowId);
-        if (!target) {
+        const match = findProjectManagedWindow(tmux, process.cwd(), { windowId });
+        if (!match) {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        openTargetForClient(tmux, target, currentClientSession, clientTty);
-        markTargetUsed(tmux, process.cwd(), target, currentClientSession);
-        send(res, 200, { ok: true });
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusClientSession = resolveControlFocusClientSession(tmux, currentClientSession, clientTty, focus);
+        const focusResult = focusControlTarget(tmux, match.target, focusClientSession, clientTty, focus);
+        const itemId =
+          match?.metadata.kind === "agent" || match?.metadata.kind === "service" ? match.metadata.sessionId : undefined;
+        if (focus && match?.metadata.kind === "agent") {
+          markSessionViewed(match.metadata.sessionId, metadataProjectRoot());
+        }
+        if (focus) {
+          markTargetUsed(tmux, process.cwd(), match.target, focusClientSession, itemId);
+          this.notifyChange();
+        }
+        sendControlAction(res, "focus-window", match.target, focusResult, itemId);
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/active-window") {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.activeWindow
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
                 currentClientSession?: string;
+                clientTty?: string;
                 currentWindow?: string;
                 currentWindowId?: string;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
+        const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
         const currentWindow = body.currentWindow?.trim() || url.searchParams.get("currentWindow")?.trim() || undefined;
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         const tmux = new TmuxRuntimeManager();
+        if (!currentClientSession) {
+          send(res, 400, { ok: false, error: "currentClientSession is required" });
+          return;
+        }
+        if (!currentWindowId) {
+          send(res, 400, { ok: false, error: "currentWindowId is required" });
+          return;
+        }
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, true);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const activeWindow = tmux.listWindows(currentClientSession).find((window) => window.active);
+        if (activeWindow?.id !== currentWindowId || (currentWindow && activeWindow.name !== currentWindow)) {
+          send(res, 404, { ok: false, error: "window not found" });
+          return;
+        }
         const ok = markActiveWindowFocused(
           tmux,
           process.cwd(),
           currentClientSession,
-          currentWindow,
+          activeWindow.name,
           currentWindowId,
-          this.tracker,
         );
         if (!ok) {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        this.options.onChange?.();
-        send(res, 200, { ok: true });
+        this.notifyChange();
+        send(res, 200, { ok: true, action: "active-window", focused: false });
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/switch-next") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.switchNext) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1826,11 +2400,19 @@ export class MetadataServer {
                 currentWindow?: string;
                 currentWindowId?: string;
                 currentPath?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const item = resolveNextAgent(
           {
             projectRoot: process.cwd(),
@@ -1840,20 +2422,28 @@ export class MetadataServer {
               body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined,
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
-          new TmuxRuntimeManager(),
+          tmux,
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no switchable agent found" });
           return;
         }
-        const tmux = new TmuxRuntimeManager();
-        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
-        markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
-        send(res, 200, { ok: true });
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
+        if (focus) {
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
+          markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+          this.notifyChange();
+        }
+        sendControlAction(res, "switch-next", item.target, focusResult, item.metadata.sessionId);
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/switch-prev") {
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === PROJECT_API_ROUTES.controls.switchPrev) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1862,11 +2452,19 @@ export class MetadataServer {
                 currentWindow?: string;
                 currentWindowId?: string;
                 currentPath?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const item = resolvePrevAgent(
           {
             projectRoot: process.cwd(),
@@ -1876,20 +2474,31 @@ export class MetadataServer {
               body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined,
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
-          new TmuxRuntimeManager(),
+          tmux,
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no switchable agent found" });
           return;
         }
-        const tmux = new TmuxRuntimeManager();
-        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
-        markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
-        send(res, 200, { ok: true });
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
+        if (focus) {
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
+          markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+          this.notifyChange();
+        }
+        sendControlAction(res, "switch-prev", item.target, focusResult, item.metadata.sessionId);
         return;
       }
 
-      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/switch-attention") {
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        url.pathname === PROJECT_API_ROUTES.controls.switchAttention
+      ) {
         const body =
           req.method === "POST"
             ? ((await readJson(req)) as {
@@ -1898,11 +2507,19 @@ export class MetadataServer {
                 currentWindow?: string;
                 currentWindowId?: string;
                 currentPath?: string;
+                focus?: boolean;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const focus = controlFocusRequested(body as Record<string, unknown>, url);
+        const tmux = new TmuxRuntimeManager();
+        const sessionError = validateProjectClientSession(tmux, process.cwd(), currentClientSession);
+        if (sessionError) {
+          send(res, 400, { ok: false, error: sessionError });
+          return;
+        }
         const item = resolveAttentionAgent(
           {
             projectRoot: process.cwd(),
@@ -1912,20 +2529,28 @@ export class MetadataServer {
               body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined,
             currentPath: body.currentPath?.trim() || url.searchParams.get("currentPath")?.trim() || undefined,
           },
-          new TmuxRuntimeManager(),
+          tmux,
         );
         if (!item) {
           send(res, 404, { ok: false, error: "no attention target found" });
           return;
         }
-        const tmux = new TmuxRuntimeManager();
-        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
-        markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
-        send(res, 200, { ok: true });
+        const focusError = validateControlFocusContext(tmux, process.cwd(), currentClientSession, clientTty, focus);
+        if (focusError) {
+          send(res, 400, { ok: false, error: focusError });
+          return;
+        }
+        const focusResult = focusControlTarget(tmux, item.target, currentClientSession, clientTty, focus);
+        if (focus) {
+          markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
+          markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
+          this.notifyChange();
+        }
+        sendControlAction(res, "switch-attention", item.target, focusResult, item.metadata.sessionId);
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-progress") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setProgress) {
         const body = (await readJson(req)) as {
           session: string;
           current: number;
@@ -1936,12 +2561,12 @@ export class MetadataServer {
           ...current,
           progress: { current: body.current, total: body.total, label: body.label },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-context") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setContext) {
         const body = (await readJson(req)) as {
           session: string;
           context: SessionContextMetadata;
@@ -1953,12 +2578,12 @@ export class MetadataServer {
             ...body.context,
           },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-services") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setServices) {
         const body = (await readJson(req)) as {
           session: string;
           services: SessionServiceMetadata[];
@@ -1970,12 +2595,12 @@ export class MetadataServer {
             services: body.services,
           },
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/log") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.log) {
         const body = (await readJson(req)) as {
           session: string;
           message: string;
@@ -1992,12 +2617,12 @@ export class MetadataServer {
           ...current,
           logs: [...(current.logs ?? []).slice(-19), entry],
         }));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/event") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.event) {
         const body = (await readJson(req)) as { session: string; event: AgentEvent };
         this.tracker.emit(body.session, body.event);
         if (body.event.kind === "needs_input") {
@@ -2037,28 +2662,28 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/mark-seen") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.markSeen) {
         const body = (await readJson(req)) as { session: string };
-        this.tracker.markSeen(body.session);
-        this.options.onChange?.();
+        markSessionViewed(body.session, metadataProjectRoot());
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-activity") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setActivity) {
         const body = (await readJson(req)) as { session: string; activity: AgentActivityState };
         this.tracker.setActivity(body.session, body.activity);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/set-attention") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setAttention) {
         const body = (await readJson(req)) as { session: string; attention: AgentAttentionState };
         this.tracker.setAttention(body.session, body.attention);
         if (body.attention === "needs_input") {
@@ -2089,12 +2714,12 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/register") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionRegister) {
         const body = (await readJson(req)) as {
           session?: string;
           type?: InteractionType;
@@ -2120,7 +2745,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/notify") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionNotify) {
         // Read-only telemetry (e.g. Codex, whose native TUI owns the decision):
         // emit a non-actionable interaction alert and flag attention, but never
         // register a blocking interaction. Returns immediately.
@@ -2154,13 +2779,20 @@ export class MetadataServer {
             toolName,
             toolInputJSON: JSON.stringify(input),
           },
+          dedupeKey: this.interactionDedupeKey({
+            sessionId,
+            type: "permission",
+            summary,
+            payload: { toolName, input, cwd },
+          }),
+          cooldownMs: 60_000,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, telemetry: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/request") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionRequest) {
         const body = (await readJson(req)) as {
           session?: string;
           type?: InteractionType;
@@ -2203,14 +2835,14 @@ export class MetadataServer {
         const settled = await this.interactions.wait(request.id, { timeoutMs, signal: controller.signal });
         if (settled.status !== "resolved" && this.interactions.listPending(sessionId).length === 0) {
           this.tracker.setAttention(sessionId, "normal");
-          this.options.onChange?.();
+          this.notifyChange();
         }
         if (closed) return;
         send(res, 200, { ok: true, request: settled });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/interaction/wait") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.interactionWait) {
         const id = url.searchParams.get("id")?.trim();
         if (!id) {
           send(res, 400, { ok: false, error: "id is required" });
@@ -2234,7 +2866,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interaction/respond") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.interactionRespond) {
         const body = (await readJson(req)) as { id?: string; response?: InteractionResponse };
         const id = body.id?.trim();
         if (!id) {
@@ -2254,18 +2886,18 @@ export class MetadataServer {
         if (request.sessionId && this.interactions.listPending(request.sessionId).length === 0) {
           this.tracker.setAttention(request.sessionId, "normal");
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, request });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/interaction/pending") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.interactionPending) {
         const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
         send(res, 200, { ok: true, requests: this.interactions.listPending(sessionId) });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/interaction/stream") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.interactionStream) {
         res.statusCode = 200;
         res.setHeader("content-type", "text/event-stream");
         res.setHeader("cache-control", "no-cache, no-transform");
@@ -2307,15 +2939,15 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/clear-log") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.clearLog) {
         const body = (await readJson(req)) as { session: string };
         clearSessionLogs(body.session);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notify") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.notify) {
         const body = (await readJson(req)) as {
           title?: string;
           subtitle?: string;
@@ -2373,7 +3005,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notification-context") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.notificationContext) {
         const body = (await readJson(req)) as {
           source?: "desktop" | "tui";
           focused?: boolean;
@@ -2382,53 +3014,77 @@ export class MetadataServer {
           panelOpen?: boolean;
         };
         const source = body.source === "desktop" ? "desktop" : "tui";
-        const context = updateNotificationContext(source, {
-          focused: Boolean(body.focused),
-          screen: body.screen?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
-          panelOpen: Boolean(body.panelOpen),
-        });
+        const context = updateNotificationContext(
+          source,
+          {
+            focused: Boolean(body.focused),
+            screen: body.screen?.trim() || undefined,
+            sessionId: body.sessionId?.trim() || undefined,
+            panelOpen: Boolean(body.panelOpen),
+          },
+          metadataProjectRoot(),
+        );
         send(res, 200, { ok: true, context });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notifications/read") {
-        const body = (await readJson(req)) as { id?: string; sessionId?: string };
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.read) {
+        const body = (await readJson(req)) as { id?: string; ids?: unknown; sessionId?: string };
+        const sessionId = body.sessionId?.trim() || undefined;
+        const ids = parseNotificationMutationIds(body);
         const updated = markNotificationsRead({
           id: body.id?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
+          ids,
+          sessionId,
+          projectRoot: metadataProjectRoot(),
+        });
+        this.notifyProjectChanged({
+          views: ["coordination-worklist", "notifications"],
+          reason: "notifications-read",
+          sessionId,
         });
         send(res, 200, { ok: true, updated });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/notifications/clear") {
-        const body = (await readJson(req)) as { id?: string; sessionId?: string };
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.notifications.clear) {
+        const body = (await readJson(req)) as { id?: string; ids?: unknown; sessionId?: string };
+        const sessionId = body.sessionId?.trim() || undefined;
+        const ids = parseNotificationMutationIds(body);
         const cleared = clearNotifications({
           id: body.id?.trim() || undefined,
-          sessionId: body.sessionId?.trim() || undefined,
+          ids,
+          sessionId,
+          projectRoot: metadataProjectRoot(),
+        });
+        this.notifyProjectChanged({
+          views: ["coordination-worklist", "notifications"],
+          reason: "notifications-clear",
+          sessionId,
         });
         send(res, 200, { ok: true, cleared });
         return;
       }
 
-      if (req.method === "POST" && (url.pathname === "/inbox/read" || url.pathname === "/inbox/clear")) {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.operationFailuresClear) {
         const body = (await readJson(req)) as {
-          id?: string;
-          sessionId?: string;
-          participant?: string;
-          includeNotifications?: boolean;
+          targetKind?: "worktree" | "agent" | "service" | "dashboard";
+          operation?: string;
+          targetId?: string;
+          worktreePath?: string;
         };
-        const updated = markRuntimeInboxRead({
-          id: body.id?.trim() || undefined,
-          participantId: body.participant?.trim() || body.sessionId?.trim() || undefined,
-          includeNotifications: body.includeNotifications === true,
+        const cleared = clearDashboardOperationFailures({
+          targetKind: body.targetKind,
+          operation: body.operation?.trim() || undefined,
+          targetId: body.targetId?.trim() || undefined,
+          worktreePath: body.worktreePath?.trim() || undefined,
         });
-        send(res, 200, { ok: true, updated });
+        this.notifyChange();
+        send(res, 200, { ok: true, cleared });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/shell-state") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.shellState) {
         const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string; command?: string };
         const result = applyShellStateTransition({
           state: body.state,
@@ -2438,12 +3094,12 @@ export class MetadataServer {
           tracker: this.tracker,
           emitAlert: (input) => this.emitAlert(input),
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, result);
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/open") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.open) {
         const body = (await readJson(req)) as {
           title: string;
           from: string;
@@ -2458,12 +3114,12 @@ export class MetadataServer {
           kind: (body.kind as ThreadKind) ?? "conversation",
           worktreePath: body.worktreePath,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, thread });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/send") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.send) {
         const body = (await readJson(req)) as {
           threadId?: string;
           from?: string;
@@ -2475,19 +3131,21 @@ export class MetadataServer {
           body: string;
           title?: string;
         };
+        const recipients = routeRecipients(body);
+        const explicitRecipients = optionalStringArray(body.to);
         const result = this.options.threads?.sendMessage
           ? this.options.threads.sendMessage(body)
           : body.threadId
             ? sendThreadMessage({
                 threadId: body.threadId,
                 from: body.from ?? "user",
-                to: body.to,
+                to: recipients,
                 kind: body.kind,
                 body: body.body,
               })
             : sendDirectMessage({
                 from: body.from ?? "user",
-                to: body.to ?? [],
+                to: recipients,
                 kind: body.kind as any,
                 body: body.body,
                 title: body.title,
@@ -2495,34 +3153,42 @@ export class MetadataServer {
               });
         const messageKind = body.kind ?? "request";
         if (messageKind === "handoff") {
-          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          const alertRecipients = this.resolveAlertRecipients(
+            explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            result.message,
+            recipients,
+          );
           this.emitThreadWaitingAlert({
             kind: "handoff_waiting",
             threadId: (result.thread as { id: string }).id,
             from: body.from ?? "user",
-            recipients,
-            title: `Handoff for ${recipients.join(", ") || "agent"}`,
+            recipients: alertRecipients,
+            title: `Handoff for ${alertRecipients.join(", ") || "agent"}`,
             message: body.body.trim() || "A handoff is waiting for you.",
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         } else if (messageKind === "request" || messageKind === "reply" || messageKind === "note") {
-          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          const alertRecipients = this.resolveAlertRecipients(
+            explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            result.message,
+            recipients,
+          );
           this.emitThreadWaitingAlert({
             kind: "message_waiting",
             threadId: (result.thread as { id: string }).id,
             from: body.from ?? "user",
-            recipients,
-            title: `Message for ${recipients.join(", ") || "agent"}`,
+            recipients: alertRecipients,
+            title: `Message for ${alertRecipients.join(", ") || "agent"}`,
             message: body.body.trim() || "A new message is waiting.",
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/mark-seen") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.markSeen) {
         const body = (await readJson(req)) as { threadId: string; session?: string; sessionId?: string };
         const sessionId = (body.session ?? body.sessionId ?? "").trim();
         if (!sessionId) {
@@ -2534,12 +3200,12 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, thread });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/threads/status") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.threads.status) {
         const body = (await readJson(req)) as {
           threadId: string;
           status: ThreadStatus;
@@ -2554,12 +3220,12 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, thread });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/handoff") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.handoff.send) {
         const body = (await readJson(req)) as {
           from?: string;
           to?: string[];
@@ -2590,12 +3256,12 @@ export class MetadataServer {
           message: body.body.trim() || "A handoff is waiting for you.",
           worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/handoff/accept") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.handoff.accept) {
         const body = (await readJson(req)) as { threadId: string; from?: string; body?: string };
         const result = this.options.actions?.acceptHandoff
           ? this.options.actions.acceptHandoff(body)
@@ -2604,12 +3270,12 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/handoff/complete") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.handoff.complete) {
         const body = (await readJson(req)) as { threadId: string; from?: string; body?: string };
         const result = this.options.actions?.completeHandoff
           ? this.options.actions.completeHandoff(body)
@@ -2618,12 +3284,12 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/assign") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.assign) {
         const body = (await readJson(req)) as {
           from?: string;
           to?: string | string[];
@@ -2634,6 +3300,9 @@ export class MetadataServer {
           type?: "task" | "review";
           diff?: string;
           worktreePath?: string;
+          assigner?: string;
+          reviewOf?: string;
+          iteration?: number;
         };
         const result = await assignTask({
           from: body.from?.trim() || "user",
@@ -2645,14 +3314,17 @@ export class MetadataServer {
           type: body.type,
           diff: body.diff,
           worktreePath: body.worktreePath,
+          assigner: body.assigner?.trim(),
+          reviewOf: body.reviewOf?.trim(),
+          iteration: body.iteration,
         });
         this.emitAssignedTaskAlert(result);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/accept") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.accept) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.acceptTask
           ? await this.options.actions.acceptTask(body)
@@ -2661,12 +3333,12 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/block") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.block) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.blockTask
           ? await this.options.actions.blockTask(body)
@@ -2686,12 +3358,12 @@ export class MetadataServer {
           dedupeKey: `task-blocked:${result.task.id}`,
           cooldownMs: 15_000,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/complete") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.complete) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.completeTask
           ? await this.options.actions.completeTask(body)
@@ -2711,12 +3383,12 @@ export class MetadataServer {
           dedupeKey: `task-done:${result.task.id}`,
           cooldownMs: 15_000,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/spawn") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.spawn) {
         const body = (await readJson(req)) as {
           tool: string;
           sessionId?: string;
@@ -2730,12 +3402,12 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.spawnAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/teammates") {
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.teammates) {
         const parentSessionId = url.searchParams.get("parentSessionId")?.trim() ?? "";
         const result = this.resolveDirectTeammates(parentSessionId);
         if (!result.ok) {
@@ -2750,7 +3422,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/create") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.createTeammate) {
         const body = (await readJson(req)) as {
           parentSessionId: string;
           role?: string;
@@ -2809,12 +3481,12 @@ export class MetadataServer {
         if (taskResult) {
           this.emitAssignedTaskAlert(taskResult);
         }
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result, task: taskResult?.task, thread: taskResult?.thread });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/tasks") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.createTeammateTask) {
         const body = (await readJson(req)) as {
           parentSessionId: string;
           teammateSessionId: string;
@@ -2859,20 +3531,20 @@ export class MetadataServer {
             optionalString(resolved.parent.worktreePath),
         });
         this.emitAssignedTaskAlert(result);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, parentSessionId: resolved.parent.id, teammateSessionId: teammate.id, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/send") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.rawTeammateSend) {
         send(res, 410, {
           ok: false,
-          error: "raw teammate send has been removed; create durable teammate work with /agents/teammates/tasks",
+          error: `raw teammate send has been removed; create durable teammate work with ${PROJECT_API_ROUTES.agents.createTeammateTask}`,
         });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/stop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.stopTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -2887,7 +3559,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.stopAgent({ sessionId: resolved.teammate.id });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -2897,7 +3569,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/resume") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.resumeTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -2915,7 +3587,7 @@ export class MetadataServer {
           sessionId: resolved.teammate.id,
           session: resolved.teammate,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -2925,7 +3597,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/kill") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.killTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -2942,7 +3614,7 @@ export class MetadataServer {
         const result = await this.options.lifecycle.killAgent({
           sessionId: resolved.teammate.id,
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -2952,7 +3624,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/resurrect") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.resurrectTeammate) {
         const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
         const resolved = this.resolveDirectGraveyardTeammate(
           body.parentSessionId?.trim() ?? "",
@@ -2967,7 +3639,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, {
           ok: true,
           parentSessionId: resolved.parent.id,
@@ -2977,7 +3649,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/fork") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.fork) {
         const body = (await readJson(req)) as {
           sourceSessionId: string;
           tool: string;
@@ -2992,96 +3664,137 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.forkAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/stop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.stop) {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.lifecycle?.stopAgent) {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
         const result = await this.options.lifecycle.stopAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/resume") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.resume) {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.desktop?.resumeAgent) {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
         const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/record-backend-session") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.recordBackendSession) {
         const body = (await readJson(req)) as { sessionId: string; backendSessionId: string };
         if (!this.options.lifecycle?.recordBackendSessionId) {
           send(res, 501, { ok: false, error: "backend session recording not supported by this service" });
           return;
         }
         const result = await this.options.lifecycle.recordBackendSessionId(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/interrupt") {
-        const body = (await readJson(req)) as { sessionId: string };
+      if (
+        req.method === "POST" &&
+        (url.pathname === PROJECT_API_ROUTES.agents.interrupt || url.pathname === PROJECT_API_ROUTES.livePane.interrupt)
+      ) {
+        const body = (await readJson(req)) as { sessionId?: string };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
         if (!this.options.lifecycle?.interruptAgent) {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.interruptAgent(body);
-        this.options.onChange?.();
+        const result = await this.options.lifecycle.interruptAgent({ sessionId });
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/rename") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.livePane.resize) {
+        const body = (await readJson(req)) as { sessionId?: string; cols?: unknown; rows?: unknown };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.lifecycle?.resizeAgentPane) {
+          send(res, 501, { ok: false, error: "live pane resize not supported by this service" });
+          return;
+        }
+        const cols = parsePositiveInteger(body.cols, "cols");
+        const rows = parsePositiveInteger(body.rows, "rows");
+        if (!cols.ok) {
+          send(res, 400, { ok: false, error: cols.error });
+          return;
+        }
+        if (!rows.ok) {
+          send(res, 400, { ok: false, error: rows.error });
+          return;
+        }
+        const result = await this.options.lifecycle.resizeAgentPane({
+          sessionId,
+          cols: cols.value,
+          rows: rows.value,
+        });
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.rename) {
         const body = (await readJson(req)) as { sessionId: string; label?: string };
         if (!this.options.lifecycle?.renameAgent) {
           send(res, 501, { ok: false, error: "agent rename not supported by this service" });
           return;
         }
         const result = await this.options.lifecycle.renameAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/migrate") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.migrate) {
         const body = (await readJson(req)) as { sessionId: string; worktreePath: string };
         if (!this.options.lifecycle?.migrateAgent) {
           send(res, 501, { ok: false, error: "agent migrate not supported by this service" });
           return;
         }
         const result = await this.options.lifecycle.migrateAgent(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/kill") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.kill) {
         const body = (await readJson(req)) as { sessionId: string; session?: Record<string, unknown> };
         if (!this.options.lifecycle?.killAgent) {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
         const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/input") {
+      if (
+        req.method === "POST" &&
+        (url.pathname === PROJECT_API_ROUTES.agents.input || url.pathname === PROJECT_API_ROUTES.livePane.input)
+      ) {
         const body = (await readJson(req)) as { sessionId?: string; text?: string; attachmentIds?: unknown };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3114,12 +3827,12 @@ export class MetadataServer {
           attachments.filter((entry): entry is AttachmentRecord => !!entry),
         );
         const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: formattedText });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/loop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.loop) {
         const body = (await readJson(req)) as { sessionId?: string; active?: boolean; goal?: string };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3134,17 +3847,17 @@ export class MetadataServer {
           const goal = typeof body.goal === "string" ? body.goal.trim() : "";
           const loop = { active: true, goal: goal || undefined, since: new Date().toISOString() };
           setSessionLoop(sessionId, loop);
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, sessionId, loop });
         } else {
           clearSessionLoop(sessionId);
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, sessionId, loop: null });
         }
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/overseer") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.overseer) {
         const body = (await readJson(req)) as { sessionId?: string; active?: boolean };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
@@ -3152,12 +3865,12 @@ export class MetadataServer {
           return;
         }
         setSessionOverseer(sessionId, Boolean(body.active));
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, sessionId, overseer: Boolean(body.active) });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/attachments") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.attachments) {
         const body = (await readJson(req)) as { filename?: unknown; mimeType?: unknown; dataBase64?: unknown };
         if (
           typeof body.filename !== "string" ||
@@ -3202,7 +3915,10 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/output") {
+      if (
+        req.method === "GET" &&
+        (url.pathname === PROJECT_API_ROUTES.agents.output || url.pathname === PROJECT_API_ROUTES.livePane.output)
+      ) {
         const sessionId = url.searchParams.get("sessionId")?.trim();
         const startLineRaw = url.searchParams.get("startLine");
         if (!sessionId) {
@@ -3213,23 +3929,88 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent output not supported by this service" });
           return;
         }
-        const startLine =
-          startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
-        if (startLineRaw !== null && Number.isNaN(startLine)) {
-          send(res, 400, { ok: false, error: "startLine must be an integer" });
+        const parsedStartLine = parseOptionalInteger(startLineRaw, "startLine");
+        if (!parsedStartLine.ok) {
+          send(res, 400, { ok: false, error: parsedStartLine.error });
           return;
         }
+        const startLine = parsedStartLine.value;
         const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/agents/history") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.livePane.attach) {
+        const body = (await readJson(req)) as {
+          sessionId?: string;
+          startLine?: unknown;
+          cols?: unknown;
+          rows?: unknown;
+        };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.lifecycle?.readAgentOutput) {
+          send(res, 501, { ok: false, error: "live pane output not supported by this service" });
+          return;
+        }
+
+        const parsedStartLine =
+          body.startLine === undefined
+            ? ({ ok: true, value: -120 } as const)
+            : parseIntegerValue(body.startLine, "startLine");
+        if (!parsedStartLine.ok) {
+          send(res, 400, { ok: false, error: parsedStartLine.error });
+          return;
+        }
+        const startLine = parsedStartLine.value;
+
+        let resize: { cols: number; rows: number } | undefined;
+        if (body.cols !== undefined || body.rows !== undefined) {
+          if (!this.options.lifecycle?.resizeAgentPane) {
+            send(res, 501, { ok: false, error: "live pane resize not supported by this service" });
+            return;
+          }
+          const cols = parsePositiveInteger(body.cols, "cols");
+          const rows = parsePositiveInteger(body.rows, "rows");
+          if (!cols.ok) {
+            send(res, 400, { ok: false, error: cols.error });
+            return;
+          }
+          if (!rows.ok) {
+            send(res, 400, { ok: false, error: rows.error });
+            return;
+          }
+          const result = await this.options.lifecycle.resizeAgentPane({
+            sessionId,
+            cols: cols.value,
+            rows: rows.value,
+          });
+          resize = { cols: result.cols, rows: result.rows };
+        }
+
+        const output = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
+        send(res, 200, {
+          ok: true,
+          ...output,
+          stream: {
+            route: PROJECT_API_ROUTES.events,
+            sessionId,
+            startLine: output.startLine ?? startLine,
+          },
+          ...(resize ? { resize } : {}),
+        });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.agents.history) {
         send(res, 410, { ok: false, error: "agent message history requires the runtime core replacement" });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/worktrees/create") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.create) {
         const body = (await readJson(req)) as { name: string };
         if (!this.options.desktop?.createWorktree) {
           send(res, 501, { ok: false, error: "worktree create not supported by this service" });
@@ -3249,7 +4030,7 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, ...earlyResult.result });
           return;
         }
@@ -3258,16 +4039,16 @@ export class MetadataServer {
           send(res, 500, { ok: false, error: message });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         void resultPromise.then(
-          () => this.options.onChange?.(),
-          () => this.options.onChange?.(),
+          () => this.notifyChange(),
+          () => this.notifyChange(),
         );
         send(res, 202, { ok: true, path: body.name, status: "creating" });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/worktrees/remove") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.remove) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.removeWorktree) {
           send(res, 501, { ok: false, error: "worktree remove not supported by this service" });
@@ -3287,7 +4068,7 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
-          this.options.onChange?.();
+          this.notifyChange();
           send(res, 200, { ok: true, ...earlyResult.result });
           return;
         }
@@ -3296,76 +4077,76 @@ export class MetadataServer {
           send(res, 500, { ok: false, error: message });
           return;
         }
-        this.options.onChange?.();
+        this.notifyChange();
         void resultPromise.then(
-          () => this.options.onChange?.(),
-          () => this.options.onChange?.(),
+          () => this.notifyChange(),
+          () => this.notifyChange(),
         );
         send(res, 202, { ok: true, path: body.path, status: "removing" });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/worktrees/graveyard") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.worktreeActions.graveyard) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.graveyardWorktree) {
           send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
           return;
         }
         const result = await this.options.desktop.graveyardWorktree(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/create") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.create) {
         const body = (await readJson(req)) as { command?: string; worktreePath?: string; serviceId?: string };
         if (!this.options.desktop?.createService) {
           send(res, 501, { ok: false, error: "service create not supported by this service" });
           return;
         }
         const result = await this.options.desktop.createService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/stop") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.stop) {
         const body = (await readJson(req)) as { serviceId: string };
         if (!this.options.desktop?.stopService) {
           send(res, 501, { ok: false, error: "service stop not supported by this service" });
           return;
         }
         const result = await this.options.desktop.stopService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/resume") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.resume) {
         const body = (await readJson(req)) as { serviceId: string };
         if (!this.options.desktop?.resumeService) {
           send(res, 501, { ok: false, error: "service resume not supported by this service" });
           return;
         }
         const result = await this.options.desktop.resumeService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/services/remove") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.services.remove) {
         const body = (await readJson(req)) as { serviceId: string };
         if (!this.options.desktop?.removeService) {
           send(res, 501, { ok: false, error: "service remove not supported by this service" });
           return;
         }
         const result = await this.options.desktop.removeService(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/resurrect") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.resurrectAgent) {
         const body = (await readJson(req)) as { sessionId?: string; id?: string };
         const sessionId = (body.sessionId ?? body.id ?? "").trim();
         if (!sessionId) {
@@ -3377,48 +4158,48 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resurrectGraveyard({ sessionId });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/worktrees/resurrect") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.resurrectWorktree) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.resurrectGraveyardWorktree) {
           send(res, 501, { ok: false, error: "worktree graveyard resurrection not supported by this service" });
           return;
         }
         const result = await this.options.desktop.resurrectGraveyardWorktree(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/worktrees/delete") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.deleteWorktree) {
         const body = (await readJson(req)) as { path: string };
         if (!this.options.desktop?.deleteGraveyardWorktree) {
           send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
           return;
         }
         const result = await this.options.desktop.deleteGraveyardWorktree(body);
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/graveyard/cleanup") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.graveyardActions.cleanup) {
         const body = (await readJson(req).catch(() => ({}))) as { dryRun?: boolean };
         if (!this.options.desktop?.cleanupGraveyard) {
           send(res, 501, { ok: false, error: "graveyard cleanup not supported by this service" });
           return;
         }
         const result = await this.options.desktop.cleanupGraveyard({ dryRun: body.dryRun === true });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...(typeof result === "object" && result ? result : { result }) });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/reviews/approve") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.reviews.approve) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.approveReview
           ? await this.options.actions.approveReview(body)
@@ -3433,12 +4214,12 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Review approved.",
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/reviews/request-changes") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.reviews.requestChanges) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.requestTaskChanges
           ? await this.options.actions.requestTaskChanges(body)
@@ -3453,12 +4234,12 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Changes requested.",
         });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/tasks/reopen") {
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.tasks.reopen) {
         const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
         const result = this.options.actions?.reopenTask
           ? await this.options.actions.reopenTask(body)
@@ -3467,7 +4248,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.options.onChange?.();
+        this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3478,4 +4259,17 @@ export class MetadataServer {
 
     send(res, 404, { ok: false, error: "not found" });
   }
+}
+
+function normalizeNotificationMutationIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((id) => (typeof id === "string" ? id.trim() : "")).filter(Boolean);
+}
+
+function parseNotificationMutationIds(body: { ids?: unknown }): string[] | undefined {
+  if (!Object.prototype.hasOwnProperty.call(body, "ids")) return undefined;
+  if (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string")) {
+    throw new Error("ids must be an array of strings");
+  }
+  return normalizeNotificationMutationIds(body.ids);
 }

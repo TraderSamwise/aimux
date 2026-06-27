@@ -39,11 +39,16 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // after this TTL — bounds memory if a request never completes.
 const PENDING_REQUEST_TTL_MS = 60_000;
 
+interface ClientSocketAttachment {
+  projectEventSubscriptions?: Record<string, string>;
+}
+
 export class RelayObject extends DurableObject<Env> {
   private daemonWs: WebSocket | null = null;
   private clientSockets = new Set<WebSocket>();
   private clientDeviceIds = new Map<WebSocket, string>();
   private pendingRequests = new Map<string, { client: WebSocket; clientRequestId: string; expiresAt: number }>();
+  private eventSubscriptions = new Map<string, { client: WebSocket; clientSubscriptionId: string }>();
   private requestCounter = 0;
 
   async fetch(request: Request): Promise<Response> {
@@ -136,8 +141,10 @@ export class RelayObject extends DurableObject<Env> {
     );
 
     if (role === "daemon") {
+      this.rehydrateSockets(server);
       if (this.daemonWs) {
         this.failPendingRequests("Daemon connection replaced", 502);
+        this.failProjectEventSubscriptions("Daemon connection replaced", 502);
         try {
           this.send(this.daemonWs, { type: "error", message: "Replaced by new daemon connection" });
           this.daemonWs.close(1000, "Replaced");
@@ -190,6 +197,16 @@ export class RelayObject extends DurableObject<Env> {
       return;
     }
 
+    if (isDaemon && parsed.type === "project_event") {
+      this.forwardProjectEvent(parsed);
+      return;
+    }
+
+    if (isDaemon && (parsed.type === "project_events_subscribed" || parsed.type === "project_events_error")) {
+      this.forwardProjectEventControl(parsed);
+      return;
+    }
+
     if (isDaemon && parsed.type === "response") {
       this.sweepExpiredPending();
       const pending = this.pendingRequests.get(parsed.id);
@@ -201,6 +218,10 @@ export class RelayObject extends DurableObject<Env> {
           // client has gone away — drop silently
         }
       }
+    } else if (!isDaemon && parsed.type === "project_events_subscribe") {
+      await this.handleClientProjectEventsSubscribe(ws, parsed);
+    } else if (!isDaemon && parsed.type === "project_events_unsubscribe") {
+      this.handleClientProjectEventsUnsubscribe(ws, parsed.id);
     } else if (!isDaemon && parsed.type === "request") {
       const sharedResult = await this.prepareSharedClientRequest(ws, parsed);
       if (!sharedResult.ok) {
@@ -248,6 +269,108 @@ export class RelayObject extends DurableObject<Env> {
           body: { ok: false, error: "Daemon not connected" },
         });
       }
+    }
+  }
+
+  private async handleClientProjectEventsSubscribe(
+    ws: WebSocket,
+    message: Extract<RelayMessage, { type: "project_events_subscribe" }>,
+  ): Promise<void> {
+    const sharedResult = await this.prepareSharedClientRequest(ws, {
+      id: message.id,
+      type: "request",
+      method: "GET",
+      path: message.path,
+      headers: message.headers,
+    });
+    if (!sharedResult.ok) {
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: sharedResult.status,
+        message: sharedResult.error,
+      });
+      return;
+    }
+    if (await this.shouldRejectClientRequest(ws)) {
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: 403,
+        message: "Remote client pending security approval",
+      });
+      return;
+    }
+    if (!this.daemonWs) {
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: 503,
+        message: "Daemon not connected",
+      });
+      return;
+    }
+
+    const relaySubscriptionId = this.nextRelayRequestId();
+    this.eventSubscriptions.set(relaySubscriptionId, { client: ws, clientSubscriptionId: message.id });
+    this.attachClientProjectEventSubscription(ws, relaySubscriptionId, message.id);
+    try {
+      this.daemonWs.send(
+        JSON.stringify({
+          id: relaySubscriptionId,
+          type: "project_events_subscribe",
+          path: message.path,
+          headers: sharedResult.requestPatch?.headers ?? message.headers,
+        }),
+      );
+    } catch {
+      this.eventSubscriptions.delete(relaySubscriptionId);
+      this.detachClientProjectEventSubscription(ws, relaySubscriptionId);
+      this.send(ws, {
+        id: message.id,
+        type: "project_events_error",
+        status: 502,
+        message: "Daemon connection lost",
+      });
+    }
+  }
+
+  private handleClientProjectEventsUnsubscribe(ws: WebSocket, clientSubscriptionId: string): void {
+    for (const [relaySubscriptionId, entry] of this.eventSubscriptions) {
+      if (entry.client !== ws || entry.clientSubscriptionId !== clientSubscriptionId) continue;
+      this.eventSubscriptions.delete(relaySubscriptionId);
+      this.detachClientProjectEventSubscription(ws, relaySubscriptionId);
+      this.sendDaemonProjectEventsUnsubscribe(relaySubscriptionId);
+    }
+  }
+
+  private forwardProjectEvent(message: Extract<RelayMessage, { type: "project_event" }>): void {
+    const subscription = this.eventSubscriptions.get(message.id);
+    if (!subscription) return;
+    try {
+      subscription.client.send(JSON.stringify({ ...message, id: subscription.clientSubscriptionId }));
+    } catch {
+      this.eventSubscriptions.delete(message.id);
+      this.detachClientProjectEventSubscription(subscription.client, message.id);
+      this.sendDaemonProjectEventsUnsubscribe(message.id);
+    }
+  }
+
+  private forwardProjectEventControl(
+    message: Extract<RelayMessage, { type: "project_events_subscribed" | "project_events_error" }>,
+  ): void {
+    const subscription = this.eventSubscriptions.get(message.id);
+    if (!subscription) return;
+    if (message.type === "project_events_error") {
+      this.eventSubscriptions.delete(message.id);
+      this.detachClientProjectEventSubscription(subscription.client, message.id);
+    }
+    try {
+      subscription.client.send(JSON.stringify({ ...message, id: subscription.clientSubscriptionId }));
+    } catch {
+      this.eventSubscriptions.delete(message.id);
+      this.detachClientProjectEventSubscription(subscription.client, message.id);
+      this.sendDaemonProjectEventsUnsubscribe(message.id);
     }
   }
 
@@ -363,19 +486,30 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   private removeSocket(ws: WebSocket): void {
-    this.rehydrateSockets(ws);
     const tags = this.ctx.getTags(ws);
-    if (tags.includes("daemon") && this.daemonWs === ws) {
-      this.daemonWs = null;
+    const wasKnownActiveDaemon = tags.includes("daemon") && this.daemonWs === ws;
+    const closingProjectEventSubscriptionIds = tags.includes("client")
+      ? Object.keys(this.clientSocketAttachment(ws).projectEventSubscriptions ?? {})
+      : [];
+    this.rehydrateSockets(ws);
+    if (tags.includes("daemon") && (wasKnownActiveDaemon || !this.daemonWs)) {
+      const replacementDaemon = this.daemonWs;
       // Fail every in-flight request immediately instead of waiting for
       // the TTL — the daemon that was going to answer just disappeared.
       this.failPendingRequests("Daemon connection lost", 502);
-      this.broadcastToClients({ type: "daemon_status", online: false });
+      this.failProjectEventSubscriptions("Daemon connection lost", 502);
+      if (!replacementDaemon) {
+        this.broadcastToClients({ type: "daemon_status", online: false });
+      }
     } else {
       this.clientSockets.delete(ws);
       this.clientDeviceIds.delete(ws);
       for (const [id, entry] of this.pendingRequests) {
         if (entry.client === ws) this.pendingRequests.delete(id);
+      }
+      for (const id of closingProjectEventSubscriptionIds) {
+        this.detachClientProjectEventSubscription(ws, id);
+        this.sendDaemonProjectEventsUnsubscribe(id);
       }
     }
     try {
@@ -810,6 +944,7 @@ export class RelayObject extends DurableObject<Env> {
     this.daemonWs = null;
     this.clientSockets.clear();
     this.clientDeviceIds.clear();
+    this.eventSubscriptions.clear();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
@@ -825,6 +960,11 @@ export class RelayObject extends DurableObject<Env> {
         this.clientSockets.add(ws);
         const deviceId = this.deviceIdFromTags(ws);
         if (deviceId) this.clientDeviceIds.set(ws, deviceId);
+        for (const [relaySubscriptionId, clientSubscriptionId] of Object.entries(
+          this.clientSocketAttachment(ws).projectEventSubscriptions ?? {},
+        )) {
+          this.eventSubscriptions.set(relaySubscriptionId, { client: ws, clientSubscriptionId });
+        }
       }
     }
   }
@@ -857,8 +997,79 @@ export class RelayObject extends DurableObject<Env> {
     this.pendingRequests.clear();
   }
 
+  private failProjectEventSubscriptions(message: string, status: number): void {
+    for (const [, entry] of this.eventSubscriptions) {
+      try {
+        entry.client.send(
+          JSON.stringify({
+            id: entry.clientSubscriptionId,
+            type: "project_events_error",
+            status,
+            message,
+          }),
+        );
+      } catch {}
+      this.clearClientProjectEventSubscriptions(entry.client);
+    }
+    this.eventSubscriptions.clear();
+  }
+
+  private sendDaemonProjectEventsUnsubscribe(id: string): void {
+    if (!this.daemonWs) return;
+    try {
+      this.send(this.daemonWs, { id, type: "project_events_unsubscribe" });
+    } catch {}
+  }
+
+  private clientSocketAttachment(ws: WebSocket): ClientSocketAttachment {
+    const socketWithAttachment = ws as WebSocket & {
+      deserializeAttachment?: () => unknown;
+    };
+    const attachment = socketWithAttachment.deserializeAttachment?.();
+    if (!attachment || typeof attachment !== "object") return {};
+    return attachment as ClientSocketAttachment;
+  }
+
+  private saveClientSocketAttachment(ws: WebSocket, attachment: ClientSocketAttachment): void {
+    const socketWithAttachment = ws as WebSocket & {
+      serializeAttachment?: (value: unknown) => void;
+    };
+    socketWithAttachment.serializeAttachment?.(attachment);
+  }
+
+  private attachClientProjectEventSubscription(
+    ws: WebSocket,
+    relaySubscriptionId: string,
+    clientSubscriptionId: string,
+  ): void {
+    const attachment = this.clientSocketAttachment(ws);
+    this.saveClientSocketAttachment(ws, {
+      ...attachment,
+      projectEventSubscriptions: {
+        ...(attachment.projectEventSubscriptions ?? {}),
+        [relaySubscriptionId]: clientSubscriptionId,
+      },
+    });
+  }
+
+  private detachClientProjectEventSubscription(ws: WebSocket, relaySubscriptionId: string): void {
+    const attachment = this.clientSocketAttachment(ws);
+    const subscriptions = { ...(attachment.projectEventSubscriptions ?? {}) };
+    delete subscriptions[relaySubscriptionId];
+    this.saveClientSocketAttachment(ws, {
+      ...attachment,
+      projectEventSubscriptions: Object.keys(subscriptions).length > 0 ? subscriptions : undefined,
+    });
+  }
+
+  private clearClientProjectEventSubscriptions(ws: WebSocket): void {
+    const attachment = this.clientSocketAttachment(ws);
+    this.saveClientSocketAttachment(ws, { ...attachment, projectEventSubscriptions: undefined });
+  }
+
   private closeAllSockets(reason: string): void {
     this.failPendingRequests(reason, 423);
+    this.failProjectEventSubscriptions(reason, 423);
     for (const ws of this.ctx.getWebSockets()) {
       try {
         ws.close(1008, reason);

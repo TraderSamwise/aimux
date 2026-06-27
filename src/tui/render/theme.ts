@@ -17,7 +17,9 @@ export type Tone =
   | "danger"
   | "blocked"
   | "info"
-  | "idle";
+  | "ready"
+  | "idle"
+  | "sleep";
 
 const TONE_SGR: Record<Tone, string> = {
   text: "",
@@ -30,12 +32,49 @@ const TONE_SGR: Record<Tone, string> = {
   danger: "\x1b[31m",
   blocked: "\x1b[35m",
   info: "\x1b[34m",
+  ready: "\x1b[38;5;75m",
   idle: "\x1b[2;32m",
+  // Dormant slate — distinct from the gold accent so "asleep/offline" never reads as selection.
+  sleep: "\x1b[38;5;103m",
 };
 
 export function style(text: string, tone: Tone): string {
   const sgr = TONE_SGR[tone];
   return sgr ? `${sgr}${text}${RESET}` : text;
+}
+
+/** How to push content into the background; see {@link recede}. */
+export type RecedeMode = "faint" | "soft" | "deep";
+
+// 256-color grays for flattened (color-stripped) receded content.
+const RECEDE_SOFT_FG = 250; // readable but colorless (e.g. selected exposé preview)
+const RECEDE_DEEP_FG = 240; // deeper recession (e.g. unselected preview)
+// Gray floor for faint backdrops so uncolored text dims further (matches RECEDE_DEEP_FG).
+const FAINT_FG = 240;
+
+/**
+ * Recede content visually so a foreground layer (a modal, exposé chrome) reads above it.
+ * - "faint": keep the content's own colors but dim them, over a gray foreground floor
+ *   so uncolored text recedes further. The lead is re-injected after every embedded reset
+ *   (`\x1b[m`, `\x1b[0m`, or a reset-led form like `\x1b[0;1m`) so a pre-styled frame stays
+ *   uniformly dimmed; a harmless trailing reset may remain. Colored spans override the gray
+ *   (kept, faint-dimmed); faint itself is not universally honored, but the gray floor still dims.
+ * - "soft"/"deep": strip all color and re-emit as one 256-color gray (flatten). Fully
+ *   portable and unambiguous; visible width is preserved. Callers pass single lines.
+ */
+export function recede(text: string, mode: RecedeMode = "faint"): string {
+  if (text === "") return "";
+  if (mode === "faint") {
+    const faint = `\x1b[2;38;5;${FAINT_FG}m`;
+    // Resume the faint lead after each embedded reset; re-emit any params that followed a
+    // reset-led form (e.g. `\x1b[0;31m`) so colored content stays colored, just dimmed.
+    return `${faint}${text.replace(
+      /\x1b\[(?:0(?:;([0-9;]*))?)?m/g,
+      (_match, rest?: string) => `${RESET}${faint}${rest ? `\x1b[${rest}m` : ""}`,
+    )}${RESET}`;
+  }
+  const fg = mode === "soft" ? RECEDE_SOFT_FG : RECEDE_DEEP_FG;
+  return `\x1b[38;5;${fg}m${stripAnsi(text)}${RESET}`;
 }
 
 /** Visible width of a string, ignoring ANSI escape sequences. */
@@ -86,9 +125,115 @@ export function chip(label: string, tone: ChipTone = "info"): string {
   return `\x1b[48;5;236;38;5;${CHIP_FG[tone]}m ${label} ${RESET}`;
 }
 
-/** A keyboard keycap for footer/help bars (` key `). */
-export function keycap(key: string): string {
-  return `\x1b[48;5;238;38;5;253m ${key} ${RESET}`;
+// 256-color anchors for keycap chrome (kept here so all keycaps restyle from one place).
+const KEYCAP_BG = 240;
+const KEYCAP_FG = 255;
+const KEYCAP_DANGER_FG = 203;
+
+/** A keyboard keycap for footer/help bars (` key `). `danger` tints the glyph red. */
+export function keycap(key: string, tone?: "danger"): string {
+  const fg = tone === "danger" ? KEYCAP_DANGER_FG : KEYCAP_FG;
+  return `\x1b[48;5;${KEYCAP_BG};38;5;${fg}m ${key} ${RESET}`;
+}
+
+/** A footer/help hint: a keycap plus a muted label (label optional). */
+export function keycapHint(key: string, label = "", tone?: "danger"): string {
+  return label ? `${keycap(key, tone)} ${style(label, "muted")}` : keycap(key, tone);
+}
+
+/**
+ * A box-free footer key: a bold glyph (red when destructive), no filled pill.
+ * Distinguishing keys by weight/color keeps a dense, wrapping footer light —
+ * boxes add a gray block of padding around every key.
+ */
+export function footerKey(key: string, tone?: "danger"): string {
+  const fg = tone === "danger" ? KEYCAP_DANGER_FG : KEYCAP_FG;
+  return `\x1b[1;38;5;${fg}m${key}${RESET}`;
+}
+
+// Split a "[key] label" or "key label" group into its [key, label] parts.
+function parseHintGroup(group: string): [string, string] {
+  const bracket = group.match(/^\[(.+?)\]\s*(.*)$/);
+  if (bracket) return [bracket[1], bracket[2]];
+  const splitAt = group.indexOf(" ");
+  if (splitAt < 0) return [group, ""];
+  return [group.slice(0, splitAt), group.slice(splitAt + 1)];
+}
+
+// Style one group into a (boxed) keycap + muted label.
+function styleHintGroup(group: string): string {
+  const [key, label] = parseHintGroup(group);
+  return label ? keycapHint(key, label) : keycap(key);
+}
+
+/** Style a help/footer line ("[a] x  [b] y" or "a x  b y") into joined keycap hints. */
+export function keycapHints(line: string): string {
+  return line
+    .trim()
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map(styleHintGroup)
+    .join("  ");
+}
+
+/** Like keycapHints, but box-free (bold glyph keys), matching the dashboard footer. */
+export function footerHints(line: string): string {
+  return line
+    .trim()
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map((group) => {
+      const [key, label] = parseHintGroup(group);
+      return label ? `${footerKey(key)} ${style(label, "muted")}` : footerKey(key);
+    })
+    .join("  ");
+}
+
+/** Like keycapHints, but wraps the keycap groups to `width` visible columns. */
+export function keycapHintLines(line: string, width: number): string[] {
+  const groups = line
+    .trim()
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map(styleHintGroup);
+  const lines: string[] = [];
+  let current = "";
+  for (const group of groups) {
+    const next = current ? `${current}  ${group}` : group;
+    if (visibleWidth(next) <= width) {
+      current = next;
+    } else {
+      if (current) lines.push(current);
+      current = group;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/** A footer hint: [key, label], optionally tagged "danger" to tint the keycap red. */
+export type FooterHint = [string, string] | [string, string, "danger"];
+
+/**
+ * Render a flat list of footer hints, greedy-wrapped to `width`. Every hint is
+ * always shown; a long list simply wraps onto more lines. No grouping and no
+ * width-conditional dropping — it just flows.
+ */
+export function renderFooterHints(hints: FooterHint[], width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const [key, label, tone] of hints) {
+    const token = `${footerKey(key, tone)} ${style(label, "muted")}`;
+    const candidate = line ? `${line}  ${token}` : token;
+    if (line === "" || visibleWidth(candidate) <= width) {
+      line = candidate;
+    } else {
+      lines.push(line);
+      line = token;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 export type BandTone = "info" | "danger";
@@ -110,6 +255,7 @@ export function modalBand(label: string, tone: BandTone, width: number): string 
 /** Presentation-level status kinds (distinct from runtime SessionStatus). */
 export type StatusKind =
   | "working"
+  | "ready"
   | "idle"
   | "offline"
   | "needs"
@@ -121,6 +267,7 @@ export type StatusKind =
 
 const STATE_GLYPH: Record<StatusKind, string> = {
   working: "●",
+  ready: "●",
   idle: "●",
   offline: "○",
   needs: "◉",
@@ -133,6 +280,7 @@ const STATE_GLYPH: Record<StatusKind, string> = {
 
 const STATE_TONE: Record<StatusKind, Tone> = {
   working: "work",
+  ready: "ready",
   idle: "idle",
   offline: "muted",
   needs: "attn",
@@ -162,6 +310,7 @@ const TMUX_COLOR: Partial<Record<Tone, string>> = {
   danger: "red",
   blocked: "magenta",
   info: "cyan",
+  ready: "colour75",
   idle: "green",
 };
 

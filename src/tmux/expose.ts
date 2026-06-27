@@ -1,12 +1,15 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync, unlinkSync } from "node:fs";
 import { basename, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
+import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
-import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
-import { renderAgentStatusChip } from "../tui/render/agent-status.js";
+import { truncateAnsi, wrapText } from "../tui/render/text.js";
+import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
+import { recede, style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
 import {
   initialExposeScope,
   loadExposeScopeItems,
@@ -27,6 +30,8 @@ export interface TmuxExposeOptions {
   paneId?: string;
   /** Baked AIMUX_HOME so cross-project Exposé reads the right project registry. */
   aimuxHome?: string;
+  /** Host snapshot captured by the launcher before the popup opened (read once, then deleted). */
+  backdropFile?: string;
 }
 
 const CAPTURE_LINES = 40;
@@ -49,6 +54,27 @@ export function balancedCols(count: number): number {
 }
 
 const RESET = "\x1b[0m";
+
+// tmux popups are fixed-size: a 100%×100% popup keeps its launch dimensions when the
+// terminal resizes, so process.stdout inside the popup never changes. Exposé instead
+// polls the controlling client's real size and exits with this code on a change; the
+// launcher relaunches the popup so it re-fits the new bounds.
+const RELAUNCH_ON_RESIZE_EXIT = 75;
+
+function queryClientSize(clientTty?: string): string {
+  if (!clientTty) return "";
+  try {
+    const result = spawnSync(
+      "tmux",
+      ["display-message", "-c", clientTty, "-p", "-F", "#{client_width}x#{client_height}"],
+      // Bounded so a hung tmux server fails open (no resize check) instead of freezing
+      // the popup's single-threaded refresh loop.
+      { encoding: "utf8", timeout: 500 },
+    );
+    if (result.status === 0) return (result.stdout ?? "").trim();
+  } catch {}
+  return "";
+}
 
 function shortWorktree(item: FastControlItem, projectRoot: string): string {
   const wt = item.metadata.worktreePath;
@@ -75,6 +101,53 @@ function tilePreview(raw: string, count: number): string[] {
   const tail = lines.slice(-count);
   while (tail.length < count) tail.push("");
   return tail;
+}
+
+// Paint a captured host screen as a dimmed full-screen backdrop, so the floating tile
+// grid reads above the user's real (receded) content. Each line is sanitized (control
+// bytes stripped, SGR kept), clamped to the viewport, then dimmed via recede "faint".
+export function buildBackdrop(capture: string, cols: number, rows: number): string {
+  if (!capture) return "";
+  const lines = capture.replace(/\r/g, "").split("\n");
+  const count = Math.min(lines.length, rows);
+  let out = "";
+  for (let i = 0; i < count; i += 1) {
+    out += `\x1b[${i + 1};1H${recede(truncateAnsi(sanitizeLine(lines[i]!), cols), "faint")}`;
+  }
+  return out;
+}
+
+// Exposé floats as an inset panel (centred, ~90%) over the dimmed backdrop, like a dialog.
+const PANEL_RATIO = 0.9;
+const PANEL_BORDER = "\x1b[38;5;248m";
+
+export interface PanelGeometry {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+export function panelGeometry(cols: number, rows: number): PanelGeometry {
+  // Clamp to the viewport last so the floor never makes the panel larger than the screen.
+  const width = Math.min(cols, Math.max(MIN_TILE_WIDTH + 2, Math.round(cols * PANEL_RATIO)));
+  const height = Math.min(rows, Math.max(MIN_TILE_HEIGHT + 4, Math.round(rows * PANEL_RATIO)));
+  const left = Math.max(1, Math.floor((cols - width) / 2) + 1);
+  const top = Math.max(1, Math.floor((rows - height) / 2) + 1);
+  return { top, left, width, height };
+}
+
+// An opaque bordered box that covers the dimmed backdrop so the panel body reads as solid;
+// tiles/title/help are drawn on top of it. Border rows position absolutely.
+export function buildPanelFrame(geo: PanelGeometry): string {
+  const innerW = Math.max(0, geo.width - 2);
+  const fill = " ".repeat(innerW);
+  let out = `\x1b[${geo.top};${geo.left}H${PANEL_BORDER}╭${"─".repeat(innerW)}╮${RESET}`;
+  for (let r = 1; r < geo.height - 1; r += 1) {
+    out += `\x1b[${geo.top + r};${geo.left}H${PANEL_BORDER}│${RESET}${fill}${PANEL_BORDER}│${RESET}`;
+  }
+  out += `\x1b[${geo.top + geo.height - 1};${geo.left}H${PANEL_BORDER}╰${"─".repeat(innerW)}╯${RESET}`;
+  return out;
 }
 
 function runWindowSwitch(options: TmuxExposeOptions, targetWindowId: string): number {
@@ -135,7 +208,66 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
-function drawTile(
+// 256-color tile borders tinted to the agent's state, with a bright (selected) and
+// dimmed (unselected) variant. This is Exposé's selection model — distinct from the
+// chip/pill tone, which carries the label color via the shared status vocabulary.
+const STATE_BORDER: Partial<Record<StatusKind, { on: string; off: string }>> = {
+  working: { on: "38;5;38", off: "38;5;24" },
+  ready: { on: "38;5;75", off: "38;5;67" },
+  idle: { on: "38;5;108", off: "38;5;65" },
+  offline: { on: "38;5;244", off: "38;5;238" },
+  needs: { on: "38;5;179", off: "38;5;94" },
+  error: { on: "38;5;174", off: "38;5;88" },
+  done: { on: "38;5;71", off: "38;5;28" },
+  blocked: { on: "38;5;176", off: "38;5;97" },
+};
+const NEUTRAL_BORDER = { on: "38;5;39", off: "38;5;240" };
+
+// Inline title in the top rule when the worktree/project context fits; otherwise drop
+// the context onto its own wrapped row(s). The status pill always gets its own row, so
+// the state signal stays legible no matter how narrow the tile is.
+export function buildTileHeader(
+  textW: number,
+  width: number,
+  titleLeft: string,
+  context: string,
+  pillStr: string,
+  detail: string,
+  inset: number,
+): { ruleTitle: string; headerRows: string[] } {
+  const pad = " ".repeat(Math.max(0, inset));
+  const contentW = Math.max(1, textW - inset);
+  const titleMax = Math.max(0, width - 6);
+  const headerRows: string[] = [];
+  let ruleTitle = titleLeft;
+  if (context) {
+    const wide = `${titleLeft} ${style(`· ${context}`, "muted")}`;
+    if (visibleWidth(wide) <= titleMax) {
+      ruleTitle = wide;
+    } else {
+      for (const line of wrapText(context, contentW)) headerRows.push(`${pad}${style(line, "muted")}`);
+    }
+  }
+  ruleTitle = truncateAnsi(ruleTitle, titleMax);
+  // The status row carries the pill plus the agent's status text (the dashboard's
+  // "last message" semantics), inset to line up under the title text in the rule.
+  const statusRow = [pillStr, detail ? style(detail, "muted") : ""].filter(Boolean).join("  ");
+  if (statusRow) headerRows.push(`${pad}${statusRow}`);
+  return { ruleTitle, headerRows };
+}
+
+// Clamp header rows to the tile's body capacity so a wrapped header can never push
+// the tile past its height (which would overwrite the tile below). Context rows are
+// dropped first; the status pill (the last row) is preserved.
+export function fitHeaderRows(headerRows: string[], capacity: number, hasPill: boolean): string[] {
+  if (headerRows.length <= capacity) return headerRows;
+  if (!hasPill) return headerRows.slice(0, capacity);
+  const pillRow = headerRows[headerRows.length - 1]!;
+  const contextRows = headerRows.slice(0, headerRows.length - 1);
+  return [...contextRows.slice(0, Math.max(0, capacity - 1)), pillRow];
+}
+
+export function drawTile(
   item: ExposeScopeItem,
   preview: string[],
   badge: number,
@@ -146,31 +278,58 @@ function drawTile(
   layout: GridLayout,
   sublabel: string,
   options: TmuxExposeOptions,
+  dimInactive: boolean,
 ): string {
   const innerW = Math.max(1, width - 2);
   const textW = Math.max(0, innerW - 1);
-  const border = selected ? "\x1b[38;5;39m" : "\x1b[38;5;240m";
-  const headerStyle = selected ? "\x1b[1;38;5;39m" : "\x1b[1m";
-  const sub = sublabel ? `  ${sublabel}` : "";
-  const here = item.target.windowId === options.currentWindowId ? " (here)" : "";
-  const badgeLabel = badge <= 9 ? String(badge) : "·";
-  const chip = renderAgentStatusChip(item.metadata);
-  const ident = `${item.label}${sub}${here}`;
-  const header = chip
-    ? `${headerStyle}${badgeLabel}${RESET} ${chip} ${headerStyle}${ident}${RESET}`
-    : `${headerStyle}${badgeLabel} ${ident}${RESET}`;
-  const headerTrunc = truncateAnsi(header, textW);
-  const headerPad = Math.max(0, textW - stripAnsi(headerTrunc).length);
+  // Only non-selected tiles dim, and only when configured; the active tile is always full color.
+  const dimmed = dimInactive && !selected;
+  const kind = agentStatusKind(item.metadata);
+  const palette = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
+  const bd = `\x1b[${dimmed ? palette.off : palette.on}m`;
+  // Focus is shown by a bolder (heavy-line) outline, not a distinct color, so the
+  // border always reflects the agent's state.
+  const box = selected
+    ? { tl: "┏", tr: "┓", bl: "┗", br: "┛", h: "━", v: "┃" }
+    : { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" };
 
+  const badgeLabel = badge <= 9 ? String(badge) : "·";
+  // Reserve the marker slot whether or not selected so the title (and thus the
+  // wide/narrow header breakpoint) doesn't shift as selection moves between tiles.
+  const marker = selected ? `${style("▸", "accent")} ` : "  ";
+  const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
+  const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
+  const pillStr = renderAgentStatusPill(item.metadata);
+  const rel = formatRelativeRecency(item.metadata.recencyAt) ?? "";
+  const recency = rel && item.metadata.recencyLabel ? `${item.metadata.recencyLabel} ${rel}` : rel;
+  const statusText = (item.metadata.statusText ?? "").replace(/[\r\n]+/g, " ").trim();
+  const detail = [recency, statusText].filter(Boolean).join(" · ");
+  // Inset the header rows by the marker width so they line up under the title text.
+  const inset = visibleWidth(marker);
+  const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr, detail, inset);
+
+  const bodyCapacity = Math.max(1, layout.tileHeight - 2);
+  // The status row is the last header row; preserve it under capacity pressure when
+  // it carries either the pill or the recency/status detail.
+  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "" || detail !== "");
+  // Dimmed (non-selected, when enabled) tiles flatten their preview to gray so the chrome
+  // reads above it; otherwise previews keep the captured pane's real colors.
+  const previewRows = preview
+    .slice(0, Math.max(0, bodyCapacity - header.length))
+    .map((line) => (dimmed ? recede(line, "deep") : line));
+  const bodyRows = [...header, ...previewRows];
+  while (bodyRows.length < bodyCapacity) bodyRows.push("");
+
+  const titleSep = visibleWidth(ruleTitle) > 0 ? " " : "";
+  const dashCount = Math.max(0, width - 3 - visibleWidth(ruleTitle) - titleSep.length);
   const rows: string[] = [];
-  rows.push(`${border}┌${"─".repeat(innerW)}┐${RESET}`);
-  rows.push(`${border}│${RESET} ${headerTrunc}${" ".repeat(headerPad)}${RESET}${border}│${RESET}`);
-  for (let b = 0; b < layout.bodyLines; b += 1) {
-    const text = truncateAnsi(preview[b] ?? "", textW);
-    const pad = Math.max(0, textW - stripAnsi(text).length);
-    rows.push(`${border}│${RESET} ${text}${" ".repeat(pad)}${RESET}${border}│${RESET}`);
+  rows.push(`${bd}${box.tl} ${RESET}${ruleTitle}${titleSep}${bd}${box.h.repeat(dashCount)}${box.tr}${RESET}`);
+  for (const content of bodyRows) {
+    const text = truncateAnsi(content, textW);
+    const pad = Math.max(0, textW - visibleWidth(text));
+    rows.push(`${bd}${box.v}${RESET} ${text}${" ".repeat(pad)}${bd}${box.v}${RESET}`);
   }
-  rows.push(`${border}└${"─".repeat(innerW)}┘${RESET}`);
+  rows.push(`${bd}${box.bl}${box.h.repeat(innerW)}${box.br}${RESET}`);
 
   let out = "";
   for (let k = 0; k < rows.length; k += 1) {
@@ -205,12 +364,30 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
 
-  const tileSublabel = (item: ExposeScopeItem): string =>
-    sublabel === "project"
-      ? (item.projectName ?? "")
-      : sublabel === "worktree"
-        ? shortWorktree(item, options.projectRoot)
-        : "";
+  const tileSublabel = (item: ExposeScopeItem): string => {
+    if (sublabel === "worktree") return shortWorktree(item, options.projectRoot);
+    if (sublabel === "project-worktree") {
+      const worktree = shortWorktree(item, item.projectRoot ?? options.projectRoot);
+      return item.projectName ? `${item.projectName} / ${worktree}` : worktree;
+    }
+    return "";
+  };
+
+  // Read and delete the launcher's backdrop snapshot up front, before any terminal
+  // state or signal handlers exist, so a fatal signal during startup can't leak the
+  // temp file. Opening the popup transiently reflows the host pane, so capturing
+  // in-popup would catch a mis-sized (off-centre) frame — hence the launcher capture.
+  let hostCapture = "";
+  if (options.backdropFile) {
+    try {
+      hostCapture = readFileSync(options.backdropFile, "utf8");
+    } catch {
+      hostCapture = "";
+    }
+    try {
+      unlinkSync(options.backdropFile);
+    } catch {}
+  }
 
   const terminal = new TerminalHost();
   terminal.enterRawMode();
@@ -231,52 +408,103 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   process.once("SIGTERM", onFatalSignal);
 
   const captures = new Map<string, string>();
-  const refreshCaptures = () => {
+  // Returns whether any capture changed, so the refresh loop can skip a repaint when
+  // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
+  const refreshCaptures = (): boolean => {
+    let changed = false;
     for (const item of items) {
+      let next: string;
       try {
-        captures.set(
-          item.target.windowId,
-          tmux.captureTarget(item.target, { startLine: -CAPTURE_LINES, includeEscapes: true }),
+        next = tmux.captureTarget(item.target, { startLine: -CAPTURE_LINES, includeEscapes: true });
+      } catch {
+        next = captures.get(item.target.windowId) ?? "";
+      }
+      if (next !== captures.get(item.target.windowId)) changed = true;
+      captures.set(item.target.windowId, next);
+    }
+    return changed;
+  };
+
+  // Fall back to capturing the host pane now only when the launcher passed no snapshot.
+  if (!hostCapture) {
+    // Prefer the exact host window; fall back to the client session's active pane.
+    const hostTarget = options.currentWindowId || options.currentClientSession;
+    if (hostTarget) {
+      try {
+        hostCapture = tmux.captureTarget(
+          { sessionName: "", windowId: hostTarget, windowIndex: 0, windowName: "" },
+          { startLine: 0, includeEscapes: true },
         );
       } catch {
-        captures.set(item.target.windowId, captures.get(item.target.windowId) ?? "");
+        hostCapture = "";
       }
     }
-  };
+  }
 
   const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
   let index = currentIdx >= 0 ? currentIdx : 0;
+  // Baseline the controlling client size at launch; a later change means the terminal
+  // was resized and the popup must be relaunched to re-fit it.
+  const clientBaseline = queryClientSize(options.clientTty);
   let tileCols = 1;
   let visibleCount = items.length;
+  let lastRenderSize = "";
+  let staticSize = "";
+  let staticVisibleCount = -1;
 
-  const render = () => {
+  const render = (full = true) => {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const layout = computeLayout(items.length, cols, rows);
+    const geo = panelGeometry(cols, rows);
+    const innerW = geo.width - 2;
+    const innerH = geo.height - 2;
+    const layout = computeLayout(items.length, innerW, innerH);
     tileCols = layout.tileCols;
     visibleCount = layout.visibleCount;
     if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
-    const title = `\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`;
     const hidden = items.length - visibleCount;
     const more = hidden > 0 ? `   +${hidden} more (use ^A s)` : "";
     const zoom = scope === "global" ? "" : " · g zoom out";
-    const help = `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`;
+    const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, innerW - 2);
+    const help = truncateAnsi(
+      `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`,
+      innerW - 2,
+    );
+
+    // Wrap each frame in synchronized output so the repaint lands atomically. The dimmed
+    // backdrop and panel frame are static (they depend only on size), so only repaint them
+    // on a full render, a resize, or a tile-count change; the periodic capture refresh and
+    // navigation repaint just the opaque tiles in place. This avoids the full-screen
+    // blank-and-repaint that flickers on terminals which ignore synchronized output.
+    const size = `${cols}x${rows}`;
+    const needsStatic = full || size !== staticSize || visibleCount !== staticVisibleCount;
+    let base = "\x1b[?2026h";
+    if (needsStatic) {
+      const clear = size === lastRenderSize ? "" : "\x1b[2J";
+      lastRenderSize = size;
+      staticSize = size;
+      staticVisibleCount = visibleCount;
+      // Dimmed real backdrop fills the screen; the opaque panel floats inset over it.
+      base += `${clear}${buildBackdrop(hostCapture, cols, rows)}${buildPanelFrame(geo)}`;
+    }
+    const titleAt = `\x1b[${geo.top + 1};${geo.left + 2}H${title}`;
+    const helpAt = `\x1b[${geo.top + innerH};${geo.left + 2}H${help}`;
 
     if (visibleCount === 0) {
       const msg = `No active agents in ${scopeLabel}.`;
-      const col = Math.max(1, Math.floor((cols - msg.length) / 2));
-      const out = `\x1b[2J\x1b[H\x1b[1;2H${title}\x1b[${Math.floor(rows / 2)};${col}H\x1b[2m${msg}${RESET}\x1b[${rows};2H${help}`;
-      process.stdout.write(out);
+      const msgCol = geo.left + 1 + Math.max(0, Math.floor((innerW - msg.length) / 2));
+      const msgRow = geo.top + Math.floor(innerH / 2);
+      process.stdout.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
       return;
     }
 
-    let out = `\x1b[2J\x1b[H\x1b[1;2H${title}`;
+    let out = `${base}${titleAt}`;
     for (let i = 0; i < visibleCount; i += 1) {
       const r = Math.floor(i / layout.tileCols);
       const c = i % layout.tileCols;
-      const top = layout.gridTopRow + r * layout.tileHeight;
-      const left = 1 + c * (layout.tileWidth + GAP);
+      const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
+      const left = geo.left + 1 + c * (layout.tileWidth + GAP);
       const preview = tilePreview(captures.get(items[i]!.target.windowId) ?? "", layout.bodyLines);
       out += drawTile(
         items[i]!,
@@ -289,9 +517,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         layout,
         tileSublabel(items[i]!),
         options,
+        config.expose.dimInactive,
       );
     }
-    out += `\x1b[${rows};2H${help}`;
+    out += `${helpAt}\x1b[?2026l`;
     process.stdout.write(out);
   };
 
@@ -308,8 +537,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     refreshCaptures();
   };
 
-  refreshCaptures();
+  // Paint the backdrop, panel, and tile chrome immediately (previews blank), then capture
+  // previews and repaint just the tiles — so entry shows the framed exposé at once instead
+  // of a blank wait, without re-blanking the backdrop.
   render();
+  if (refreshCaptures()) render(false);
 
   return await new Promise<number>((resolve) => {
     const finish = (code: number) => {
@@ -326,15 +558,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         // openTarget's explicit-client path.
         const suffix = options.currentClientSession?.match(/-client-([a-f0-9]{8})$/)?.[1];
         try {
-          tmux.openTarget(
-            { ...item.target, sessionName: tmux.getProjectSession(item.projectRoot).sessionName },
-            {
-              insideTmux: true,
-              clientTty: options.clientTty,
-              clientSuffix: suffix,
-              returnSessionName: options.currentClientSession,
-            },
-          );
+          tmux.openTarget(item.target, {
+            insideTmux: true,
+            clientTty: options.clientTty,
+            clientSuffix: suffix,
+            returnSessionName: options.currentClientSession,
+          });
         } catch {
           /* target vanished mid-jump; close Exposé regardless */
         }
@@ -375,22 +604,22 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         if (visibleCount === 0) return;
         if (key === "right" || key === "l" || key === "n" || key === "tab") {
           index = (index + 1) % visibleCount;
-          render();
+          render(false);
           return;
         }
         if (key === "left" || key === "h" || key === "p") {
           index = (index - 1 + visibleCount) % visibleCount;
-          render();
+          render(false);
           return;
         }
         if (key === "down" || key === "j") {
           if (index + tileCols < visibleCount) index += tileCols;
-          render();
+          render(false);
           return;
         }
         if (key === "up" || key === "k") {
           if (index - tileCols >= 0) index -= tileCols;
-          render();
+          render(false);
           return;
         }
       } catch {
@@ -403,8 +632,20 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const scheduleRefresh = () => {
       timer = setTimeout(() => {
         try {
-          refreshCaptures();
-          render();
+          // A fixed-size popup can't grow with the terminal, so exit and let the launcher
+          // relaunch us at the new bounds when the controlling client size changes.
+          if (clientBaseline) {
+            const clientNow = queryClientSize(options.clientTty);
+            if (clientNow && clientNow !== clientBaseline) {
+              finish(RELAUNCH_ON_RESIZE_EXIT);
+              return;
+            }
+          }
+          // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
+          // idle exposé still reflows when the window size changes.
+          const captureChanged = refreshCaptures();
+          const sizeNow = `${process.stdout.columns ?? 80}x${process.stdout.rows ?? 24}`;
+          if (captureChanged || sizeNow !== staticSize) render(false);
           scheduleRefresh();
         } catch {
           finish(1);

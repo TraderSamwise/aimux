@@ -6,10 +6,13 @@
 
 import { EventSourcePolyfill } from "event-source-polyfill";
 import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import { getApiRelay, shouldRouteViaRelay } from "@/lib/api";
+import { PROJECT_API_EVENT_NAMES, PROJECT_API_ROUTES } from "../../src/project-api-contract";
 import type {
   AgentOutputEvent,
   AlertEvent,
   ReadyEvent,
+  ProjectUpdateEvent,
   StreamErrorEvent,
   StreamEvent,
 } from "@/lib/events";
@@ -28,7 +31,13 @@ export interface HeartbeatHandle {
   stop: () => void;
 }
 
-const SSE_EVENT_NAMES = ["ready", "alert", "agent_output", "error"] as const;
+const SSE_EVENT_NAMES = [
+  PROJECT_API_EVENT_NAMES.ready,
+  PROJECT_API_EVENT_NAMES.alert,
+  PROJECT_API_EVENT_NAMES.agentOutput,
+  PROJECT_API_EVENT_NAMES.projectUpdate,
+  PROJECT_API_EVENT_NAMES.error,
+] as const;
 
 export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   const { serviceEndpoint, sessionId, startLine, intervalMs, token, onEvent, onError } = options;
@@ -38,10 +47,31 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   if (startLine !== undefined) params.set("startLine", String(startLine));
   if (intervalMs !== undefined) params.set("intervalMs", String(intervalMs));
   const qs = params.toString();
-  const url = `${getServiceUrl(serviceEndpoint)}/events${qs ? `?${qs}` : ""}`;
+  const eventPath = `${PROJECT_API_ROUTES.events}${qs ? `?${qs}` : ""}`;
 
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
+
+  if (shouldRouteViaRelay()) {
+    const relay = getApiRelay();
+    if (!relay) {
+      onError?.(new Error("Relay not connected"));
+      return { stop: () => {} };
+    }
+    try {
+      return relay.subscribeProjectEvents(
+        `/proxy/${serviceEndpoint.host}/${serviceEndpoint.port}${eventPath}`,
+        headers,
+        (name, data) => dispatchPayload(name, data, onEvent, onError),
+        onError ?? (() => {}),
+      );
+    } catch (err) {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+      return { stop: () => {} };
+    }
+  }
+
+  const url = `${getServiceUrl(serviceEndpoint)}${eventPath}`;
 
   // heartbeatTimeout: how long we tolerate silence on the wire before the polyfill
   // tears down and reconnects. Server sends `: keepalive\n\n` every 15s; pick 30s.
@@ -62,9 +92,7 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
       onError?.(err instanceof Error ? err : new Error(String(err)));
       return;
     }
-    // Synthesize the typed event with `type: <name>` field.
-    const typed = { ...(payload as object), type: name } as StreamEvent;
-    onEvent(typed);
+    dispatchPayload(name, payload, onEvent, onError);
   }
 
   // event-source-polyfill's typed addEventListener accepts only the built-in EventSource
@@ -102,5 +130,25 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   };
 }
 
+function dispatchPayload(
+  name: string,
+  payload: unknown,
+  onEvent: (event: StreamEvent) => void,
+  onError: ((error: Error) => void) | undefined,
+): void {
+  if (!payload || typeof payload !== "object") {
+    onError?.(new Error(`heartbeat event ${name} did not include an object payload`));
+    return;
+  }
+  onEvent({ ...(payload as object), type: name } as StreamEvent);
+}
+
 // Re-exports so callers can type-narrow without importing from events directly.
-export type { AgentOutputEvent, AlertEvent, ReadyEvent, StreamErrorEvent, StreamEvent };
+export type {
+  AgentOutputEvent,
+  AlertEvent,
+  ReadyEvent,
+  ProjectUpdateEvent,
+  StreamErrorEvent,
+  StreamEvent,
+};

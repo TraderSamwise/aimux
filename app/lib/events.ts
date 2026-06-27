@@ -1,6 +1,8 @@
 // SSE event taxonomy for the aimux project metadata server (`/events` endpoint).
-// Canonical server-side types live in src/project-events.ts (AlertEvent,
-// AlertKind). Redeclared here so the Expo bundle stays hermetic.
+
+import type { ProjectUpdateEvent } from "../../src/project-api-contract";
+
+export type { ProjectUpdateEvent };
 
 export type AlertKind =
   | "notification"
@@ -75,7 +77,12 @@ export interface StreamErrorEvent {
   error: string;
 }
 
-export type StreamEvent = ReadyEvent | AlertEvent | AgentOutputEvent | StreamErrorEvent;
+export type StreamEvent =
+  | ReadyEvent
+  | AlertEvent
+  | AgentOutputEvent
+  | ProjectUpdateEvent
+  | StreamErrorEvent;
 
 // Display-side representation of an image part as it appears in history.
 export interface HistoryImagePart {

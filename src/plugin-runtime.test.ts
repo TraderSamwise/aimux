@@ -1,12 +1,29 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { deriveAlertFromAgentEvent, ensureBundledDefaultPluginWrappers } from "./plugin-runtime.js";
+import { deriveAlertFromAgentEvent, ensureBundledDefaultPluginWrappers, PluginRuntime } from "./plugin-runtime.js";
+import { initPaths } from "./paths.js";
 
 let tempDir = "";
+let originalAimuxHome: string | undefined;
+let capturedAimuxHome = false;
+let originalCwd = "";
 
 afterEach(() => {
+  if (capturedAimuxHome) {
+    if (originalAimuxHome === undefined) {
+      delete process.env.AIMUX_HOME;
+    } else {
+      process.env.AIMUX_HOME = originalAimuxHome;
+    }
+    capturedAimuxHome = false;
+  }
+  if (originalCwd) {
+    process.chdir(originalCwd);
+    originalCwd = "";
+  }
+  delete (globalThis as { __aimuxFailedPluginStopped?: number }).__aimuxFailedPluginStopped;
   if (tempDir) {
     rmSync(tempDir, { recursive: true, force: true });
     tempDir = "";
@@ -104,5 +121,101 @@ describe("deriveAlertFromAgentEvent", () => {
 
     expect(existsSync(wrapperPath)).toBe(false);
     expect(existsSync(transcriptWrapperPath)).toBe(false);
+  });
+
+  it("stops and reports a plugin that fails during startup with resource exhaustion", async () => {
+    originalAimuxHome = process.env.AIMUX_HOME;
+    capturedAimuxHome = true;
+    originalCwd = process.cwd();
+    tempDir = mkdtempSync(join(tmpdir(), "aimux-plugin-runtime-failed-start-"));
+    const repoRoot = join(tempDir, "repo");
+    const aimuxHome = join(tempDir, "home");
+    const pluginDir = join(aimuxHome, "plugins");
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    mkdirSync(pluginDir, { recursive: true });
+    process.env.AIMUX_HOME = aimuxHome;
+    await initPaths(repoRoot);
+
+    const pluginPath = join(pluginDir, "emfile-plugin.js");
+    writeFileSync(
+      pluginPath,
+      [
+        "export default function plugin() {",
+        "  return {",
+        "    start() {",
+        "      const error = new Error('EMFILE: too many open files, watch');",
+        "      error.code = 'EMFILE';",
+        "      throw error;",
+        "    },",
+        "    stop() {",
+        "      globalThis.__aimuxFailedPluginStopped = (globalThis.__aimuxFailedPluginStopped || 0) + 1;",
+        "    }",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    const runtime = new PluginRuntime({
+      host: "127.0.0.1",
+      port: 43190,
+      pid: process.pid,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await runtime.start();
+    const failed = runtime.getPluginStatuses().find((status) => status.path === pluginPath);
+
+    expect(failed).toMatchObject({
+      source: "user",
+      status: "failed",
+      resourceFailure: true,
+      stoppedAfterFailedStart: true,
+    });
+    expect((globalThis as { __aimuxFailedPluginStopped?: number }).__aimuxFailedPluginStopped).toBe(1);
+
+    await runtime.stop();
+
+    expect((globalThis as { __aimuxFailedPluginStopped?: number }).__aimuxFailedPluginStopped).toBe(1);
+  });
+
+  it("reports invalid user plugin module shapes as failed statuses", async () => {
+    originalAimuxHome = process.env.AIMUX_HOME;
+    capturedAimuxHome = true;
+    originalCwd = process.cwd();
+    tempDir = mkdtempSync(join(tmpdir(), "aimux-plugin-runtime-invalid-shape-"));
+    const repoRoot = join(tempDir, "repo");
+    const aimuxHome = join(tempDir, "home");
+    const pluginDir = join(aimuxHome, "plugins");
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    mkdirSync(pluginDir, { recursive: true });
+    process.env.AIMUX_HOME = aimuxHome;
+    await initPaths(repoRoot);
+
+    const noDefaultPath = join(pluginDir, "no-default.js");
+    const noInstancePath = join(pluginDir, "no-instance.js");
+    writeFileSync(noDefaultPath, "export const plugin = true;\n");
+    writeFileSync(noInstancePath, "export default function plugin() {}\n");
+
+    const runtime = new PluginRuntime({
+      host: "127.0.0.1",
+      port: 43190,
+      pid: process.pid,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await runtime.start();
+    try {
+      const statuses = runtime.getPluginStatuses();
+
+      expect(statuses.find((status) => status.path === noDefaultPath)).toMatchObject({
+        source: "user",
+        status: "failed",
+        error: "default export must be a function",
+      });
+      expect(statuses.find((status) => status.path === noInstancePath)).toBeUndefined();
+    } finally {
+      await runtime.stop();
+    }
   });
 });

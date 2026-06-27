@@ -1,5 +1,5 @@
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import {
   buildHelpOverlayOutput,
   buildMigratePickerOverlayOutput,
@@ -95,7 +95,7 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "q") {
     host.exitDashboardClientOrProcess();
@@ -105,24 +105,24 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     dismissHelp(host);
     return;
   }
+  if (key === "l") {
+    dismissHelp(host);
+    host.showLibrary();
+    return;
+  }
+  if (key === "t") {
+    dismissHelp(host);
+    host.showTopology();
+    return;
+  }
+  if (key === "c") {
+    dismissHelp(host);
+    host.showCoordination();
+    return;
+  }
   if (key === "p") {
     dismissHelp(host);
-    host.showPlans();
-    return;
-  }
-  if (key === "i") {
-    dismissHelp(host);
-    host.showNotifications();
-    return;
-  }
-  if (key === "a") {
-    dismissHelp(host);
-    host.showActivityDashboard();
-    return;
-  }
-  if (key === "y") {
-    dismissHelp(host);
-    host.showWorkflow();
+    host.showProject();
     return;
   }
   if (key === "g") {
@@ -149,7 +149,7 @@ export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "s") {
     const list = getSwitcherList(host);
@@ -183,12 +183,25 @@ export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
 
 export function showMigratePicker(host: NavigationHost, sessionId?: string): void {
   try {
-    const worktrees = listAllWorktrees();
-    const mainRepo = findMainRepo();
-    host.migratePickerWorktrees = [
-      { name: "(main)", path: mainRepo },
-      ...worktrees.filter((wt) => wt.path !== mainRepo).map((wt) => ({ name: wt.name, path: wt.path })),
-    ];
+    if (host.mode === "dashboard" && Array.isArray(host.dashboardWorktreeGroupsCache)) {
+      const mainRepo = host.projectRoot ?? findMainRepo();
+      host.migratePickerWorktrees = host.dashboardWorktreeGroupsCache
+        .map((group: any) => ({
+          name: group.path === undefined ? "(main)" : group.name,
+          path: group.path ?? mainRepo,
+        }))
+        .filter(
+          (entry: any, index: number, entries: any[]) =>
+            entries.findIndex((item) => item.path === entry.path) === index,
+        );
+    } else {
+      const worktrees = listAllWorktrees();
+      const mainRepo = findMainRepo();
+      host.migratePickerWorktrees = [
+        { name: "(main)", path: mainRepo },
+        ...worktrees.filter((wt) => wt.path !== mainRepo).map((wt) => ({ name: wt.name, path: wt.path })),
+      ];
+    }
   } catch {
     host.migratePickerWorktrees = [];
   }
@@ -215,7 +228,7 @@ export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   host.clearDashboardOverlay();
 

@@ -86,6 +86,7 @@ describe("findLiveDashboardTarget", () => {
       captureTarget: vi.fn(() => ""),
       killWindow: vi.fn(),
       respawnWindow: vi.fn(),
+      setSessionOption: vi.fn(),
       setWindowOption: vi.fn(),
     } as unknown as TmuxRuntimeManager;
 
@@ -94,10 +95,58 @@ describe("findLiveDashboardTarget", () => {
     resolveDashboardTarget("/Users/sam/cs/glyde-frontend", tmux);
 
     expect(tmux.respawnWindow).toHaveBeenCalledWith(dashboardTarget, expect.any(Object));
+    expect(tmux.setSessionOption).toHaveBeenCalledWith(
+      "aimux-glyde-frontend-abc123",
+      "@aimux-dashboard-build",
+      dashboardBuildStamp,
+    );
     expect(tmux.setWindowOption).toHaveBeenCalledWith(
       dashboardTarget,
       TMUX_DASHBOARD_OWNER_OPTION,
       getRuntimeOwnerId(),
+    );
+  });
+
+  it("backfills the host session dashboard build stamp before returning a live dashboard", () => {
+    const { dashboardBuildStamp } = getDashboardCommandSpec("/Users/sam/cs/glyde-frontend");
+    const dashboardTarget = {
+      sessionName: "aimux-glyde-frontend-abc123",
+      windowId: "@1",
+      windowIndex: 0,
+      windowName: "dashboard",
+    };
+    const tmux = {
+      getProjectSession: vi.fn(() => ({
+        projectRoot: "/Users/sam/cs/glyde-frontend",
+        projectId: "glyde",
+        sessionName: "aimux-glyde-frontend-abc123",
+      })),
+      getOpenSessionName: vi.fn(() => "aimux-glyde-frontend-abc123"),
+      isInsideTmux: vi.fn(() => false),
+      currentClientSession: vi.fn(() => null),
+      listSessionNames: vi.fn(() => ["aimux-glyde-frontend-abc123"]),
+      hasSession: vi.fn(() => true),
+      listWindows: vi.fn(() => [{ id: "@1", index: 0, name: "dashboard", active: true }]),
+      isWindowAlive: vi.fn(() => true),
+      getWindowOption: vi.fn((_target: unknown, key: string) =>
+        key === TMUX_DASHBOARD_OWNER_OPTION ? getRuntimeOwnerId() : dashboardBuildStamp,
+      ),
+      getSessionOption: vi.fn((_sessionName: string, key: string) =>
+        key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : "/Users/sam/cs/glyde-frontend",
+      ),
+      displayMessage: vi.fn(() => "bash"),
+      captureTarget: vi.fn(() => ""),
+      killWindow: vi.fn(),
+      setSessionOption: vi.fn(),
+    } as unknown as TmuxRuntimeManager;
+
+    const resolved = resolveDashboardTarget("/Users/sam/cs/glyde-frontend", tmux);
+
+    expect(resolved.dashboardTarget).toEqual(dashboardTarget);
+    expect(tmux.setSessionOption).toHaveBeenCalledWith(
+      "aimux-glyde-frontend-abc123",
+      "@aimux-dashboard-build",
+      dashboardBuildStamp,
     );
   });
 });

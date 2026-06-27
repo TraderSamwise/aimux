@@ -1,5 +1,5 @@
 import { loadConfig, type ToolConfig } from "../config.js";
-import { parseKeys } from "../key-parser.js";
+import { commandKey, parseKeys } from "../key-parser.js";
 import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../shell-args.js";
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
 import { truncateAnsi } from "../tui/render/text.js";
@@ -310,7 +310,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
   const tools = enabledTools();
   const selectedIndex = clampPickerIndex(host, tools);
 
@@ -378,7 +378,7 @@ export function handleToolOptionsKey(host: ToolPickerHost, data: Buffer): void {
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
   const state: LaunchOptionsState | null = host.launchOptionsState;
 
   const backToPicker = () => {

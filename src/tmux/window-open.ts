@@ -1,5 +1,12 @@
 import type { TmuxRuntimeManager, TmuxTarget } from "./runtime-manager.js";
 
+export type TmuxFocusMode = "client-tty" | "linked-client-session" | "open-target";
+
+export interface TmuxFocusResult {
+  focused: true;
+  focusMode: TmuxFocusMode;
+}
+
 export function resolveLiveClientTty(
   tmux: TmuxRuntimeManager,
   currentClientSession?: string,
@@ -20,7 +27,7 @@ export function openTargetForClient(
   target: TmuxTarget,
   currentClientSession?: string,
   clientTty?: string,
-): void {
+): TmuxFocusResult {
   const liveClientTty =
     resolveLiveClientTty(tmux, currentClientSession, clientTty) ?? tmux.getAttachedClientForTarget(target)?.tty;
   if (liveClientTty) {
@@ -29,7 +36,7 @@ export function openTargetForClient(
     if (target.windowName.startsWith("dashboard")) {
       tmux.sendFocusIn(target);
     }
-    return;
+    return { focused: true, focusMode: "client-tty" };
   }
   if (currentClientSession) {
     const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
@@ -39,11 +46,12 @@ export function openTargetForClient(
       if (linkedTarget.windowName.startsWith("dashboard")) {
         tmux.sendFocusIn(linkedTarget);
       }
-      return;
+      return { focused: true, focusMode: "linked-client-session" };
     }
   }
   tmux.openTarget(target, { insideTmux: Boolean(currentClientSession) });
   tmux.refreshStatus();
+  return { focused: true, focusMode: "open-target" };
 }
 
 export function selectLinkedOrOpenTarget(tmux: TmuxRuntimeManager, target: TmuxTarget): void {
@@ -73,7 +81,8 @@ export function openManagedSessionWindow(
         (candidate) =>
           candidate.metadata.kind === "agent" &&
           ((entry.tmuxWindowId && candidate.target.windowId === entry.tmuxWindowId) ||
-            candidate.metadata.sessionId === entry.id),
+            candidate.metadata.sessionId === entry.id ||
+            (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId)),
       ) ?? null;
   if (!match) return null;
   selectLinkedOrOpenTarget(tmux, match.target);

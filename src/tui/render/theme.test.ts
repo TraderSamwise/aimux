@@ -5,10 +5,17 @@ import {
   chip,
   cols,
   divider,
+  footerHints,
   keycap,
+  keycapHint,
+  keycapHintLines,
+  keycapHints,
   padVisible,
+  recede,
+  renderFooterHints,
   pill,
   statusDot,
+  statusTone,
   style,
   tmuxInvert,
   tmuxStyle,
@@ -28,6 +35,16 @@ describe("theme tokens", () => {
     expect(stripAnsi(statusDot("needs"))).toBe("◉");
     expect(stripAnsi(statusDot("service"))).toBe("◆");
     expect(statusDot("error")).toContain("\x1b[31m");
+  });
+
+  it("gives ready a distinct online color, not the offline gray", () => {
+    expect(statusTone("ready")).toBe("ready");
+    expect(statusTone("ready")).not.toBe(statusTone("offline"));
+    // ready paints sky blue (256-color 75); offline stays dim gray (\x1b[2m).
+    expect(style("x", "ready")).toContain("38;5;75");
+    expect(statusDot("ready")).toContain("38;5;75");
+    expect(statusDot("offline")).toContain("\x1b[2m");
+    expect(statusDot("ready")).not.toContain("\x1b[2m");
   });
 });
 
@@ -67,6 +84,119 @@ describe("theme primitives", () => {
 
   it("renders a divider of exact width", () => {
     expect(stripAnsi(divider(5))).toBe("─────");
+  });
+
+  it("renders keycap hints as a keycap plus muted label", () => {
+    expect(stripAnsi(keycapHint("q", "quit"))).toBe(" q  quit");
+    expect(stripAnsi(keycapHint("Esc"))).toBe(" Esc ");
+    expect(keycapHint("q", "quit")).toContain(keycap("q"));
+  });
+
+  it("tints destructive keycaps red and uses the standard glyph otherwise", () => {
+    expect(keycap("n")).toContain("38;5;255");
+    expect(keycap("x", "danger")).toContain("38;5;203");
+    expect(keycapHint("x", "kill", "danger")).toContain(keycap("x", "danger"));
+  });
+
+  it("styles a footer line into keycap groups, supporting [key] and key forms", () => {
+    const rendered = keycapHints("[↑↓] select  q quit");
+    expect(stripAnsi(rendered)).toBe(" ↑↓  select   q  quit");
+    expect(rendered).toContain(keycap("↑↓"));
+    expect(rendered).toContain(keycap("q"));
+  });
+
+  it("styles a footer line box-free (bold glyph keys, no pill background)", () => {
+    const rendered = footerHints("[↑↓] select  q quit");
+    expect(stripAnsi(rendered)).toBe("↑↓ select  q quit");
+    expect(rendered).not.toContain("48;5;"); // no keycap background fill
+    expect(rendered).toContain("\x1b[1;38;5;255m↑↓"); // bold key glyph
+  });
+
+  it("wraps keycap hint groups to a width budget across lines", () => {
+    const lines = keycapHintLines("[a] alpha  [b] bravo  [c] charlie", 14);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(14);
+  });
+});
+
+describe("recede", () => {
+  it("faint mode prepends the gray faint lead and re-injects it after embedded resets", () => {
+    expect(recede("plain")).toBe("\x1b[2;38;5;240mplain\x1b[0m");
+    // A pre-styled span keeps its color but gains faint, and the lead resumes after the reset.
+    expect(recede(`${style("hi", "danger")}bye`)).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m\x1b[2;38;5;240mbye\x1b[0m");
+  });
+
+  it("faint mode also matches the shorthand reset \\x1b[m", () => {
+    expect(recede("a\x1b[mb")).toBe("\x1b[2;38;5;240ma\x1b[0m\x1b[2;38;5;240mb\x1b[0m");
+  });
+
+  it("faint mode resumes after reset-led sequences, re-emitting their params", () => {
+    // A reset-led form clears faint, so re-apply the lead AND the params (here bold) after it.
+    expect(recede("x\x1b[0;1my")).toBe("\x1b[2;38;5;240mx\x1b[0m\x1b[2;38;5;240m\x1b[1my\x1b[0m");
+    // A non-reset color (\x1b[31m) is left intact so its color still shows, dimmed.
+    expect(recede("\x1b[31mhi")).toBe("\x1b[2;38;5;240m\x1b[31mhi\x1b[0m");
+  });
+
+  it("faint mode keeps a reset-led color (e.g. \\x1b[0;31m) so backdrops stay colored", () => {
+    const out = recede("\x1b[0;31mred");
+    expect(out).toContain("\x1b[31m"); // the red survives the reset, just faint-dimmed
+    expect(out).toContain("\x1b[2;38;5;240m"); // and the faint lead is reapplied after the reset
+    expect(stripAnsi(out)).toBe("red");
+  });
+
+  it("flatten modes strip color and re-emit as a single 256-color gray", () => {
+    expect(recede(style("hi", "danger"), "soft")).toBe("\x1b[38;5;250mhi\x1b[0m");
+    expect(recede(style("hi", "danger"), "deep")).toBe("\x1b[38;5;240mhi\x1b[0m");
+  });
+
+  it("preserves visible width when flattening multicolor content", () => {
+    const colored = `${style("ab", "work")}${style("cd", "accent")}`;
+    expect(visibleWidth(colored)).toBe(4);
+    expect(visibleWidth(recede(colored, "deep"))).toBe(4);
+    expect(stripAnsi(recede(colored, "deep"))).toBe("abcd");
+  });
+
+  it("returns an empty string unchanged in every mode", () => {
+    expect(recede("")).toBe("");
+    expect(recede("", "soft")).toBe("");
+    expect(recede("", "deep")).toBe("");
+  });
+});
+
+describe("renderFooterHints", () => {
+  it("renders all hints on one line when they fit", () => {
+    const [line, ...rest] = renderFooterHints(
+      [
+        ["u", "attention"],
+        ["n", "agent"],
+        ["q", "quit"],
+      ],
+      200,
+    );
+    expect(rest).toHaveLength(0);
+    const plain = stripAnsi(line);
+    expect(plain).toContain("attention");
+    expect(plain).toContain("agent");
+    expect(plain).toContain("quit");
+  });
+
+  it("tints destructive hints red", () => {
+    const [line] = renderFooterHints([["x", "kill", "danger"]], 200);
+    expect(line).toContain("38;5;203");
+  });
+
+  it("wraps a long list to the width budget, showing every hint", () => {
+    const hints: Array<[string, string]> = [
+      ["a", "alpha"],
+      ["b", "bravo"],
+      ["c", "charlie"],
+      ["d", "delta"],
+    ];
+    const lines = renderFooterHints(hints, 16);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(16);
+    const all = lines.map(stripAnsi).join(" ");
+    for (const [, label] of hints) expect(all).toContain(label);
   });
 });
 
@@ -134,12 +264,14 @@ describe("theme primitive branches", () => {
       "danger",
       "blocked",
       "info",
+      "ready",
       "idle",
     ] as const) {
       expect(visibleWidth(style("abc", tone))).toBe(3);
     }
     for (const kind of [
       "working",
+      "ready",
       "idle",
       "offline",
       "needs",

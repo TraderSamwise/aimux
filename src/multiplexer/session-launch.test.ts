@@ -1060,32 +1060,185 @@ describe("migrateAgent", () => {
 
 describe("focusSession", () => {
   it("does not use durable backend metadata when opening a session that missed its backend id", async () => {
+    vi.useFakeTimers();
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-"));
-    gitInit(repoRoot);
-    await initPaths(repoRoot);
+    try {
+      gitInit(repoRoot);
+      await initPaths(repoRoot);
 
-    const host: any = {
-      sessions: [{ id: "claude-1" }],
-      activeIndex: 0,
-      sessionMRU: [],
-      agentTracker: { markSeen: vi.fn() },
-      noteLastUsedItem: vi.fn(),
-      syncTuiNotificationContext: vi.fn(),
-      sessionTmuxTargets: new Map(),
-      tmuxRuntimeManager: { getTargetByWindowId: vi.fn() },
-      openLiveTmuxWindowForEntry: vi.fn(() => "opened"),
-      saveState: vi.fn(),
-    };
+      const host: any = {
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
+        agentTracker: { markSeen: vi.fn() },
+        noteLastUsedItem: vi.fn(),
+        sessionTmuxTargets: new Map(),
+        tmuxRuntimeManager: { getTargetByWindowId: vi.fn() },
+        openLiveTmuxWindowForEntry: vi.fn(() => "opened"),
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        saveState: vi.fn(),
+      };
 
-    focusSession(host, 0);
+      focusSession(host, 0);
+      await vi.runOnlyPendingTimersAsync();
 
-    expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
-      id: "claude-1",
-      backendSessionId: undefined,
-    });
-    expect(host.saveState).toHaveBeenCalledOnce();
+      expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
+        id: "claude-1",
+        backendSessionId: undefined,
+      });
+      expect(host.activeIndex).toBe(0);
+      expect(host.sessionMRU).toEqual(["claude-1", "codex-2"]);
+      expect(host.saveState).toHaveBeenCalledOnce();
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(1, "/notification-context", {
+        source: "tui",
+        focused: true,
+        screen: "agent",
+        sessionId: "claude-1",
+        panelOpen: false,
+      });
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(2, "/mark-seen", { session: "claude-1" });
+    } finally {
+      vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 
-    rmSync(repoRoot, { recursive: true, force: true });
+  it("keeps existing tmux targets focused as agent context", async () => {
+    vi.useFakeTimers();
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-existing-"));
+    try {
+      gitInit(repoRoot);
+      await initPaths(repoRoot);
+
+      const target = { sessionName: "aimux-test", windowId: "@1", windowName: "claude" };
+      const host: any = {
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
+        agentTracker: { markSeen: vi.fn() },
+        noteLastUsedItem: vi.fn(),
+        sessionTmuxTargets: new Map([["claude-1", target]]),
+        tmuxRuntimeManager: {
+          getTargetByWindowId: vi.fn(() => target),
+          getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-1" })),
+        },
+        selectLinkedOrOpenTarget: vi.fn(),
+        openLiveTmuxWindowForEntry: vi.fn(),
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        saveState: vi.fn(),
+      };
+
+      focusSession(host, 0);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(host.tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledWith("aimux-test", "@1");
+      expect(host.selectLinkedOrOpenTarget).toHaveBeenCalledWith(target);
+      expect(host.openLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+      expect(host.activeIndex).toBe(0);
+      expect(host.sessionMRU).toEqual(["claude-1", "codex-2"]);
+      expect(host.saveState).toHaveBeenCalledOnce();
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(1, "/notification-context", {
+        source: "tui",
+        focused: true,
+        screen: "agent",
+        sessionId: "claude-1",
+        panelOpen: false,
+      });
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(2, "/mark-seen", { session: "claude-1" });
+    } finally {
+      vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark stale failed targets as focused or seen", async () => {
+    vi.useFakeTimers();
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-stale-"));
+    try {
+      gitInit(repoRoot);
+      await initPaths(repoRoot);
+
+      const staleTarget = { sessionName: "aimux-test", windowId: "@2", windowName: "claude" };
+      const host: any = {
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
+        agentTracker: { markSeen: vi.fn() },
+        noteLastUsedItem: vi.fn(),
+        sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
+        tmuxRuntimeManager: {
+          getTargetByWindowId: vi.fn(() => undefined),
+          getWindowMetadata: vi.fn(() => null),
+          listProjectManagedWindows: vi.fn(() => []),
+        },
+        selectLinkedOrOpenTarget: vi.fn(),
+        openLiveTmuxWindowForEntry: vi.fn(() => "missing"),
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        saveState: vi.fn(),
+      };
+
+      focusSession(host, 0);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(host.tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledWith("aimux-test", "@2");
+      expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
+        id: "claude-1",
+        backendSessionId: undefined,
+      });
+      expect(host.selectLinkedOrOpenTarget).not.toHaveBeenCalled();
+      expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+      expect(host.activeIndex).toBe(1);
+      expect(host.sessionMRU).toEqual(["codex-2"]);
+      expect(host.sessionTmuxTargets.has("claude-1")).toBe(false);
+      expect(host.postToProjectService).not.toHaveBeenCalled();
+      expect(host.saveState).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not focus a cached tmux target that now belongs to another session", async () => {
+    vi.useFakeTimers();
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-alias-"));
+    try {
+      gitInit(repoRoot);
+      await initPaths(repoRoot);
+
+      const staleTarget = { sessionName: "aimux-test", windowId: "@3", windowName: "claude" };
+      const host: any = {
+        sessions: [{ id: "claude-1" }, { id: "codex-2" }],
+        activeIndex: 1,
+        sessionMRU: ["codex-2"],
+        agentTracker: { markSeen: vi.fn() },
+        noteLastUsedItem: vi.fn(),
+        sessionTmuxTargets: new Map([["claude-1", staleTarget]]),
+        tmuxRuntimeManager: {
+          getTargetByWindowId: vi.fn(() => staleTarget),
+          getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-2" })),
+          listProjectManagedWindows: vi.fn(() => []),
+        },
+        selectLinkedOrOpenTarget: vi.fn(),
+        openLiveTmuxWindowForEntry: vi.fn(() => "missing"),
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        saveState: vi.fn(),
+      };
+
+      focusSession(host, 0);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(host.tmuxRuntimeManager.getTargetByWindowId).toHaveBeenCalledWith("aimux-test", "@3");
+      expect(host.tmuxRuntimeManager.getWindowMetadata).toHaveBeenCalledWith(staleTarget);
+      expect(host.selectLinkedOrOpenTarget).not.toHaveBeenCalled();
+      expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+      expect(host.activeIndex).toBe(1);
+      expect(host.sessionMRU).toEqual(["codex-2"]);
+      expect(host.postToProjectService).not.toHaveBeenCalled();
+      expect(host.saveState).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1425,10 +1578,13 @@ describe("resumeSessions", () => {
 });
 
 describe("runProjectService", () => {
-  it("starts without legacy dispatchers", async () => {
+  it("adopts live topology before exposing the project service", async () => {
     const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
+      tmuxRuntimeManager: {
+        repairLegacyProjectSessionNames: vi.fn(),
+      },
       syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
@@ -1447,6 +1603,19 @@ describe("runProjectService", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.mode).toBe("project-service");
+    expect(host.tmuxRuntimeManager.repairLegacyProjectSessionNames).toHaveBeenCalledWith(process.cwd());
+    expect(host.tmuxRuntimeManager.repairLegacyProjectSessionNames.mock.invocationCallOrder[0]).toBeLessThan(
+      host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0],
+    );
+    expect(host.syncSessionsFromTopology.mock.invocationCallOrder[0]).toBeLessThan(
+      host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0],
+    );
+    expect(host.refreshDesktopStateSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      host.startProjectServices.mock.invocationCallOrder[0],
+    );
+    expect(host.syncSessionsFromTopology.mock.invocationCallOrder[0]).toBeLessThan(
+      host.writeInstructionFiles.mock.invocationCallOrder[0],
+    );
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
     expect(host.startGraveyardCleanup).toHaveBeenCalledOnce();
     expect(host.cleanupGraveyard).toHaveBeenCalledOnce();
@@ -1529,6 +1698,7 @@ describe("runDashboard", () => {
       },
       isFocusInReport: vi.fn(() => false),
       handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
       isDashboardScreen: vi.fn(() => false),
       handleDashboardKey: vi.fn(),
       getViewportKey: vi.fn(() => "120x40"),
@@ -1560,5 +1730,371 @@ describe("runDashboard", () => {
     expect(host.renderDashboard).not.toHaveBeenCalled();
     expect(host.hydrateDashboardScreenState).toHaveBeenCalledOnce();
     expect(host.writeDashboardClientStatuslineFile).toHaveBeenCalledOnce();
+  });
+
+  it("lets active overlays own keys before the runtime guard", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => true),
+      handleActiveDashboardOverlayKey: vi.fn(() => true),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+    host.onStdinData(Buffer.from("n"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.handleActiveDashboardOverlayKey).toHaveBeenCalledWith(Buffer.from("n"));
+    expect(host.handleRuntimeGuardKey).not.toHaveBeenCalled();
+  });
+
+  it("clears the startup busy state when repair completes without a fresh model change", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.ensureDashboardControlPlane).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.dashboardBusyState).toBeNull());
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.renderCurrentDashboardView).toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("clears the startup busy state and reports a repair failure when the service remains unavailable", async () => {
+    const serviceError = new Error("service still unavailable");
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshError = serviceError;
+        return false;
+      }),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.ensureDashboardControlPlane).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["service still unavailable"]),
+    );
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalled();
+  });
+
+  it("does not render or report stale startup repair after later dashboard input", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockImplementationOnce(async () => {
+          host.dashboardModelServiceRefreshError = undefined;
+          host.dashboardModelServiceRefreshedAt = 2;
+          return true;
+        }),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => {
+        host.mode = "dashboard";
+        host.dashboardInputEpoch = 1;
+      }),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.ensureDashboardControlPlane).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.dashboardBusyState).toBeNull());
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("initializes dashboard input epoch before hydrate and priming refresh", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(() => {
+        expect(host.dashboardInputEpoch).toBe(0);
+      }),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
+      }),
+    );
+    await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+  });
+
+  it("does not discard startup priming data after later dashboard input", async () => {
+    let resolvePriming!: () => void;
+    const primingSettled = new Promise<void>((resolve) => {
+      resolvePriming = resolve;
+    });
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
+        await primingSettled;
+        return opts?.lifecycle?.requiresInputEpoch ? false : true;
+      }),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    resolvePriming();
+    await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
+      }),
+    );
+    expect(host.dashboardBusyState).toBeUndefined();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("does not render or report stale startup repair after a newer dashboard run starts", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      dashboardModelServiceRefreshedAt: 1,
+      dashboardModelServiceRefreshError: undefined,
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => {
+        host.dashboardRunGeneration += 1;
+      }),
+      startStatusRefresh: vi.fn(),
+      showDashboardError: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.ensureDashboardControlPlane).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.dashboardBusyState).toBeNull());
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 });

@@ -1,27 +1,28 @@
-import { loadConfig } from "../config.js";
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
-import { updateNotificationContext } from "../notification-context.js";
-import { requestJson } from "../http-client.js";
+import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
-import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
-import { parseKeys } from "../key-parser.js";
-import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
-import { getProjectStateDir } from "../paths.js";
-import { loadTeamConfig, isOverseerSession } from "../team.js";
+import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
+import { commandKey, parseKeys } from "../key-parser.js";
+import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
+import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
+import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
+import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
-import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
+import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
   buildDashboardErrorOverlayOutput,
+  buildDashboardRuntimeGuardOverlayOutput,
   buildLabelInputOverlayOutput,
   buildMigratePickerOverlayOutput,
-  buildNotificationPanelOverlayOutput,
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
   buildTeammatePickerOverlayOutput,
@@ -34,22 +35,56 @@ import { keycap, style } from "../tui/render/theme.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
 import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
+import {
+  captureDashboardLifecycle,
+  isDashboardLifecycleCurrent,
+  renderDashboardIfCurrent,
+  type DashboardLifecycleToken,
+} from "./dashboard-lifecycle.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
+import {
+  probeRuntimeGuard,
+  runtimeGuardEquals,
+  runtimeGuardKeyDisposition,
+  stabilizeRuntimeGuardProbe,
+  type RuntimeGuardState,
+} from "./runtime-guard.js";
+import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
 
 type DashboardControlHost = any;
-type DashboardOrchestrationTarget = {
-  label: string;
-  sessionId?: string;
-  assignee?: string;
-  tool?: string;
-  worktreePath?: string;
-  recipientIds?: string[];
-};
+type DashboardOrchestrationTarget = OrchestrationRouteOption;
+const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
+const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
+const RUNTIME_GUARD_REPAIR_KILL_GRACE_MS = 5_000;
+const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
+const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
+type ProjectServiceEndpointState = "current" | "stale" | "unknown";
 
-function writeStatuslineTextFile(name: string, content: string): void {
+export function dashboardProjectRoot(host: DashboardControlHost): string {
+  const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  return projectRoot || process.cwd();
+}
+
+export class DashboardProjectServiceHttpError extends Error {
+  readonly tuiApiRecoverable: boolean;
+
+  constructor(
+    readonly status: number,
+    readonly response: unknown,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DashboardProjectServiceHttpError";
+    this.tuiApiRecoverable = isProjectServiceRetryableStatus(status) || status >= 500;
+  }
+}
+
+function writeStatuslineTextFile(projectRoot: string, name: string, content: string): void {
   // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
   // unique-temp atomic write (never a shared ".tmp"), and never fatal.
   try {
-    writeTextAtomic(join(getProjectStateDir(), "tmux-statusline", name), `${content}\n`);
+    writeTextAtomic(join(getProjectStateDirFor(projectRoot), "tmux-statusline", name), `${content}\n`);
   } catch (error) {
     debug(
       `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -60,22 +95,22 @@ function writeStatuslineTextFile(name: string, content: string): void {
 
 function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: string; windowName: string }): void {
   try {
-    const data = loadStatusline(process.cwd());
+    const projectRoot = dashboardProjectRoot(host);
+    const data = loadStatusline(projectRoot);
     if (!data) return;
-    const currentPath =
-      host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? process.cwd();
-    const top = renderTmuxStatuslineFromData(data, process.cwd(), "top", {
+    const currentPath = host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? projectRoot;
+    const top = renderTmuxStatuslineFromData(data, projectRoot, "top", {
       currentWindow: target.windowName,
       currentWindowId: target.windowId,
       currentPath,
     });
-    const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+    const bottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", {
       currentWindow: target.windowName,
       currentWindowId: target.windowId,
       currentPath,
     });
-    writeStatuslineTextFile(`top-${target.windowId}.txt`, top);
-    writeStatuslineTextFile(`bottom-${target.windowId}.txt`, bottom);
+    writeStatuslineTextFile(projectRoot, `top-${target.windowId}.txt`, top);
+    writeStatuslineTextFile(projectRoot, `bottom-${target.windowId}.txt`, bottom);
   } catch {}
 }
 
@@ -113,8 +148,7 @@ export function syncTuiNotificationContext(host: DashboardControlHost, panelOpen
         ? host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex]?.id
         : undefined
       : host.getDashboardSessions()[host.activeIndex]?.id;
-  updateNotificationContext("tui", {
-    focused: true,
+  noteTuiNotificationContext(host, {
     screen: host.dashboardState.screen,
     sessionId: selected,
     panelOpen,
@@ -133,6 +167,373 @@ export function setDashboardScreen(host: DashboardControlHost, screen: Dashboard
   host.tmuxRuntimeManager.refreshStatus();
 }
 
+// Intercept keys while the dashboard is guarded: let safe nav keys through,
+// swallow everything that could mutate. Returns true when the key was consumed.
+export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer): boolean {
+  if (!host.runtimeGuardState || host.runtimeGuardState.kind === "ok") return false;
+  if (host.dashboardBusyState || host.dashboardErrorState) return false;
+  const overlayKind = host.dashboardOverlayState?.kind;
+  if (overlayKind && overlayKind !== "none") return false;
+  const events = parseKeys(data);
+  // Unrecognized/empty sequences can't mutate (no handler acts on them); let them fall through
+  // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
+  if (events.length === 0) return false;
+  const key = commandKey(events[0]);
+  const disposition = runtimeGuardKeyDisposition(key);
+  if (disposition === "passthrough") return false;
+  showDashboardFooterFlash(
+    host,
+    host.runtimeGuardState.kind === "disconnected"
+      ? "Aimux is reconnecting to the project service"
+      : "Aimux is repairing the local control plane",
+    3,
+  );
+  host.renderCurrentDashboardView();
+  return true;
+}
+
+function shouldAutoRepairRuntimeGuard(state: RuntimeGuardState): boolean {
+  return state.kind === "stale" || state.kind === "runtime-rebuild-required";
+}
+
+function runtimeGuardRepairKey(state: RuntimeGuardState): string {
+  return state.kind === "stale" ? `${state.kind}:${state.reason}` : state.kind;
+}
+
+function showDashboardFooterFlash(host: DashboardControlHost, message: string, ticks: number): void {
+  host.footerFlash = message;
+  host.footerFlashTicks = ticks;
+}
+
+function runtimeGuardRepairLockPath(): string {
+  return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
+}
+
+function runtimeGuardRepairStealLockPath(): string {
+  return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair.steal");
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readRuntimeGuardRepairLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeRuntimeGuardRepairLockOwner(lockPath: string, pid: number, projectRoot: string): void {
+  writeFileSync(
+    join(lockPath, "owner.json"),
+    `${JSON.stringify({ pid, projectRoot, acquiredAt: new Date().toISOString() })}\n`,
+  );
+}
+
+function tryAcquireRuntimeGuardRepairStealLock(): string | null {
+  const stealPath = runtimeGuardRepairStealLockPath();
+  const writeOwner = (): boolean => {
+    try {
+      writeFileSync(
+        join(stealPath, "owner.json"),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+      );
+      return true;
+    } catch {
+      rmSync(stealPath, { recursive: true, force: true });
+      return false;
+    }
+  };
+  try {
+    mkdirSync(stealPath, { recursive: false });
+    if (!writeOwner()) return null;
+    return stealPath;
+  } catch {
+    try {
+      if (Date.now() - statSync(stealPath).mtimeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
+        rmSync(stealPath, { recursive: true, force: true });
+        mkdirSync(stealPath, { recursive: false });
+        if (!writeOwner()) return null;
+        return stealPath;
+      }
+    } catch {
+      if (!existsSync(stealPath)) return tryAcquireRuntimeGuardRepairStealLock();
+    }
+    return null;
+  }
+}
+
+function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
+  const lockPath = runtimeGuardRepairLockPath();
+  const acquire = (): string | null => {
+    try {
+      mkdirSync(lockPath);
+      try {
+        writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+      } catch (error) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+      return lockPath;
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EEXIST") throw error;
+      return null;
+    }
+  };
+
+  mkdirSync(join(getGlobalAimuxDir(), "locks"), { recursive: true });
+  const acquired = acquire();
+  if (acquired) return acquired;
+  try {
+    const ownerPid = readRuntimeGuardRepairLockPid(lockPath);
+    const ageMs = Date.now() - statSync(lockPath).mtimeMs;
+    if ((ownerPid && !isPidAlive(ownerPid)) || (!ownerPid && ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)) {
+      const stealPath = tryAcquireRuntimeGuardRepairStealLock();
+      if (!stealPath) return null;
+      try {
+        const currentOwnerPid = readRuntimeGuardRepairLockPid(lockPath);
+        const currentAgeMs = Date.now() - statSync(lockPath).mtimeMs;
+        if (
+          !(
+            (currentOwnerPid && !isPidAlive(currentOwnerPid)) ||
+            (!currentOwnerPid && currentAgeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)
+          )
+        ) {
+          return null;
+        }
+        rmSync(lockPath, { recursive: true, force: true });
+        return acquire();
+      } finally {
+        rmSync(stealPath, { recursive: true, force: true });
+      }
+    }
+  } catch {
+    if (!existsSync(lockPath)) return acquire();
+  }
+  return null;
+}
+
+function releaseRuntimeGuardRepairLock(lockPath: string | null): void {
+  if (!lockPath) return;
+  try {
+    rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
+}
+
+function showRuntimeGuardRepairFailure(host: DashboardControlHost, title: string, message: string): void {
+  if (host.runtimeGuardRepairBusy) {
+    host.dashboardBusyState = null;
+    host.runtimeGuardRepairBusy = false;
+  }
+  if (typeof host.showDashboardError === "function") {
+    host.showDashboardError(title, [message]);
+    return;
+  }
+  showDashboardFooterFlash(host, `${title}: ${message}`, 6);
+  host.renderCurrentDashboardView?.();
+}
+
+function clearRuntimeGuardRepairError(host: DashboardControlHost): void {
+  if (host.dashboardErrorState?.title === "Aimux repair failed") {
+    host.dashboardErrorState = null;
+  }
+}
+
+function describeRuntimeGuardState(state: RuntimeGuardState): string {
+  if (state.kind === "ok") return "healthy";
+  if (state.kind === "stale") return `out of sync (${state.reason})`;
+  if (state.kind === "runtime-rebuild-required") return "runtime rebuild required";
+  return "project service unreachable";
+}
+
+function runtimeGuardRepairRetryReady(host: DashboardControlHost, repairKey: string): boolean {
+  const failedKey = host.runtimeGuardRepairFailedKey;
+  if (failedKey !== repairKey) return true;
+  const retryAt = host.runtimeGuardRepairRetryAt;
+  if (typeof retryAt !== "number" || Date.now() < retryAt) return false;
+  host.runtimeGuardRepairFailedKey = undefined;
+  host.runtimeGuardRepairRetryAt = undefined;
+  return true;
+}
+
+export function startRuntimeGuardRepair(host: DashboardControlHost, state: RuntimeGuardState): void {
+  if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing) return;
+  const lifecycle = captureDashboardLifecycle(host);
+  const repairKey = runtimeGuardRepairKey(state);
+  if (!runtimeGuardRepairRetryReady(host, repairKey)) return;
+  const projectRoot = dashboardProjectRoot(host);
+  const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
+  if (!lockPath) {
+    host.runtimeGuardRepairBusy = true;
+    showDashboardFooterFlash(host, "Aimux repair already running", 3);
+    renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+    return;
+  }
+  const command = resolveDashboardReloadCommand();
+  host.runtimeGuardRepairing = true;
+  host.runtimeGuardRepairStateKey = repairKey;
+  host.runtimeGuardRepairBusy = true;
+  clearRuntimeGuardRepairError(host);
+  host.dashboardBusyState = {
+    title: "Repairing Aimux",
+    lines: ["Aimux is repairing the local control plane."],
+    spinnerFrame: 0,
+    startedAt: Date.now(),
+  };
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+
+  let settled = false;
+  let repairTimeout: ReturnType<typeof setTimeout> | null = null;
+  let repairKillTimeout: ReturnType<typeof setTimeout> | null = null;
+  let childExited = false;
+  let releaseLockWhenChildExits = false;
+  const clearRepairTimeout = () => {
+    if (!repairTimeout) return;
+    clearTimeout(repairTimeout);
+    repairTimeout = null;
+  };
+  const clearRepairKillTimeout = () => {
+    if (!repairKillTimeout) return;
+    clearTimeout(repairKillTimeout);
+    repairKillTimeout = null;
+  };
+  const fail = (message: string, options: { keepRepairLock?: boolean } = {}) => {
+    if (settled) return;
+    settled = true;
+    clearRepairTimeout();
+    if (!options.keepRepairLock) clearRepairKillTimeout();
+    if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
+    host.runtimeGuardRepairing = false;
+    host.runtimeGuardRepairFailedKey = repairKey;
+    host.runtimeGuardRepairRetryAt = Date.now() + RUNTIME_GUARD_REPAIR_RETRY_MS;
+    if (host.runtimeGuardRepairBusy) {
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+    }
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
+  };
+  const succeed = async () => {
+    if (settled) return;
+    const probed = await probeRuntimeGuard(projectRoot);
+    if (settled) return;
+    if (probed.kind !== "ok") {
+      fail(`aimux repair completed but the control plane is still ${describeRuntimeGuardState(probed)}`);
+      return;
+    }
+    if (isDashboardLifecycleCurrent(host, lifecycle)) {
+      const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+      if (settled) return;
+      if (!refreshed) {
+        fail("aimux repair completed but dashboard data is still unavailable");
+        return;
+      }
+    }
+    if (settled) return;
+    settled = true;
+    clearRepairTimeout();
+    clearRepairKillTimeout();
+    releaseRuntimeGuardRepairLock(lockPath);
+    host.runtimeGuardRepairing = false;
+    host.runtimeGuardRepairFailedKey = undefined;
+    host.runtimeGuardRepairRetryAt = undefined;
+    clearRuntimeGuardRepairError(host);
+    if (host.runtimeGuardRepairBusy) {
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+    }
+    host.runtimeGuardState = { kind: "ok" };
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    host.renderCurrentDashboardView?.();
+  };
+
+  try {
+    const child = spawn(command, ["restart", "--project", projectRoot], { detached: true, stdio: "ignore" });
+    if (typeof child.pid === "number" && child.pid > 0) {
+      writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
+    }
+    repairTimeout = setTimeout(() => {
+      if (!childExited) {
+        releaseLockWhenChildExits = true;
+        try {
+          child.kill?.("SIGTERM");
+        } catch {}
+        repairKillTimeout = setTimeout(() => {
+          repairKillTimeout = null;
+          if (childExited) return;
+          try {
+            child.kill?.("SIGKILL");
+          } catch {}
+        }, RUNTIME_GUARD_REPAIR_KILL_GRACE_MS);
+        repairKillTimeout.unref?.();
+      }
+      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
+        keepRepairLock: !childExited,
+      });
+    }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
+    repairTimeout.unref?.();
+    child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
+    child.on("exit", (code, signal) => {
+      childExited = true;
+      clearRepairKillTimeout();
+      if (releaseLockWhenChildExits) {
+        releaseRuntimeGuardRepairLock(lockPath);
+        releaseLockWhenChildExits = false;
+      }
+      if (code === 0) {
+        void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
+        return;
+      }
+      fail(signal ? `aimux repair exited on ${signal}` : `aimux repair exited with code ${code ?? "unknown"}`);
+    });
+    child.unref();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<void> {
+  if (host.mode !== "dashboard") return;
+  if (host.runtimeGuardProbing) return;
+  const lifecycle = captureDashboardLifecycle(host);
+  host.runtimeGuardProbing = true;
+  try {
+    const current = host.runtimeGuardState ?? { kind: "ok" };
+    const probed = await probeRuntimeGuard(dashboardProjectRoot(host));
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    const next = stabilizeRuntimeGuardProbe(current, probed, host.runtimeGuardDisconnectProbeCount ?? 0);
+    host.runtimeGuardDisconnectProbeCount = next.disconnectedProbeCount;
+    if (!runtimeGuardEquals(current, next.state)) {
+      host.runtimeGuardState = next.state;
+      if (next.state.kind === "ok") {
+        host.runtimeGuardRepairFailedKey = undefined;
+        host.runtimeGuardRepairRetryAt = undefined;
+        clearRuntimeGuardRepairError(host);
+        if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
+          host.dashboardBusyState = null;
+          host.runtimeGuardRepairBusy = false;
+        }
+      }
+      host.renderCurrentDashboardView();
+    }
+    if (shouldAutoRepairRuntimeGuard(next.state)) startRuntimeGuardRepair(host, next.state);
+  } finally {
+    host.runtimeGuardProbing = false;
+  }
+}
+
+export function resolveDashboardReloadCommand(): string {
+  return process.env.AIMUX_CLI_BIN?.trim() || "aimux";
+}
+
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {
   if (host.dashboardBusyState) {
     return true;
@@ -140,7 +541,7 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
   if (host.dashboardErrorState) {
     const events = parseKeys(data);
     if (events.length === 0) return true;
-    const key = events[0].name || events[0].char;
+    const key = commandKey(events[0]);
     if (key === "escape" || key === "enter" || key === "return") {
       host.dismissDashboardError();
     }
@@ -152,9 +553,6 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
       return true;
     case "tool-options":
       host.handleToolOptionsKey(data);
-      return true;
-    case "notification-panel":
-      host.handleNotificationPanelKey(data);
       return true;
     case "teammate-picker":
       host.handleTeammatePickerKey(data);
@@ -221,9 +619,6 @@ export function buildActiveDashboardOverlayOutput(
   if (host.dashboardOverlayState.kind === "switcher") {
     return buildSwitcherOverlayOutput(host, cols, rows);
   }
-  if (host.dashboardOverlayState.kind === "notification-panel") {
-    return buildNotificationPanelOverlayOutput(host, cols, rows);
-  }
   if (host.dashboardOverlayState.kind === "teammate-picker") {
     return buildTeammatePickerOverlayOutput(host, cols, rows);
   }
@@ -257,7 +652,9 @@ export function buildActiveDashboardOverlayOutput(
   if (host.dashboardOverlayState.kind === "orchestration-route-picker") {
     return buildOrchestrationRoutePickerOverlayOutput(host, cols, rows);
   }
-  return null;
+  // Lowest precedence: a stale/disconnected guard claims the screen only when no real overlay
+  // is active, so transient dialogs keep working and the guard owns the bare dashboard.
+  return buildDashboardRuntimeGuardOverlayOutput(host, cols, rows);
 }
 
 export function handleDashboardSubscreenNavigationKey(
@@ -271,52 +668,32 @@ export function handleDashboardSubscreenNavigationKey(
     host.renderDashboard();
     return true;
   }
-  if (key === "a") {
-    if (currentScreen === "activity") {
-      host.renderActivityDashboard();
-    } else {
-      host.showActivityDashboard();
-    }
-    return true;
-  }
-  if (key === "t") {
-    if (currentScreen === "threads") {
-      host.renderThreads();
-    } else {
-      host.showThreads();
-    }
-    return true;
-  }
-  if (key === "i") {
-    if (currentScreen === "notifications") {
-      host.renderNotifications();
-    } else {
-      host.showNotifications();
-    }
-    return true;
-  }
-  if (key === "y") {
-    if (currentScreen === "workflow") {
-      host.renderWorkflow();
-    } else {
-      host.showWorkflow();
-    }
+  // For each screen hotkey: when already on that screen, decline (return false) so the
+  // key falls through to the screen's own action handler (e.g. coordination's [c] clear/
+  // complete). Otherwise switch to it.
+  if (key === "c") {
+    if (currentScreen === "coordination") return false;
+    host.showCoordination();
     return true;
   }
   if (key === "p") {
-    if (currentScreen === "plans") {
-      host.renderPlans();
-    } else {
-      host.showPlans();
-    }
+    if (currentScreen === "project") return false;
+    host.showProject();
+    return true;
+  }
+  if (key === "l") {
+    if (currentScreen === "library") return false;
+    host.showLibrary();
+    return true;
+  }
+  if (key === "t") {
+    if (currentScreen === "topology") return false;
+    host.showTopology();
     return true;
   }
   if (key === "g") {
-    if (currentScreen === "graveyard") {
-      host.renderGraveyard();
-    } else {
-      host.showGraveyard();
-    }
+    if (currentScreen === "graveyard") return false;
+    host.showGraveyard();
     return true;
   }
   return false;
@@ -327,16 +704,12 @@ export function openLiveTmuxWindowForEntry(
   entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
 ): "opened" | "missing" | "error" {
   try {
-    const target = openManagedSessionWindow(host.tmuxRuntimeManager, process.cwd(), entry);
+    const target = openManagedSessionWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), entry);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void host.postToProjectService("/statusline/refresh", { sessionId: entry.id }).catch(() => {});
-    host.agentTracker.markSeen(entry.id);
-    updateNotificationContext("tui", {
-      focused: true,
-      sessionId: entry.id,
-      panelOpen: false,
-    });
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
+    noteTuiNotificationContext(host, { screen: "agent", sessionId: entry.id, panelOpen: false });
+    markTuiSessionSeen(host, entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
   } catch (error) {
@@ -348,14 +721,32 @@ export function openLiveTmuxWindowForEntry(
   }
 }
 
+function noteTuiNotificationContext(
+  host: DashboardControlHost,
+  patch: { screen?: string; sessionId?: string; panelOpen?: boolean },
+): void {
+  queueTuiNotificationContext(host, patch);
+}
+
+function markTuiSessionSeen(host: DashboardControlHost, sessionId: string): void {
+  queueTuiSessionSeen(host, sessionId);
+}
+
 export async function waitAndOpenLiveTmuxWindowForEntry(
   host: DashboardControlHost,
-  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
-  timeoutMs = 3000,
+  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string; status?: string },
+  timeoutMs?: number,
 ): Promise<"opened" | "missing" | "error"> {
-  const deadline = Date.now() + timeoutMs;
+  const activationToken = host.dashboardActivationToken;
+  const effectiveTimeoutMs = timeoutMs ?? (entry.status === "offline" || entry.status === "exited" ? 60_000 : 3000);
+  const deadline = Date.now() + effectiveTimeoutMs;
   while (Date.now() < deadline) {
-    const result = openLiveTmuxWindowForEntry(host, entry);
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
+    const remainingMs = Math.max(100, deadline - Date.now());
+    const result =
+      host.mode === "dashboard"
+        ? await openProjectServiceNotificationTarget(host, entry.id, "agent", remainingMs, activationToken)
+        : openLiveTmuxWindowForEntry(host, entry);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -367,10 +758,10 @@ export function openLiveTmuxWindowForService(
   serviceId: string,
 ): "opened" | "missing" | "error" {
   try {
-    const target = openManagedServiceWindow(host.tmuxRuntimeManager, process.cwd(), serviceId);
+    const target = openManagedServiceWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), serviceId);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void host.postToProjectService("/statusline/refresh", { sessionId: serviceId }).catch(() => {});
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
     noteLastUsedItem(host, serviceId);
     return "opened";
   } catch (error) {
@@ -387,17 +778,85 @@ export async function waitAndOpenLiveTmuxWindowForService(
   serviceId: string,
   timeoutMs = 3000,
 ): Promise<"opened" | "missing" | "error"> {
+  const activationToken = host.dashboardActivationToken;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const result = openLiveTmuxWindowForService(host, serviceId);
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
+    const remainingMs = Math.max(100, deadline - Date.now());
+    const result =
+      host.mode === "dashboard"
+        ? await openProjectServiceNotificationTarget(host, serviceId, "service", remainingMs, activationToken)
+        : openLiveTmuxWindowForService(host, serviceId);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return "missing";
 }
 
+function dashboardActivationStillCurrent(host: DashboardControlHost, token: any | undefined): boolean {
+  if (!token) return true;
+  return host.dashboardActivationToken === token && (host.dashboardInputEpoch ?? 0) === token.inputEpoch;
+}
+
+async function openProjectServiceNotificationTarget(
+  host: DashboardControlHost,
+  sessionId: string,
+  kind: "agent" | "service",
+  timeoutMs: number,
+  activationToken: any | undefined,
+): Promise<"opened" | "missing" | "error"> {
+  try {
+    const context = dashboardControlClientContext(host);
+    const startedAt = Date.now();
+    await mutateDashboardApi(
+      host,
+      PROJECT_API_ROUTES.controls.openNotificationTarget,
+      { sessionId, focus: false },
+      {
+        timeoutMs,
+      },
+    );
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
+    const focusTimeoutMs = Math.max(100, timeoutMs - (Date.now() - startedAt));
+    await mutateDashboardApi(
+      host,
+      PROJECT_API_ROUTES.controls.openNotificationTarget,
+      { sessionId, focus: true, ...context },
+      { timeoutMs: focusTimeoutMs },
+    );
+    return "opened";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("not found") || message.includes("no longer available") || message.includes("is offline")) {
+      return "missing";
+    }
+    if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
+    host.showDashboardError(`Failed to open ${kind}`, [
+      message,
+      "The tmux window may still be starting. Try again in a moment.",
+    ]);
+    return "error";
+  }
+}
+
+function dashboardControlClientContext(host: DashboardControlHost): {
+  currentClientSession?: string;
+  clientTty?: string;
+  currentWindowId?: string;
+} {
+  try {
+    return {
+      currentClientSession: host.tmuxRuntimeManager.currentClientSession() ?? undefined,
+      clientTty: host.tmuxRuntimeManager.displayMessage?.("#{client_tty}") ?? undefined,
+      currentWindowId: host.tmuxRuntimeManager.displayMessage?.("#{window_id}") ?? undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function noteLastUsedItem(host: DashboardControlHost, itemId: string): void {
-  markLastUsed(process.cwd(), {
+  markLastUsed(dashboardProjectRoot(host), {
     itemId,
     clientSession: host.tmuxRuntimeManager.currentClientSession() ?? undefined,
   });
@@ -428,69 +887,11 @@ export function getSelectedDashboardServiceForActions(host: DashboardControlHost
   return host.getDashboardServices().find((service: DashboardService) => service.id === selectedEntry.id);
 }
 
-export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "message" | "handoff" | "task"): void {
-  const selected = getSelectedDashboardSessionForActions(host);
-  const options: DashboardOrchestrationTarget[] = [];
-  const focusedWorktreePath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
-  const metadataState = loadMetadataState().sessions;
-  const candidates = host.sessions.map((session: any) => {
-    const derivedActivity = metadataState[session.id]?.derived?.activity;
-    const semanticStatus =
-      derivedActivity === "running" ? "running" : derivedActivity === "waiting" ? "waiting" : session.status;
-    const semantic = host.deriveSessionSemanticState(session.id, semanticStatus);
-    return {
-      id: session.id,
-      tool: host.sessionToolKeys.get(session.id) ?? session.command,
-      role: host.sessionRoles.get(session.id),
-      worktreePath: host.sessionWorktreePaths.get(session.id),
-      status: semantic.user.label,
-      canReceiveInput: semantic.runtime.canReceiveInput,
-      isAlive: semantic.runtime.isAlive,
-      workflowPressure: host.orchestrationWorkflowPressure(session.id, semanticStatus),
-      exited: session.exited,
-    };
-  });
-
-  if (selected) {
-    options.push({
-      label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
-      sessionId: selected.id,
-    });
-  }
-
-  const team = loadTeamConfig();
-  for (const [role, cfg] of Object.entries(team.roles as Record<string, { description?: string }>)) {
-    const recipientIds = resolveOrchestrationRecipients({
-      candidates,
-      assignee: role,
-      worktreePath: focusedWorktreePath,
-    });
-    if (recipientIds.length === 0) continue;
-    options.push({
-      label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${host.formatRoutePreview(recipientIds)}`,
-      assignee: role,
-      worktreePath: focusedWorktreePath,
-      recipientIds,
-    });
-  }
-
-  const config = loadConfig();
-  for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
-    if (!toolCfg.enabled) continue;
-    const recipientIds = resolveOrchestrationRecipients({
-      candidates,
-      tool: toolKey,
-      worktreePath: focusedWorktreePath,
-    });
-    if (recipientIds.length === 0) continue;
-    options.push({
-      label: `Tool: ${toolKey}${host.formatRoutePreview(recipientIds)}`,
-      tool: toolKey,
-      worktreePath: focusedWorktreePath,
-      recipientIds,
-    });
-  }
-
+function applyOrchestrationRouteOptions(
+  host: DashboardControlHost,
+  mode: "message" | "handoff" | "task",
+  options: DashboardOrchestrationTarget[],
+): void {
   if (options.length === 0) {
     host.showDashboardError("No orchestration targets available", [
       "Select a local agent, define team roles, or enable tools before sending orchestration actions.",
@@ -502,6 +903,56 @@ export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "
   host.orchestrationRouteOptions = options;
   host.openDashboardOverlay("orchestration-route-picker");
   host.renderOrchestrationRoutePicker();
+}
+
+function validOrchestrationRouteOption(value: unknown): value is DashboardOrchestrationTarget {
+  if (!value || typeof value !== "object") return false;
+  const option = value as DashboardOrchestrationTarget;
+  return typeof option.label === "string" && (!option.recipientIds || Array.isArray(option.recipientIds));
+}
+
+async function showOrchestrationRoutePickerFromService(
+  host: DashboardControlHost,
+  mode: "message" | "handoff" | "task",
+  lifecycle: DashboardLifecycleToken,
+  selectedSessionId?: string,
+  worktreePath?: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  params.set("mode", mode);
+  if (selectedSessionId) params.set("selectedSessionId", selectedSessionId);
+  if (worktreePath) params.set("worktreePath", worktreePath);
+  try {
+    const res = await getJsonWithTuiApiRuntime(
+      host,
+      `${PROJECT_API_ROUTES.orchestration.routes}?${params.toString()}`,
+      undefined,
+      (requestHost, path, opts) => getFromProjectService(requestHost, path, opts),
+    );
+    if (!res?.ok || !Array.isArray(res.options) || !res.options.every(validOrchestrationRouteOption)) {
+      throw new Error("invalid orchestration route options payload");
+    }
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    applyOrchestrationRouteOptions(host, mode, res.options);
+  } catch (error) {
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    host.showDashboardError("Failed to load orchestration targets", [
+      error instanceof Error ? error.message : String(error),
+    ]);
+  }
+}
+
+export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "message" | "handoff" | "task"): void {
+  if (host.mode !== "dashboard" || typeof host.getFromProjectService !== "function") {
+    host.showDashboardError("Failed to load orchestration targets", [
+      "Orchestration routing requires the project service.",
+    ]);
+    return;
+  }
+  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const selected = getSelectedDashboardSessionForActions(host);
+  const focusedWorktreePath = host.dashboardState.focusedWorktreePath;
+  void showOrchestrationRoutePickerFromService(host, mode, lifecycle, selected?.id, focusedWorktreePath);
 }
 
 export function showOrchestrationInput(
@@ -588,52 +1039,202 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
   if (output) process.stdout.write(output);
 }
 
-export async function postToProjectService(
+// Shared retry/recovery loop for project-service requests. Route calls are the liveness
+// probe; only dead endpoints trigger control-plane recovery, and timeouts stay visible.
+async function requestProjectService(
   host: DashboardControlHost,
   path: string,
-  body: unknown,
-  opts?: { timeoutMs?: number },
+  opts: { method: "GET" | "POST"; body?: unknown; timeoutMs?: number },
 ): Promise<any> {
-  const projectRoot = process.cwd();
-  const timeoutMs = opts?.timeoutMs ?? 1000;
+  const projectRoot = dashboardProjectRoot(host);
+  const timeoutMs = opts.timeoutMs ?? 1000;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
   for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
-    const endpoint = resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     if (!endpoint) {
-      await ensureDashboardControlPlane(host);
-      await sleepProjectServiceRetry(attempt);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      await sleepProjectServiceRetry(attempt, deadline);
       continue;
+    }
+    const endpointState = await endpointStateForRequest(
+      host,
+      endpoint,
+      Math.min(1000, remainingProjectServiceDeadline(deadline)),
+    );
+    if (endpointState === "stale" && Date.now() < deadline) {
+      clearProjectServiceEndpointHealth(host);
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    if (endpointState === "stale") {
+      throw new Error("project service endpoint is stale");
+    }
+    if (endpointState === "unknown") {
+      lastError = new Error("project service endpoint could not be verified");
+      if (Date.now() < deadline) {
+        await sleepProjectServiceRetry(attempt, deadline);
+        continue;
+      }
+      throw lastError;
     }
     try {
       const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
+        method: opts.method,
+        headers: opts.method === "POST" ? { "content-type": "application/json" } : undefined,
+        body: opts.method === "POST" ? opts.body : undefined,
         timeoutMs: Math.max(1, deadline - Date.now()),
       });
       if (status >= 200 && status < 300 && json?.ok !== false) {
         return json;
       }
-      lastError = new Error(json?.error || `request failed: ${status}`);
+      lastError = new DashboardProjectServiceHttpError(status, json, json?.error || `request failed: ${status}`);
       if (isProjectServiceRetryableStatus(status) && Date.now() < deadline) {
-        await ensureDashboardControlPlane(host);
-        await sleepProjectServiceRetry(attempt);
+        clearProjectServiceEndpointHealth(host);
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
+        await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
       throw lastError;
     } catch (error) {
       lastError = error;
+      if (isHttpTimeoutError(error) && opts.method === "GET" && Date.now() < deadline) {
+        await sleepProjectServiceRetry(attempt, deadline);
+        continue;
+      }
       if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
+        clearProjectServiceEndpointHealth(host);
         removeMetadataEndpoint(projectRoot);
-        await ensureDashboardControlPlane(host);
-        await sleepProjectServiceRetry(attempt);
+        await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+          restartProjectService: true,
+        });
+        await sleepProjectServiceRetry(attempt, deadline);
         continue;
       }
       throw error;
     }
   }
   throw lastError instanceof Error ? lastError : new Error("no live project service endpoint");
+}
+
+export async function resolveCurrentProjectServiceEndpointForDashboard(
+  host: DashboardControlHost,
+  timeoutMs = 1000,
+): Promise<{ host: string; port: number; pid?: number } | null> {
+  const projectRoot = dashboardProjectRoot(host);
+  const deadline = Date.now() + timeoutMs;
+  for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
+    let endpoint = loadMetadataEndpoint(projectRoot);
+    if (!endpoint) {
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline));
+      endpoint = loadMetadataEndpoint(projectRoot);
+    }
+    if (!endpoint) {
+      await sleepProjectServiceRetry(attempt, deadline);
+      continue;
+    }
+    const endpointState = await endpointStateForRequest(
+      host,
+      endpoint,
+      remainingProjectServiceDeadline(deadline),
+      projectRoot,
+    );
+    if (endpointState === "current") return endpoint;
+    if (endpointState === "stale" && Date.now() < deadline) {
+      clearProjectServiceEndpointHealth(host);
+      removeMetadataEndpoint(projectRoot);
+      await ensureDashboardControlPlane(host, remainingProjectServiceDeadline(deadline), {
+        restartProjectService: true,
+      });
+    }
+    await sleepProjectServiceRetry(attempt, deadline);
+  }
+  return null;
+}
+
+async function endpointStateForRequest(
+  host: DashboardControlHost,
+  endpoint: { host: string; port: number; pid?: number },
+  timeoutMs: number,
+  projectRoot = dashboardProjectRoot(host),
+): Promise<ProjectServiceEndpointState> {
+  const key = projectServiceEndpointHealthKey(endpoint, projectRoot);
+  const cached = host.dashboardProjectServiceEndpointHealth as { key?: string; checkedAt?: number } | undefined;
+  if (cached?.key === key && typeof cached.checkedAt === "number") {
+    if (Date.now() - cached.checkedAt <= PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS) return "current";
+  }
+  const current = await endpointMatchesCurrentProjectService(endpoint, timeoutMs, projectRoot);
+  if (current === "current") markProjectServiceEndpointCurrent(host, endpoint, projectRoot);
+  else clearProjectServiceEndpointHealth(host);
+  return current;
+}
+
+function projectServiceEndpointHealthKey(
+  endpoint: { host: string; port: number; pid?: number },
+  projectRoot: string,
+): string {
+  return `${endpoint.host}:${endpoint.port}:${endpoint.pid ?? "unknown"}:${getProjectStateDirFor(projectRoot)}`;
+}
+
+function markProjectServiceEndpointCurrent(
+  host: DashboardControlHost,
+  endpoint: { host: string; port: number; pid?: number },
+  projectRoot: string,
+): void {
+  host.dashboardProjectServiceEndpointHealth = {
+    key: projectServiceEndpointHealthKey(endpoint, projectRoot),
+    checkedAt: Date.now(),
+  };
+}
+
+function clearProjectServiceEndpointHealth(host: DashboardControlHost): void {
+  host.dashboardProjectServiceEndpointHealth = undefined;
+}
+
+async function endpointMatchesCurrentProjectService(
+  endpoint: { host: string; port: number; pid?: number },
+  timeoutMs: number,
+  projectRoot: string,
+): Promise<ProjectServiceEndpointState> {
+  try {
+    const { status, json } = await requestJson<{
+      pid?: number;
+      projectStateDir?: string;
+      serviceInfo?: ProjectServiceManifest;
+    }>(`http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.health}`, { timeoutMs: Math.max(1, timeoutMs) });
+    if (status < 200 || status >= 300) return "unknown";
+    return json?.pid === endpoint.pid &&
+      json?.projectStateDir === getProjectStateDirFor(projectRoot) &&
+      manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)
+      ? "current"
+      : "stale";
+  } catch (error) {
+    if (isHttpTimeoutError(error)) return "unknown";
+    return isProjectServiceConnectionError(error) ? "stale" : "unknown";
+  }
+}
+
+export async function postToProjectService(
+  host: DashboardControlHost,
+  path: string,
+  body: unknown,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  return requestProjectService(host, path, { method: "POST", body, timeoutMs: opts?.timeoutMs });
+}
+
+export async function getFromProjectService(
+  host: DashboardControlHost,
+  path: string,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  return requestProjectService(host, path, { method: "GET", timeoutMs: opts?.timeoutMs });
 }
 
 function isProjectServiceConnectionError(error: unknown): boolean {
@@ -653,23 +1254,67 @@ function isProjectServiceRetryableStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
-async function sleepProjectServiceRetry(attempt: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, Math.min(250, 50 + attempt * 25)));
+function remainingProjectServiceDeadline(deadline: number): number {
+  return Math.max(1, deadline - Date.now());
 }
 
-export async function ensureDashboardControlPlane(host: DashboardControlHost): Promise<void> {
+async function sleepProjectServiceRetry(attempt: number, deadline: number): Promise<void> {
+  const delayMs = Math.min(250, 50 + attempt * 25, Math.max(0, deadline - Date.now()));
+  if (delayMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function withProjectServiceTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`project service recovery timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function ensureDashboardControlPlane(
+  host: DashboardControlHost,
+  timeoutMs = 10_000,
+  opts: { restartProjectService?: boolean } = {},
+): Promise<void> {
   if (host.dashboardServiceRecovery) {
-    await host.dashboardServiceRecovery;
+    await withProjectServiceTimeout(host.dashboardServiceRecovery, timeoutMs);
+    if (!opts.restartProjectService) {
+      return;
+    }
+    if (host.dashboardServiceRecovery) {
+      await withProjectServiceTimeout(host.dashboardServiceRecovery, timeoutMs);
+    }
+    if (!host.dashboardServiceRecovery) {
+      return ensureDashboardControlPlane(host, timeoutMs, opts);
+    }
     return;
   }
-  host.dashboardServiceRecovery = (async () => {
+  const recovery = (async () => {
+    const projectRoot = dashboardProjectRoot(host);
     await ensureDaemonRunning();
-    await ensureProjectService(process.cwd());
+    if (opts.restartProjectService) {
+      await stopProjectService(projectRoot);
+      removeMetadataEndpoint(projectRoot);
+    }
+    await ensureProjectService(projectRoot);
   })();
+  host.dashboardServiceRecovery = recovery;
   try {
-    await host.dashboardServiceRecovery;
+    await withProjectServiceTimeout(recovery, timeoutMs);
   } finally {
-    host.dashboardServiceRecovery = null;
+    if (host.dashboardServiceRecovery === recovery) {
+      host.dashboardServiceRecovery = null;
+    }
   }
 }
 
@@ -677,7 +1322,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
   const events = parseKeys(data);
   if (events.length === 0) return;
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();
@@ -689,6 +1334,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
   }
 
   if (key === "enter" || key === "return") {
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     const mode = host.orchestrationInputMode;
     const target = host.orchestrationInputTarget;
     const body = host.orchestrationInputBuffer.trim();
@@ -700,7 +1346,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
       host.renderDashboard();
       return;
     }
-    void host.submitDashboardOrchestrationAction(mode, target, body);
+    void host.submitDashboardOrchestrationAction(mode, target, body, lifecycle);
     return;
   }
 
@@ -721,7 +1367,7 @@ export function handleOrchestrationRoutePickerKey(host: DashboardControlHost, da
   if (events.length === 0) return;
 
   const event = events[0];
-  const key = event.name || event.char;
+  const key = commandKey(event);
 
   if (key === "escape") {
     host.clearDashboardOverlay();

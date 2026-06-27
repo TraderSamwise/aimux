@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { getProjectStateDirFor } from "../paths.js";
-import { writeJsonAtomic } from "../atomic-write.js";
 import type { AimuxPluginAPI, AimuxPluginInstance } from "../plugin-runtime.js";
 import type { SessionContextMetadata } from "../metadata-store.js";
 import { createRuntimeTopologyStore } from "../runtime-core/topology-store.js";
@@ -207,12 +206,23 @@ export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginIns
   }
 
   function saveDiskPrCache(entries: Record<string, PrCacheEntry>): void {
+    const raw = readJson(prCachePath);
+    if (raw && typeof raw === "object" && stableSerialize((raw as any).entries ?? {}) === stableSerialize(entries)) {
+      return;
+    }
     mkdirSync(join(projectStateDir, "plugin-cache"), { recursive: true });
-    writeJsonAtomic(prCachePath, {
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      entries,
-    });
+    writeFileSync(
+      prCachePath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          entries,
+        },
+        null,
+        2,
+      )}\n`,
+    );
   }
 
   function collectTargets(): SessionTarget[] {

@@ -7,11 +7,37 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type ProjectEventSubscription = {
+  path: string;
+  headers?: Record<string, string>;
+  onEvent: (event: string, data: unknown) => void;
+  onError: (error: Error) => void;
+};
+
 interface RelayResponse {
   id: string;
   type: "response";
   status: number;
   body?: unknown;
+}
+
+interface RelayProjectEventsSubscribed {
+  id: string;
+  type: "project_events_subscribed";
+}
+
+interface RelayProjectEvent {
+  id: string;
+  type: "project_event";
+  event: string;
+  data: unknown;
+}
+
+interface RelayProjectEventsError {
+  id: string;
+  type: "project_events_error";
+  status?: number;
+  message: string;
 }
 
 interface RelayControl {
@@ -21,7 +47,12 @@ interface RelayControl {
   event?: SecurityEventRecord;
 }
 
-type RelayMessage = RelayResponse | RelayControl;
+type RelayMessage =
+  | RelayResponse
+  | RelayProjectEventsSubscribed
+  | RelayProjectEvent
+  | RelayProjectEventsError
+  | RelayControl;
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const INITIAL_RETRY_MS = 1_000;
@@ -57,6 +88,7 @@ export class RelayTransport {
   private _status: RelayStatus = "disconnected";
   private listeners = new Set<RelayStatusListener>();
   private securityEventListeners = new Set<RelaySecurityEventListener>();
+  private projectEventSubscriptions = new Map<string, ProjectEventSubscription>();
 
   private readonly relayUrl: string;
 
@@ -127,6 +159,7 @@ export class RelayTransport {
     this.ws.onclose = (event) => {
       this.ws = null;
       this.rejectAllPending("Connection lost");
+      this.rejectAllProjectEventSubscriptions("Connection lost");
       const code = (event as CloseEvent).code;
       if (code === 1008 || code === 4001 || code === 4003) {
         this.stopped = true;
@@ -158,6 +191,7 @@ export class RelayTransport {
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.rejectAllPending("Disconnected");
+    this.rejectAllProjectEventSubscriptions("Disconnected");
     if (this.ws) {
       try {
         this.ws.close(1000);
@@ -208,6 +242,40 @@ export class RelayTransport {
     return this._status === "connected" || this._status === "daemon_offline";
   }
 
+  subscribeProjectEvents(
+    path: string,
+    headers: Record<string, string> | undefined,
+    onEvent: (event: string, data: unknown) => void,
+    onError: (error: Error) => void,
+  ): { stop: () => void } {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Relay not connected");
+    }
+    if (!this.daemonOnline) {
+      throw new Error("Daemon not connected to relay");
+    }
+
+    const id = `e${++idCounter}`;
+    this.projectEventSubscriptions.set(id, { path, headers, onEvent, onError });
+    try {
+      this.ws.send(JSON.stringify({ id, type: "project_events_subscribe", path, headers }));
+    } catch (err) {
+      this.projectEventSubscriptions.delete(id);
+      throw err instanceof Error ? err : new Error("Relay send failed");
+    }
+
+    return {
+      stop: () => {
+        const entry = this.projectEventSubscriptions.get(id);
+        if (!entry) return;
+        this.projectEventSubscriptions.delete(id);
+        try {
+          this.ws?.send(JSON.stringify({ id, type: "project_events_unsubscribe" }));
+        } catch {}
+      },
+    };
+  }
+
   private handleMessage(data: string): void {
     let msg: RelayMessage;
     try {
@@ -251,6 +319,25 @@ export class RelayTransport {
         this.pending.delete(msg.id);
         entry.resolve({ status: msg.status, body: msg.body });
       }
+      return;
+    }
+
+    if (msg.type === "project_events_subscribed") {
+      return;
+    }
+
+    if (msg.type === "project_event") {
+      const entry = this.projectEventSubscriptions.get(msg.id);
+      if (entry) entry.onEvent(msg.event, msg.data);
+      return;
+    }
+
+    if (msg.type === "project_events_error") {
+      const entry = this.projectEventSubscriptions.get(msg.id);
+      if (entry) {
+        this.projectEventSubscriptions.delete(msg.id);
+        entry.onError(new Error(msg.message || `project event stream failed (${msg.status ?? 0})`));
+      }
     }
   }
 
@@ -271,6 +358,13 @@ export class RelayTransport {
       clearTimeout(entry.timer);
       entry.reject(new Error(reason));
       this.pending.delete(id);
+    }
+  }
+
+  private rejectAllProjectEventSubscriptions(reason: string): void {
+    for (const [id, entry] of this.projectEventSubscriptions) {
+      entry.onError(new Error(reason));
+      this.projectEventSubscriptions.delete(id);
     }
   }
 

@@ -1,9 +1,121 @@
-import { describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
+const dashboardApiClientMock = vi.hoisted(() => ({
+  mutateDashboardApi: vi.fn(),
+}));
+
+vi.mock("./dashboard-api-client.js", async () => {
+  const actual = await vi.importActual<typeof import("./dashboard-api-client.js")>("./dashboard-api-client.js");
+  dashboardApiClientMock.mutateDashboardApi.mockImplementation(actual.mutateDashboardApi);
+  return {
+    ...actual,
+    mutateDashboardApi: dashboardApiClientMock.mutateDashboardApi,
+  };
+});
+
+vi.mock("../team.js", async () => {
+  const actual = await vi.importActual<typeof import("../team.js")>("../team.js");
+  return {
+    ...actual,
+    loadTeamConfig: vi.fn(() => actual.getDefaultTeamConfig()),
+  };
+});
+
 describe("dashboardInteractionMethods", () => {
+  beforeEach(() => {
+    dashboardApiClientMock.mutateDashboardApi.mockClear();
+  });
+
+  it("requests reviews through the project service", async () => {
+    const host: any = {
+      activeSession: { id: "codex-1", command: "codex" },
+      sessionRoles: new Map([["codex-1", "coder"]]),
+      sessionWorktreePaths: new Map([["codex-1", "/repo/.aimux/worktrees/demo"]]),
+      postToProjectService: vi.fn(async () => ({ ok: true, task: { assignee: "reviewer" } })),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await dashboardInteractionMethods.handleReviewRequest.call(host);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/tasks/assign",
+      expect.objectContaining({
+        from: "codex-1",
+        assignee: "reviewer",
+        description: "Review: Review codex agent's recent work",
+        prompt: "Review codex agent's recent work",
+        type: "review",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 1,
+      }),
+    );
+    expect(host.footerFlash).toBe("⧫ Review requested → reviewer");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("captures review diffs from the project root for root sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-review-root-"));
+    try {
+      execFileSync("git", ["init"], { cwd: repoRoot });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, "demo.txt"), "before\n");
+      execFileSync("git", ["add", "demo.txt"], { cwd: repoRoot });
+      execFileSync("git", ["commit", "-m", "initial"], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, "demo.txt"), "after\n");
+      const host: any = {
+        activeSession: { id: "codex-1", command: "codex" },
+        projectRoot: repoRoot,
+        sessionRoles: new Map([["codex-1", "coder"]]),
+        sessionWorktreePaths: new Map(),
+        postToProjectService: vi.fn(async () => ({ ok: true, task: { assignee: "reviewer" } })),
+        renderDashboard: vi.fn(),
+      };
+
+      await dashboardInteractionMethods.handleReviewRequest.call(host);
+
+      expect(host.postToProjectService).toHaveBeenCalledWith(
+        "/tasks/assign",
+        expect.objectContaining({
+          diff: expect.stringContaining("+after"),
+          worktreePath: undefined,
+        }),
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not locally create services from the dashboard input path", () => {
+    const host: any = {
+      mode: "terminal",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      showDashboardError: vi.fn(),
+      createService: vi.fn(),
+      serviceInputBuffer: "yarn dev",
+      dashboardState: {},
+    };
+
+    dashboardInteractionMethods.handleServiceInputKey.call(host, Buffer.from("\r"));
+
+    expect(host.createService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
+      "Service creation requires the project service.",
+    ]);
+  });
+
   it("blocks stepping into a removing worktree", () => {
     const host: any = {
       dashboardState: {
@@ -274,6 +386,51 @@ describe("dashboardInteractionMethods", () => {
     expect(host.isSessionRuntimeLive).not.toHaveBeenCalled();
   });
 
+  it("routes worktree row reorders through the dashboard API adapter", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [
+          { kind: "session", id: "codex-1" },
+          { kind: "session", id: "claude-1" },
+        ],
+        sessionIndex: 0,
+      },
+      dashboardUiStateStore: {
+        moveEntryWithinWorktree: vi.fn(() => true),
+        orderWorktreeGroups: vi.fn((groups) => groups),
+      },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo" }],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\x1b[1;2B"));
+
+    expect(host.dashboardUiStateStore.moveEntryWithinWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedId: "codex-1",
+        direction: "down",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true }),
+    );
+    expect(dashboardApiClientMock.mutateDashboardApi).toHaveBeenCalledWith(host, "/statusline/refresh", {
+      force: true,
+    });
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("waits briefly for a live agent window to become enterable", async () => {
     const entry = {
       id: "codex-1",
@@ -314,6 +471,31 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
 
+  it("resumes exited agents in the non-dashboard fallback path", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "exited",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const offline = { ...entry, restoreState: "ready" };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "missing"),
+      offlineSessions: [offline],
+      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      sessions: [],
+      noteLastUsedItem: vi.fn(),
+      focusSession: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("opened");
+
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(offline);
+    expect(host.focusSession).not.toHaveBeenCalled();
+  });
+
   it("can open a teammate without changing dashboard selection", async () => {
     const entry = {
       id: "reviewer-1",
@@ -340,6 +522,233 @@ describe("dashboardInteractionMethods", () => {
     expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
     expect(host.persistDashboardUiState).not.toHaveBeenCalled();
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
+  });
+
+  it("resumes, refreshes, then opens an offline dashboard agent", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      command: "codex",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(
+      { ...entry, status: "running", tmuxWindowId: "@agent" },
+      60000,
+    );
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("does not open or render an offline dashboard agent after newer input invalidates activation", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      command: "codex",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => {
+        host.mode = "session";
+        host.dashboardInputEpoch = 1;
+      }),
+      getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("missing");
+
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("refreshes from the service after an offline row open reports an error", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "error"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      getDashboardSessions: vi.fn(() => [entry]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("resumes, refreshes, then opens an offline dashboard service", async () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineServiceWithFeedback: vi.fn(async () => undefined),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("opened");
+
+    expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1", 60000);
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes and reports unavailable service when a running service open misses", async () => {
+    const service = {
+      id: "service-1",
+      status: "running",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "missing"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("missing");
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.footerFlash).toBe("Service shell is not available yet");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("does not fall back to local focus when the dashboard control route misses", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "running",
+      label: "Codex",
+      command: "codex",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "missing"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      offlineSessions: [],
+      resumeOfflineSessionWithFeedback: vi.fn(),
+      sessions: [{ id: "codex-1" }],
+      noteLastUsedItem: vi.fn(),
+      focusSession: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.focusSession).not.toHaveBeenCalled();
+    expect(host.noteLastUsedItem).not.toHaveBeenCalled();
+    expect(host.resumeOfflineSessionWithFeedback).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Agent Codex is not available yet");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("dismisses failed worktree rows through the project service", async () => {
+    const path = "/repo/.aimux/worktrees/demo";
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: path,
+        worktreeNavOrder: [undefined, path],
+        worktreeEntries: [],
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path,
+          sessions: [],
+          services: [],
+          operationFailure: { operation: "create", message: "boom" },
+        },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      sessions: [],
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+    await vi.waitFor(() =>
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }) }),
+      ),
+    );
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/operation-failures/clear", {
+      targetKind: "worktree",
+      operation: "create",
+      worktreePath: path,
+    });
+    expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("opens a teammate picker only for selected agents with teammates", () => {
@@ -543,6 +952,87 @@ describe("dashboardInteractionMethods", () => {
     expect(host.footerFlash).toBe("Sent handoff to codex-1");
   });
 
+  it("does not render stale worktree failure dismissal completions after later input", async () => {
+    let resolveClear!: () => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeNavOrder: ["/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          sessions: [],
+          services: [],
+          operationFailure: { operation: "create", message: "branch exists" },
+        },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      postToProjectService: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveClear = resolve;
+          }),
+      ),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    host.dashboardInputEpoch = 1;
+    resolveClear();
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not show stale orchestration completion after later input", async () => {
+    let resolveSend!: () => void;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      postToProjectService: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSend = resolve;
+          }),
+      ),
+      clearDashboardOverlay: vi.fn(),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+    const lifecycle = { mode: "dashboard" as const, inputEpoch: 0, requiresInputEpoch: true };
+
+    const submit = dashboardInteractionMethods.submitDashboardOrchestrationAction.call(
+      host,
+      "handoff",
+      { label: "codex-1", sessionId: "codex-1", worktreePath: "/repo" },
+      "Take over this task",
+      lifecycle,
+    );
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    host.dashboardInputEpoch = 1;
+    resolveSend();
+    await submit;
+
+    expect(host.footerFlash).toBeUndefined();
+    expect(host.clearDashboardOverlay).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("submits dashboard tasks with route-compatible descriptions", async () => {
     const host: any = {
       postToProjectService: vi.fn(async () => ({ ok: true })),
@@ -721,6 +1211,133 @@ describe("dashboardInteractionMethods", () => {
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
   });
 
+  it("uses lowercase hjkl for worktree-level dashboard navigation before commands", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo",
+        worktreeNavOrder: ["/repo", "/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboardWorktreeGroupsCache: [
+        { path: "/repo", name: "main", sessions: [], services: [] },
+        { path: "/repo/.aimux/worktrees/demo", name: "demo", sessions: [], services: [] },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      updateWorktreeSessions: vi.fn(function (this: any) {
+        this.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+        this.dashboardState.worktreeSessions = [{ id: "codex-1" }];
+      }),
+      showLibrary: vi.fn(),
+      showOrchestrationRoutePicker: vi.fn(),
+      renderDashboard: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("j"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("h"));
+    expect(host.showOrchestrationRoutePicker).not.toHaveBeenCalled();
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+    expect(host.updateWorktreeSessions).toHaveBeenCalledOnce();
+    expect(host.dashboardState.level).toBe("sessions");
+    expect(host.dashboardState.sessionIndex).toBe(0);
+    expect(host.showLibrary).not.toHaveBeenCalled();
+  });
+
+  it("resets stale worktree focus before hjkl worktree navigation", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/deleted",
+        worktreeNavOrder: ["/repo", "/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+        sessionIndex: 0,
+      },
+      dashboardWorktreeGroupsCache: [
+        { path: "/repo", name: "main", sessions: [], services: [] },
+        { path: "/repo/.aimux/worktrees/demo", name: "demo", sessions: [], services: [] },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      renderDashboard: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("j"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
+
+    host.dashboardState.focusedWorktreePath = "/repo/.aimux/worktrees/deleted";
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
+  });
+
+  it("uses lowercase hjkl for session-level dashboard navigation before commands", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [
+          { kind: "session", id: "codex-1" },
+          { kind: "session", id: "codex-2" },
+        ],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      activateSelectedDashboardWorktreeEntry: vi.fn(),
+      showLibrary: vi.fn(),
+      showOrchestrationRoutePicker: vi.fn(),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("j"));
+    expect(host.dashboardState.sessionIndex).toBe(1);
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
+    expect(host.dashboardState.sessionIndex).toBe(0);
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    expect(host.showLibrary).not.toHaveBeenCalled();
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("h"));
+    expect(host.dashboardState.level).toBe("worktrees");
+    expect(host.showOrchestrationRoutePicker).not.toHaveBeenCalled();
+  });
+
+  it("uses lowercase l to focus flat dashboard entries instead of opening Library", () => {
+    const entry = { id: "claude-1", status: "offline" };
+    const host: any = {
+      dashboardState: { hasWorktrees: () => false, quickJumpDigits: "" },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getDashboardSessions: vi.fn(() => [entry]),
+      activeIndex: 0,
+      activateDashboardEntry: vi.fn(),
+      showLibrary: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
+    expect(host.showLibrary).not.toHaveBeenCalled();
+  });
+
   it("reorders selected agents within their worktree without mixing services", () => {
     const store = new DashboardUiStateStore();
     const sessions = [
@@ -799,6 +1416,35 @@ describe("dashboardInteractionMethods", () => {
     expect(host.persistDashboardUiState).toHaveBeenCalledOnce();
     expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true });
     expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("handles shifted dashboard command keys from printable uppercase input", () => {
+    const selected = { id: "codex-1", command: "codex", threadWaitingOnMeCount: 1 };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => false,
+        quickJumpDigits: "",
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      showOrchestrationRoutePicker: vi.fn(),
+      showLibrary: vi.fn(),
+      showWorktreeList: vi.fn(),
+      getSelectedDashboardSessionForActions: vi.fn(() => selected),
+      openRelevantThreadForSession: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("H"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("L"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("T"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("W"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("R"));
+
+    expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("handoff");
+    expect(host.showOrchestrationRoutePicker).toHaveBeenCalledWith("task");
+    expect(host.showLibrary).toHaveBeenCalledOnce();
+    expect(host.showWorktreeList).toHaveBeenCalledOnce();
+    expect(host.openRelevantThreadForSession).toHaveBeenCalledWith("codex-1");
   });
 });
 

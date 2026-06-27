@@ -1,14 +1,6 @@
 import type { DashboardSession, DashboardWorktreeEntry } from "./index.js";
 
-export type DashboardScreen =
-  | "dashboard"
-  | "activity"
-  | "workflow"
-  | "threads"
-  | "notifications"
-  | "plans"
-  | "graveyard"
-  | "help";
+export type DashboardScreen = "dashboard" | "coordination" | "project" | "library" | "topology" | "graveyard" | "help";
 export type DashboardLevel = "worktrees" | "sessions";
 export type DashboardOverlayKind =
   | "none"
@@ -23,7 +15,6 @@ export type DashboardOverlayKind =
   | "worktree-remove-confirm"
   | "migrate-picker"
   | "thread-reply"
-  | "notification-panel"
   | "teammate-picker"
   | "switcher";
 

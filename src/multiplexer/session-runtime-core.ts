@@ -8,10 +8,18 @@ import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
+import { isAgentOutputEventKind } from "../agent-events.js";
+import { loadLastUsedState } from "../last-used.js";
+import { summarizeUnreadNotificationsBySession } from "../notifications.js";
+import { sessionRecencyAnchor } from "../session-recency.js";
+import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
+import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionRuntimeHost = any;
 
@@ -54,25 +62,40 @@ export function applyDashboardSessionLabel(host: SessionRuntimeHost, sessionId: 
 
 export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: string, label?: string): Promise<void> {
   if (host.mode === "dashboard") {
-    host.setPendingDashboardSessionAction(sessionId, "renaming");
+    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const modelLifecycle = captureDashboardLifecycle(host);
+    const token = host.setPendingDashboardSessionAction(sessionId, "renaming");
     host.writeStatuslineFile();
     host.renderCurrentDashboardView();
-    try {
-      await host.postToProjectService("/agents/rename", { sessionId, label });
-      host.invalidateDesktopStateSnapshot();
-      if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true);
+    const clearPending = () => {
+      if (typeof token === "number") {
+        const clearIfToken = host.dashboardPendingActions?.clearSessionActionIfToken;
+        if (typeof clearIfToken === "function") {
+          if (clearIfToken.call(host.dashboardPendingActions, sessionId, token)) {
+            host.reapplyDashboardPendingActions?.();
+          }
+          return;
+        }
+        host.setPendingDashboardSessionAction(sessionId, null);
+        return;
       }
+      host.setPendingDashboardSessionAction(sessionId, null);
+    };
+    try {
+      await mutateDashboardApi(host, PROJECT_API_ROUTES.agents.rename, { sessionId, label });
+      host.invalidateDesktopStateSnapshot();
+      await refreshDashboardModelThroughApi(host, { force: true, lifecycle: modelLifecycle });
     } catch (err: unknown) {
+      await refreshDashboardModelThroughApi(host, { force: true, lifecycle: modelLifecycle });
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
       host.footerFlashTicks = 4;
-      if (typeof host.refreshDashboardModelFromService === "function") {
-        await host.refreshDashboardModelFromService(true);
-      }
     } finally {
-      host.setPendingDashboardSessionAction(sessionId, null);
+      clearPending();
       host.writeStatuslineFile();
-      host.renderCurrentDashboardView();
+      if (isDashboardLifecycleCurrent(host, lifecycle)) {
+        host.renderCurrentDashboardView();
+      }
     }
     return;
   }
@@ -139,17 +162,22 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
       const resolved = host.tmuxRuntimeManager.getTargetByWindowId(candidate.sessionName, candidate.windowId);
       const metadata = resolved ? host.tmuxRuntimeManager.getWindowMetadata(resolved) : null;
       if (!resolved) {
-        return undefined;
-      }
-      if (!metadata || (metadata.kind === "agent" && metadata.sessionId === sessionId)) {
+        host.sessionTmuxTargets.delete(sessionId);
+      } else if (!metadata || (metadata.kind === "agent" && metadata.sessionId === sessionId)) {
         host.sessionTmuxTargets.set(sessionId, resolved);
         return resolved;
+      } else {
+        host.sessionTmuxTargets.delete(sessionId);
       }
-    } catch {}
+    } catch {
+      host.sessionTmuxTargets.delete(sessionId);
+    }
   }
 
   try {
-    for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    const projectRoot =
+      typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+    for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(projectRoot)) {
       if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) continue;
       if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
       host.sessionTmuxTargets.set(sessionId, target);
@@ -171,6 +199,25 @@ export async function interruptAgent(host: SessionRuntimeHost, sessionId: string
     session.write("\x1b");
   }
   return { sessionId };
+}
+
+export async function resizeAgentPane(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<{ sessionId: string; cols: number; rows: number }> {
+  if (!Number.isInteger(cols) || cols <= 0) throw new Error("cols must be a positive integer");
+  if (!Number.isInteger(rows) || rows <= 0) throw new Error("rows must be a positive integer");
+
+  const session = resolveRunningSession(host, sessionId);
+  if (session.transport instanceof TmuxSessionTransport) {
+    const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+    if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+    session.transport.retarget(target);
+  }
+  session.resize(cols, rows);
+  return { sessionId, cols, rows };
 }
 
 export async function sendAgentInput(
@@ -384,6 +431,31 @@ export function buildTmuxWindowMetadata(
 ): any {
   const sessionMetadata = loadMetadataState().sessions[sessionId];
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
+  // Compute the same semantic user label the dashboard shows, from the single source
+  // of truth, so Exposé and the dashboard never disagree on an agent's state.
+  const semantic = deriveSessionSemantics({
+    status: runtime?.status ?? "running",
+    activity: sessionMetadata?.derived?.activity,
+    attention: sessionMetadata?.derived?.attention,
+    unseenCount: sessionMetadata?.derived?.unseenCount,
+  });
+  const derived = sessionMetadata?.derived;
+  const lastOutputAt =
+    derived?.lastOutputAt ??
+    (derived?.lastEvent && isAgentOutputEventKind(derived.lastEvent.kind) ? derived.lastEvent.ts : undefined);
+  const label = semantic.user.label;
+  // latestUnread only feeds the prompted/blocked/failed anchors — skip the notification
+  // scan for the common working/ready/idle states.
+  const wantsUnread = label === "needs_input" || label === "needs_response" || label === "blocked" || label === "error";
+  const anchor = sessionRecencyAnchor({
+    label,
+    lastOutputAt,
+    becameIdleAt: derived?.becameIdleAt,
+    lastUsedAt: loadLastUsedState(process.cwd()).items[sessionId]?.lastUsedAt,
+    latestUnreadAt: wantsUnread
+      ? summarizeUnreadNotificationsBySession().get(sessionId)?.latestUnread?.createdAt
+      : undefined,
+  });
   return {
     kind: "agent",
     sessionId,
@@ -399,6 +471,9 @@ export function buildTmuxWindowMetadata(
     attention: sessionMetadata?.derived?.attention,
     unseenCount: sessionMetadata?.derived?.unseenCount,
     statusText: sessionMetadata?.status?.text,
+    userLabel: semantic.user.label,
+    recencyAt: anchor?.value,
+    recencyLabel: anchor?.label,
   };
 }
 

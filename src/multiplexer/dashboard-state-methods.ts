@@ -12,9 +12,11 @@ import {
   refreshDesktopStateSnapshot as refreshDesktopStateSnapshotImpl,
   refreshLocalDashboardModel as refreshLocalDashboardModelImpl,
   startProjectServices as startProjectServicesImpl,
+  type DashboardModelRefreshOptions,
 } from "./dashboard-model.js";
 import { hydrateDashboardArchiveScreenState } from "./archives.js";
 import { hydrateDashboardNotificationScreenState } from "./notifications.js";
+import { recede } from "../tui/render/theme.js";
 import type { TmuxTarget } from "../tmux/runtime-manager.js";
 
 export const dashboardStateMethods = {
@@ -133,7 +135,10 @@ export const dashboardStateMethods = {
       this.lastRenderedBaseFrame = output;
       const viewport = this.getViewportSize();
       const overlayOutput = this.buildActiveDashboardOverlayOutput?.(viewport) ?? null;
-      const finalOutput = overlayOutput ? `${output}${overlayOutput}` : output;
+      // Dim the dashboard into a backdrop behind a centered modal; the box overdraws
+      // its rectangle at full brightness on top. The stored base stays undimmed so a
+      // dismissal redraws bright and each frame re-dims freshly.
+      const finalOutput = overlayOutput ? `${recede(output, "faint")}${overlayOutput}` : output;
       const renderKey = [
         `${viewport.cols}x${viewport.rows}`,
         `model:${this.dashboardModelVersion ?? 0}`,
@@ -142,7 +147,9 @@ export const dashboardStateMethods = {
         `ui:${this.dashboardState.renderStateKey?.() ?? ""}`,
       ].join("|");
       if (!force && this.lastRenderedFrameKey === renderKey && this.lastRenderedFrame === finalOutput) return;
-      process.stdout.write(`\x1b[H\x1b[J${finalOutput}`);
+      // Hide the cursor so it doesn't park as a block after the last footer key.
+      // Input overlays draw their own `_` caret; the cursor is restored on exit.
+      process.stdout.write(`\x1b[?25l\x1b[H\x1b[J${finalOutput}`);
       this.lastRenderedFrame = finalOutput;
       this.lastRenderedFrameKey = renderKey;
       return;
@@ -261,35 +268,47 @@ export const dashboardStateMethods = {
     invalidateDesktopStateSnapshotImpl(this);
   },
 
-  refreshDesktopStateSnapshot(this: any): void {
-    refreshDesktopStateSnapshotImpl(this);
+  refreshDesktopStateSnapshot(this: any, options: { includeRuntimeInfo?: boolean } = {}): void {
+    refreshDesktopStateSnapshotImpl(this, options);
   },
 
   computeDashboardSessions(this: any): DashboardSession[] {
     return computeDashboardSessionsImpl(this);
   },
 
-  computeDashboardServices(this: any, worktrees = this.listDesktopWorktrees()): DashboardService[] {
-    return computeDashboardServicesImpl(this, worktrees);
+  computeDashboardServices(
+    this: any,
+    worktrees = this.listDesktopWorktrees(),
+    options: { includeRuntimeInfo?: boolean } = {},
+  ): DashboardService[] {
+    return computeDashboardServicesImpl(this, worktrees, options);
   },
 
   readTmuxProcessInfo(this: any, target: TmuxTarget): { command?: string; pid?: number; previewLine?: string } {
     return readTmuxProcessInfoImpl(this, target);
   },
 
-  buildDesktopStateSnapshot(this: any): {
+  buildDesktopStateSnapshot(
+    this: any,
+    options: { includeRuntimeInfo?: boolean } = {},
+  ): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
     services: DashboardService[];
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    worktreeGroups: WorktreeGroup[];
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    return buildDesktopStateSnapshotImpl(this);
+    return buildDesktopStateSnapshotImpl(this, options);
   },
 
-  async refreshDashboardModelFromService(this: any, force = false): Promise<boolean> {
-    return refreshDashboardModelFromServiceImpl(this, force);
+  async refreshDashboardModelFromService(
+    this: any,
+    force = false,
+    options?: DashboardModelRefreshOptions,
+  ): Promise<boolean> {
+    return refreshDashboardModelFromServiceImpl(this, force, options);
   },
 
   refreshLocalDashboardModel(this: any): void {

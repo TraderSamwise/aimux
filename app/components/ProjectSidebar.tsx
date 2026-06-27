@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Network,
 } from "lucide-react-native";
+import { AgentActions } from "@/components/agent-actions";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDotMini, TypeTag } from "@/components/status-dot";
@@ -27,6 +28,7 @@ import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main
 import {
   buildViewHref,
   detailHrefForPath,
+  parentViewHrefForPath,
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
@@ -61,6 +63,7 @@ type SidebarMode = "dashboard" | "views";
 function routePrefersViews(tab: MainTabId): boolean {
   return (
     tab === "project" ||
+    tab === "coordination" ||
     tab === "topology" ||
     tab === "library" ||
     tab === "inbox" ||
@@ -192,37 +195,57 @@ function AgentRow({
   session,
   digit,
   isSelected,
+  endpoint,
+  token,
+  mainCheckoutPath,
+  onKilled,
   onPress,
 }: {
   session: DesktopSession;
   digit: number;
   isSelected: boolean;
+  endpoint: ServiceEndpoint | null;
+  token: string | null;
+  mainCheckoutPath?: string | null;
+  onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
   const tool = firstTokenOf(session.command);
   return (
-    <Pressable
-      onPress={onPress}
+    <View
       className={cn(
-        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-2.5 pr-2.5",
+        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-2.5 pr-2",
         isSelected ? "bg-[#232733]" : "hover:bg-[#232429] active:bg-[#26272d]",
       )}
     >
-      <StatusDotMini status={session.status} />
-      <IndexBadge digit={digit} />
-      <Text
-        className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-        numberOfLines={1}
-        ellipsizeMode="tail"
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        {session.label || session.id}
-      </Text>
-      {session.role || tool ? (
-        <Text className="ml-auto shrink-0 font-mono text-[12px] text-[#787a83]" numberOfLines={1}>
-          {session.role ?? tool}
+        <StatusDotMini status={session.status} />
+        <IndexBadge digit={digit} />
+        <Text
+          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {session.label || session.id}
         </Text>
-      ) : null}
-    </Pressable>
+        {session.role || tool ? (
+          <Text className="ml-auto shrink-0 font-mono text-[12px] text-[#787a83]" numberOfLines={1}>
+            {session.role ?? tool}
+          </Text>
+        ) : null}
+      </Pressable>
+      <AgentActions
+        session={session}
+        endpoint={endpoint}
+        token={token}
+        compact
+        mainCheckoutPath={mainCheckoutPath}
+        onKilled={() => onKilled(session.id)}
+      />
+    </View>
   );
 }
 
@@ -270,6 +293,7 @@ function WorktreeGroup({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   bucket: WorktreeBucket;
   endpoint: ServiceEndpoint | null;
@@ -277,6 +301,7 @@ function WorktreeGroup({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const hasChildren = worktreeHasChildren(bucket);
   const [collapsed, setCollapsed] = useState(false);
@@ -352,6 +377,10 @@ function WorktreeGroup({
               session={session}
               digit={i + 1}
               isSelected={session.id === selectedSessionId}
+              endpoint={endpoint}
+              token={token}
+              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
+              onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
           ))}
@@ -408,6 +437,7 @@ function WorktreeTree({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   projectPath: string;
   endpoint: ServiceEndpoint | null;
@@ -417,6 +447,7 @@ function WorktreeTree({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
   const [showEmpty, setShowEmpty] = useState(false);
@@ -464,6 +495,7 @@ function WorktreeTree({
     selectedSessionId,
     onPickSession,
     onPickService,
+    onKillSession,
   };
 
   return (
@@ -509,6 +541,7 @@ function WorktreeTree({
 
 const PRIMARY_NAV = [
   { id: "project", label: "Project", Icon: FolderKanban },
+  { id: "coordination", label: "Coordination", Icon: Bell },
   { id: "topology", label: "Topology", Icon: Network },
   { id: "library", label: "Library", Icon: BookOpen },
   { id: "inbox", label: "Inbox", Icon: Bell },
@@ -676,6 +709,14 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     router.push(detailHrefForPath(pathname, "service", serviceId, effectiveProjectPath));
   }
 
+  function handleKillSession(sessionId: string) {
+    if (selectedSessionId !== sessionId) return;
+    setSelectedSession(null);
+    if (pathname.includes("/agent/")) {
+      router.replace(parentViewHrefForPath(pathname, effectiveProjectPath));
+    }
+  }
+
   return (
     <View
       className="border-r border-[#2a2b31] bg-[#161719]"
@@ -709,6 +750,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                     selectedSessionId={selectedSessionId}
                     onPickSession={handlePickSession}
                     onPickService={handlePickService}
+                    onKillSession={handleKillSession}
                   />
                 )}
               </>
@@ -722,6 +764,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                 selectedSessionId={selectedSessionId}
                 onPickSession={handlePickSession}
                 onPickService={handlePickService}
+                onKillSession={handleKillSession}
               />
             )}
           </>

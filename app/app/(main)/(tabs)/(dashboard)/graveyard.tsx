@@ -6,6 +6,7 @@ import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import {
   deleteGraveyardWorktree,
   listGraveyard,
@@ -36,7 +37,7 @@ export default function GraveyardScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
 
-  const endpoint = project?.serviceEndpoint ?? null;
+  const endpoint = getProjectServiceEndpoint(project);
   const endpointHost = endpoint?.host;
   const endpointPort = endpoint?.port;
   const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;

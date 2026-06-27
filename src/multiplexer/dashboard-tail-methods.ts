@@ -1,20 +1,17 @@
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
 import {
-  buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
-  handlePlansKey as handlePlansKeyImpl,
-  loadPlanEntries as loadPlanEntriesImpl,
-  openPlanInEditor as openPlanInEditorImpl,
-  parsePlanFrontmatter as parsePlanFrontmatterImpl,
   renderGraveyard as renderGraveyardImpl,
   renderGraveyardDetailsForHost as renderGraveyardDetailsForHostImpl,
-  renderPlanDetailsForHost as renderPlanDetailsForHostImpl,
-  renderPlans as renderPlansImpl,
   resurrectGraveyardEntry as resurrectGraveyardEntryImpl,
   showGraveyard as showGraveyardImpl,
-  showPlans as showPlansImpl,
 } from "./archives.js";
+import {
+  handleLibraryKey as handleLibraryKeyImpl,
+  renderLibrary as renderLibraryImpl,
+  showLibrary as showLibraryImpl,
+} from "./library.js";
 import {
   confirmSwitcher as confirmSwitcherImpl,
   dismissHelp as dismissHelpImpl,
@@ -35,8 +32,6 @@ import {
 import {
   basenameForHost,
   clearDashboardSubscreens as clearDashboardSubscreensImpl,
-  composeSplitScreen as composeSplitScreenImpl,
-  composeTwoPaneLines as composeTwoPaneLinesImpl,
   createDashboardServiceWithFeedback as createDashboardServiceWithFeedbackImpl,
   dashboardSessionActionDeps as dashboardSessionActionDepsImpl,
   graveyardSessionWithFeedback as graveyardSessionWithFeedbackImpl,
@@ -188,15 +183,10 @@ export type DashboardTailMethods = {
   renderGraveyard(this: Multiplexer): void;
   handleGraveyardKey(this: Multiplexer, data: Buffer): void;
   resurrectGraveyardEntry(this: Multiplexer, idx: number): void;
-  showPlans(this: Multiplexer): void;
-  loadPlanEntries(this: Multiplexer): void;
-  parsePlanFrontmatter(this: Multiplexer, content: string): Record<string, string>;
-  renderPlans(this: Multiplexer): void;
-  buildPlanPreview(this: Multiplexer, content: string, width: number, maxLines: number): string[];
-  renderPlanDetails(this: Multiplexer, width: number, height: number): string[];
+  showLibrary(this: Multiplexer): void;
+  renderLibrary(this: Multiplexer): void;
   renderGraveyardDetails(this: Multiplexer, width: number, height: number): string[];
-  handlePlansKey(this: Multiplexer, data: Buffer): void;
-  openPlanInEditor(this: Multiplexer, path: string): void;
+  handleLibraryKey(this: Multiplexer, data: Buffer): void;
   getSwitcherList(this: Multiplexer): SessionRuntime[];
   showSwitcher(this: Multiplexer): void;
   resetSwitcherTimeout(this: Multiplexer): void;
@@ -238,16 +228,6 @@ export type DashboardTailMethods = {
     width: number,
     height: number,
   ): string[];
-  composeSplitScreen(
-    this: Multiplexer,
-    leftLines: string[],
-    rightLines: string[],
-    cols: number,
-    viewportHeight: number,
-    focusLine: number,
-    twoPane: boolean,
-  ): string[];
-  composeTwoPaneLines(this: Multiplexer, left: string[], right: string[], cols: number): string[];
   wrapKeyValue(this: Multiplexer, key: string, value: string, width: number): string[];
   wrapText(this: Multiplexer, text: string, width: number): string[];
   truncatePlain(this: Multiplexer, text: string, max: number): string;
@@ -450,32 +430,17 @@ export const dashboardTailMethods: DashboardTailMethods = {
   resurrectGraveyardEntry(idx) {
     resurrectGraveyardEntryImpl(this, idx);
   },
-  showPlans() {
-    showPlansImpl(this);
+  showLibrary() {
+    showLibraryImpl(this);
   },
-  loadPlanEntries() {
-    loadPlanEntriesImpl(this);
-  },
-  parsePlanFrontmatter(content) {
-    return parsePlanFrontmatterImpl(content);
-  },
-  renderPlans() {
-    renderPlansImpl(this);
-  },
-  buildPlanPreview(content, width, maxLines) {
-    return buildPlanPreviewImpl(content, width, maxLines);
-  },
-  renderPlanDetails(width, height) {
-    return renderPlanDetailsForHostImpl(this, width, height);
+  renderLibrary() {
+    renderLibraryImpl(this);
   },
   renderGraveyardDetails(width, height) {
     return renderGraveyardDetailsForHostImpl(this, width, height);
   },
-  handlePlansKey(data) {
-    handlePlansKeyImpl(this, data);
-  },
-  openPlanInEditor(path) {
-    openPlanInEditorImpl(this, path);
+  handleLibraryKey(data) {
+    handleLibraryKeyImpl(this, data);
   },
   getSwitcherList() {
     return getSwitcherListImpl(this);
@@ -536,12 +501,6 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   renderSessionDetails(session, width, height) {
     return renderSessionDetailsImpl(this, session, width, height);
-  },
-  composeSplitScreen(leftLines, rightLines, cols, viewportHeight, focusLine, twoPane) {
-    return composeSplitScreenImpl(this, leftLines, rightLines, cols, viewportHeight, focusLine, twoPane);
-  },
-  composeTwoPaneLines(left, right, cols) {
-    return composeTwoPaneLinesImpl(left, right, cols);
   },
   wrapKeyValue(key, value, width) {
     return wrapKeyValueForHost(key, value, width);

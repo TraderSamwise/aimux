@@ -1,8 +1,6 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
@@ -21,6 +19,7 @@ import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js"
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import {
   buildTmuxDoctorReport,
   renderTmuxDoctorReport,
@@ -32,13 +31,11 @@ import {
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
-  loadMetadataState,
   type MetadataTone,
   type SessionContextMetadata,
   type SessionServiceMetadata,
   removeMetadataEndpoint,
 } from "./metadata-store.js";
-import { contextualizeAlertInput, metadataDisplayContext } from "./alert-display.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { listDesktopProjects } from "./project-scanner.js";
@@ -56,42 +53,10 @@ import {
   stopProjectService,
 } from "./daemon.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
-import {
-  createThread,
-  listThreadSummaries,
-  markThreadSeen,
-  readMessages,
-  readThread,
-  setThreadStatus,
-  type MessageKind,
-  type ThreadKind,
-  type ThreadStatus,
-} from "./threads.js";
-import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
-import {
-  acceptHandoff,
-  approveReview,
-  acceptTask,
-  assignTask,
-  blockTask,
-  completeHandoff,
-  completeTask,
-  reopenTask,
-  requestTaskChanges,
-  sendHandoff,
-} from "./orchestration-actions.js";
-import { readAllTasks, readTask } from "./tasks.js";
-import {
-  clearNotifications,
-  listNotifications,
-  markNotificationsRead,
-  upsertNotification,
-  unreadNotificationCount,
-} from "./notifications.js";
-import { notifyAlert } from "./notify.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
@@ -107,17 +72,10 @@ import {
 import { parseCodexHookPayload } from "./codex-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
-import { runTmuxExpose } from "./tmux/expose.js";
+import { registerExposeCommand } from "./popup-expose.js";
 import { runTmuxMetaDashboard } from "./tmux/meta-dashboard.js";
-import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
-import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
-import {
-  findLiveDashboardTarget,
-  openDashboardTarget,
-  pruneDashboardArtifacts,
-  resolveDashboardTarget,
-} from "./dashboard/targets.js";
+import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
@@ -127,11 +85,7 @@ import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
 import { recordTopologyBackendSessionId } from "./runtime-core/backend-session-ids.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
-import {
-  listTopologyWorktreeGraveyard,
-  listTopologyWorktreeGraveyardPaths,
-} from "./runtime-core/topology-worktrees.js";
-import { buildGraveyardCleanupPlan, runGraveyardCleanup, type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
+import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
   importRuntimeMigration,
@@ -146,6 +100,9 @@ import {
   openUrlInBrowser,
   startLocalUiServer,
 } from "./local-ui-server.js";
+import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
+import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
+import { isAimuxBuildDriftError } from "./runtime-drift.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -160,6 +117,19 @@ class ProjectServiceVersionError extends Error {
   }
 }
 
+class ProjectServiceHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: any,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectServiceHttpError";
+  }
+}
+
+const PROJECT_SERVICE_READ_TIMEOUT_MS = 15_000;
+
 function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): string {
   const lines = [
     "aimux: the running project service is from a different local build.",
@@ -168,11 +138,11 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
     `Expected build: ${error.expected.buildStamp}`,
     `Running build: ${error.actual?.buildStamp ?? "unknown"}`,
     "",
-    "Restart the project runtime, then retry:",
-    "  aimux restart-runtime --open",
+    "Restart the local aimux control plane, then retry:",
+    "  aimux restart",
     "",
-    "If the mismatch persists, use the advanced daemon restart path:",
-    "  aimux daemon restart",
+    "Inspect the local version inventory with:",
+    "  aimux doctor versions",
   ];
   return lines.join("\n");
 }
@@ -180,12 +150,22 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
 async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   console.error(`aimux: restarting stale daemon-managed control plane for ${projectRoot}...`);
   log.warn("restarting stale control plane", "runtime", { projectRoot });
-  await stopDaemon();
   removeMetadataEndpoint(projectRoot);
-  await ensureDaemonRunning();
-  await ensureProjectService(projectRoot);
-  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, new TmuxRuntimeManager());
+  const result = await restartAimuxControlPlane({ projectRoot });
+  const project = result.projects.find((entry) => entry.projectRoot === projectRoot);
+  if (!project) throw new Error("failed to restart project service: project was not included in restart result");
+  if (project.runtime.status === "failed") {
+    throw new Error(project.runtime.error ?? "failed to repair tmux runtime");
+  }
+  if (project?.service.status === "failed") {
+    throw new Error(project.service.error ?? "failed to restart project service");
+  }
+  if (project.dashboard.status === "failed") {
+    throw new Error(project.dashboard.error ?? "failed to reload dashboard");
+  }
+  if (result.verification.status === "failed") {
+    throw new Error(result.verification.error ?? "post-restart verification failed");
+  }
 }
 
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
@@ -205,7 +185,7 @@ async function waitForVerifiedProjectService(
   projectRoot: string,
   opts?: { timeoutMs?: number },
 ): Promise<{
-  endpoint: { host: string; port: number };
+  endpoint: { host: string; port: number; pid: number };
   health: { serviceInfo?: ProjectServiceManifest; pid?: number };
 }> {
   const expected = getProjectServiceManifest();
@@ -218,12 +198,30 @@ async function waitForVerifiedProjectService(
   let missingEndpointSince = 0;
 
   while (Date.now() < deadline) {
-    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
     if (endpoint) {
       missingEndpointSince = 0;
       try {
         const health = await fetchProjectServiceHealth(endpoint);
         lastServiceInfo = health.serviceInfo ?? null;
+        if (health.pid !== endpoint.pid) {
+          lastError = `project service pid mismatch: endpoint ${endpoint.pid} health ${health.pid ?? "unknown"}`;
+          log.warn("project service pid mismatch", "runtime", {
+            projectRoot,
+            endpoint,
+            healthPid: health.pid,
+          });
+          if (!respawnAttempted) {
+            respawnAttempted = true;
+            await stopProjectService(projectRoot);
+            removeMetadataEndpoint(projectRoot);
+            await ensureProjectService(projectRoot);
+          } else {
+            removeMetadataEndpoint(projectRoot);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          continue;
+        }
         if (manifestsMatch(expected, health.serviceInfo)) {
           log.info("project service verified", "runtime", {
             projectRoot,
@@ -352,11 +350,9 @@ function rewriteLocalStatuslineArtifacts(
 }
 
 async function postProjectServiceJson(path: string, body: unknown, options?: { timeoutMs?: number }): Promise<any> {
-  let endpoint = await resolveProjectServiceEndpoint();
-  if (!endpoint) {
-    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
-    endpoint = await resolveProjectServiceEndpoint();
-  }
+  const projectRoot = resolveProjectRoot(process.cwd());
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
@@ -372,36 +368,46 @@ async function postProjectServiceJson(path: string, body: unknown, options?: { t
   return json;
 }
 
-async function getProjectServiceJson(path: string): Promise<any> {
-  let endpoint = await resolveProjectServiceEndpoint();
-  if (!endpoint) {
-    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
-    endpoint = await resolveProjectServiceEndpoint();
-  }
+async function getProjectServiceJson(path: string, opts?: { notFound?: "null" }): Promise<any> {
+  const projectRoot = resolveProjectRoot(process.cwd());
+  await ensureDaemonProjectReady(projectRoot);
+  let endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`);
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
+    }));
+  } catch {
+    removeMetadataEndpoint(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
+    endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    if (!endpoint) {
+      throw new Error("no live project service metadata endpoint");
+    }
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
+    }));
+  }
+  if (status === 404 && opts?.notFound === "null") {
+    return null;
+  }
   if (status < 200 || status >= 300 || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${status}`);
+    throw new ProjectServiceHttpError(status, json, json?.error || `request failed: ${status}`);
   }
   return json;
 }
 
-async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallback: () => any): Promise<any> {
-  try {
-    return await postProjectServiceJson(path, body);
-  } catch {
-    return fallback();
-  }
-}
-
-async function getProjectServiceJsonOrLocal(path: string, fallback: () => any): Promise<any> {
-  try {
-    return await getProjectServiceJson(path);
-  } catch {
-    return fallback();
-  }
+function notificationQuery(opts: { unread?: boolean; session?: string }): string {
+  const query = new URLSearchParams();
+  if (opts.unread) query.set("unread", "1");
+  const sessionId = opts.session?.trim();
+  if (sessionId) query.set("sessionId", sessionId);
+  const rendered = query.toString();
+  return rendered ? `?${rendered}` : "";
 }
 
 function exitAfterOpen(): never {
@@ -420,7 +426,7 @@ async function resolvePermissionRequestOutput(
     // The hook runs in the agent's working dir, which is the worktree (or the
     // project root if no worktree). Carry it so clients can show project/worktree.
     const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
-    const result = await postHookProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrSafetyFallback(
       projectRoot,
       "/agents/interaction/request",
       { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
@@ -435,12 +441,28 @@ async function resolvePermissionRequestOutput(
   return {};
 }
 
-async function postLiveProjectServiceJsonOrLocal(
+async function postLiveProjectServiceJson(projectRoot: string, path: string, body: unknown): Promise<any> {
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+  if (!endpoint) {
+    throw new Error("no live project service metadata endpoint");
+  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
+}
+
+async function postHookProjectServiceJsonOrSafetyFallback(
   projectRoot: string,
   path: string,
   body: unknown,
   fallback: () => any,
-  options: { fallbackOnRequestError?: boolean } = {},
 ): Promise<any> {
   let endpoint;
   try {
@@ -459,8 +481,7 @@ async function postLiveProjectServiceJsonOrLocal(
       headers: { "content-type": "application/json" },
       body,
     }));
-  } catch (error) {
-    if (!options.fallbackOnRequestError) throw error;
+  } catch {
     return fallback();
   }
   if (status === 404 || status === 405 || status === 501) {
@@ -472,37 +493,29 @@ async function postLiveProjectServiceJsonOrLocal(
   return json;
 }
 
-async function postHookProjectServiceJsonOrLocal(
-  projectRoot: string,
-  path: string,
-  body: unknown,
-  fallback: () => any,
-): Promise<any> {
-  return postLiveProjectServiceJsonOrLocal(projectRoot, path, body, fallback, { fallbackOnRequestError: true });
+async function clearHookNotificationsViaService(projectRoot: string, sessionId: string): Promise<void> {
+  try {
+    await postLiveProjectServiceJson(projectRoot, "/notifications/clear", { sessionId });
+  } catch (error) {
+    debug(
+      `failed to clear notifications via project service for ${sessionId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "session",
+    );
+  }
 }
 
-async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
-  let endpoint;
-  try {
-    endpoint = await resolveProjectServiceEndpoint(projectRoot);
-  } catch {
-    return fallback();
-  }
+async function getLiveProjectServiceJson(projectRoot: string, path: string): Promise<any> {
+  await ensureDaemonProjectReady(projectRoot);
+  const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
-    return fallback();
+    throw new Error("no live project service metadata endpoint");
   }
-  let status: number;
-  let json: any;
-  try {
-    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "GET",
-    }));
-  } catch {
-    return fallback();
-  }
-  if (status === 404 || status === 405 || status === 501) {
-    return fallback();
-  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "GET",
+    timeoutMs: PROJECT_SERVICE_READ_TIMEOUT_MS,
+  });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
   }
@@ -532,7 +545,7 @@ async function recordBackendSessionIdForHook(
   backendSessionId: string,
 ): Promise<{ ok: boolean; sessionId: string; backendSessionId?: string; error?: string }> {
   try {
-    const result = await postHookProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrSafetyFallback(
       projectRoot,
       "/agents/record-backend-session",
       { sessionId, backendSessionId },
@@ -577,7 +590,14 @@ async function readAllStdin(): Promise<string> {
 }
 
 async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVersionDrift?: boolean }): Promise<void> {
-  await ensureDaemonRunning();
+  try {
+    await ensureDaemonRunning();
+  } catch (error) {
+    if (opts?.repairVersionDrift === false || !isAimuxBuildDriftError(error)) {
+      throw error;
+    }
+    await restartStaleControlPlane(projectRoot);
+  }
   await ensureProjectService(projectRoot);
   try {
     await waitForVerifiedProjectService(projectRoot);
@@ -607,7 +627,7 @@ function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: s
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
   return tmux
     .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession))
     .sort((a, b) => {
       const aIsHost = a === hostSession ? 1 : 0;
       const bIsHost = b === hostSession ? 1 : 0;
@@ -658,7 +678,7 @@ async function stopProjectRuntime(
 
 async function restartProjectRuntime(
   projectRoot: string,
-  opts: { open?: boolean } = {},
+  opts: { open?: boolean; clientTty?: string } = {},
 ): Promise<{
   dashboardSessionName: string;
   dashboardTarget: ReturnType<typeof resolveDashboardTarget>["dashboardTarget"];
@@ -669,7 +689,11 @@ async function restartProjectRuntime(
   ensureTmuxAvailable(tmux);
   const resolved = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
   if (opts.open) {
-    tmux.openTarget(resolved.dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+    tmux.openTarget(resolved.dashboardTarget, {
+      insideTmux: tmux.isInsideTmux() || Boolean(opts.clientTty),
+      alreadyResolved: true,
+      clientTty: opts.clientTty,
+    });
   }
   return {
     dashboardSessionName: resolved.dashboardSession.sessionName,
@@ -835,40 +859,37 @@ program
         }
       }
 
-      const mux = new Multiplexer();
+      const mux = new Multiplexer({ contextWatcherEnabled: !opts.tmuxDashboardInternal });
       let cleanedUp = false;
       const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-      const cleanupAll = () => {
+      const cleanupAll = async () => {
         if (cleanedUp) return;
         cleanedUp = true;
-        mux.cleanup();
+        await mux.cleanup();
       };
 
       // Graceful shutdown on signals
       const shutdown = () => {
-        cleanupAll();
-        process.exit(0);
+        void cleanupAll().finally(() => process.exit(0));
       };
       process.on("exit", ensureTerminalRestored);
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
       process.on("uncaughtException", (err) => {
-        cleanupAll();
         log.error("uncaught exception", "runtime", {
           error: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
         console.error(err);
-        process.exit(1);
+        void cleanupAll().finally(() => process.exit(1));
       });
       process.on("unhandledRejection", (reason) => {
-        cleanupAll();
         log.error("unhandled rejection", "runtime", {
           error: reason instanceof Error ? reason.message : String(reason),
           stack: reason instanceof Error ? reason.stack : undefined,
         });
         console.error(reason);
-        process.exit(1);
+        void cleanupAll().finally(() => process.exit(1));
       });
 
       try {
@@ -882,10 +903,10 @@ program
         } else {
           exitCode = await mux.runDashboard();
         }
-        cleanupAll();
+        await cleanupAll();
         process.exit(exitCode);
       } catch (err: unknown) {
-        cleanupAll();
+        await cleanupAll();
         if (err instanceof ProjectServiceVersionError) {
           console.error(renderProjectServiceVersionHelp(err));
           process.exit(1);
@@ -906,10 +927,35 @@ program
   });
 
 program
+  .command("restart")
+  .description("Restart local aimux control plane and reload all known dashboards")
+  .option("--project <path>", "Reload only one project's dashboard while preserving known services")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = opts.project ? resolveProjectRoot(pathResolve(opts.project)) : undefined;
+      const result = await restartAimuxControlPlane({ projectRoot });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (result.summary.failures > 0) process.exitCode = 1;
+        return;
+      }
+      console.log(renderRuntimeRestartResult(result));
+      if (result.summary.failures > 0) process.exitCode = 1;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command("dashboard-reload")
   .description("Recreate and optionally reopen the dashboard window only")
   .option("--open", "Open the dashboard after reloading")
-  .action(async (opts: { open?: boolean }) => {
+  .option("--client-tty <tty>", "tmux client tty to switch after reloading")
+  .option("--current-client-session <name>", "Current client session to reopen")
+  .action(async (opts: { open?: boolean; clientTty?: string; currentClientSession?: string }) => {
     try {
       const originalCwd = process.cwd();
       const projectRoot = resolveProjectRoot(originalCwd);
@@ -918,14 +964,26 @@ program
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
-      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, {
+        forceReload: true,
+        openInHostSession: true,
+      });
       try {
         await postProjectServiceJson("/statusline/refresh", { force: true }, { timeoutMs: 1500 });
       } catch {}
       rewriteLocalStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
 
       if (opts.open) {
-        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+        const clientTty = opts.clientTty?.trim() || undefined;
+        const returnSessionName = opts.currentClientSession?.trim() || undefined;
+        const clientSuffix = returnSessionName?.match(/-client-([0-9a-f]{8})$/)?.[1];
+        tmux.openTarget(dashboardTarget, {
+          insideTmux: tmux.isInsideTmux() || Boolean(clientTty || clientSuffix),
+          alreadyResolved: true,
+          clientTty,
+          clientSuffix,
+          returnSessionName,
+        });
         exitAfterOpen();
       }
 
@@ -951,10 +1009,7 @@ program
       if (sessionId) {
         const projectRoot = await prepareProjectContext(opts.project);
         await ensureDaemonProjectReady(projectRoot);
-        const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/stop", { sessionId }, () => {
-          const mux = new Multiplexer();
-          return mux.stopAgent(sessionId);
-        });
+        const result = await postLiveProjectServiceJson(projectRoot, "/agents/stop", { sessionId });
         if (opts.json) {
           console.log(
             JSON.stringify(
@@ -1009,12 +1064,16 @@ program
   .description("Hard restart the current project runtime and rebuild its managed tmux topology")
   .option("--project-root <path>", "Project root", process.cwd())
   .option("--open", "Open the dashboard after restarting the runtime")
+  .option("--client-tty <tty>", "tmux client tty to switch after reopening")
   .option("--json", "Emit JSON")
-  .action(async (opts: { projectRoot: string; open?: boolean; json?: boolean }) => {
+  .action(async (opts: { projectRoot: string; open?: boolean; clientTty?: string; json?: boolean }) => {
     try {
       const projectRoot = resolveProjectRoot(opts.projectRoot);
       await initPaths(projectRoot);
-      const result = await restartProjectRuntime(projectRoot, { open: opts.open });
+      const result = await restartProjectRuntime(projectRoot, {
+        open: opts.open,
+        clientTty: opts.clientTty?.trim() || undefined,
+      });
       if (opts.open) exitAfterOpen();
       if (opts.json) {
         console.log(
@@ -1044,9 +1103,7 @@ program
     }
   });
 
-const hostCmd = program
-  .command("host")
-  .description("Advanced compatibility wrappers for legacy daemon-managed project services");
+const hostCmd = program.command("host").description("Advanced project-service inspection commands");
 
 program
   .command("ui")
@@ -1091,7 +1148,7 @@ program
 
 program
   .command("serve")
-  .description("Advanced: ensure the legacy daemon-backed project control service is running")
+  .description("Advanced: ensure the daemon-backed project control service is running")
   .action(async () => {
     const projectRoot = resolveProjectRoot(process.cwd());
     if (projectRoot !== process.cwd()) {
@@ -1345,7 +1402,7 @@ hostCmd
   });
 
 hostCmd.action(() => {
-  console.log("`aimux host` is a compatibility alias for daemon-managed project services.");
+  console.log("Use `aimux host status` or `aimux host --help` to inspect project services.");
 });
 
 const daemonCmd = program.command("daemon").description("Advanced: manage the global aimux control-plane daemon");
@@ -1404,21 +1461,17 @@ daemonCmd
 
 daemonCmd
   .command("restart")
-  .description("Restart the global aimux daemon")
-  .action(async () => {
-    const priorProjects = Object.values(loadDaemonState().projects)
-      .map((project) => project.projectRoot)
-      .filter((projectRoot, index, items) => items.indexOf(projectRoot) === index);
-    await stopDaemon("SIGTERM");
-    const info = await ensureDaemonRunning();
-    for (const projectRoot of priorProjects) {
-      await ensureProjectService(projectRoot);
+  .description("Compatibility alias for aimux restart")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const result = await restartAimuxControlPlane();
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.summary.failures > 0) process.exitCode = 1;
+      return;
     }
-    const restoredSuffix =
-      priorProjects.length > 0
-        ? ` and restored ${priorProjects.length} project service${priorProjects.length === 1 ? "" : "s"}`
-        : "";
-    console.log(`Restarted daemon pid ${info.pid} on http://127.0.0.1:${info.port}${restoredSuffix}`);
+    console.log(renderRuntimeRestartResult(result));
+    if (result.summary.failures > 0) process.exitCode = 1;
   });
 
 daemonCmd
@@ -1495,55 +1548,55 @@ daemonCmd
 program
   .command("__project-service-internal")
   .description("Internal daemon-managed project service entrypoint")
-  .action(async () => {
-    const projectRoot = resolveProjectRoot(process.cwd());
+  .option("--project-id <id>", "Internal project id")
+  .option("--project-root <path>", "Internal project root")
+  .action(async (opts: { projectId?: string; projectRoot?: string }) => {
+    void opts.projectId;
+    const projectRoot = resolveProjectRoot(opts.projectRoot ? pathResolve(opts.projectRoot) : process.cwd());
     if (projectRoot !== process.cwd()) {
       process.chdir(projectRoot);
     }
     await initPaths(projectRoot);
     initProject();
 
-    const mux = new Multiplexer();
+    const mux = new Multiplexer({ contextWatcherEnabled: false });
     let cleanedUp = false;
     const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-    const cleanupAll = () => {
+    const cleanupAll = async () => {
       if (cleanedUp) return;
       cleanedUp = true;
-      mux.cleanup();
+      await mux.cleanup();
     };
 
     const shutdown = () => {
-      cleanupAll();
-      process.exit(0);
+      void cleanupAll().finally(() => process.exit(0));
     };
     process.on("exit", ensureTerminalRestored);
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
     process.on("uncaughtException", (err) => {
-      cleanupAll();
       log.error("project service uncaught exception", "runtime", {
         error: err instanceof Error ? err.message : String(err),
         stack: err instanceof Error ? err.stack : undefined,
       });
       console.error(err);
-      process.exit(1);
+      void cleanupAll().finally(() => process.exit(1));
     });
     process.on("unhandledRejection", (reason) => {
-      cleanupAll();
       log.error("project service unhandled rejection", "runtime", {
         error: reason instanceof Error ? reason.message : String(reason),
         stack: reason instanceof Error ? reason.stack : undefined,
       });
       console.error(reason);
-      process.exit(1);
+      void cleanupAll().finally(() => process.exit(1));
     });
 
     try {
       const exitCode = await mux.runProjectService();
-      cleanupAll();
+      await cleanupAll();
       process.exit(exitCode);
     } catch (err: unknown) {
-      cleanupAll();
+      await cleanupAll();
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`aimux project service: ${msg}`);
       process.exit(1);
@@ -1774,11 +1827,6 @@ async function prepareProjectContext(requestedProject?: string): Promise<string>
   return projectRoot;
 }
 
-function listVisibleLocalWorktrees(projectRoot: string): WorktreeInfo[] {
-  const graveyardPaths = listTopologyWorktreeGraveyardPaths();
-  return listWorktrees(projectRoot).filter((worktree) => !graveyardPaths.has(worktree.path));
-}
-
 function printWorktrees(projectRoot?: string, worktreesInput?: WorktreeInfo[]): void {
   try {
     const worktrees = worktreesInput ?? listWorktrees(projectRoot);
@@ -1852,23 +1900,9 @@ function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
-async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
-  try {
-    await ensureDaemonProjectReady(projectRoot);
-  } catch (err) {
-    if (err instanceof ProjectServiceVersionError) {
-      throw err;
-    }
-  }
-}
-
 worktreeCmd.action(async () => {
   const projectRoot = await prepareProjectContext();
-  await ensureDaemonProjectReadyForFallback(projectRoot);
-  const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
-    ok: true,
-    worktrees: listVisibleLocalWorktrees(projectRoot),
-  }));
+  const result = await getLiveProjectServiceJson(projectRoot, "/worktrees");
   printWorktrees(projectRoot, result.worktrees ?? []);
 });
 
@@ -1880,7 +1914,7 @@ program
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
+    const summaries = await getProjectServiceJson(`/threads${query}`);
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1909,7 +1943,7 @@ threadCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { session?: string; json?: boolean }) => {
     const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
-    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
+    const summaries = await getProjectServiceJson(`/threads${query}`);
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1937,11 +1971,7 @@ threadCmd
   .argument("<threadId>")
   .option("--json", "Emit JSON")
   .action(async (threadId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrLocal(`/threads/${encodeURIComponent(threadId)}`, () => {
-      const thread = readThread(threadId);
-      if (!thread) return null;
-      return { thread, messages: readMessages(threadId) };
-    });
+    const detail = await getProjectServiceJson(`/threads/${encodeURIComponent(threadId)}`, { notFound: "null" });
     if (!detail?.thread) {
       console.error(`aimux: thread not found: ${threadId}`);
       process.exit(1);
@@ -1976,23 +2006,12 @@ threadCmd
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const result = await postProjectServiceJsonOrLocal(
-      "/threads/open",
-      {
-        title: opts.title,
-        from: opts.from,
-        participants,
-        kind: (opts.kind as ThreadKind) ?? "conversation",
-      },
-      () => ({
-        thread: createThread({
-          title: opts.title,
-          kind: (opts.kind as ThreadKind) ?? "conversation",
-          createdBy: opts.from,
-          participants: [...new Set([opts.from, ...participants])],
-        }),
-      }),
-    );
+    const result = await postProjectServiceJson("/threads/open", {
+      title: opts.title,
+      from: opts.from,
+      participants,
+      kind: (opts.kind as ThreadKind) ?? "conversation",
+    });
     console.log(result.thread.id);
   });
 
@@ -2009,29 +2028,13 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const result = await postProjectServiceJsonOrLocal(
-      "/threads/send",
-      {
-        threadId,
-        from: opts.from,
-        to,
-        kind: (opts.kind as MessageKind) ?? "note",
-        body,
-      },
-      () => {
-        if (!readThread(threadId)) {
-          console.error(`aimux: thread not found: ${threadId}`);
-          process.exit(1);
-        }
-        return sendThreadMessage({
-          threadId,
-          from: opts.from,
-          to,
-          kind: (opts.kind as MessageKind) ?? "note",
-          body,
-        });
-      },
-    );
+    const result = await postProjectServiceJson("/threads/send", {
+      threadId,
+      from: opts.from,
+      to,
+      kind: (opts.kind as MessageKind) ?? "note",
+      body,
+    });
     console.log(result.message.id);
   });
 
@@ -2041,14 +2044,7 @@ threadCmd
   .argument("<threadId>")
   .requiredOption("--session <sessionId>", "Participant session id")
   .action(async (threadId: string, opts: { session: string }) => {
-    await postProjectServiceJsonOrLocal("/threads/mark-seen", { threadId, session: opts.session }, () => {
-      const thread = markThreadSeen(threadId, opts.session);
-      if (!thread) {
-        console.error(`aimux: thread not found: ${threadId}`);
-        process.exit(1);
-      }
-      return { ok: true, thread };
-    });
+    await postProjectServiceJson("/threads/mark-seen", { threadId, session: opts.session });
     console.log("ok");
   });
 
@@ -2064,28 +2060,14 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    try {
-      const result = await postProjectServiceJson("/threads/status", {
-        threadId,
-        status: opts.status,
-        owner: opts.owner,
-        waitingOn,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`status ${result.thread.status}`);
-      return;
-    } catch {
-      const thread = setThreadStatus(threadId, opts.status, {
-        owner: opts.owner?.trim(),
-        waitingOn,
-      });
-      if (!thread) {
-        console.error(`aimux: thread not found: ${threadId}`);
-        process.exit(1);
-      }
-      console.log(`thread ${thread.id}`);
-      console.log(`status ${thread.status}`);
-    }
+    const result = await postProjectServiceJson("/threads/status", {
+      threadId,
+      status: opts.status,
+      owner: opts.owner,
+      waitingOn,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`status ${result.thread.status}`);
   });
 
 program
@@ -2259,42 +2241,21 @@ messageCmd
         console.error("aimux: message send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      try {
-        const result = await postProjectServiceJson("/threads/send", {
-          threadId: opts.thread,
-          from: opts.from ?? "user",
-          to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          worktreePath: opts.worktree,
-          kind: (opts.kind as MessageKind) ?? "request",
-          body,
-          title: opts.title,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
-        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-          console.log(`delivered ${result.deliveredTo.join(",")}`);
-        }
-        return;
-      } catch {
-        const result = opts.thread
-          ? sendThreadMessage({
-              threadId: opts.thread,
-              from: opts.from ?? "user",
-              to,
-              kind: (opts.kind as MessageKind) ?? "request",
-              body,
-            })
-          : sendDirectMessage({
-              from: opts.from ?? "user",
-              to: to ?? [],
-              body,
-              title: opts.title,
-              kind: (opts.kind as any) ?? "request",
-            });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
+      const result = await postProjectServiceJson("/threads/send", {
+        threadId: opts.thread,
+        from: opts.from ?? "user",
+        to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        worktreePath: opts.worktree,
+        kind: (opts.kind as MessageKind) ?? "request",
+        body,
+        title: opts.title,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
       }
     },
   );
@@ -2324,36 +2285,19 @@ handoffCmd
         console.error("aimux: handoff send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      try {
-        const result = await postProjectServiceJson("/handoff", {
-          from: opts.from ?? "user",
-          to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          body,
-          title: opts.title,
-          worktreePath: opts.worktree,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
-        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-          console.log(`delivered ${result.deliveredTo.join(",")}`);
-        }
-        return;
-      } catch {
-        const result = sendHandoff({
-          from: opts.from ?? "user",
-          to: to?.length
-            ? to
-            : [opts.assignee, opts.tool]
-                .map((value) => value?.trim())
-                .filter((value): value is string => Boolean(value)),
-          body,
-          title: opts.title,
-          worktreePath: opts.worktree,
-        });
-        console.log(`thread ${result.thread.id}`);
-        console.log(`message ${result.message.id}`);
+      const result = await postProjectServiceJson("/handoff", {
+        from: opts.from ?? "user",
+        to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        body,
+        title: opts.title,
+        worktreePath: opts.worktree,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
       }
     },
   );
@@ -2365,24 +2309,13 @@ handoffCmd
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
   .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/handoff/accept", {
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      return;
-    } catch {
-      const result = acceptHandoff({
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
+    const result = await postProjectServiceJson("/handoff/accept", {
+      threadId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`message ${result.message.id}`);
   });
 
 handoffCmd
@@ -2392,24 +2325,13 @@ handoffCmd
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Optional completion note")
   .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/handoff/complete", {
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      return;
-    } catch {
-      const result = completeHandoff({
-        threadId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
+    const result = await postProjectServiceJson("/handoff/complete", {
+      threadId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`thread ${result.thread.id}`);
+    console.log(`message ${result.message.id}`);
   });
 
 const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
@@ -2425,12 +2347,7 @@ taskCmd
     if (opts.session) params.set("session", opts.session);
     if (opts.status) params.set("status", opts.status);
     const query = params.toString();
-    const result = await getProjectServiceJsonOrLocal(`/tasks${query ? `?${query}` : ""}`, () => ({
-      ok: true,
-      tasks: readAllTasks()
-        .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
-        .filter((task) => !opts.status || task.status === opts.status),
-    }));
+    const result = await getProjectServiceJson(`/tasks${query ? `?${query}` : ""}`);
     const tasks = Array.isArray(result.tasks) ? result.tasks : [];
     if (opts.json) {
       console.log(JSON.stringify({ tasks }, null, 2));
@@ -2454,16 +2371,7 @@ taskCmd
   .argument("<taskId>")
   .option("--json", "Emit JSON")
   .action(async (taskId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJsonOrLocal(`/tasks/${encodeURIComponent(taskId)}`, () => {
-      const task = readTask(taskId);
-      if (!task) return null;
-      return {
-        ok: true,
-        task,
-        thread: task.threadId ? readThread(task.threadId) : undefined,
-        messages: task.threadId ? readMessages(task.threadId) : [],
-      };
-    });
+    const detail = await getProjectServiceJson(`/tasks/${encodeURIComponent(taskId)}`, { notFound: "null" });
     if (!detail?.task) {
       console.error(`aimux: task not found: ${taskId}`);
       process.exit(1);
@@ -2515,36 +2423,19 @@ taskCmd
         worktree?: string;
       },
     ) => {
-      try {
-        const result = await postProjectServiceJson("/tasks/assign", {
-          from: opts.from ?? "user",
-          to: opts.to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          description,
-          prompt: opts.prompt,
-          type: opts.type,
-          diff: opts.diff,
-          worktreePath: opts.worktree,
-        });
-        console.log(`task ${result.task.id}`);
-        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-        return;
-      } catch {
-        const result = await assignTask({
-          from: opts.from ?? "user",
-          to: opts.to,
-          assignee: opts.assignee,
-          tool: opts.tool,
-          description,
-          prompt: opts.prompt,
-          type: opts.type,
-          diff: opts.diff,
-          worktreePath: opts.worktree,
-        });
-        console.log(`task ${result.task.id}`);
-        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      }
+      const result = await postProjectServiceJson("/tasks/assign", {
+        from: opts.from ?? "user",
+        to: opts.to,
+        assignee: opts.assignee,
+        tool: opts.tool,
+        description,
+        prompt: opts.prompt,
+        type: opts.type,
+        diff: opts.diff,
+        worktreePath: opts.worktree,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
     },
   );
 
@@ -2555,24 +2446,13 @@ taskCmd
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/accept", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await acceptTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/accept", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2582,24 +2462,13 @@ taskCmd
   .option("--from <sessionId>", "Blocking session id", "user")
   .option("--body <text>", "Blocking reason")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/block", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await blockTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/block", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2609,24 +2478,13 @@ taskCmd
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Completion summary/result")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/complete", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await completeTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/complete", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 taskCmd
@@ -2636,24 +2494,13 @@ taskCmd
   .option("--from <sessionId>", "Reopening session id", "user")
   .option("--body <text>", "Optional reopening note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/tasks/reopen", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await reopenTask({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/tasks/reopen", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 const reviewCmd = program.command("review").description("Manage review workflow tasks");
@@ -2665,24 +2512,13 @@ reviewCmd
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Optional approval note")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/reviews/approve", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await approveReview({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/reviews/approve", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 reviewCmd
@@ -2692,26 +2528,14 @@ reviewCmd
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Requested changes")
   .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    try {
-      const result = await postProjectServiceJson("/reviews/request-changes", {
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-      return;
-    } catch {
-      const result = await requestTaskChanges({
-        taskId,
-        from: opts.from ?? "user",
-        body: opts.body,
-      });
-      console.log(`task ${result.task.id}`);
-      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
-      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
-    }
+    const result = await postProjectServiceJson("/reviews/request-changes", {
+      taskId,
+      from: opts.from ?? "user",
+      body: opts.body,
+    });
+    console.log(`task ${result.task.id}`);
+    if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
+    if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
 
 worktreeCmd
@@ -2721,11 +2545,7 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReadyForFallback(projectRoot);
-    const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
-      ok: true,
-      worktrees: listVisibleLocalWorktrees(projectRoot),
-    }));
+    const result = await getLiveProjectServiceJson(projectRoot, "/worktrees");
     const worktrees = result.worktrees ?? [];
     if (opts.json) {
       console.log(JSON.stringify(worktrees, null, 2));
@@ -2742,12 +2562,10 @@ worktreeCmd
   .action(async (name: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees/create", { name }, () => {
-        const mux = new Multiplexer();
-        return mux.createDesktopWorktree(name);
-      });
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/create", { name });
       const createdPath = result.path;
+      const status = result.status === "creating" ? "creating" : "created";
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2755,12 +2573,17 @@ worktreeCmd
               ok: true,
               name,
               path: createdPath,
+              status,
               projectRoot,
             },
             null,
             2,
           ),
         );
+        return;
+      }
+      if (status === "creating") {
+        console.log(`Creating worktree "${name}"${createdPath ? ` (${createdPath})` : ""}.`);
         return;
       }
       console.log(`Created worktree "${name}" at ${createdPath}`);
@@ -2781,16 +2604,8 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/worktrees/remove",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.removeDesktopWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/remove", { path: resolvedPath });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2813,16 +2628,8 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/worktrees/graveyard",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.graveyardDesktopWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/worktrees/graveyard", { path: resolvedPath });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2845,16 +2652,10 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/worktrees/resurrect",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.resurrectGraveyardWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/worktrees/resurrect", {
+        path: resolvedPath,
+      });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2877,16 +2678,10 @@ worktreeCmd
       const inputCwd = process.cwd();
       const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/worktrees/delete",
-        { path: resolvedPath },
-        () => {
-          const mux = new Multiplexer();
-          return mux.deleteGraveyardWorktree(resolvedPath);
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/worktrees/delete", {
+        path: resolvedPath,
+      });
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
         return;
@@ -2910,13 +2705,10 @@ program
   .action(async (opts: { tool: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
-      initProject();
-      const mux = new Multiplexer();
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.spawnAgent({
-        toolConfigKey: opts.tool,
-        targetWorktreePath,
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+        tool: opts.tool,
+        worktreePath: targetWorktreePath,
         open: opts.open,
       });
       if (opts.json) {
@@ -2957,14 +2749,12 @@ overseerCmd
   .action(async (opts: { tool?: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
       initProject();
-      const mux = new Multiplexer();
       const tool = opts.tool ?? loadConfig().defaultTool;
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.spawnAgent({
-        toolConfigKey: tool,
-        targetWorktreePath,
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/spawn", {
+        tool,
+        worktreePath: targetWorktreePath,
         open: opts.open,
         overseer: true,
       });
@@ -3009,15 +2799,12 @@ program
     ) => {
       try {
         const projectRoot = await prepareProjectContext(opts.project);
-        await ensureDaemonProjectReady(projectRoot);
-        initProject();
-        const mux = new Multiplexer();
         const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-        const result = await mux.forkAgent({
+        const result = await postLiveProjectServiceJson(projectRoot, "/agents/fork", {
           sourceSessionId,
-          targetToolConfigKey: opts.tool,
+          tool: opts.tool,
           instruction: opts.instruction,
-          targetWorktreePath,
+          worktreePath: targetWorktreePath,
           open: opts.open,
         });
         if (opts.json) {
@@ -3058,34 +2845,21 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReadyForFallback(projectRoot);
-    try {
-      const graveyard = await getLiveProjectServiceJsonOrLocal(projectRoot, "/graveyard", () => ({
-        ok: true,
-        entries: listTopologySessionStates({ statuses: ["graveyard"] }),
-        worktrees: listTopologyWorktreeGraveyard(),
-      }));
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              entries: Array.isArray(graveyard.entries) ? graveyard.entries : [],
-              worktrees: Array.isArray(graveyard.worktrees) ? graveyard.worktrees : [],
-            },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
-      printGraveyard(graveyard);
-    } catch {
-      if (opts.json) {
-        console.log(JSON.stringify({ entries: [], worktrees: [] }, null, 2));
-        return;
-      }
-      console.log("Graveyard is empty.");
+    const graveyard = await getLiveProjectServiceJson(projectRoot, "/graveyard");
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            entries: Array.isArray(graveyard.entries) ? graveyard.entries : [],
+            worktrees: Array.isArray(graveyard.worktrees) ? graveyard.worktrees : [],
+          },
+          null,
+          2,
+        ),
+      );
+      return;
     }
+    printGraveyard(graveyard);
   });
 
 graveyardCmd
@@ -3097,10 +2871,7 @@ graveyardCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId: id }, () => {
-        const mux = new Multiplexer();
-        return mux.sendAgentToGraveyard(id);
-      });
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/kill", { sessionId: id });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3134,15 +2905,7 @@ graveyardCmd
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/resurrect",
-        { sessionId: id },
-        () => {
-          const mux = new Multiplexer();
-          return mux.resurrectGraveyardSession(id);
-        },
-      );
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/resurrect", { sessionId: id });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3175,22 +2938,10 @@ graveyardCmd
   .action(async (opts: { project?: string; dryRun?: boolean; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReadyForFallback(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/graveyard/cleanup",
-        { dryRun: opts.dryRun === true },
-        async () => {
-          const mux = new Multiplexer();
-          return runGraveyardCleanup(
-            buildGraveyardCleanupPlan(),
-            {
-              deleteWorktree: (path) => mux.deleteGraveyardWorktree(path),
-            },
-            { dryRun: opts.dryRun === true },
-          );
-        },
-      );
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJson(projectRoot, "/graveyard/cleanup", {
+        dryRun: opts.dryRun === true,
+      });
       const cleanupResult = (result.result ?? result) as GraveyardCleanupRunResult;
       if (opts.json) {
         console.log(JSON.stringify({ ok: true, projectRoot, ...cleanupResult }, null, 2));
@@ -3214,15 +2965,10 @@ program
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/rename",
-        { sessionId, label: opts.label },
-        () => {
-          const mux = new Multiplexer();
-          return mux.renameAgent(sessionId, opts.label);
-        },
-      );
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/rename", {
+        sessionId,
+        label: opts.label,
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3282,44 +3028,9 @@ program
     },
   );
 
-program
-  .command("expose")
-  .description("Internal tmux popup exposé")
-  .requiredOption("--project-root <path>", "Project root")
-  .requiredOption("--project-state-dir <path>", "Project state dir")
-  .option("--current-client-session <name>", "Current client session")
-  .option("--client-tty <tty>", "Client tty")
-  .option("--current-window <name>", "Current window name")
-  .option("--current-window-id <id>", "Current window id")
-  .option("--current-path <path>", "Current path")
-  .option("--pane-id <id>", "Current pane id")
-  .option("--aimux-home <path>", "AIMUX_HOME to scope cross-project Exposé")
-  .action(
-    async (opts: {
-      projectRoot: string;
-      projectStateDir: string;
-      currentClientSession?: string;
-      clientTty?: string;
-      currentWindow?: string;
-      currentWindowId?: string;
-      currentPath?: string;
-      paneId?: string;
-      aimuxHome?: string;
-    }) => {
-      const code = await runTmuxExpose({
-        projectRoot: pathResolve(opts.projectRoot),
-        projectStateDir: pathResolve(opts.projectStateDir),
-        currentClientSession: opts.currentClientSession,
-        clientTty: opts.clientTty,
-        currentWindow: opts.currentWindow,
-        currentWindowId: opts.currentWindowId,
-        currentPath: opts.currentPath,
-        paneId: opts.paneId,
-        aimuxHome: opts.aimuxHome,
-      });
-      process.exit(code);
-    },
-  );
+// Defined in popup-expose.ts so bin/aimux can run exposé through that lightweight entry
+// (no full-CLI load); registered here too so `aimux expose` works via the main program.
+registerExposeCommand(program);
 
 program
   .command("meta-dashboard")
@@ -3361,42 +3072,6 @@ program
   );
 
 program
-  .command("inbox-popup")
-  .description("Internal tmux popup inbox")
-  .requiredOption("--project-root <path>", "Project root")
-  .requiredOption("--project-state-dir <path>", "Project state dir")
-  .option("--current-client-session <name>", "Current client session")
-  .option("--client-tty <tty>", "Client tty")
-  .option("--current-window <name>", "Current window name")
-  .option("--current-window-id <id>", "Current window id")
-  .option("--current-path <path>", "Current path")
-  .option("--pane-id <id>", "Current pane id")
-  .action(
-    async (opts: {
-      projectRoot: string;
-      projectStateDir: string;
-      currentClientSession?: string;
-      clientTty?: string;
-      currentWindow?: string;
-      currentWindowId?: string;
-      currentPath?: string;
-      paneId?: string;
-    }) => {
-      const code = await runTmuxInboxPopup({
-        projectRoot: pathResolve(opts.projectRoot),
-        projectStateDir: pathResolve(opts.projectStateDir),
-        currentClientSession: opts.currentClientSession,
-        clientTty: opts.clientTty,
-        currentWindow: opts.currentWindow,
-        currentWindowId: opts.currentWindowId,
-        currentPath: opts.currentPath,
-        paneId: opts.paneId,
-      });
-      process.exit(code);
-    },
-  );
-
-program
   .command("kill <sessionId>")
   .description("Send an agent to the graveyard from running or offline state")
   .option("--project <path>", "Project path")
@@ -3405,10 +3080,7 @@ program
     try {
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReady(projectRoot);
-      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId }, () => {
-        const mux = new Multiplexer();
-        return mux.sendAgentToGraveyard(sessionId);
-      });
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/kill", { sessionId });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3442,9 +3114,11 @@ program
   .action(async (sessionId: string, opts: { worktree: string; project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
       const targetWorktreePath = pathResolve(opts.worktree);
-      const result = await mux.migrateAgentSession(sessionId, targetWorktreePath);
+      const result = await postLiveProjectServiceJson(projectRoot, "/agents/migrate", {
+        sessionId,
+        worktreePath: targetWorktreePath,
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -3452,7 +3126,7 @@ program
               ok: true,
               projectRoot,
               sessionId: result.sessionId,
-              worktreePath: result.worktreePath ?? projectRoot,
+              worktreePath: result.worktreePath ?? targetWorktreePath,
             },
             null,
             2,
@@ -3460,17 +3134,13 @@ program
         );
         return;
       }
-      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? projectRoot}`);
+      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? targetWorktreePath}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
       process.exit(1);
     }
   });
-
-// ── Statusline commands ────────────────────────────────────────────
-
-const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime state");
 const notificationsCmd = program.command("notifications").description("Manage desktop notification delivery");
@@ -3552,6 +3222,19 @@ logsCmd
     mkdirSync(pathDirname(path), { recursive: true });
     writeFileSync(path, "");
     console.log(`Cleared ${path}`);
+  });
+
+doctorCmd
+  .command("versions")
+  .description("Inspect local daemon, project service, and dashboard version coherence")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const report = await buildRuntimeCoherenceReport();
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderRuntimeCoherenceReport(report));
   });
 
 doctorCmd
@@ -3740,81 +3423,19 @@ program
       await initPaths();
       const title = opts.title.trim();
       const body = opts.body?.trim() || title;
-      const result = await postProjectServiceJsonOrLocal(
-        "/notify",
-        {
-          title,
-          subtitle: opts.subtitle?.trim() || undefined,
-          message: body,
-          sessionId: opts.session?.trim() || undefined,
-          kind: opts.kind?.trim() || "notification",
-          force: true,
-        },
-        () => {
-          const kind = (opts.kind?.trim() || "notification") as
-            | "notification"
-            | "needs_input"
-            | "next_step"
-            | "task_done"
-            | "task_failed"
-            | "blocked"
-            | "message_waiting"
-            | "handoff_waiting"
-            | "task_assigned"
-            | "review_waiting";
-          const sessionId = opts.session?.trim() || undefined;
-          const context = sessionId ? metadataDisplayContext(loadMetadataState().sessions[sessionId]) : undefined;
-          const alert = contextualizeAlertInput(
-            {
-              kind,
-              sessionId,
-              title,
-              message: [opts.subtitle?.trim(), body].filter(Boolean).join(" — "),
-              forceNotify: true,
-            },
-            context,
-          );
-          const notification = upsertNotification({
-            title: alert.title,
-            subtitle: opts.subtitle?.trim() || undefined,
-            body: alert.message,
-            sessionId,
-            kind,
-            projectName: alert.projectName,
-            projectRoot: alert.projectRoot,
-            worktreePath: alert.worktreePath,
-            worktreeName: alert.worktreeName,
-            branch: alert.branch,
-            categoryLabel: alert.categoryLabel,
-            reasonLabel: alert.reasonLabel,
-          });
-          notifyAlert({
-            type: "alert",
-            kind,
-            projectId: getProjectId(),
-            sessionId,
-            title: alert.title,
-            message: alert.message,
-            notificationId: notification.id,
-            projectName: alert.projectName,
-            projectRoot: alert.projectRoot,
-            worktreePath: alert.worktreePath,
-            worktreeName: alert.worktreeName,
-            branch: alert.branch,
-            categoryLabel: alert.categoryLabel,
-            reasonLabel: alert.reasonLabel,
-            ts: notification.createdAt,
-            forceNotify: true,
-          });
-          return { ok: true, notification };
-        },
-      );
+      const result = await postProjectServiceJson("/notify", {
+        title,
+        subtitle: opts.subtitle?.trim() || undefined,
+        message: body,
+        sessionId: opts.session?.trim() || undefined,
+        kind: opts.kind?.trim() || "notification",
+        force: true,
+      });
       if (opts.json) {
         console.log(JSON.stringify(result));
         return;
       }
-      const count = unreadNotificationCount();
-      console.log(`Queued notification "${title}" (${count} unread).`);
+      console.log(`Queued notification "${title}".`);
     },
   );
 
@@ -3840,42 +3461,43 @@ program
     }
 
     const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrSafetyFallback(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
         () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
       );
-    const clearSessionNotifications = async () =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
-        ok: true,
-        cleared: clearNotifications({ sessionId }),
-      }));
+    const clearSessionNotifications = async () => clearHookNotificationsViaService(projectRoot, sessionId);
     const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
     if (transcriptPath) {
       const context: SessionContextMetadata = { transcriptPath };
-      await postHookProjectServiceJsonOrLocal(projectRoot, "/set-context", { session: sessionId, context }, () => {
-        updateSessionMetadata(
-          sessionId,
-          (current) => ({
-            ...current,
-            context: {
-              ...(current.context ?? {}),
-              ...context,
-            },
-          }),
-          projectRoot,
-        );
-        return { ok: true };
-      });
+      await postHookProjectServiceJsonOrSafetyFallback(
+        projectRoot,
+        "/set-context",
+        { session: sessionId, context },
+        () => {
+          updateSessionMetadata(
+            sessionId,
+            (current) => ({
+              ...current,
+              context: {
+                ...(current.context ?? {}),
+                ...context,
+              },
+            }),
+            projectRoot,
+          );
+          return { ok: true };
+        },
+      );
       result.transcriptPath = transcriptPath;
     }
 
@@ -3888,7 +3510,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3936,25 +3558,21 @@ program
 
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrSafetyFallback(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
         () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
       );
-    const clearSessionNotifications = async () =>
-      postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
-        ok: true,
-        cleared: clearNotifications({ sessionId }),
-      }));
+    const clearSessionNotifications = async () => clearHookNotificationsViaService(projectRoot, sessionId);
 
     const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
     if (backendSessionId) {
@@ -3970,7 +3588,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3984,7 +3602,7 @@ program
         const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
         // Best-effort: a telemetry transport failure must never break the hook —
         // it always falls through to `console.log({})` and the native prompt.
-        await postHookProjectServiceJsonOrLocal(
+        await postHookProjectServiceJsonOrSafetyFallback(
           projectRoot,
           "/agents/interaction/notify",
           { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
@@ -4007,11 +3625,9 @@ program
   .option("--json", "Emit JSON output")
   .action(async (opts: { unread?: boolean; session?: string; json?: boolean }) => {
     await initPaths();
-    const notifications = listNotifications({
-      unreadOnly: Boolean(opts.unread),
-      sessionId: opts.session?.trim() || undefined,
-    });
-    const unreadCount = unreadNotificationCount({ sessionId: opts.session?.trim() || undefined });
+    const result = await getProjectServiceJson(`/notifications${notificationQuery(opts)}`);
+    const notifications = Array.isArray(result.notifications) ? result.notifications : [];
+    const unreadCount = typeof result.unreadCount === "number" ? result.unreadCount : 0;
     if (opts.json) {
       console.log(JSON.stringify({ notifications, unreadCount }));
       return;
@@ -4034,7 +3650,10 @@ program
   .option("--json", "Emit JSON output")
   .action(async (opts: { session?: string; json?: boolean }) => {
     await initPaths();
-    const cleared = clearNotifications({ sessionId: opts.session?.trim() || undefined });
+    const result = await postProjectServiceJson("/notifications/clear", {
+      sessionId: opts.session?.trim() || undefined,
+    });
+    const cleared = typeof result.cleared === "number" ? result.cleared : 0;
     if (opts.json) {
       console.log(JSON.stringify({ ok: true, cleared }));
       return;
@@ -4049,7 +3668,10 @@ program
   .option("--json", "Emit JSON output")
   .action(async (opts: { session?: string; json?: boolean }) => {
     await initPaths();
-    const updated = markNotificationsRead({ sessionId: opts.session?.trim() || undefined });
+    const result = await postProjectServiceJson("/notifications/read", {
+      sessionId: opts.session?.trim() || undefined,
+    });
+    const updated = typeof result.updated === "number" ? result.updated : 0;
     if (opts.json) {
       console.log(JSON.stringify({ ok: true, updated }));
       return;
@@ -4179,87 +3801,6 @@ metadataCmd
   .action(async (session: string) => {
     await initPaths();
     clearSessionLogs(session);
-  });
-
-statuslineCmd
-  .command("install")
-  .description("Install aimux statusline into Claude Code")
-  .action(() => {
-    const home = homedir();
-    const aimuxDir = pathJoin(home, ".aimux");
-    const targetScript = pathJoin(aimuxDir, "statusline.sh");
-
-    // Resolve source script relative to compiled JS location
-    const thisFile = fileURLToPath(import.meta.url);
-    const sourceScript = pathResolve(pathDirname(thisFile), "..", "scripts", "statusline.sh");
-
-    if (!existsSync(sourceScript)) {
-      console.error(`Source script not found: ${sourceScript}`);
-      process.exit(1);
-    }
-    mkdirSync(aimuxDir, { recursive: true });
-    copyFileSync(sourceScript, targetScript);
-    chmodSync(targetScript, 0o755);
-    console.log(`Copied statusline script to ${targetScript}`);
-
-    // Update Claude Code settings
-    const claudeDir = pathJoin(home, ".claude");
-    const settingsPath = pathJoin(claudeDir, "settings.json");
-    let settings: Record<string, any> = {};
-    if (existsSync(settingsPath)) {
-      try {
-        settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      } catch {}
-    }
-
-    const newCommand = `bash ${targetScript}`;
-    const oldCommand = settings.statusLine?.command;
-    if (oldCommand && oldCommand !== newCommand) {
-      const backupPath = pathJoin(aimuxDir, "statusline-previous.txt");
-      writeFileSync(backupPath, oldCommand + "\n");
-      console.log(`Backed up previous statusline command to ${backupPath}`);
-    }
-
-    settings.statusLine = { type: "command", command: newCommand };
-    mkdirSync(claudeDir, { recursive: true });
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-    console.log(`Updated ${settingsPath} → statusLine points to aimux script`);
-    console.log("Restart Claude Code to see aimux agent status in the toolbar.");
-  });
-
-statuslineCmd
-  .command("uninstall")
-  .description("Restore previous Claude Code statusline")
-  .action(() => {
-    const home = homedir();
-    const aimuxDir = pathJoin(home, ".aimux");
-    const settingsPath = pathJoin(home, ".claude", "settings.json");
-    const backupPath = pathJoin(aimuxDir, "statusline-previous.txt");
-
-    if (!existsSync(settingsPath)) {
-      console.error("No Claude Code settings found.");
-      process.exit(1);
-    }
-
-    let settings: Record<string, any> = {};
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-    } catch {
-      console.error("Could not parse settings.json");
-      process.exit(1);
-    }
-
-    if (existsSync(backupPath)) {
-      const prev = readFileSync(backupPath, "utf-8").trim();
-      settings.statusLine = { type: "command", command: prev };
-      console.log(`Restored previous statusline: ${prev}`);
-    } else {
-      delete settings.statusLine;
-      console.log("Removed aimux statusline (no previous config to restore).");
-    }
-
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-    console.log("Restart Claude Code for changes to take effect.");
   });
 
 // ── Team commands ──────────────────────────────────────────────────

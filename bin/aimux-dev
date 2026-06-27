@@ -1,6 +1,0 @@
-#!/usr/bin/env node
-import { prepareDevCliEnv } from "../dist/launcher-env.js";
-
-prepareDevCliEnv();
-
-import("../dist/main.js");

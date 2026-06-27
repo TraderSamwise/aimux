@@ -2,8 +2,21 @@ import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGr
 import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
-import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
-import { card, chip, cols as gridCols, keycap, pill, statusDot, style, type Tone } from "../render/theme.js";
+import { sessionRecencyAnchor } from "../../session-recency.js";
+import { composeScreenFrame } from "../render/screen-frame.js";
+import { center, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
+import {
+  card,
+  chip,
+  type ChipTone,
+  cols as gridCols,
+  type FooterHint,
+  pill,
+  renderFooterHints,
+  statusDot,
+  style,
+  type Tone,
+} from "../render/theme.js";
 
 const RECENT_IDLE_MS = 2 * 60 * 1000;
 
@@ -13,6 +26,7 @@ type SessionRowState = SessionUserLabel | SessionPendingAction;
 
 const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   working: "Working",
+  ready: "Ready",
   needs_input: "Needs input",
   needs_response: "Needs response",
   next_step: "Next step",
@@ -88,8 +102,6 @@ function sessionUserStateLabel(session: DashboardSession, fallback: string): str
 }
 
 function sessionTimeAnchor(session: DashboardSession): { label: string; value?: string } | null {
-  const userLabel = effectiveSessionRowState(session);
-  const latestUnreadAt = session.semantic?.notifications.latestUnread?.createdAt;
   const lastOutputAt =
     session.lastOutputAt ??
     (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
@@ -102,32 +114,13 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
     };
   }
 
-  if (userLabel === "needs_input" || userLabel === "needs_response") {
-    return { label: "prompted", value: latestUnreadAt ?? lastOutputAt ?? session.becameIdleAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "next_step" || userLabel === "idle" || userLabel === "interrupted") {
-    return lastOutputAt
-      ? { label: "output", value: lastOutputAt }
-      : { label: "idle", value: session.becameIdleAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "working") {
-    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
-  }
-  if (userLabel === "done") {
-    return lastOutputAt
-      ? { label: "output", value: lastOutputAt }
-      : { label: "done", value: session.becameIdleAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "offline") {
-    return lastOutputAt ? { label: "output", value: lastOutputAt } : { label: "offline", value: session.lastUsedAt };
-  }
-  if (userLabel === "blocked") {
-    return { label: "blocked", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
-  }
-  if (userLabel === "error") {
-    return { label: "failed", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
-  }
-  return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
+  return sessionRecencyAnchor({
+    label: session.semantic?.user.label,
+    latestUnreadAt: session.semantic?.notifications.latestUnread?.createdAt,
+    lastOutputAt,
+    becameIdleAt: session.becameIdleAt,
+    lastUsedAt: session.lastUsedAt,
+  });
 }
 
 function sessionTimeText(session: DashboardSession): string {
@@ -135,6 +128,14 @@ function sessionTimeText(session: DashboardSession): string {
   if (!anchor?.value) return "";
   const recency = formatRelativeRecency(anchor.value);
   return recency ? style(`${anchor.label} ${recency}`, "muted") : "";
+}
+
+/** An offline agent gets no accent colors — its chips/hints render muted so the
+ *  eye stays on live agents. Pending actions (creating/graveyarding) still count
+ *  as active. */
+function isSessionOffline(session: DashboardSession): boolean {
+  if (session.pendingAction) return false;
+  return effectiveSessionRowState(session) === "offline" || session.status === "offline" || session.status === "exited";
 }
 
 function sessionActivityChips(session: DashboardSession): string {
@@ -146,15 +147,29 @@ function sessionActivityChips(session: DashboardSession): string {
   const threadWaitingOnThem = session.threadWaitingOnThemCount ?? 0;
   const threadPending = session.threadPendingCount ?? 0;
 
-  if (notificationUnread > 0) chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, "work"));
-  if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, "info"));
+  // Offline rows lose all accent tones; colors are reserved for live agents.
+  const offline = isSessionOffline(session);
+  const tone = (active: ChipTone): ChipTone => (offline ? "muted" : active);
+
+  // The live state label already announces a needs-input request, so don't double-show it as
+  // an unread chip; other unread kinds (and stale lingering notices) still surface. A lingering
+  // notice whose agent has moved on is de-emphasized (muted) to match Coordination.
+  const needsInputUnread = session.notificationNeedsInputUnreadCount ?? 0;
+  const label = session.semantic?.user.label;
+  const stateConveysNeedsInput = label === "needs_input" || label === "needs_response";
+  const shownUnread =
+    notificationUnread - (stateConveysNeedsInput ? Math.min(needsInputUnread, notificationUnread) : 0);
+  if (shownUnread > 0) {
+    chips.push(chip(`${Math.min(shownUnread, 99)} unread`, session.notificationStale ? "muted" : tone("work")));
+  }
+  if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, tone("info")));
   if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
     chips.push(chip(`thread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}`, "muted"));
   }
-  if (threadPending > 0) chips.push(chip(`${threadPending} pending`, "danger"));
-  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("workflow on you", "attn"));
-  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("workflow blocked", "danger"));
-  if ((session.workflowFamilyCount ?? 0) > 0) chips.push(chip(`workflow ${session.workflowFamilyCount}`, "muted"));
+  if (threadPending > 0) chips.push(chip(`${threadPending} pending`, tone("danger")));
+  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("coordination on you", tone("attn")));
+  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("coordination blocked", tone("danger")));
+  if ((session.workflowFamilyCount ?? 0) > 0) chips.push(chip(`coordination ${session.workflowFamilyCount}`, "muted"));
 
   return chips.join(" ");
 }
@@ -175,6 +190,8 @@ function sessionStateRank(state: SessionRowState | undefined): StateRank {
       return { rank: 4, tone: "blocked" };
     case "working":
       return { rank: 3, tone: "work" };
+    case "ready":
+      return { rank: 1, tone: "ready" };
     case "next_step":
       return { rank: 3, tone: "attn" };
     case "done":
@@ -209,6 +226,7 @@ function semanticCountParts(worktree: { sessions: DashboardSession[] }): string[
   append("blocked", "blocked", "blocked");
   append("error", "error", "danger");
   append("working", "working", "work");
+  append("ready", "ready", "ready");
   append("idle", "idle");
   append("done", "done", "done");
   append("offline", "offline");
@@ -261,6 +279,7 @@ function sessionStatusDot(session: DashboardSession): string {
   if (attention === "needs_input" || label === "needs_input") return statusDot("needs");
   if (attention === "needs_response" || label === "needs_response") return statusDot("needs");
   if (label === "working") return statusDot("working");
+  if (label === "ready") return statusDot("ready");
   if (label === "done") return statusDot("done");
   if (label === "next_step") return style("●", "attn");
   if (label === "idle") return statusDot("idle");
@@ -279,13 +298,11 @@ function sessionStatusCell(session: DashboardSession, fallback: string): string 
     const pillLabel = PILL_LABEL[rowState] ?? label.toUpperCase();
     return pill(pillLabel, PILL_TONE[rowState] ?? "attn");
   }
-  const tone: Tone = session.pendingAction
-    ? "attn"
-    : rowState === "done"
-      ? "done"
-      : rowState === "idle"
-        ? "idle"
-        : "muted";
+  let tone: Tone = "muted";
+  if (session.pendingAction) tone = "attn";
+  if (rowState === "ready") tone = "ready";
+  if (rowState === "done") tone = "done";
+  if (rowState === "idle") tone = "idle";
   return style(label, tone);
 }
 
@@ -308,6 +325,104 @@ function summarizeTeammate(
     .join(" · ");
 }
 
+/**
+ * Build the dashboard footer as a flat, ordered list of every active key for the
+ * current state (navigation, then actions, then system). It is rendered as one
+ * line that wraps naturally to the available width — no grouping, no
+ * width-conditional dropping. Presentation-only. The destructive `x` is tagged
+ * "danger" so its keycap renders red.
+ */
+export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint[] {
+  const selectedSession = state.selectedSessionId
+    ? state.sessions.find((s) => s.id === state.selectedSessionId)
+    : undefined;
+  const selectedService = state.selectedServiceId
+    ? state.services.find((s) => s.id === state.selectedServiceId)
+    : undefined;
+  const enterVerb = selectedService ? "open" : selectedSession?.status === "offline" ? "resume" : "focus";
+  const killVerb = selectedService
+    ? "stop"
+    : selectedSession?.status === "offline"
+      ? "kill"
+      : selectedSession
+        ? "stop"
+        : "";
+
+  const talk: FooterHint[] = [
+    ["s", "msg"],
+    ["H", "handoff"],
+    ["T", "task"],
+    ["o", "thread"],
+    ["R", "reply"],
+  ];
+  if (selectedSession && state.selectedTeammates.length > 0) talk.push(["e", "team"]);
+  const system: FooterHint[] = [
+    ["?", "help"],
+    ["q", "quit"],
+  ];
+
+  // Worktrees present, focused at session level: the full set.
+  if (state.hasWorktrees && state.navLevel === "sessions") {
+    const manage: FooterHint[] = [["m", "migrate"]];
+    if (selectedSession) manage.push(["r", "name"]);
+    if (killVerb) manage.push(["x", killVerb, "danger"]);
+    return [
+      ["↑↓/jk", "items"],
+      ["1-9", "jump"],
+      ["Enter/l", enterVerb],
+      ["Tab", "details"],
+      ["u", "attention"],
+      ["Esc/h", "back"],
+      ["⇧↑↓", "reorder"],
+      ["n", "agent"],
+      ["v", "service"],
+      ["f", "fork"],
+      ...talk,
+      ...manage,
+      ...system,
+    ];
+  }
+
+  // Worktrees present, focused at worktree level: create-only actions.
+  if (state.hasWorktrees) {
+    return [
+      ["↑↓/jk", "worktrees"],
+      ["1-9", "jump"],
+      ["Enter/l", "step in"],
+      ["Tab", "details"],
+      ["u", "attention"],
+      ["n", "agent"],
+      ["v", "service"],
+      ["f", "fork"],
+      ["w", "worktree"],
+      ...system,
+    ];
+  }
+
+  // Flat session list (no worktrees).
+  if (state.sessions.length > 0) {
+    const manage: FooterHint[] = [];
+    if (killVerb) manage.push(["x", killVerb, "danger"]);
+    if (selectedSession) manage.push(["r", "name"]);
+    return [
+      ["↑↓/jk", "select"],
+      ["Enter/l", enterVerb],
+      ["Tab", "details"],
+      ["u", "attention"],
+      ["n", "agent"],
+      ["v", "service"],
+      ["f", "fork"],
+      ["w", "worktree"],
+      ...talk,
+      ...manage,
+      ...system,
+    ];
+  }
+
+  // No sessions and no worktrees: nothing to navigate.
+  return [["Tab", "details"], ["u", "attention"], ["n", "agent"], ["v", "service"], ["f", "fork"], ...talk, ...system];
+}
+
 export function renderDashboardFrame(
   state: DashboardViewModel,
   cols: number,
@@ -317,38 +432,7 @@ export function renderDashboardFrame(
   const twoPane = cols >= 72 && state.detailsPaneVisible;
   const leftWidth = Math.max(32, Math.floor(contentWidth * 0.58));
   const cardWidth = twoPane ? leftWidth : contentWidth;
-  const padBlockLine = (line: string): string => line;
   const centerInBlock = (line: string): string => truncateAnsi(center(line, contentWidth), cols);
-  const styleHelpGroup = (group: string): string => {
-    const bracket = group.match(/^\[(.+?)\]\s*(.*)$/);
-    if (bracket) {
-      return bracket[2] ? `${keycap(bracket[1])} ${style(bracket[2], "muted")}` : keycap(bracket[1]);
-    }
-    const splitAt = group.indexOf(" ");
-    if (splitAt < 0) return keycap(group);
-    return `${keycap(group.slice(0, splitAt))} ${style(group.slice(splitAt + 1), "muted")}`;
-  };
-
-  const buildHelpLines = (line: string): string[] => {
-    const groups = line
-      .trim()
-      .split(/\s{2,}/)
-      .filter(Boolean)
-      .map(styleHelpGroup);
-    const lines: string[] = [];
-    let current = "";
-    for (const group of groups) {
-      const next = current ? `${current}  ${group}` : group;
-      if (stripAnsi(next).length <= contentWidth) {
-        current = next;
-      } else {
-        if (current) lines.push(current);
-        current = group;
-      }
-    }
-    if (current) lines.push(current);
-    return lines;
-  };
 
   const trailingHints = (parts: string[]): string => parts.filter(Boolean).join(" ");
 
@@ -365,11 +449,13 @@ export function renderDashboardFrame(
       { content: sessionStatusCell(session, state.derivedStatusLabel(session)), width: COL_STATUS },
       { content: sessionTimeText(session), width: COL_TIME },
     ]);
+    const offline = isSessionOffline(session);
+    const hintTone = (active: Tone): Tone => (offline ? "muted" : active);
     const trailing = trailingHints([
       sessionActivityChips(session),
-      isRecentlyIdle(session) ? style("idle now", "attn") : "",
-      session.taskDescription ? style(`⧫ ${truncate(session.taskDescription, 40)}`, "blocked") : "",
-      session.workflowNextAction ? style(`→ ${truncate(session.workflowNextAction, 24)}`, "attn") : "",
+      isRecentlyIdle(session) ? style("idle now", hintTone("ready")) : "",
+      session.taskDescription ? style(`⧫ ${truncate(session.taskDescription, 40)}`, hintTone("blocked")) : "",
+      session.workflowNextAction ? style(`→ ${truncate(session.workflowNextAction, 24)}`, hintTone("attn")) : "",
       session.headline ? style(`· ${truncate(session.headline, 50)}`, "muted") : "",
     ]);
     return trailing ? `${grid} ${trailing}` : grid;
@@ -444,45 +530,6 @@ export function renderDashboardFrame(
       if (stripped.includes("▸")) return i;
     }
     return -1;
-  };
-
-  const buildHelpLine = (): string => {
-    const selectedSession = state.selectedSessionId
-      ? state.sessions.find((s) => s.id === state.selectedSessionId)
-      : undefined;
-    const selectedService = state.selectedServiceId
-      ? state.services.find((s) => s.id === state.selectedServiceId)
-      : undefined;
-    const xLabel = selectedService
-      ? "[x] stop"
-      : selectedSession?.status === "offline"
-        ? "[x] kill"
-        : selectedSession
-          ? "[x] stop"
-          : "";
-    const rLabel = selectedSession ? "  [r] name" : "";
-    const teamLabel = selectedSession && state.selectedTeammates.length > 0 ? "  [e] team" : "";
-    const enterLabel = selectedService
-      ? "Enter open"
-      : selectedSession?.status === "offline"
-        ? "Enter resume"
-        : "Enter focus";
-
-    if (state.sessions.length === 0 && !state.hasWorktrees) {
-      return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [p] plans  [g] graveyard  [?] help  [q] quit ";
-    }
-    if (state.hasWorktrees && state.navLevel === "sessions") {
-      const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ items  Shift+↑↓ reorder  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
-    }
-    if (state.hasWorktrees) {
-      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit `;
-    }
-    if (state.sessions.length > 0) {
-      const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply${teamLabel}  [w] worktree${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
-    }
-    return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   };
 
   const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
@@ -709,7 +756,7 @@ export function renderDashboardFrame(
       ]
         .filter(Boolean)
         .join(" · ");
-      lines.push(...wrapKeyValue("Workflow", summary, width));
+      lines.push(...wrapKeyValue("Coordination", summary, width));
     }
     if ((selected.services?.length ?? 0) > 0) {
       lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));
@@ -763,7 +810,7 @@ export function renderDashboardFrame(
     content.push("");
   }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
-    content.push(centerInBlock("No sessions. Press [c] to create one."));
+    content.push(centerInBlock("No sessions. Press [n] to create one."));
   } else if (state.hasWorktrees) {
     renderWorktreeGrouped(content);
   } else {
@@ -774,47 +821,19 @@ export function renderDashboardFrame(
     });
   }
 
-  const helpLines = buildHelpLines(buildHelpLine());
-  const footer: string[] = ["─".repeat(Math.max(0, cols)), ...helpLines.map((line) => centerInBlock(line))];
-  const viewportHeight = rows - header.length - footer.length;
-  let scrollOffset = state.scrollOffset;
-  const focusLine = findFocusLine(content);
-  // The focused card spans from its marker line to the next blank separator;
-  // scroll to reveal its whole body, not just the marker line, so the bottom
-  // of the last (possibly tall) card is always reachable.
-  let focusEnd = focusLine;
-  while (focusEnd >= 0 && focusEnd + 1 < content.length && stripAnsi(content[focusEnd + 1]).trim() !== "") {
-    focusEnd++;
-  }
-  const maxScroll = Math.max(0, content.length - viewportHeight);
-  if (focusLine >= 0) {
-    if (focusLine < scrollOffset + 1) {
-      scrollOffset = Math.max(0, focusLine - 1);
-    } else if (focusEnd >= scrollOffset + viewportHeight - 1) {
-      scrollOffset = Math.min(maxScroll, focusEnd - viewportHeight + 2);
-      // If the card is taller than the viewport, keep its top edge in view.
-      if (focusLine < scrollOffset + 1) scrollOffset = Math.max(0, focusLine - 1);
-    }
-  }
-  scrollOffset = Math.min(scrollOffset, maxScroll);
-  const visibleContent = content.slice(scrollOffset, scrollOffset + viewportHeight);
-  const canScrollUp = scrollOffset > 0;
-  const canScrollDown = scrollOffset < maxScroll;
-  if (canScrollUp) visibleContent[0] = centerInBlock("\x1b[2m▲ more ▲\x1b[0m");
-  if (canScrollDown && visibleContent.length > 0)
-    visibleContent[visibleContent.length - 1] = centerInBlock("\x1b[2m▼ more ▼\x1b[0m");
-  while (visibleContent.length < viewportHeight) visibleContent.push("");
-
-  let bodyLines = visibleContent;
-  if (twoPane) {
-    const panelWidth = Math.max(20, contentWidth - leftWidth - 4);
-    const rightPanel = renderSelectedDetailsPanel(panelWidth, viewportHeight);
-    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth, "   ").map(padBlockLine);
-  } else {
-    bodyLines = visibleContent.map((line) => padBlockLine(line));
-  }
-  return {
-    frame: "\x1b[2J\x1b[H" + [...header, ...bodyLines, ...footer].join("\r\n"),
-    scrollOffset,
-  };
+  // Flat footer: every active key on one line that wraps naturally to width.
+  // Wrap to the real terminal width (not contentWidth's 72 floor) so keys wrap
+  // instead of being truncated on narrow panes.
+  const footerLines = renderFooterHints(buildDashboardFooterHints(state), Math.max(0, cols - 2));
+  return composeScreenFrame({
+    cols,
+    rows,
+    header,
+    content,
+    footerLines,
+    focusLine: findFocusLine(content),
+    scrollOffset: state.scrollOffset,
+    twoPane,
+    rightPanel: twoPane ? (panelWidth, height) => renderSelectedDetailsPanel(panelWidth, height) : undefined,
+  });
 }

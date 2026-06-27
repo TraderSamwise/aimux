@@ -20,8 +20,8 @@ interface GlobalThreadRow {
 }
 
 function sortThreadRows(a: GlobalThreadRow, b: GlobalThreadRow): number {
-  const aTime = Date.parse(a.thread.lastMessage?.createdAt ?? "");
-  const bTime = Date.parse(b.thread.lastMessage?.createdAt ?? "");
+  const aTime = Date.parse(a.thread.latestMessage?.ts ?? "");
+  const bTime = Date.parse(b.thread.latestMessage?.ts ?? "");
   if (Number.isFinite(aTime) && Number.isFinite(bTime)) return bTime - aTime;
   if (Number.isFinite(aTime)) return -1;
   if (Number.isFinite(bTime)) return 1;
@@ -177,9 +177,9 @@ export default function GlobalThreadsScreen() {
                     {row.projectName} · {row.thread.thread.kind ?? "thread"} ·{" "}
                     {row.thread.thread.status ?? "open"}
                   </Text>
-                  {row.thread.lastMessage?.body ? (
+                  {row.thread.latestMessage?.body ? (
                     <Text className="mt-2 text-sm text-foreground/90" numberOfLines={2}>
-                      {row.thread.lastMessage.body}
+                      {row.thread.latestMessage.body}
                     </Text>
                   ) : null}
                 </View>

@@ -2,16 +2,19 @@ import React, { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
+import { AgentCreatePanel } from "@/components/agent-create-panel";
+import { AgentActions } from "@/components/agent-actions";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
+import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
 import { StatusDotMini } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
-import { detailHrefForPath } from "@/lib/view-location";
+import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -151,47 +154,67 @@ function AgentRow({
   session,
   digit,
   selected,
+  endpoint,
+  token,
+  mainCheckoutPath,
+  onKilled,
   onPress,
 }: {
   session: DesktopSession;
   digit: number;
   selected: boolean;
+  endpoint: ServiceEndpoint | null;
+  token: string | null;
+  mainCheckoutPath?: string | null;
+  onKilled: (sessionId: string) => void;
   onPress: () => void;
 }) {
   const tool = firstTokenOf(session.command);
   const state = deriveAgentState(session);
   return (
-    <Pressable
-      onPress={onPress}
+    <View
       className={cn(
         "flex-row items-center gap-2 rounded-md px-2.5 py-2",
         selected ? "bg-[#232733]" : PRESS,
       )}
     >
-      <SelectMark selected={selected} />
-      <View className="w-4 items-center justify-center">
-        <StatusDotMini status={session.status} />
-      </View>
-      <IndexBadge digit={digit} />
-      <View className="min-w-0 max-w-[55%] shrink flex-row items-baseline gap-2">
-        <Text
-          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {session.label || session.id}
-        </Text>
-        {session.role || tool ? (
-          <Text className="shrink-0 font-mono text-[12px] text-[#7c7e88]" numberOfLines={1}>
-            {session.role ?? tool}
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
+      >
+        <SelectMark selected={selected} />
+        <View className="w-4 items-center justify-center">
+          <StatusDotMini status={session.status} />
+        </View>
+        <IndexBadge digit={digit} />
+        <View className="min-w-0 max-w-[55%] shrink flex-row items-baseline gap-2">
+          <Text
+            className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {session.label || session.id}
           </Text>
-        ) : null}
-      </View>
-      <TrailingHint text={session.headline || session.previewLine || undefined} />
-      <View className="shrink-0 pl-2">
+          {session.role || tool ? (
+            <Text className="shrink-0 font-mono text-[12px] text-[#7c7e88]" numberOfLines={1}>
+              {session.role ?? tool}
+            </Text>
+          ) : null}
+        </View>
+        <TrailingHint text={session.headline || session.previewLine || undefined} />
+      </Pressable>
+      <View className="shrink-0 flex-row items-center gap-3 pl-2">
         <StatusCell state={state} />
+        <AgentActions
+          session={session}
+          endpoint={endpoint}
+          token={token}
+          compact
+          mainCheckoutPath={mainCheckoutPath}
+          onKilled={() => onKilled(session.id)}
+        />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -281,6 +304,7 @@ function WorktreeCard({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   bucket: WorktreeBucket;
   endpoint: ServiceEndpoint | null;
@@ -288,6 +312,7 @@ function WorktreeCard({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
@@ -362,6 +387,10 @@ function WorktreeCard({
               session={session}
               digit={i + 1}
               selected={session.id === selectedSessionId}
+              endpoint={endpoint}
+              token={token}
+              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
+              onKilled={onKillSession}
               onPress={() => onPickSession(session.id)}
             />
           ))}
@@ -389,6 +418,7 @@ function WorktreeList({
   selectedSessionId,
   onPickSession,
   onPickService,
+  onKillSession,
 }: {
   groups: WorktreeBucket[];
   endpoint: ServiceEndpoint | null;
@@ -397,6 +427,7 @@ function WorktreeList({
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
+  onKillSession: (sessionId: string) => void;
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
 
@@ -405,7 +436,14 @@ function WorktreeList({
   const activeRest = rest.filter(worktreeHasChildren);
   const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
 
-  const cardProps = { endpoint, token, selectedSessionId, onPickSession, onPickService };
+  const cardProps = {
+    endpoint,
+    token,
+    selectedSessionId,
+    onPickSession,
+    onPickService,
+    onKillSession,
+  };
 
   return (
     <View className={cn("py-3", padded && "px-4")}>
@@ -484,6 +522,14 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
     router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
   }
 
+  function handleKillSession(sessionId: string) {
+    if (selectedSessionId !== sessionId) return;
+    selectSession(null);
+    if (pathname.includes("/agent/")) {
+      router.replace(parentViewHrefForPath(pathname, project?.path));
+    }
+  }
+
   const statePad = padded ? "p-6" : "py-6";
 
   if (!endpoint && desktopState === null) {
@@ -520,14 +566,19 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   }
 
   return (
-    <WorktreeList
-      groups={groups}
-      endpoint={endpoint}
-      token={token}
-      padded={padded}
-      selectedSessionId={selectedSessionId}
-      onPickSession={handlePickSession}
-      onPickService={handlePickService}
-    />
+    <View className={cn(padded && "px-4")}>
+      <WorktreeManagementPanel endpoint={endpoint} token={token} groups={groups} />
+      <AgentCreatePanel endpoint={endpoint} token={token} groups={groups} />
+      <WorktreeList
+        groups={groups}
+        endpoint={endpoint}
+        token={token}
+        padded={false}
+        selectedSessionId={selectedSessionId}
+        onPickSession={handlePickSession}
+        onPickService={handlePickService}
+        onKillSession={handleKillSession}
+      />
+    </View>
   );
 }

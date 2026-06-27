@@ -1,9 +1,4 @@
 import {
-  closeNotificationPanel as closeNotificationPanelImpl,
-  handleNotificationPanelKey as handleNotificationPanelKeyImpl,
-  showNotificationPanel as showNotificationPanelImpl,
-} from "./notifications.js";
-import {
   beginWorktreeRemoval as beginWorktreeRemovalImpl,
   finishWorktreeRemoval as finishWorktreeRemovalImpl,
   handleWorktreeInputKey as handleWorktreeInputKeyImpl,
@@ -29,6 +24,25 @@ import { isDevelopmentRuntime } from "../connection-targets.js";
 import { AIMUX_VERSION } from "../version.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
+import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
+import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+
+function buildStaticDashboardRenderErrorFrame(message: string, cols: number, rows: number): string {
+  const width = Math.max(24, Math.min(cols, 120));
+  const height = Math.max(8, rows);
+  const lines = [
+    "Dashboard render failed",
+    "",
+    message,
+    "",
+    "Aimux kept the dashboard alive so you can restart or report this failure.",
+  ];
+  const body = lines
+    .slice(0, height - 1)
+    .map((line) => line.slice(0, width))
+    .join("\n");
+  return `\x1b[2J\x1b[H${body}`;
+}
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
@@ -41,6 +55,8 @@ export const dashboardViewMethods = {
 
   settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
+    const settleLifecycle = captureDashboardLifecycle(this);
+    const uiLifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
     const pendingTarget =
       target ??
       (itemId.startsWith("worktree:")
@@ -52,19 +68,19 @@ export const dashboardViewMethods = {
       pendingTarget,
       itemId,
       () => {
-        this.refreshLocalDashboardModel();
-        this.renderDashboard();
+        void refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle })
+          .then(() => {
+            if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
+          })
+          .catch(() => undefined);
       },
       {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
-          if (typeof this.refreshDashboardModelFromService === "function") {
-            await this.refreshDashboardModelFromService(true);
-          }
+          if (!isDashboardLifecycleCurrent(this, settleLifecycle)) return true;
+          await refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle });
           if (pendingTarget === "worktree") {
             const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
-            const rawWorktree = this.listDesktopWorktrees?.().find((entry: any) => entry.path === path);
-            if (rawWorktree && rawWorktree.pending !== true && rawWorktree.pendingAction !== "creating") return true;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
             return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
           }
@@ -170,7 +186,7 @@ export const dashboardViewMethods = {
           : undefined,
         derivedStatusLabel,
       });
-      this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
+      this.syncTuiNotificationContext(false);
       this.writeFrame(this.dashboard.render(cols, rows));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -179,7 +195,8 @@ export const dashboardViewMethods = {
         title: "Dashboard render failed",
         lines: [message],
       };
-      this.writeFrame("\x1b[2J\x1b[H", true);
+      const { cols, rows } = this.getViewportSize?.() ?? { cols: 120, rows: 40 };
+      this.writeFrame(buildStaticDashboardRenderErrorFrame(message, cols, rows), true);
     }
   },
 
@@ -227,22 +244,6 @@ export const dashboardViewMethods = {
 
   renderDashboardErrorOverlay(this: any): void {
     this.redrawDashboardWithOverlay();
-  },
-
-  showNotificationPanel(this: any): void {
-    showNotificationPanelImpl(this);
-  },
-
-  closeNotificationPanel(this: any): void {
-    closeNotificationPanelImpl(this);
-  },
-
-  renderNotificationPanel(this: any): void {
-    this.redrawDashboardWithOverlay();
-  },
-
-  handleNotificationPanelKey(this: any, data: Buffer): void {
-    handleNotificationPanelKeyImpl(this, data);
   },
 
   startDashboardBusy(this: any, title: string, lines: string[]): void {

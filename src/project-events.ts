@@ -2,6 +2,12 @@ import { getProjectId } from "./paths.js";
 import { upsertNotification } from "./notifications.js";
 import { isSessionNotificationFocused } from "./notification-context.js";
 import type { InteractionType } from "./interaction-requests.js";
+import {
+  PROJECT_API_EVENT_NAMES,
+  PROJECT_API_VIEWS,
+  type ProjectApiView,
+  type ProjectUpdateEvent,
+} from "./project-api-contract.js";
 
 export type AlertKind =
   | "notification"
@@ -17,7 +23,7 @@ export type AlertKind =
   | "interaction_request";
 
 export interface AlertEvent {
-  type: "alert";
+  type: typeof PROJECT_API_EVENT_NAMES.alert;
   kind: AlertKind;
   projectId: string;
   sessionId?: string;
@@ -49,7 +55,7 @@ export interface AlertEvent {
   };
 }
 
-export type ProjectStreamEvent = AlertEvent;
+export type ProjectStreamEvent = AlertEvent | ProjectUpdateEvent;
 
 type ProjectEventListener = (event: ProjectStreamEvent) => void;
 
@@ -68,6 +74,26 @@ export class ProjectEventBus {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+
+  publishProjectUpdate(
+    input: {
+      views?: ProjectApiView[];
+      reason?: string;
+      sessionId?: string;
+      worktreePath?: string;
+    } = {},
+  ): void {
+    const views = input.views?.length ? input.views : [...PROJECT_API_VIEWS];
+    this.publish({
+      type: PROJECT_API_EVENT_NAMES.projectUpdate,
+      projectId: getProjectId(),
+      ts: new Date().toISOString(),
+      views,
+      reason: input.reason,
+      sessionId: input.sessionId,
+      worktreePath: input.worktreePath,
+    });
   }
 
   publishAlert(
@@ -103,12 +129,15 @@ export class ProjectEventBus {
       reasonLabel: alert.reasonLabel,
       dedupeKey,
       createdAt: ts,
-      unread: !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId),
+      unread:
+        !alert.sessionId || alert.forceNotify
+          ? true
+          : !isSessionNotificationFocused(alert.sessionId, alert.projectRoot),
       interaction: alert.interaction,
     });
 
     const event = {
-      type: "alert",
+      type: PROJECT_API_EVENT_NAMES.alert,
       projectId: getProjectId(),
       ts,
       kind: alert.kind,
@@ -131,6 +160,12 @@ export class ProjectEventBus {
     } satisfies AlertEvent;
 
     this.publish(event);
+    this.publishProjectUpdate({
+      views: ["coordination-worklist", "notifications"],
+      reason: "alert",
+      sessionId: alert.sessionId,
+      worktreePath: alert.worktreePath,
+    });
     return true;
   }
 }

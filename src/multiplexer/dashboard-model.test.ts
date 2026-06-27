@@ -7,14 +7,33 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
 import { initPaths } from "../paths.js";
 import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { addNotification } from "../notifications.js";
 import {
   applyDashboardModel,
+  buildDesktopStateSnapshot,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
+  computeDashboardServices,
+  computeDashboardSessions,
+  refreshDashboardModelFromService,
   startProjectServices,
   withMetadataServicePending,
   withMetadataSessionPending,
 } from "./dashboard-model.js";
+
+function minimalDashboardHost(sessions: Array<{ id: string; command: string; status: string }>): any {
+  return {
+    sessions,
+    activeIndex: 0,
+    offlineSessions: [],
+    sessionWorktreePaths: new Map(),
+    sessionTmuxTargets: new Map(),
+    sessionRoles: new Map(),
+    getSessionLabel: () => undefined,
+    deriveHeadline: () => undefined,
+    tmuxRuntimeManager: { listProjectManagedWindows: () => [], isWindowAlive: () => false },
+  };
+}
 
 function deferred<T = void>(): {
   promise: Promise<T>;
@@ -1022,6 +1041,75 @@ describe("metadata pending actions", () => {
     expect(host.debug).toHaveBeenCalledWith(expect.stringContaining("settle failed"), "dashboard");
   });
 
+  it("refreshes the service model after pending actions settle", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      isDashboardScreen: vi.fn(() => true),
+      renderDashboard: vi.fn(),
+    };
+    const settled = deferred<boolean>();
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "codex-1",
+        "starting",
+        () => ({ sessionId: "codex-1" }),
+        undefined,
+        () => settled.promise,
+      ),
+    ).resolves.toEqual({ sessionId: "codex-1" });
+
+    settled.resolve(true);
+
+    await vi.waitFor(() => {
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          lifecycle: expect.objectContaining({ mode: "dashboard" }),
+        }),
+      );
+      expect(host.renderDashboard).toHaveBeenCalled();
+    });
+  });
+
+  it("does not render a pending-action model reconcile after dashboard exit", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      mode: "dashboard",
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.mode = "session";
+        return true;
+      }),
+      isDashboardScreen: vi.fn(() => true),
+      renderDashboard: vi.fn(),
+    };
+    const settled = deferred<boolean>();
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "codex-1",
+        "starting",
+        () => ({ sessionId: "codex-1" }),
+        undefined,
+        () => settled.promise,
+      ),
+    ).resolves.toEqual({ sessionId: "codex-1" });
+
+    settled.resolve(true);
+
+    await vi.waitFor(() => {
+      expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
+      expect(host.renderDashboard).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not let an older session settle clear a newer pending action", async () => {
     const pending = new DashboardPendingActions(() => {});
     const host: any = {
@@ -1101,5 +1189,392 @@ describe("metadata pending actions", () => {
     secondSettle.resolve(true);
     await nextTick();
     expect(pending.getServiceAction("service-1")).toBeUndefined();
+  });
+});
+
+describe("computeDashboardSessions thread stats", () => {
+  it("can build API dashboard entries without live tmux process probes", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-no-runtime-probes-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const agentTarget = { windowId: "@1", windowIndex: 1, windowName: "claude" };
+      const serviceTarget = { windowId: "@2", windowIndex: 2, windowName: "server", paneDead: true };
+      const tmuxRuntimeManager = {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: agentTarget,
+            metadata: { kind: "agent", sessionId: "claude-1", createdAt: "2026-06-21T00:00:00.000Z" },
+          },
+          {
+            target: serviceTarget,
+            metadata: {
+              kind: "service",
+              sessionId: "service-1",
+              command: "yarn",
+              createdAt: "2026-06-21T00:00:00.000Z",
+            },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => {
+          throw new Error("should not probe window liveness");
+        }),
+        displayMessage: vi.fn(() => {
+          throw new Error("should not probe pane metadata");
+        }),
+        captureTarget: vi.fn(() => {
+          throw new Error("should not capture pane output");
+        }),
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]),
+        services: [],
+        offlineServices: [],
+        tmuxRuntimeManager,
+      };
+
+      const sessions = computeDashboardSessions(host, { includeRuntimeInfo: false });
+      const services = computeDashboardServices(host, [], { includeRuntimeInfo: false });
+
+      expect(sessions.find((entry) => entry.id === "claude-1")?.tmuxWindowIndex).toBe(1);
+      expect(services.find((entry) => entry.id === "service-1")?.status).toBe("exited");
+      expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.displayMessage).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.captureTarget).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run mutating topology sync for API runtime-light desktop snapshots", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-light-snapshot-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const syncSessionsFromTopology = vi.fn(() => {
+        throw new Error("should not sync runtime state");
+      });
+      const tmuxRuntimeManager = {
+        listProjectManagedWindows: vi.fn(() => []),
+        isWindowAlive: vi.fn(() => {
+          throw new Error("should not probe window liveness");
+        }),
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]),
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology,
+        tmuxRuntimeManager,
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions.map((session) => session.id)).toEqual(["claude-1"]);
+      expect(syncSessionsFromTopology).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.isWindowAlive).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("builds API desktop snapshots from the host project root", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-project-root-"));
+    const cwdRepoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-cwd-root-"));
+    const originalCwd = process.cwd();
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      mkdirSync(join(cwdRepoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      updateSessionMetadata(
+        "claude-1",
+        (current) => ({ ...current, context: { cwd: join(repoRoot, "correct") } }),
+        repoRoot,
+      );
+      updateSessionMetadata(
+        "claude-1",
+        (current) => ({ ...current, context: { cwd: join(cwdRepoRoot, "wrong") } }),
+        cwdRepoRoot,
+      );
+      process.chdir(cwdRepoRoot);
+      const tmuxRuntimeManager = {
+        listProjectManagedWindows: vi.fn((projectRoot: string) => {
+          expect(projectRoot).toBe(repoRoot);
+          return [
+            {
+              target: { windowId: "@1", windowIndex: 1, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "claude-1",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: repoRoot,
+              },
+            },
+          ];
+        }),
+        isWindowAlive: vi.fn(() => true),
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]),
+        projectRoot: repoRoot,
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        syncSessionsFromTopology: vi.fn(),
+        tmuxRuntimeManager,
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions.map((session) => session.id)).toEqual(["claude-1"]);
+      expect(snapshot.sessions[0]?.worktreePath).toBeUndefined();
+      expect(snapshot.sessions[0]?.cwd).toBe(join(repoRoot, "correct"));
+      expect(tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalledWith(repoRoot);
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(cwdRepoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("hydrates live tmux agents before building cold API desktop snapshots", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-cold-service-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const liveWindow = {
+        target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" },
+        metadata: {
+          kind: "agent",
+          sessionId: "claude-live",
+          command: "claude",
+          args: ["--resume", "backend-live"],
+          toolConfigKey: "claude",
+          backendSessionId: "backend-live",
+          worktreePath: repoRoot,
+          createdAt: "2026-04-21T00:00:00.000Z",
+        },
+      };
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        sessionToolKeys: new Map(),
+        sessionOriginalArgs: new Map(),
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        tmuxRuntimeManager: {
+          listProjectManagedWindows: vi.fn((projectRoot: string) => {
+            expect(projectRoot).toBe(repoRoot);
+            return [liveWindow];
+          }),
+          isWindowAlive: vi.fn(() => true),
+        },
+        restoreTmuxSessionsFromTopology: vi.fn(() => {
+          host.sessions.push({
+            id: "claude-live",
+            command: "claude",
+            backendSessionId: "backend-live",
+            status: "running",
+            startTime: Date.parse("2026-04-21T00:00:00.000Z"),
+          });
+          host.sessionToolKeys.set("claude-live", "claude");
+          host.sessionOriginalArgs.set("claude-live", ["--resume", "backend-live"]);
+          host.sessionWorktreePaths.set("claude-live", repoRoot);
+          host.sessionTmuxTargets.set("claude-live", liveWindow.target);
+        }),
+        syncSessionsFromTopology: vi.fn(),
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions.map((session) => [session.id, session.status, session.worktreePath])).toEqual([
+        ["claude-live", "running", repoRoot],
+      ]);
+      expect(host.restoreTmuxSessionsFromTopology).toHaveBeenCalledTimes(1);
+      expect(host.syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("hydrates existing session rows when tmux-backed maps are empty", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-partial-service-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const liveWindow = {
+        target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" },
+        metadata: {
+          kind: "agent",
+          sessionId: "claude-live",
+          command: "claude",
+          args: [],
+          toolConfigKey: "claude",
+          worktreePath: repoRoot,
+          createdAt: "2026-04-21T00:00:00.000Z",
+        },
+      };
+      const host = {
+        ...minimalDashboardHost([{ id: "claude-live", command: "claude", status: "running" }]),
+        projectRoot: repoRoot,
+        sessionToolKeys: new Map(),
+        sessionOriginalArgs: new Map(),
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        tmuxRuntimeManager: {
+          listProjectManagedWindows: vi.fn((projectRoot: string) => {
+            expect(projectRoot).toBe(repoRoot);
+            return [liveWindow];
+          }),
+          isWindowAlive: vi.fn(() => true),
+        },
+        restoreTmuxSessionsFromTopology: vi.fn(() => {
+          host.sessionToolKeys.set("claude-live", "claude");
+          host.sessionWorktreePaths.set("claude-live", repoRoot);
+          host.sessionTmuxTargets.set("claude-live", liveWindow.target);
+        }),
+        syncSessionsFromTopology: vi.fn(),
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, { includeRuntimeInfo: false });
+
+      expect(snapshot.sessions.map((session) => [session.id, session.status, session.worktreePath])).toEqual([
+        ["claude-live", "running", repoRoot],
+      ]);
+      expect(host.restoreTmuxSessionsFromTopology).toHaveBeenCalledTimes(1);
+      expect(host.syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not count notification-tagged threads as session threads", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-threadstats-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({
+        title: "[Needs input] claude",
+        body: "Claude is waiting for your input",
+        sessionId: "claude-1",
+        kind: "needs_input",
+      });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+
+      expect(session?.notificationUnreadCount).toBe(1);
+      expect(session?.threadUnreadCount).toBe(0);
+      expect(session?.threadPendingCount).toBe(0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("marks an unread needs-input notice stale when the live label has moved on", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-stale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "needs input", body: "waiting", sessionId: "claude-1", kind: "needs_input" });
+
+      // A running session with no activity/attention resolves to label "ready" (not waiting).
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.semantic?.user.label).toBe("ready");
+      expect(session?.notificationStale).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark an offline agent's needs-input notice stale (live guard)", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-stale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "needs input", body: "waiting", sessionId: "claude-1", kind: "needs_input" });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "offline" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.notificationStale).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark a non-needs-input unread notice stale", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-nonstale-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      addNotification({ title: "done", body: "completed", sessionId: "claude-1", kind: "complete" });
+
+      const host = minimalDashboardHost([{ id: "claude-1", command: "claude", status: "running" }]);
+      const session = computeDashboardSessions(host).find((entry) => entry.id === "claude-1");
+      expect(session?.notificationStale).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("refreshDashboardModelFromService", () => {
+  it("rejects incomplete desktop-state snapshots when tmux has live agents", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardModelRefreshedAt: 0,
+      dashboardSessionsCache: [{ id: "codex-1", command: "codex", status: "running" }],
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "main" },
+      dashboardMainCheckoutPathCache: "/repo",
+      dashboardPendingActions: {
+        applyToSessions: (sessions: any[]) => sessions,
+        applyToServices: (services: any[]) => services,
+      },
+      dashboardUiStateStore: { reconcile: vi.fn() },
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined, level: "sessions", worktreeEntries: [] },
+      activeIndex: 0,
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshRuntimeGuard: vi.fn(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: { windowId: "@1", windowName: "codex", windowIndex: 1 },
+            metadata: { kind: "agent", sessionId: "codex-1" },
+          },
+          {
+            target: { windowId: "@2", windowName: "claude", windowIndex: 2 },
+            metadata: { kind: "agent", sessionId: "claude-1" },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => true),
+      },
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        sessions: [{ id: "codex-1", command: "codex", status: "running", index: 1, active: false }],
+        teammates: [],
+        services: [],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "main",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+      })),
+    };
+
+    await expect(refreshDashboardModelFromService(host)).resolves.toBe(false);
+
+    expect(host.dashboardSessionsCache).toEqual([{ id: "codex-1", command: "codex", status: "running" }]);
+    expect(host.dashboardModelServiceRefreshError?.message).toContain("incomplete state");
   });
 });

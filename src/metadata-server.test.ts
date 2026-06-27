@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataState } from "./metadata-store.js";
-import { upsertNotification } from "./notifications.js";
+import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
+import { loadNotificationContexts } from "./notification-context.js";
+import { listNotifications, upsertNotification } from "./notifications.js";
+import { addDashboardOperationFailure, listDashboardOperationFailures } from "./dashboard/operation-failures.js";
+import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
@@ -15,6 +18,7 @@ import {
   saveRuntimeTopologySessions,
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -48,6 +52,197 @@ describe("MetadataServer threads API", () => {
   afterEach(() => {
     server?.stop();
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("keeps project service health cheap", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/health`);
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      pid: process.pid,
+      serviceInfo: expect.any(Object),
+    });
+    expect(json.resources).toBeUndefined();
+    expect(json.recentSlowRequests).toBeUndefined();
+    expect(json.plugins).toBeUndefined();
+  });
+
+  it("exposes project service resource diagnostics separately from health", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
+    const json = await response.json();
+
+    expect(json).toMatchObject({
+      ok: true,
+      pid: process.pid,
+      resources: {
+        uptimeMs: expect.any(Number),
+        memoryRssBytes: expect.any(Number),
+        memoryHeapUsedBytes: expect.any(Number),
+      },
+      recentSlowRequests: [],
+    });
+  });
+
+  it("records slow desktop-state requests for health diagnostics", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => {
+          const deadline = Date.now() + 275;
+          while (Date.now() < deadline) {
+            Date.now();
+          }
+          return {
+            sessions: [],
+            teammates: [],
+            services: [],
+            worktreeGroups: [],
+            mainCheckoutInfo: { name: "Main Checkout" },
+          };
+        },
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`);
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
+    const json = await health.json();
+
+    expect(json.recentSlowRequests).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        path: "/desktop-state",
+        statusCode: 200,
+        durationMs: expect.any(Number),
+        resources: expect.objectContaining({
+          memoryRssBytes: expect.any(Number),
+          memoryHeapUsedBytes: expect.any(Number),
+        }),
+      }),
+    ]);
+  });
+
+  it("does not record long-lived stream routes as slow requests", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://127.0.0.1:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const stream = await fetch(`${base}/agents/interaction/stream`, { signal: controller.signal });
+    expect(stream.ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    controller.abort();
+    await stream.body?.cancel().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const health = await fetch(`${base}/diagnostics`);
+    const json = await health.json();
+    expect(json.recentSlowRequests).toEqual([]);
+  });
+
+  it("exposes plugin startup diagnostics in health", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      diagnostics: {
+        pluginStatuses: () => [
+          {
+            source: "user",
+            name: "file-watch-plugin",
+            path: "/tmp/file-watch-plugin.js",
+            status: "failed",
+            error: "EMFILE: too many open files, watch",
+            resourceFailure: true,
+            stoppedAfterFailedStart: true,
+          },
+        ],
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const health = await fetch(`http://127.0.0.1:${endpoint!.port}/diagnostics`);
+    const json = await health.json();
+
+    expect(json.plugins).toEqual([
+      expect.objectContaining({
+        name: "file-watch-plugin",
+        status: "failed",
+        resourceFailure: true,
+      }),
+    ]);
+  });
+
+  it("caches desktop-state reads but refreshes immediately after project changes", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    expect(second.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const cached = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(cached.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    server.notifyChange();
+    const third = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(third.seq).toBe(2);
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes desktop-state cache when alerts publish project updates", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    server.getEventBus().publishAlert({
+      kind: "needs_input",
+      title: "Needs input",
+      message: "Agent needs input",
+      sessionId: "agent-1",
+      cooldownMs: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const second = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+
+    expect(second.seq).toBe(2);
+    expect(getState).toHaveBeenCalledTimes(2);
   });
 
   function seedAgentTopology(
@@ -127,6 +322,20 @@ describe("MetadataServer threads API", () => {
     expect(showRes.ok).toBe(true);
     expect(detail.thread.id).toBe(opened.thread.id);
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
+
+    const routedRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "user",
+        assignee: "codex-1",
+        kind: "request",
+        body: "Please inspect the routed message path.",
+      }),
+    });
+    const routed = (await routedRes.json()) as { message: { to?: string[] } };
+    expect(routedRes.ok).toBe(true);
+    expect(routed.message.to).toEqual(["codex-1"]);
   });
 
   it("lists agents with loop state and toggles the loop flag over HTTP", async () => {
@@ -270,29 +479,12 @@ describe("MetadataServer threads API", () => {
       kind: "needs_input",
     });
 
-    const inboxRes = await fetch(`${base}/inbox?participant=reviewer`);
-    const inbox = (await inboxRes.json()) as { inbox: Array<{ id: string; subjectId: string; title: string }> };
-    expect(inboxRes.ok).toBe(true);
-    expect(inbox.inbox).toEqual([expect.objectContaining({ subjectId: roleHandoff.thread.id })]);
-
-    const inboxWithNotificationsRes = await fetch(`${base}/inbox?participant=reviewer&includeNotifications=1`);
-    const inboxWithNotifications = (await inboxWithNotificationsRes.json()) as {
-      inbox: Array<{ title: string; subjectId: string }>;
-    };
-    expect(inboxWithNotifications.inbox.map((entry) => entry.title)).toContain("Reviewer alert");
-
-    const readInboxRes = await fetch(`${base}/inbox/read`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ participant: "reviewer" }),
-    });
-    expect(readInboxRes.ok).toBe(true);
-    const readInboxAgainRes = await fetch(`${base}/inbox?participant=reviewer&unread=1`);
-    const readInboxAgain = (await readInboxAgainRes.json()) as { inbox: unknown[] };
-    expect(readInboxAgain.inbox).toEqual([]);
     const notificationStillUnreadRes = await fetch(`${base}/notifications?sessionId=reviewer&unread=1`);
-    const notificationStillUnread = (await notificationStillUnreadRes.json()) as { notifications: unknown[] };
+    const notificationStillUnread = (await notificationStillUnreadRes.json()) as {
+      notifications: Array<{ title: string }>;
+    };
     expect(notificationStillUnread.notifications).toHaveLength(1);
+    expect(notificationStillUnread.notifications[0]?.title).toBe("Reviewer alert");
 
     const taskRes = await fetch(`${base}/tasks/assign`, {
       method: "POST",
@@ -334,6 +526,124 @@ describe("MetadataServer threads API", () => {
     const body = (await res.json()) as { ok: boolean; sessionId: string };
     expect(res.ok).toBe(true);
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
+  });
+
+  it("drives live pane control endpoints over HTTP", async () => {
+    const calls: Array<{ kind: string; sessionId: string; cols?: number; rows?: number; text?: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => ({
+          sessionId,
+          startLine: startLine ?? -120,
+          output: `output for ${sessionId}`,
+          parsed: { blocks: [{ type: "response", text: `output for ${sessionId}` }] },
+        }),
+        sendAgentInput: ({ sessionId, text }) => {
+          calls.push({ kind: "input", sessionId, text });
+          return { sessionId, accepted: true };
+        },
+        interruptAgent: ({ sessionId }) => {
+          calls.push({ kind: "interrupt", sessionId });
+          return { sessionId };
+        },
+        resizeAgentPane: ({ sessionId, cols, rows }) => {
+          calls.push({ kind: "resize", sessionId, cols, rows });
+          return { sessionId, cols, rows };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const outputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=-80`);
+    const output = (await outputRes.json()) as { ok: boolean; sessionId: string; startLine: number; output: string };
+    expect(outputRes.ok).toBe(true);
+    expect(output).toMatchObject({ ok: true, sessionId: "codex-1", startLine: -80, output: "output for codex-1" });
+
+    const attachRes = await fetch(`${base}/live-pane/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", startLine: -90, cols: 100, rows: 32 }),
+    });
+    const attach = (await attachRes.json()) as {
+      ok: boolean;
+      sessionId: string;
+      stream: { route: string; sessionId: string; startLine: number };
+      resize?: { cols: number; rows: number };
+    };
+    expect(attachRes.ok).toBe(true);
+    expect(attach.stream).toEqual({ route: "/events", sessionId: "codex-1", startLine: -90 });
+    expect(attach.resize).toEqual({ cols: 100, rows: 32 });
+
+    const inputRes = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "hello" }),
+    });
+    expect(inputRes.ok).toBe(true);
+
+    const interruptRes = await fetch(`${base}/live-pane/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1" }),
+    });
+    expect(interruptRes.ok).toBe(true);
+
+    const missingInterruptSessionRes = await fetch(`${base}/live-pane/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(missingInterruptSessionRes.status).toBe(400);
+
+    const resizeRes = await fetch(`${base}/live-pane/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: 120, rows: 40 }),
+    });
+    expect(resizeRes.ok).toBe(true);
+
+    const malformedColsRes = await fetch(`${base}/live-pane/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: "100px", rows: 40 }),
+    });
+    expect(malformedColsRes.status).toBe(400);
+
+    const malformedRowsRes = await fetch(`${base}/live-pane/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: 100, rows: "10.5" }),
+    });
+    expect(malformedRowsRes.status).toBe(400);
+
+    const malformedAttachRes = await fetch(`${base}/live-pane/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", startLine: "10px" }),
+    });
+    expect(malformedAttachRes.status).toBe(400);
+
+    const partialAttachResizeRes = await fetch(`${base}/live-pane/attach`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", cols: 100 }),
+    });
+    expect(partialAttachResizeRes.status).toBe(400);
+
+    const malformedOutputRes = await fetch(`${base}/live-pane/output?sessionId=codex-1&startLine=10.5`);
+    expect(malformedOutputRes.status).toBe(400);
+
+    expect(calls).toEqual([
+      { kind: "resize", sessionId: "codex-1", cols: 100, rows: 32 },
+      { kind: "input", sessionId: "codex-1", text: "hello" },
+      { kind: "interrupt", sessionId: "codex-1" },
+      { kind: "resize", sessionId: "codex-1", cols: 120, rows: 40 },
+    ]);
   });
 
   it("records backend session ids over HTTP so crashed panes stay resumable", async () => {
@@ -496,7 +806,9 @@ describe("MetadataServer threads API", () => {
 
   it("opens notification targets from hidden teammate desktop state", async () => {
     server?.stop();
+    const onChange = vi.fn();
     server = new MetadataServer({
+      onChange,
       desktop: {
         getState: () => ({
           sessions: [{ id: "parent", command: "claude", status: "running" }],
@@ -516,21 +828,60 @@ describe("MetadataServer threads API", () => {
     await server.start();
 
     const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
-    const opened: any[] = [];
+    const switched: Array<{ tty: string; target: unknown }> = [];
     const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
     const getTargetByWindowId = TmuxRuntimeManager.prototype.getTargetByWindowId;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
     const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
     const openTarget = TmuxRuntimeManager.prototype.openTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
     TmuxRuntimeManager.prototype.getTargetByWindowId = (_sessionName, windowId) =>
       windowId === "@7" ? target : undefined;
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "teammate-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
     TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
-    TmuxRuntimeManager.prototype.openTarget = (nextTarget) => {
-      opened.push(nextTarget);
+    TmuxRuntimeManager.prototype.openTarget = vi.fn();
+    TmuxRuntimeManager.prototype.switchClientToTarget = (tty, nextTarget) => {
+      switched.push({ tty, target: nextTarget });
     };
     TmuxRuntimeManager.prototype.refreshStatus = vi.fn();
     try {
+      updateSessionMetadata("teammate-1", (current) => ({
+        ...current,
+        derived: {
+          ...(current.derived ?? {}),
+          activity: "waiting",
+          attention: "needs_input",
+          unseenCount: 2,
+        },
+      }));
+      upsertNotification({
+        title: "Needs input",
+        body: "Agent needs input",
+        sessionId: "teammate-1",
+        kind: "needs_input",
+      });
+
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
@@ -538,18 +889,1012 @@ describe("MetadataServer threads API", () => {
       const res = await fetch(`${base}/control/open-notification-target`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: "teammate-1" }),
+        body: JSON.stringify({
+          sessionId: "teammate-1",
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/ttys001",
+          focus: true,
+        }),
       });
 
       expect(res.ok).toBe(true);
-      expect(opened).toEqual([target]);
+      const body = (await res.json()) as { ok: boolean; focused: boolean; focusMode?: string; target?: unknown };
+      expect(body).toMatchObject({
+        ok: true,
+        focused: true,
+        focusMode: "client-tty",
+        target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+      });
+      expect(switched).toEqual([{ tty: "/dev/ttys001", target }]);
+      expect(TmuxRuntimeManager.prototype.openTarget).not.toHaveBeenCalled();
+      expect(loadMetadataState().sessions["teammate-1"]?.derived).toMatchObject({
+        attention: "normal",
+        unseenCount: 0,
+      });
+      expect(listNotifications({ sessionId: "teammate-1" })[0]?.unread).toBe(false);
+      expect(onChange).toHaveBeenCalledTimes(1);
+
+      updateSessionMetadata("teammate-1", (current) => ({
+        ...current,
+        derived: {
+          ...(current.derived ?? {}),
+          activity: "waiting",
+          attention: "needs_input",
+          unseenCount: 3,
+        },
+      }));
+      onChange.mockClear();
+      const resolveOnlyRes = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "teammate-1" }),
+      });
+      const resolveOnly = (await resolveOnlyRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
+
+      expect(resolveOnlyRes.ok).toBe(true);
+      expect(resolveOnly).toMatchObject({
+        ok: true,
+        focused: false,
+        target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+      });
+      expect(switched).toEqual([{ tty: "/dev/ttys001", target }]);
+      expect(loadMetadataState().sessions["teammate-1"]?.derived).toMatchObject({
+        attention: "needs_input",
+        unseenCount: 3,
+      });
+      expect(onChange).not.toHaveBeenCalled();
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
       TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
       TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
       TmuxRuntimeManager.prototype.openTarget = openTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
       TmuxRuntimeManager.prototype.refreshStatus = refreshStatus;
     }
+  });
+
+  it("does not resume offline notification targets from open routes", async () => {
+    server?.stop();
+    const resumeService = vi.fn();
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [],
+          teammates: [],
+          services: [{ id: "svc-1", command: "yarn dev", status: "offline", tmuxWindowId: "@stale" }],
+        }),
+        resumeService,
+      },
+    });
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("stale offline window id should not be resolved");
+    });
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "svc-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string; itemId?: string };
+
+      expect(res.status).toBe(409);
+      expect(body).toMatchObject({ ok: false, error: "service is offline", itemId: "svc-1" });
+      expect(resumeService).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("does not trust stale exited agent window ids from open routes", async () => {
+    server?.stop();
+    const resumeAgent = vi.fn();
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "agent-1", command: "codex", status: "exited", tmuxWindowId: "@stale" }],
+          teammates: [],
+          services: [],
+        }),
+        resumeAgent,
+      },
+    });
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("stale exited window id should not be resolved");
+    });
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "agent-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string; itemId?: string };
+
+      expect(res.status).toBe(409);
+      expect(body).toMatchObject({ ok: false, error: "agent is offline", itemId: "agent-1" });
+      expect(resumeAgent).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("rejects offline service notification targets without resuming", async () => {
+    server?.stop();
+    const onChange = vi.fn();
+    const resumeService = vi.fn();
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [],
+          teammates: [],
+          services: [{ id: "svc-1", command: "shell", status: "offline" }],
+        }),
+        resumeService,
+      },
+      onChange,
+    });
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("offline service open should not resolve tmux windows");
+    });
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "svc-1",
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/ttys001",
+          focus: true,
+        }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      expect(res.status).toBe(409);
+      expect(body).toEqual({ ok: false, error: "service is offline", itemId: "svc-1" });
+      expect(resumeService).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
+      expect(onChange).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("rejects offline agent notification targets without resuming", async () => {
+    server?.stop();
+    const onChange = vi.fn();
+    const resumeAgent = vi.fn();
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "agent-1", command: "codex", status: "offline" }],
+          teammates: [],
+          services: [],
+        }),
+        resumeAgent,
+      },
+      onChange,
+    });
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = vi.fn(() => {
+      throw new Error("offline agent open should not resolve tmux windows");
+    });
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "agent-1",
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/ttys001",
+          focus: true,
+        }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      expect(res.status).toBe(409);
+      expect(body).toEqual({ ok: false, error: "agent is offline", itemId: "agent-1" });
+      expect(resumeAgent).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.listProjectManagedWindows).not.toHaveBeenCalled();
+      expect(onChange).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("rejects dead notification target windows", async () => {
+    server?.stop();
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "agent-1", command: "codex", status: "running", tmuxWindowId: "@7" }],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "agent-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      expect(res.status).toBe(404);
+      expect(body).toEqual({ ok: false, error: "window not found" });
+    } finally {
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("rejects unmanaged focus-window targets", async () => {
+    const target = { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "outside" } as any;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const getTargetByWindowId = TmuxRuntimeManager.prototype.getTargetByWindowId;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.getTargetByWindowId = vi.fn(() => target);
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/focus-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ windowId: "@8", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      expect(res.status).toBe(404);
+      expect(body).toEqual({ ok: false, error: "window not found" });
+      expect(TmuxRuntimeManager.prototype.getTargetByWindowId).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
+    }
+  });
+
+  it("rejects dead managed focus-window targets", async () => {
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      for (const focus of [false, true]) {
+        const res = await fetch(`${base}/control/focus-window`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ windowId: "@7", focus }),
+        });
+        const body = (await res.json()) as { ok: boolean; error?: string };
+        expect(res.status).toBe(404);
+        expect(body).toEqual({ ok: false, error: "window not found" });
+      }
+    } finally {
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("requires an explicit client tty for mutating focus requests", async () => {
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
+    const openTarget = TmuxRuntimeManager.prototype.openTarget;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = vi.fn(() => ({ tty: "/dev/ttys999" }) as any);
+    TmuxRuntimeManager.prototype.switchClientToTarget = vi.fn();
+    TmuxRuntimeManager.prototype.openTarget = vi.fn();
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/focus-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ windowId: "@7", currentClientSession: "aimux-test-client-12345678", focus: true }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      expect(res.status).toBe(400);
+      expect(body).toEqual({ ok: false, error: "clientTty is required" });
+      expect(TmuxRuntimeManager.prototype.getAttachedClientForTarget).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.switchClientToTarget).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.openTarget).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
+      TmuxRuntimeManager.prototype.openTarget = openTarget;
+    }
+  });
+
+  it("uses live client tty over a stale currentClientSession for focus requests", async () => {
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const switched: Array<{ tty: string; target: unknown }> = [];
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
+    const openTarget = TmuxRuntimeManager.prototype.openTarget;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-abcdef12";
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-abcdef12" } as any) : null;
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = vi.fn(() => undefined as any);
+    TmuxRuntimeManager.prototype.switchClientToTarget = (tty, nextTarget) => {
+      switched.push({ tty, target: nextTarget });
+    };
+    TmuxRuntimeManager.prototype.openTarget = vi.fn();
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/focus-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          windowId: "@7",
+          currentClientSession: "aimux-test-client-deadbeef",
+          clientTty: "/dev/ttys001",
+          focus: true,
+        }),
+      });
+      const body = (await res.json()) as { ok: boolean; focused?: boolean; focusMode?: string };
+
+      expect(res.ok).toBe(true);
+      expect(body).toMatchObject({ ok: true, focused: true, focusMode: "client-tty" });
+      expect(switched).toEqual([{ tty: "/dev/ttys001", target }]);
+      expect(TmuxRuntimeManager.prototype.openTarget).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
+      TmuxRuntimeManager.prototype.openTarget = openTarget;
+    }
+  });
+
+  it("resolves dashboard locations without mutating tmux state when focus is false", async () => {
+    const target = {
+      sessionName: "aimux-repo-abc-client-12345678",
+      windowId: "@99",
+      windowIndex: 0,
+      windowName: "dashboard-123",
+    } as any;
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
+    const getSessionOption = TmuxRuntimeManager.prototype.getSessionOption;
+    const displayMessage = TmuxRuntimeManager.prototype.displayMessage;
+    const captureTarget = TmuxRuntimeManager.prototype.captureTarget;
+    const ensureProjectSession = TmuxRuntimeManager.prototype.ensureProjectSession;
+    const ensureDashboardWindow = TmuxRuntimeManager.prototype.ensureDashboardWindow;
+    const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-repo-abc-client-12345678";
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-repo-abc", "aimux-repo-abc-client-12345678"];
+    TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+      sessionName === "aimux-repo-abc-client-12345678"
+        ? [{ id: target.windowId, index: target.windowIndex, name: target.windowName, active: true }]
+        : [];
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
+      key === TMUX_DASHBOARD_OWNER_OPTION
+        ? getRuntimeOwnerId()
+        : key === "@aimux-dashboard-build"
+          ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+          : "";
+    TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
+      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
+    TmuxRuntimeManager.prototype.displayMessage = () => "bash";
+    TmuxRuntimeManager.prototype.captureTarget = () => "";
+    TmuxRuntimeManager.prototype.ensureProjectSession = vi.fn();
+    TmuxRuntimeManager.prototype.ensureDashboardWindow = vi.fn();
+    TmuxRuntimeManager.prototype.respawnWindow = vi.fn();
+    TmuxRuntimeManager.prototype.setWindowOption = vi.fn();
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const dashboardRes = await fetch(`${base}/control/open-dashboard`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-repo-abc-client-12345678",
+          currentWindowId: "@42",
+          focus: false,
+        }),
+      });
+      const dashboardBody = (await dashboardRes.json()) as { ok: boolean; focused: boolean; target?: unknown };
+
+      const coordinationResolveRes = await fetch(`${base}/control/open-dashboard`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-repo-abc-client-12345678",
+          focus: false,
+          screen: "coordination",
+        }),
+      });
+      const coordinationResolveBody = (await coordinationResolveRes.json()) as {
+        ok: boolean;
+        focused: boolean;
+        target?: unknown;
+      };
+
+      expect(dashboardRes.ok).toBe(true);
+      expect(dashboardBody).toMatchObject({ ok: true, focused: false, target });
+      expect(coordinationResolveRes.ok).toBe(true);
+      expect(coordinationResolveBody).toMatchObject({ ok: true, focused: false, target });
+      const coordinationResolveSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(coordinationResolveSnapshot.screen).toBe("coordination");
+      expect(TmuxRuntimeManager.prototype.ensureProjectSession).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.ensureDashboardWindow).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.respawnWindow).not.toHaveBeenCalled();
+      expect(TmuxRuntimeManager.prototype.setWindowOption).not.toHaveBeenCalled();
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
+      TmuxRuntimeManager.prototype.getSessionOption = getSessionOption;
+      TmuxRuntimeManager.prototype.displayMessage = displayMessage;
+      TmuxRuntimeManager.prototype.captureTarget = captureTarget;
+      TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
+      TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
+      TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
+    }
+  });
+
+  it("validates active-window reports before mutating notification context", async () => {
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
+    const getSessionOption = TmuxRuntimeManager.prototype.getSessionOption;
+    const displayMessage = TmuxRuntimeManager.prototype.displayMessage;
+    const captureTarget = TmuxRuntimeManager.prototype.captureTarget;
+    const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = (sessionName) => sessionName === "aimux-test-client-12345678";
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test", "aimux-test-client-12345678"];
+    TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+      sessionName === "aimux-test-client-12345678"
+        ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }]
+        : [];
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
+      key === TMUX_DASHBOARD_OWNER_OPTION
+        ? getRuntimeOwnerId()
+        : key === "@aimux-dashboard-build"
+          ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+          : "";
+    TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
+      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
+    TmuxRuntimeManager.prototype.displayMessage = () => "bash";
+    TmuxRuntimeManager.prototype.captureTarget = () => "";
+    TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
+      tty === "/dev/ttys001" ? ({ tty, sessionName: "aimux-test-client-12345678" } as any) : null;
+    TmuxRuntimeManager.prototype.listManagedWindows = vi.fn(() => {
+      throw new Error("switch resolver should not run for invalid client sessions");
+    });
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const missingSessionRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentWindowId: "@99" }),
+      });
+      const missingSessionBody = (await missingSessionRes.json()) as { ok: boolean; error?: string };
+      expect(missingSessionRes.status).toBe(400);
+      expect(missingSessionBody).toEqual({ ok: false, error: "currentClientSession is required" });
+
+      const missingTtyRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentClientSession: "aimux-test-client-12345678", currentWindowId: "@99" }),
+      });
+      const missingTtyBody = (await missingTtyRes.json()) as { ok: boolean; error?: string };
+      expect(missingTtyRes.status).toBe(400);
+      expect(missingTtyBody).toEqual({ ok: false, error: "clientTty is required" });
+
+      const invalidSessionRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "other-client",
+          clientTty: "/dev/ttys001",
+          currentWindowId: "@7",
+        }),
+      });
+      const invalidSessionBody = (await invalidSessionRes.json()) as { ok: boolean; error?: string };
+      expect(invalidSessionRes.status).toBe(400);
+      expect(invalidSessionBody).toEqual({ ok: false, error: "currentClientSession is not a project client" });
+
+      const invalidSwitchRes = await fetch(`${base}/control/switch-next`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentClientSession: "other-client", focus: false }),
+      });
+      const invalidSwitchBody = (await invalidSwitchRes.json()) as { ok: boolean; error?: string };
+      expect(invalidSwitchRes.status).toBe(400);
+      expect(invalidSwitchBody).toEqual({ ok: false, error: "currentClientSession is not a project client" });
+      expect(TmuxRuntimeManager.prototype.listManagedWindows).not.toHaveBeenCalled();
+
+      TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+        sessionName === "aimux-test-client-12345678" ? [{ id: "@7", index: 7, name: "codex", active: true }] : [];
+      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      const deadManagedRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/ttys001",
+          currentWindow: "codex",
+          currentWindowId: "@7",
+        }),
+      });
+      const deadManagedBody = (await deadManagedRes.json()) as { ok: boolean; error?: string };
+      expect(deadManagedRes.status).toBe(404);
+      expect(deadManagedBody).toEqual({ ok: false, error: "window not found" });
+      expect(loadNotificationContexts().contexts.tui).toBeUndefined();
+      TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
+        sessionName === "aimux-test-client-12345678"
+          ? [{ id: "@99", index: 0, name: "dashboard-123", active: true }]
+          : [];
+      TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+
+      const spoofedDashboardRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/ttys001",
+          currentWindow: "dashboard-123",
+          currentWindowId: "@7",
+        }),
+      });
+      const spoofedDashboardBody = (await spoofedDashboardRes.json()) as { ok: boolean; error?: string };
+      expect(spoofedDashboardRes.status).toBe(404);
+      expect(spoofedDashboardBody).toEqual({ ok: false, error: "window not found" });
+      expect(loadNotificationContexts().contexts.tui).toBeUndefined();
+
+      const dashboardRes = await fetch(`${base}/control/active-window`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentClientSession: "aimux-test-client-12345678",
+          clientTty: "/dev/ttys001",
+          currentWindow: "dashboard-123",
+          currentWindowId: "@99",
+        }),
+      });
+      expect(dashboardRes.ok).toBe(true);
+      expect(loadNotificationContexts().contexts.tui).toMatchObject({ focused: true, screen: "dashboard" });
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
+      TmuxRuntimeManager.prototype.getSessionOption = getSessionOption;
+      TmuxRuntimeManager.prototype.displayMessage = displayMessage;
+      TmuxRuntimeManager.prototype.captureTarget = captureTarget;
+      TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
+    }
+  });
+
+  it("serves a reconciled coordination worklist from desktop state + notifications", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            {
+              id: "live-1",
+              command: "claude",
+              status: "running",
+              semantic: { user: { label: "needs_input" }, presentation: { attentionScore: 4 } },
+            },
+          ],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    upsertNotification({
+      title: "Needs input",
+      body: "live agent needs input",
+      sessionId: "live-1",
+      kind: "needs_input",
+    });
+    upsertNotification({
+      title: "Gone",
+      body: "vanished agent needs input",
+      sessionId: "ghost-1",
+      kind: "needs_input",
+    });
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/coordination-worklist`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      worklist: { items: Array<{ key: string; sessionId?: string; bucket: string; reachability: string }> };
+      model: { items: Array<{ key: string }> };
+      threads: unknown[];
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    const live = body.worklist.items.find((item) => item.sessionId === "live-1");
+    const ghost = body.worklist.items.find((item) => item.sessionId === "ghost-1");
+    expect(live).toMatchObject({ bucket: "awake", reachability: "live" });
+    expect(ghost).toMatchObject({ bucket: "unreachable", reachability: "missing" });
+    // Awake (actionable) sorts ahead of the unreachable tail.
+    const keys = body.worklist.items.map((item) => item.key);
+    expect(keys.indexOf("n:live-1")).toBeLessThan(keys.indexOf("n:ghost-1"));
+    expect(Array.isArray(body.threads)).toBe(true);
+  });
+
+  it("serves orchestration route options from desktop state", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            {
+              id: "codex-1",
+              command: "custom-codex-command",
+              toolConfigKey: "codex",
+              status: "idle",
+              label: "Reviewer",
+              semantic: {
+                user: { label: "idle" },
+                runtime: { canReceiveInput: true, isAlive: true },
+              },
+            },
+          ],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/orchestration/routes?selectedSessionId=codex-1`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      options: Array<{ label: string; sessionId?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.options[0]).toEqual({ label: "Reviewer (codex-1)", sessionId: "codex-1" });
+    expect(body.options).toContainEqual({
+      label: "Tool: codex [1: codex-1]",
+      tool: "codex",
+      recipientIds: ["codex-1"],
+    });
+  });
+
+  it("clears dashboard operation failures over HTTP", async () => {
+    const failure = addDashboardOperationFailure({
+      targetKind: "worktree",
+      operation: "create",
+      title: "Failed to create worktree",
+      message: "boom",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    });
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/operation-failures/clear`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        targetKind: "worktree",
+        operation: "create",
+        worktreePath: failure.worktreePath,
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; cleared: number };
+
+    expect(res.ok).toBe(true);
+    expect(body).toEqual({ ok: true, cleared: 1 });
+    expect(listDashboardOperationFailures()).toHaveLength(0);
+  });
+
+  it("serves project observability from desktop state, tasks, and notifications", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "live-1", command: "claude", status: "running" }],
+          teammates: [{ id: "team-1", command: "codex", status: "waiting" }],
+          services: [{ id: "svc-1", command: "yarn dev", status: "running" }],
+          worktrees: [{ name: "main", path: repoRoot, branch: "main" }],
+        }),
+      },
+    });
+    await server.start();
+
+    upsertNotification({ title: "Needs input", body: "body", sessionId: "live-1", kind: "needs_input" });
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/project-observability`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      project: {
+        summary: {
+          agentsRunning: number;
+          agentsWaiting: number;
+          services: number;
+          worktrees: number;
+          unreadNotifications: number;
+        };
+      };
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.project.summary).toMatchObject({
+      agentsRunning: 1,
+      agentsWaiting: 1,
+      services: 1,
+      worktrees: 1,
+      unreadNotifications: 1,
+    });
+  });
+
+  it("serves topology from grouped desktop worktree state", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          mainCheckoutInfo: { name: "aimux" },
+          sessions: [
+            { id: "live-1", command: "claude", status: "running", worktreePath: "/repo" },
+            { id: "main-1", command: "shell", status: "idle" },
+          ],
+          teammates: [{ id: "team-1", command: "codex", status: "waiting", worktreePath: "/repo" }],
+          services: [{ id: "svc-1", command: "yarn dev", status: "running", worktreePath: "/repo" }],
+          worktrees: [
+            { name: "main", path: "/repo", branch: "main" },
+            { name: "empty", path: "/empty", branch: "empty" },
+          ],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/topology`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      topology: {
+        projectName: string;
+        counts: { worktrees: number; agents: number; services: number };
+        rows: Array<{ kind: string; label?: string; status?: string; sessionId?: string; serviceId?: string }>;
+      };
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.topology.projectName).toBe("aimux");
+    expect(body.topology.counts).toEqual({ worktrees: 2, agents: 3, services: 1 });
+    expect(body.topology.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "worktree", label: "empty", status: "offline" }),
+        expect.objectContaining({ kind: "agent", sessionId: "live-1" }),
+        expect.objectContaining({ kind: "agent", sessionId: "main-1" }),
+        expect.objectContaining({ kind: "agent", sessionId: "team-1" }),
+        expect.objectContaining({ kind: "service", serviceId: "svc-1" }),
+      ]),
+    );
   });
 
   it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
@@ -953,6 +2298,42 @@ describe("MetadataServer threads API", () => {
     expect(resurrectGraveyard).toHaveBeenCalledWith({ sessionId: "codex-old" });
   });
 
+  it("returns graveyard entries with the server-built TUI view model", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({ sessions: [], teammates: [] }),
+        listGraveyard: () => [
+          {
+            id: "codex-old",
+            tool: "codex",
+            command: "codex",
+            status: "graveyard",
+          },
+        ],
+        listWorktreeGraveyard: () => [],
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/graveyard`);
+    const body = (await res.json()) as {
+      entries: Array<{ id: string }>;
+      viewModel: { rows: Array<{ kind: string }>; selectableRows: Array<{ kind: string; entry: { id: string } }> };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.entries).toEqual([expect.objectContaining({ id: "codex-old" })]);
+    expect(body.viewModel.rows.map((row) => row.kind)).toContain("orphan-agent");
+    expect(body.viewModel.selectableRows).toEqual([
+      expect.objectContaining({ kind: "orphan-agent", entry: expect.objectContaining({ id: "codex-old" }) }),
+    ]);
+  });
+
   it("passes worktree graveyard resurrection and delete over HTTP", async () => {
     server?.stop();
     const resurrectGraveyardWorktree = vi.fn(({ path }) => ({ path, status: "active" as const }));
@@ -1214,24 +2595,30 @@ describe("MetadataServer threads API", () => {
 
   it("persists the current live window as the preferred dashboard selection when reopening dashboard", async () => {
     const ensureProjectSession = TmuxRuntimeManager.prototype.ensureProjectSession;
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
     const hasSession = TmuxRuntimeManager.prototype.hasSession;
     const ensureDashboardWindow = TmuxRuntimeManager.prototype.ensureDashboardWindow;
     const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
     const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const setSessionOption = TmuxRuntimeManager.prototype.setSessionOption;
     const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
     const listClients = TmuxRuntimeManager.prototype.listClients;
+    const findClientByTty = TmuxRuntimeManager.prototype.findClientByTty;
     const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
     const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
     const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
+    const setSessionOptionMock = vi.fn();
+    const setWindowOptionMock = vi.fn();
 
     TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
     TmuxRuntimeManager.prototype.hasSession = () => true;
     TmuxRuntimeManager.prototype.ensureDashboardWindow = () =>
       ({
-        sessionName: "aimux-repo-abc-client-123",
+        sessionName: "aimux-repo-abc-client-12345678",
         windowId: "@99",
         windowIndex: 0,
         windowName: "dashboard-123",
@@ -1239,7 +2626,8 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
-    TmuxRuntimeManager.prototype.setWindowOption = () => undefined as any;
+    TmuxRuntimeManager.prototype.setSessionOption = setSessionOptionMock;
+    TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
       [
         {
@@ -1252,7 +2640,9 @@ describe("MetadataServer threads API", () => {
         },
       ] as any;
     TmuxRuntimeManager.prototype.listClients = () =>
-      [{ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-123" }] as any;
+      [{ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-12345678" }] as any;
+    TmuxRuntimeManager.prototype.findClientByTty = () =>
+      ({ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-12345678" }) as any;
     TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
     TmuxRuntimeManager.prototype.switchClientToTarget = () => undefined as any;
     TmuxRuntimeManager.prototype.refreshStatus = () => undefined as any;
@@ -1264,12 +2654,25 @@ describe("MetadataServer threads API", () => {
       const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
       const res = await fetch(
-        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042`,
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
+      const body = (await res.json()) as { ok: boolean; error?: string };
+      expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith("aimux-repo-abc", "@aimux-dashboard-build", expect.any(String));
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        "@aimux-dashboard-build",
+        expect.any(String),
+      );
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        TMUX_DASHBOARD_OWNER_OPTION,
+        getRuntimeOwnerId(),
+      );
 
       const snapshot = JSON.parse(
-        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
       expect(snapshot).toMatchObject({
         screen: "dashboard",
@@ -1278,16 +2681,68 @@ describe("MetadataServer threads API", () => {
         selectedEntryKind: "session",
         selectedEntryId: "codex-1",
       });
+
+      const coordinationRes = await fetch(
+        `${base}/control/open-dashboard?clientTty=%2Fdev%2Fttys001&focus=true&screen=coordination`,
+      );
+      const coordinationBody = (await coordinationRes.json()) as { ok: boolean };
+      expect(coordinationRes.ok).toBe(true);
+      expect(coordinationBody.ok).toBe(true);
+      expect(setSessionOptionMock).toHaveBeenCalledWith("aimux-repo-abc", "@aimux-dashboard-build", expect.any(String));
+      const coordinationSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(coordinationSnapshot.screen).toBe("coordination");
+
+      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      const deadRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+      );
+      const deadBody = (await deadRes.json()) as { ok: boolean };
+      expect(deadRes.ok).toBe(true);
+      expect(deadBody.ok).toBe(true);
+      const deadSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(deadSnapshot).toMatchObject({ screen: "dashboard" });
+      expect(deadSnapshot.focusedWorktreePath).toBeUndefined();
+      expect(deadSnapshot.level).toBeUndefined();
+      expect(deadSnapshot.selectedEntryKind).toBeUndefined();
+      expect(deadSnapshot.selectedEntryId).toBeUndefined();
+
+      TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+      const liveAgainRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+      );
+      expect(liveAgainRes.ok).toBe(true);
+      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      const dashboardWindowRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4099&focus=true`,
+      );
+      expect(dashboardWindowRes.ok).toBe(true);
+      const dashboardWindowSnapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(dashboardWindowSnapshot).toMatchObject({
+        screen: "dashboard",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        level: "sessions",
+        selectedEntryKind: "session",
+        selectedEntryId: "codex-1",
+      });
     } finally {
       TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.hasSession = hasSession;
       TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
       TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.setSessionOption = setSessionOption;
       TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
       TmuxRuntimeManager.prototype.listClients = listClients;
+      TmuxRuntimeManager.prototype.findClientByTty = findClientByTty;
       TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
       TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
       TmuxRuntimeManager.prototype.refreshStatus = refreshStatus;
@@ -1366,10 +2821,21 @@ describe("MetadataServer threads API", () => {
         to: "codex-1",
         description: "Review the parser timeout patch",
         type: "review",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 1,
       }),
     });
-    const review = (await reviewRes.json()) as { task: { id: string } };
+    const review = (await reviewRes.json()) as {
+      task: { id: string; assigner?: string; reviewStatus?: string; reviewOf?: string; iteration?: number };
+    };
     expect(reviewRes.ok).toBe(true);
+    expect(review.task).toMatchObject({
+      assigner: "coder",
+      reviewStatus: "pending",
+      reviewOf: "codex-1",
+      iteration: 1,
+    });
 
     const approveRes = await fetch(`${base}/reviews/approve`, {
       method: "POST",
@@ -1389,19 +2855,27 @@ describe("MetadataServer threads API", () => {
         to: "codex-1",
         description: "Review the parser timeout follow-up",
         type: "review",
+        assigner: "coder",
+        reviewOf: "codex-1",
+        iteration: 0,
       }),
     });
-    const review2 = (await reviewRes2.json()) as { task: { id: string } };
+    const review2 = (await reviewRes2.json()) as { task: { id: string; iteration?: number } };
+    expect(review2.task.iteration).toBe(1);
 
     const changesRes = await fetch(`${base}/reviews/request-changes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ taskId: review2.task.id, from: "codex-1", body: "Please tighten the tests." }),
     });
-    const changes = (await changesRes.json()) as { task: { reviewStatus: string }; followUpTask?: { id: string } };
+    const changes = (await changesRes.json()) as {
+      task: { reviewStatus: string };
+      followUpTask?: { id: string; assignee?: string };
+    };
     expect(changesRes.ok).toBe(true);
     expect(changes.task.reviewStatus).toBe("changes_requested");
     expect(changes.followUpTask?.id).toBeTruthy();
+    expect(changes.followUpTask?.assignee).toBe("coder");
 
     const reopenRes = await fetch(`${base}/tasks/reopen`, {
       method: "POST",
@@ -1412,34 +2886,6 @@ describe("MetadataServer threads API", () => {
     expect(reopenRes.ok).toBe(true);
     expect(reopened.task.id).not.toBe(review2.task.id);
     expect(reopened.task.status).toBe("pending");
-  });
-
-  it("returns workflow entries over HTTP", async () => {
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    await fetch(`${base}/tasks/assign`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        from: "claude-lead",
-        to: "codex-1",
-        description: "Audit the parser timeout path",
-      }),
-    });
-
-    const workflowRes = await fetch(`${base}/workflow?participant=codex-1`);
-    const workflow = (await workflowRes.json()) as Array<{
-      thread: { kind: string };
-      task?: { status: string };
-      stateLabel: string;
-    }>;
-    expect(workflowRes.ok).toBe(true);
-    expect(workflow.some((entry) => entry.thread.kind === "task")).toBe(true);
-    expect(workflow.some((entry) => entry.stateLabel.includes("on codex-1") || entry.stateLabel === "on me")).toBe(
-      true,
-    );
   });
 
   it("reads agent output over HTTP", async () => {
@@ -1809,6 +3255,118 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"codex-1"');
   });
 
+  it("rejects malformed events stream startLine values", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/events?sessionId=codex-1&startLine=10.5`);
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ ok: false, error: "startLine must be an integer" });
+  });
+
+  it("streams project_update invalidations over SSE after API mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    upsertNotification({ title: "Needs review", body: "Please inspect", sessionId: "codex-1" });
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+    const readRes = await fetch(`${base}/notifications/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1" }),
+    });
+    expect(readRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: project_update");
+    expect(text).toContain('"views":');
+    expect(text).toContain('"coordination-worklist"');
+    expect(text).toContain('"notifications"');
+  });
+
+  it("mutates notification id batches over one HTTP request", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const first = upsertNotification({ title: "First", body: "sessionless first" });
+    const second = upsertNotification({ title: "Second", body: "sessionless second" });
+    upsertNotification({ title: "Third", body: "kept unread" });
+
+    const readRes = await fetch(`${base}/notifications/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: [first.id, second.id] }),
+    });
+    const readBody = (await readRes.json()) as { ok: boolean; updated: number };
+    expect(readRes.ok).toBe(true);
+    expect(readBody).toEqual({ ok: true, updated: 2 });
+
+    const listRes = await fetch(`${base}/notifications?unread=1`);
+    const listed = (await listRes.json()) as { unreadCount: number };
+    expect(listed.unreadCount).toBe(1);
+  });
+
+  it("rejects malformed notification id batches without mutating everything", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    upsertNotification({ title: "First", body: "still unread" });
+    upsertNotification({ title: "Second", body: "also unread" });
+
+    const readRes = await fetch(`${base}/notifications/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: "not-an-array" }),
+    });
+    const readBody = (await readRes.json()) as { ok: boolean; error: string };
+    expect(readRes.status).toBe(400);
+    expect(readBody).toEqual({ ok: false, error: "ids must be an array of strings" });
+
+    const listRes = await fetch(`${base}/notifications?unread=1`);
+    const listed = (await listRes.json()) as { unreadCount: number };
+    expect(listed.unreadCount).toBe(2);
+  });
+
+  it("streams project_update invalidations after notification mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    for (const pathname of ["/notifications/read", "/notifications/clear"]) {
+      upsertNotification({
+        title: `Please inspect ${pathname}.`,
+        body: "notification mutation",
+        sessionId: "codex-1",
+      });
+
+      const streamRes = await fetch(`${base}/events`);
+      expect(streamRes.ok).toBe(true);
+      expect(streamRes.body).toBeTruthy();
+
+      const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+      const readRes = await fetch(`${base}${pathname}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "codex-1" }),
+      });
+      expect(readRes.ok).toBe(true);
+
+      const text = await streamRead;
+      expect(text).toContain("event: project_update");
+      expect(text).toContain('"coordination-worklist"');
+      expect(text).toContain('"notifications"');
+      expect(text).not.toContain('"inbox"');
+    }
+  });
+
   it("updates shell service state over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
@@ -1950,6 +3508,55 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain("event: alert");
     expect(text).toContain('"kind":"message_waiting"');
     expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("emits routed thread alerts to resolved callback recipients", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      threads: {
+        sendMessage: (input) => ({
+          thread: { id: "thread-1", worktreePath: input.worktreePath },
+          message: {
+            id: "message-1",
+            threadId: "thread-1",
+            ts: new Date().toISOString(),
+            from: input.from ?? "user",
+            to: ["codex-1"],
+            kind: input.kind ?? "request",
+            body: input.body,
+          },
+          threadCreated: true,
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"message_waiting"'));
+
+    const sendRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "user",
+        assignee: "reviewer",
+        kind: "request",
+        body: "Please inspect the role-routed branch.",
+      }),
+    });
+    expect(sendRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain('"kind":"message_waiting"');
+    expect(text).toContain('"sessionId":"codex-1"');
+    expect(text).not.toContain('"sessionId":"reviewer"');
   });
 
   it("emits handoff waiting alerts for handoffs", async () => {
@@ -2391,6 +3998,51 @@ describe("MetadataServer threads API", () => {
     const unreadJson = (await unreadRes.json()) as { unreadCount: number; notifications: unknown[] };
     expect(unreadJson.unreadCount).toBe(0);
     expect(unreadJson.notifications).toHaveLength(0);
+  });
+
+  it("returns library documents and renderer entries over HTTP", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getSessionDisplayContext: (sessionId) => (sessionId === "codex-plan" ? { label: "Codex plan" } : undefined),
+      },
+    });
+    const previousCwd = process.cwd();
+    process.chdir(repoRoot);
+    writeFileSync(join(repoRoot, "AGENTS.md"), "# Instructions\n");
+    writeFileSync(
+      join(getPlansDir(), "codex-plan.md"),
+      "---\nupdatedAt: 2026-06-20T00:00:00.000Z\n---\n# Plan\n\nShip the API library.",
+    );
+
+    try {
+      await server.start();
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/library`);
+      const body = (await res.json()) as {
+        documents: Array<{ id: string; content: string }>;
+        entries: Array<{ id: string; title: string; kind: string; preview: string }>;
+      };
+
+      expect(res.status).toBe(200);
+      expect(body.documents).toEqual([expect.objectContaining({ id: "AGENTS.md", content: "# Instructions\n" })]);
+      expect(body.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "doc:AGENTS.md", kind: "doc" }),
+          expect.objectContaining({
+            id: "plan:codex-plan",
+            title: "Codex plan",
+            kind: "plan",
+            preview: "# Plan\n\nShip the API library.",
+          }),
+        ]),
+      );
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 
   it("uses dashboard display context in session notification titles", async () => {

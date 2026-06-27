@@ -1,9 +1,10 @@
+import { runtimeGuardOverlayCopy } from "../../multiplexer/runtime-guard.js";
 import { renderOverlayBox } from "../render/box.js";
-import { keycap, modalBand, padVisible, statusDot, style } from "../render/theme.js";
+import { keycap, keycapHint, style } from "../render/theme.js";
 
 /** Render footer-style key hints as keycaps: hints([["Enter","create"],["Esc","cancel"]]). */
 export function hints(pairs: [string, string][]): string {
-  return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
+  return `  ${pairs.map(([key, label]) => keycapHint(key, label)).join("  ")}`;
 }
 
 export function buildServiceInputOverlayOutput(ctx: any, cols: number, rows: number): string {
@@ -43,10 +44,18 @@ export function renderLabelInputOverlay(ctx: any): void {
 }
 
 export function buildWorktreeListOverlayOutput(ctx: any, cols: number, rows: number): string {
-  let worktrees: Array<{ name: string; branch: string; path: string }> = [];
-  try {
-    worktrees = ctx.listAllWorktrees().filter((wt: any) => !wt.isBare);
-  } catch {}
+  let worktrees: Array<{ name: string; branch: string; path?: string }> = [];
+  if (ctx.mode === "dashboard" && Array.isArray(ctx.dashboardWorktreeGroupsCache)) {
+    worktrees = ctx.dashboardWorktreeGroupsCache.map((group: any) => ({
+      name: group.name,
+      branch: group.branch,
+      path: group.path,
+    }));
+  } else {
+    try {
+      worktrees = ctx.listAllWorktrees().filter((wt: any) => !wt.isBare);
+    } catch {}
+  }
 
   const body: string[] = [];
   if (worktrees.length === 0) {
@@ -54,7 +63,8 @@ export function buildWorktreeListOverlayOutput(ctx: any, cols: number, rows: num
   } else {
     for (let i = 0; i < worktrees.length; i++) {
       const wt = worktrees[i];
-      const isMain = i === 0 ? ` ${style("(main)", "muted")}` : "";
+      const isMain =
+        wt.path === undefined || (ctx.mode !== "dashboard" && i === 0) ? ` ${style("(main)", "muted")}` : "";
       body.push(`  ${style(wt.name, "strong")} ${style(`(${wt.branch})`, "muted")}${isMain}`);
     }
   }
@@ -132,93 +142,16 @@ export function renderDashboardErrorOverlay(ctx: any): void {
   if (output) process.stdout.write(output);
 }
 
-export function buildNotificationPanelOverlayOutput(ctx: any, cols: number, rows: number): string | null {
-  const panel = ctx.notificationPanelState;
-  if (!panel) return null;
-
-  const header = [
-    hints([
-      ["↑↓", "select"],
-      ["r", "read"],
-      ["c", "clear"],
-      ["C", "clear all"],
-      ["Esc", "close"],
-    ]),
+export function buildDashboardRuntimeGuardOverlayOutput(ctx: any, cols: number, rows: number): string | null {
+  const guard = ctx.runtimeGuardState;
+  if (!guard || guard.kind === "ok") return null;
+  const copy = runtimeGuardOverlayCopy(guard);
+  const body = [
+    ...copy.lines.map((line: string) => `  ${style(line, "muted")}`),
     "",
+    `  ${style("Please wait", "muted")}`,
   ];
-  const items =
-    panel.entries.length === 0
-      ? [`  ${style("No inbox items.", "muted")}`]
-      : panel.entries.map((entry: any, index: number) => {
-          const marker = index === panel.index ? style("▸", "accent") : " ";
-          const dot = entry.unread ? statusDot("needs") : statusDot("offline");
-          const session = entry.sessionId ? style(` (${entry.sessionId})`, "muted") : "";
-          const time = entry.createdAt.replace("T", " ").slice(5, 16);
-          const titleTone = entry.unread ? "strong" : "muted";
-          return `  ${marker} ${dot} ${style(entry.title, titleTone)}${session} ${style(`· ${time}`, "muted")}`;
-        });
-  const selected = panel.entries[panel.index];
-  const details = selected
-    ? [
-        style("Details", "strong"),
-        "",
-        ...ctx.wrapKeyValue("Title", selected.title, 56),
-        ...(selected.subtitle ? ctx.wrapKeyValue("Subtitle", selected.subtitle, 56) : []),
-        ...ctx.wrapKeyValue("Body", selected.body, 56),
-        ...(selected.sessionId ? ctx.wrapKeyValue("Session", selected.sessionId, 56) : []),
-        ...(selected.kind ? ctx.wrapKeyValue("Kind", selected.kind, 56) : []),
-      ]
-    : [style("Details", "strong"), "", `  ${style("No notification selected.", "muted")}`];
-
-  if (rows < 10) return null;
-  const lines = [...header, ...items];
-  const height = Math.max(8, Math.min(rows - 6, Math.max(12, Math.min(24, lines.length + 4))));
-  const width = Math.min(cols - 8, 100);
-  const leftWidth = Math.max(28, Math.floor((width - 7) * 0.5));
-  const rightWidth = Math.max(20, width - 7 - leftWidth);
-  const boxWidth = leftWidth + rightWidth + 7;
-  const startRow = Math.max(1, Math.floor((rows - height) / 2));
-  const startCol = Math.max(2, Math.floor((cols - boxWidth) / 2));
-  // Chrome rows: top border, band, separator, bottom border.
-  const listHeight = height - 4;
-  const listVisible = lines.slice(0, listHeight);
-  while (listVisible.length < listHeight) listVisible.push("");
-  const detailVisible = details.slice(0, listHeight);
-  while (detailVisible.length < listHeight) detailVisible.push("");
-  const border = (segment: string): string => style(segment, "info");
-  const divider = style("│", "muted");
-
-  let output = "\x1b7";
-  for (let i = 0; i < height; i++) {
-    output += `\x1b[${startRow + i};${startCol}H`;
-    if (i === 0) {
-      output += border(`╭${"─".repeat(boxWidth - 2)}╮`);
-      continue;
-    }
-    if (i === 1) {
-      output += border("│") + modalBand("NOTIFICATIONS", "info", boxWidth - 2) + border("│");
-      continue;
-    }
-    if (i === 2) {
-      output += border(`├${"─".repeat(boxWidth - 2)}┤`);
-      continue;
-    }
-    if (i === height - 1) {
-      output += border(`╰${"─".repeat(boxWidth - 2)}╯`);
-      continue;
-    }
-    const left = padVisible(listVisible[i - 3] ?? "", leftWidth);
-    const right = padVisible(detailVisible[i - 3] ?? "", rightWidth);
-    output += `${border("│")} ${left} ${divider} ${right} ${border("│")}`;
-  }
-  output += "\x1b8";
-  return output;
-}
-
-export function renderNotificationPanel(ctx: any): void {
-  const { cols, rows } = ctx.getViewportSize();
-  const output = buildNotificationPanelOverlayOutput(ctx, cols, rows);
-  if (output) process.stdout.write(output);
+  return renderOverlayBox({ title: copy.title, body, cols, rows, variant: "red" });
 }
 
 export function buildTeammatePickerOverlayOutput(ctx: any, cols: number, rows: number): string | null {
@@ -284,12 +217,13 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  Ctrl+A v  request review",
     "  Ctrl+A 1-9  focus numbered agent",
     "  Ctrl+A d  return to dashboard window",
-    "  arrows / j k  navigate",
+    "  arrows / h j k l  navigate",
     "  Enter  open, resume, or focus",
-    "  a  activity",
-    "  i  inbox",
-    "  y  workflow",
-    "  p  plans",
+    "  c  coordination",
+    "  p  project",
+    "  L  library",
+    "  t  topology",
+    "  n  new agent",
     "  r  name agent",
     "  m  migrate agent",
     "  g  graveyard",
@@ -315,7 +249,7 @@ function styleHelpLine(line: string): string {
   const text = line.trim();
   if (!indented) return style(text, "strong");
   const match = text.match(/^(\S+(?:\s\S+)*)\s{2,}(.*)$/);
-  if (match) return `  ${keycap(match[1])} ${style(match[2], "muted")}`;
+  if (match) return `  ${keycapHint(match[1], match[2])}`;
   return `  ${style(text, "muted")}`;
 }
 

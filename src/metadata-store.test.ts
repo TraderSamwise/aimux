@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,6 +11,7 @@ import {
   clearSessionLoop,
   setSessionOverseer,
   findOverseerSessionId,
+  updateSessionMetadata,
 } from "./metadata-store.js";
 
 function gitInit(cwd: string): void {
@@ -106,6 +107,21 @@ describe("metadata store", () => {
     expect(state.sessions["worker-1"].loop).toBeUndefined();
     expect(state.sessions.boss.overseer).toBeUndefined();
     expect(findOverseerSessionId(state)).toBeUndefined();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("skips writes for unchanged session metadata payloads", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-noop-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    const paths = getReadOnlyProjectPathsFor(repoRoot);
+
+    updateSessionMetadata("worker-1", (current) => ({ ...current, status: { text: "ready", tone: "info" } }), repoRoot);
+    const first = readFileSync(paths.metadataPath, "utf-8");
+    updateSessionMetadata("worker-1", (current) => ({ ...current, status: { text: "ready", tone: "info" } }), repoRoot);
+
+    expect(readFileSync(paths.metadataPath, "utf-8")).toBe(first);
 
     rmSync(repoRoot, { recursive: true, force: true });
   });

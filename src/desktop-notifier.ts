@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import notifier from "node-notifier";
 import { debug } from "./debug.js";
+import { externalNotificationsDisabled } from "./external-notifications.js";
 
 export interface DesktopNotificationPayload {
   title: string;
@@ -28,7 +29,7 @@ export interface DesktopNotifierDeps {
   nodeNotifier?: NodeNotifierLike;
 }
 
-export type DesktopNotificationTransport = "mac-helper" | "node-notifier";
+export type DesktopNotificationTransport = "mac-helper" | "node-notifier" | "disabled";
 
 export interface DesktopNotificationAttempt {
   transport: DesktopNotificationTransport;
@@ -150,6 +151,8 @@ export function sendDesktopNotification(
   payload: DesktopNotificationPayload,
   deps: DesktopNotifierDeps = {},
 ): DesktopNotificationAttempt {
+  if (externalNotificationsDisabled(deps.env)) return { transport: "disabled" };
+
   if ((deps.platform ?? process.platform) !== "darwin") {
     return sendViaNodeNotifier(payload, deps);
   }
@@ -163,6 +166,8 @@ export async function sendDesktopNotificationAndWait(
   payload: DesktopNotificationPayload,
   deps: DesktopNotifierDeps = {},
 ): Promise<DesktopNotificationDeliveryResult> {
+  if (externalNotificationsDisabled(deps.env)) return { transport: "disabled", ok: false, error: "disabled" };
+
   if ((deps.platform ?? process.platform) !== "darwin") {
     return { ...sendViaNodeNotifier(payload, deps), ok: true };
   }

@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { buildAimuxCliShellCommand } from "./cli-launcher.js";
 
 export interface ClaudeHookPayload {
   session_id?: string;
@@ -59,10 +60,7 @@ export function extractClaudeBackendSessionIdFromArgs(args: string[]): string | 
 
 function buildClaudeHookCommand(action: string, sessionId: string, projectRoot: string): string {
   return [
-    shellQuote(process.execPath),
-    shellQuote(getAimuxCliEntryPath()),
-    "claude-hook",
-    action,
+    buildAimuxCliShellCommand(["claude-hook", action]),
     "--session",
     shellQuote(sessionId),
     "--project",

@@ -59,6 +59,17 @@ describe("managed window open", () => {
     });
   });
 
+  it("opens agent windows by backend session id when the logical id changed", () => {
+    const tmux = host();
+
+    const target = openManagedSessionWindow(tmux, "/repo", { id: "codex-new", backendSessionId: "backend-1" });
+
+    expect(target?.windowId).toBe("@agent");
+    expect(tmux.openTarget).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@agent" }), {
+      insideTmux: false,
+    });
+  });
+
   it("opens service windows from project-wide managed windows", () => {
     const tmux = host();
 

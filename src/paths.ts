@@ -226,6 +226,10 @@ export function getProjectLogPathFor(cwd: string): string {
   return join(getProjectLogsDirFor(cwd), "aimux.jsonl");
 }
 
+export function getProjectRepairLogPathFor(cwd: string): string {
+  return join(getProjectLogsDirFor(cwd), "repairs.jsonl");
+}
+
 export function getProjectServiceStdioLogPathFor(cwd: string): string {
   return join(getProjectLogsDirFor(cwd), "project-service-stdio.log");
 }
