@@ -101,6 +101,62 @@ describe("runtime coherence report", () => {
     expect(report.projects[1]?.status).toBe("ok");
   });
 
+  it("ignores tmux-only projects owned by another Aimux install", async () => {
+    const requestJson = vi.fn(async () => ({
+      status: 200,
+      json: { ok: true, pid: 1001, serviceInfo: expectedManifest },
+    }));
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => ["aimux-alpha-111", "aimux-foreign-333"]),
+        getProjectSession: vi.fn((projectRoot: string) => ({
+          projectRoot,
+          projectId: "111",
+          sessionName: "aimux-alpha-111",
+        })),
+        getSessionOption: vi.fn((sessionName: string, key: string) => {
+          if (key === "@aimux-project-root" && sessionName === "aimux-alpha-111") return "/repo/alpha";
+          if (key === "@aimux-project-root" && sessionName === "aimux-foreign-333") return "/repo/foreign";
+          if (key === TMUX_RUNTIME_OWNER_OPTION && sessionName === "aimux-foreign-333") return "owner-foreign";
+          if (key === TMUX_RUNTIME_OWNER_OPTION) return "owner-new";
+          if (key === TMUX_RUNTIME_CONTRACT_OPTION) return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
+          return null;
+        }),
+        listWindows: vi.fn((sessionName: string) => {
+          if (sessionName === "aimux-alpha-111") return [{ id: "@1", index: 0, name: "dashboard", active: true }];
+          if (sessionName === "aimux-foreign-333") return [{ id: "@3", index: 0, name: "dashboard", active: true }];
+          return [];
+        }),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          alpha: {
+            projectId: "alpha",
+            projectRoot: "/repo/alpha",
+            pid: 1001,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43211,
+        pid: 1001,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson,
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.summary.projects).toBe(1);
+    expect(report.projects.map((project) => project.projectRoot)).toEqual(["/repo/alpha"]);
+    expect(requestJson).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps unreachable services visible in the versions report", async () => {
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({

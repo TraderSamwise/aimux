@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
   TmuxRuntimeManager,
@@ -236,6 +239,53 @@ describe("TmuxRuntimeManager", () => {
         metadata,
       },
     ]);
+  });
+
+  it("finds managed windows when the requested project root is a symlink alias", () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "aimux-tmux-root-"));
+    const realRoot = join(tmpRoot, "real");
+    const linkRoot = join(tmpRoot, "link");
+    rmSync(realRoot, { recursive: true, force: true });
+    rmSync(linkRoot, { recursive: true, force: true });
+    try {
+      symlinkSync(tmpRoot, linkRoot);
+      const metadata = {
+        kind: "agent",
+        sessionId: "codex-realpath",
+        command: "codex",
+        args: [],
+        toolConfigKey: "codex",
+        worktreePath: realRoot,
+      };
+      const realSession = new TmuxRuntimeManager(createExecMock()).getProjectSession(tmpRoot).sessionName;
+      const exec = vi.fn<TmuxExec>((args: string[]) => {
+        const joined = args.join(" ");
+        if (joined === "list-sessions -F #{session_name}") return realSession;
+        if (joined === `show-options -v -t ${realSession} @aimux-project-root`) return tmpRoot;
+        if (joined.startsWith(`list-windows -t ${realSession} -F `)) {
+          return `@9\t9\tcodex\t1\t100\t0\t${JSON.stringify(metadata)}`;
+        }
+        return "";
+      });
+      const manager = new TmuxRuntimeManager(exec);
+
+      const windows = manager.listProjectManagedWindows(linkRoot);
+
+      expect(windows).toEqual([
+        {
+          target: {
+            sessionName: realSession,
+            windowId: "@9",
+            windowIndex: 9,
+            windowName: "codex",
+            paneDead: false,
+          },
+          metadata,
+        },
+      ]);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 
   it("creates a detached project session when missing", () => {

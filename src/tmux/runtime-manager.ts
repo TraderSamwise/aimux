@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
@@ -146,6 +146,14 @@ const DEFAULT_INTERACTIVE_EXEC: TmuxInteractiveExec = (args, options) => {
     throw new Error(result.stderr?.toString() || `tmux ${args.join(" ")} failed`);
   }
 };
+
+function canonicalizeFilesystemPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
 
 export function buildDefaultRootMouseBindingsConfig(input: {
   openPaneLinkCommand: string;
@@ -861,9 +869,13 @@ export class TmuxRuntimeManager {
     const hostSession = this.getProjectSession(projectRoot).sessionName;
     const allSessionNames = this.listSessionNames();
     this.repairLegacyProjectSessionNames(projectRoot, allSessionNames);
-    const sessionNames = this.listSessionNames().filter(
-      (name) => name === hostSession || isTmuxClientSessionForHost(name, hostSession),
-    );
+    const requestedRoot = canonicalizeFilesystemPath(projectRoot);
+    const sessionNames = this.listSessionNames().filter((name) => {
+      if (name === hostSession || isTmuxClientSessionForHost(name, hostSession)) return true;
+      if (!this.isManagedSessionName(name)) return false;
+      const storedRoot = this.getSessionOption(name, "@aimux-project-root");
+      return Boolean(storedRoot && canonicalizeFilesystemPath(storedRoot) === requestedRoot);
+    });
     const seenWindowIds = new Set<string>();
     const managed: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> = [];
     for (const sessionName of sessionNames) {

@@ -104,6 +104,17 @@ function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
   return [...sessionsById.values()];
 }
 
+function listOfflineSessionsForDashboard(host: DashboardModelHost): any[] {
+  const sessionsById = new Map<string, any>();
+  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+    if (session?.id) sessionsById.set(session.id, session);
+  }
+  for (const session of host.offlineSessions ?? []) {
+    if (session?.id) sessionsById.set(session.id, session);
+  }
+  return [...sessionsById.values()];
+}
+
 function reconcileSessionsForLifecycleAction(host: DashboardModelHost): void {
   host.syncSessionsFromTopology?.();
   host.saveState?.();
@@ -800,7 +811,7 @@ export function computeDashboardSessions(
       tmuxWindowId: host.sessionTmuxTargets.get(session.id)?.windowId,
     })),
     activeIndex: host.activeIndex,
-    offlineSessions: host.offlineSessions,
+    offlineSessions: listOfflineSessionsForDashboard(host),
     hiddenWorktreePaths: listWorktreeGraveyardPaths(),
     mainRepoPath,
     includeTeammates: options.includeTeammates,
