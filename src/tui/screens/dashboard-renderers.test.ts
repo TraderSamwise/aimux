@@ -36,7 +36,7 @@ describe("buildDashboardFooterHints", () => {
     const hints = buildDashboardFooterHints(
       baseDashboardViewModel({ hasWorktrees: true, navLevel: "sessions", sessions: sess() }),
     );
-    expect(hints[0][0]).toBe("↑↓");
+    expect(hints[0][0]).toBe("↑↓/jk");
     expect(hints.at(-2)).toEqual(["?", "help"]);
     expect(hints.at(-1)).toEqual(["q", "quit"]);
   });
@@ -51,11 +51,11 @@ describe("buildDashboardFooterHints", () => {
   it("shows every active key per state variant", () => {
     // no sessions, no worktrees
     expect(keys({ hasWorktrees: false, sessions: [] })).toEqual(
-      new Set(["u", "Tab", "n", "v", "f", "S", "H", "T", "o", "R", "?", "q"]),
+      new Set(["u", "Tab", "n", "v", "f", "s", "H", "T", "o", "R", "?", "q"]),
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
-      new Set(["↑↓", "1-9", "Enter", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
+      new Set(["↑↓/jk", "1-9", "Enter/l", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
     );
     // session level with worktrees + a selected session + a teammate
     expect(
@@ -68,17 +68,17 @@ describe("buildDashboardFooterHints", () => {
       }),
     ).toEqual(
       new Set([
-        "↑↓",
+        "↑↓/jk",
         "⇧↑↓",
         "1-9",
-        "Enter",
-        "Esc",
+        "Enter/l",
+        "Esc/h",
         "u",
         "Tab",
         "n",
         "v",
         "f",
-        "S",
+        "s",
         "H",
         "T",
         "o",
@@ -93,7 +93,7 @@ describe("buildDashboardFooterHints", () => {
     );
     // flat session list with a selected session
     expect(keys({ hasWorktrees: false, navLevel: "sessions", sessions: sess(), selectedSessionId: "a" })).toEqual(
-      new Set(["↑↓", "Enter", "u", "Tab", "n", "v", "f", "w", "S", "H", "T", "o", "R", "x", "r", "?", "q"]),
+      new Set(["↑↓/jk", "Enter/l", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "R", "x", "r", "?", "q"]),
     );
   });
 });
@@ -212,7 +212,11 @@ describe("renderDashboardFrame worktree progress", () => {
             attention: "needs_input",
             notificationUnreadCount: 1,
             notificationNeedsInputUnreadCount: 1,
-            semantic: deriveSessionSemantics({ status: "running", attention: "needs_input", notificationUnreadCount: 1 }),
+            semantic: deriveSessionSemantics({
+              status: "running",
+              attention: "needs_input",
+              notificationUnreadCount: 1,
+            }),
           },
         ],
         worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
@@ -240,7 +244,11 @@ describe("renderDashboardFrame worktree progress", () => {
             attention: "needs_input",
             notificationUnreadCount: 2,
             notificationNeedsInputUnreadCount: 1,
-            semantic: deriveSessionSemantics({ status: "running", attention: "needs_input", notificationUnreadCount: 2 }),
+            semantic: deriveSessionSemantics({
+              status: "running",
+              attention: "needs_input",
+              notificationUnreadCount: 2,
+            }),
           },
         ],
         worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
