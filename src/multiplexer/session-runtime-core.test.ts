@@ -141,6 +141,51 @@ describe("session runtime prompt submission", () => {
     }
   });
 
+  it("returns on acceptance without blocking on submit when waitForSubmit is false", async () => {
+    vi.useFakeTimers();
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const captures = ["› hi", "› hi", "› hi", "› hi", ""];
+    const tmuxRuntimeManager = {
+      sendText: vi.fn(),
+      sendKey: vi.fn(),
+      sendEnter: vi.fn(),
+      sendCarriageReturn: vi.fn(),
+      getTargetByWindowId: vi.fn(() => target),
+      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
+      captureTarget: vi.fn(() => captures.shift() ?? ""),
+      isWindowAlive: vi.fn(() => true),
+    };
+    const transport = new TmuxSessionTransport("codex-1", "codex", target, tmuxRuntimeManager as any, 80, 24);
+    const host: any = {
+      sessions: [{ id: "codex-1", command: "codex", transport }],
+      sessionTmuxTargets: new Map([["codex-1", target]]),
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      tmuxRuntimeManager,
+    };
+
+    try {
+      // Resolves without advancing any timers: the response does not block on the
+      // timer-driven tmux submit confirmation.
+      await expect(sendAgentInput(host, "codex-1", "hi", { waitForSubmit: false })).resolves.toEqual({
+        sessionId: "codex-1",
+        accepted: true,
+      });
+      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "hi");
+      // The carriage-return submit has not happened yet — it runs in the background.
+      expect(tmuxRuntimeManager.sendCarriageReturn).not.toHaveBeenCalled();
+
+      // Draining the background timers still submits the prompt.
+      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(700);
+      expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
+    } finally {
+      transport.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("retargets tmux-backed sessions before resizing", async () => {
     const staleTarget = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
     const liveTarget = { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "codex" };
