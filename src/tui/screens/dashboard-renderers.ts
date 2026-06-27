@@ -45,6 +45,10 @@ const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   renaming: "Renaming",
 };
 
+function rowStateLabel(value: string): string {
+  return ROW_STATE_LABELS[value as SessionRowState] ?? value;
+}
+
 // Status cells render as attention pills; the rest use plain colored/dim text.
 const PILL_STATES = new Set<SessionRowState>([
   "needs_input",
@@ -690,7 +694,11 @@ export function renderDashboardFrame(
         );
       }
       if (selectedService.cwd) lines.push(...wrapKeyValue("CWD", selectedService.cwd, width));
-      lines.push(...wrapKeyValue("Status", selectedService.status, width));
+      if (selectedService.pendingAction) {
+        lines.push(...wrapKeyValue("State", rowStateLabel(selectedService.pendingAction), width));
+      } else {
+        lines.push(...wrapKeyValue("Status", selectedService.status, width));
+      }
       if (selectedService.previewLine) lines.push(...wrapKeyValue("Preview", selectedService.previewLine, width));
       return finish("DETAILS", "info", lines);
     }
@@ -721,7 +729,7 @@ export function renderDashboardFrame(
     if (selected.repoRemote) lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
     if (selected.pendingAction) {
-      lines.push(...wrapKeyValue("State", ROW_STATE_LABELS[selected.pendingAction], width));
+      lines.push(...wrapKeyValue("State", rowStateLabel(selected.pendingAction), width));
       if (selected.pendingStartedAt) {
         const startedRecency = formatRelativeRecency(selected.pendingStartedAt);
         if (startedRecency) lines.push(...wrapKeyValue("Started", startedRecency, width));
