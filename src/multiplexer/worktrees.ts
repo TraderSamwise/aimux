@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import { getWorktreeCreatePath } from "../worktree.js";
 import { debug } from "../debug.js";
 import { commandKey, parseKeys } from "../key-parser.js";
@@ -61,10 +63,23 @@ async function refreshDashboardModelForWorktreeSettlement(
 
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
-    ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => entry.path === path)
+    ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path))
     : undefined;
   if (raw) return raw;
-  return host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+  return host.dashboardWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path));
+}
+
+function canonicalWorktreePath(path: string | undefined): string | undefined {
+  if (!path) return path;
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return pathResolve(path);
+  }
+}
+
+function sameWorktreePath(left: string | undefined, right: string | undefined): boolean {
+  return canonicalWorktreePath(left) === canonicalWorktreePath(right);
 }
 
 async function waitForRenderedDashboardWorktreeState(
@@ -178,11 +193,15 @@ function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, pa
 }
 
 function findDashboardWorktreeCreateFailure(host: WorktreeHost, path: string): any | undefined {
-  const groupFailure = host.dashboardWorktreeGroupsCache?.find((group: any) => group.path === path)?.operationFailure;
+  const groupFailure = host.dashboardWorktreeGroupsCache?.find((group: any) =>
+    sameWorktreePath(group.path, path),
+  )?.operationFailure;
   if (groupFailure) return groupFailure;
   return (host.dashboardOperationFailuresCache ?? []).find(
     (failure: any) =>
-      failure.targetKind === "worktree" && failure.operation === "create" && failure.worktreePath === path,
+      failure.targetKind === "worktree" &&
+      failure.operation === "create" &&
+      sameWorktreePath(failure.worktreePath, path),
   );
 }
 
@@ -201,10 +220,37 @@ async function waitForRenderedDashboardWorktreeCreate(
   renderLifecycle?: DashboardLifecycleToken,
 ): Promise<{ ok: true } | { ok: false; error: Error }> {
   const deadline = Date.now() + timeoutMs;
+  const snapshotUnavailableTimeoutMs = host.dashboardWorktreeSettlementSnapshotUnavailableTimeoutMs ?? 5_000;
+  let snapshotUnavailableSince: number | undefined;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
-      return { ok: false, error: new Error("project service snapshot unavailable") };
+    if (!isDashboardLifecycleCurrent(host, modelLifecycle)) {
+      return { ok: true };
     }
+    const existingFailure = findDashboardWorktreeCreateFailure(host, path);
+    if (existingFailure) {
+      const message = typeof existingFailure.message === "string" ? existingFailure.message : "worktree create failed";
+      return { ok: false, error: new Error(message) };
+    }
+    if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
+      return { ok: true };
+    }
+    if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
+      const failure = findDashboardWorktreeCreateFailure(host, path);
+      if (failure) {
+        const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
+        return { ok: false, error: new Error(message) };
+      }
+      if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
+        return { ok: true };
+      }
+      snapshotUnavailableSince ??= Date.now();
+      if (Date.now() - snapshotUnavailableSince >= snapshotUnavailableTimeoutMs) {
+        return { ok: false, error: new Error("project service snapshot unavailable") };
+      }
+      await sleep(250);
+      continue;
+    }
+    snapshotUnavailableSince = undefined;
     const failure = findDashboardWorktreeCreateFailure(host, path);
     if (failure) {
       const message = typeof failure.message === "string" ? failure.message : "worktree create failed";

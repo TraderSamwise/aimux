@@ -94,6 +94,8 @@ interface RuntimeRestartDashboardTarget {
   dashboardTarget: TmuxTarget;
 }
 
+const POST_RESTART_VERIFICATION_TIMEOUT_MS = 15_000;
+
 export interface RestartAimuxControlPlaneOptions {
   projectRoot?: string;
   now?: () => Date;
@@ -709,7 +711,7 @@ async function restartAimuxControlPlaneUnlocked(
       coherence: options.coherence,
       projectRoots: verificationProjectRoots,
       sleep,
-      timeoutMs: options.verificationTimeoutMs ?? 5000,
+      timeoutMs: options.verificationTimeoutMs ?? POST_RESTART_VERIFICATION_TIMEOUT_MS,
       intervalMs: options.verificationIntervalMs ?? 250,
     });
   }

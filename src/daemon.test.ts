@@ -308,6 +308,22 @@ describe("daemon supervision", () => {
     expect(livePids.has(first.pid)).toBe(true);
   });
 
+  it("waits for a just-started project service to publish its metadata endpoint", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = await (daemon as any).ensureProject(projectRoot);
+    rmSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"), {
+      force: true,
+    });
+
+    setTimeout(() => writeMetadataEndpointFor(first.pid), 25);
+    const second = await (daemon as any).ensureProject(projectRoot);
+
+    expect(second.pid).toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for a repeatedly-unhealthy project service to exit before spawning a replacement", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
