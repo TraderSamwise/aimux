@@ -166,7 +166,7 @@ async function waitForStableDashboardSessionAbsence(
   while (Date.now() < deadline) {
     const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
     if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
-    const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+    const session = getDashboardSessionEntry(host, sessionId);
     if (session) {
       missingSince = null;
     } else if (refreshed || missingSince !== null) {
@@ -218,9 +218,9 @@ function isDashboardSessionResumeSettled(host: DashboardOpsHost, sessionId: stri
 }
 
 function isDashboardSessionStopSettled(host: DashboardOpsHost, sessionId: string): boolean {
-  const entry = getDashboardSessionEntry(host, sessionId);
-  if (!entry) return true;
   const hasLiveWindow = hasLiveManagedAgentWindow(host, sessionId);
+  const entry = getDashboardSessionEntry(host, sessionId);
+  if (!entry) return !hasLiveWindow;
   return !hasLiveWindow && entry.status !== "running";
 }
 

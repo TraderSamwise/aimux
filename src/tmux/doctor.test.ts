@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./doctor.js";
-import { TmuxRuntimeManager, type TmuxExec } from "./runtime-manager.js";
+import { buildTmuxDoctorReport, renderTmuxDoctorReport, repairTmuxRuntime } from "./doctor.js";
+import { TmuxRuntimeManager, type TmuxExec, type TmuxTarget } from "./runtime-manager.js";
 
 function createDoctorExec(): TmuxExec {
   return (args: string[]) => {
@@ -140,6 +140,61 @@ describe("tmux doctor", () => {
       expect(aliasSession).not.toBe(expectedSession);
       expect(report.managedSession.sessionName).toBe(expectedSession);
       expect(report.managedSession.exists).toBe(true);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs alias-derived managed sessions for the same canonical project", () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "aimux-doctor-repair-"));
+    const realRoot = join(tmpRoot, "repo");
+    const aliasRoot = join(tmpRoot, "repo-link");
+    mkdirSync(realRoot);
+    symlinkSync(realRoot, aliasRoot, "dir");
+
+    try {
+      const canonicalRoot = realpathSync(aliasRoot);
+      const canonicalSession = new TmuxRuntimeManager(createDoctorExec()).getProjectSession(canonicalRoot).sessionName;
+      const aliasSession = new TmuxRuntimeManager(createDoctorExec()).getProjectSession(aliasRoot).sessionName;
+      const configured: Array<[string, string]> = [];
+      const target: TmuxTarget = {
+        sessionName: canonicalSession,
+        windowId: "@dashboard",
+        windowIndex: 0,
+        windowName: "dashboard",
+      };
+      const tmux = {
+        isAvailable: () => true,
+        isInsideTmux: () => false,
+        currentClientSession: () => null,
+        listSessionNames: () => [canonicalSession, aliasSession],
+        hasSession: (sessionName: string) => sessionName === canonicalSession || sessionName === aliasSession,
+        isManagedSessionName: (sessionName: string) => sessionName.startsWith("aimux-"),
+        getSessionOption: (sessionName: string, option: string) =>
+          option === "@aimux-project-root" && sessionName === aliasSession ? aliasRoot : null,
+        getProjectSession: (projectRoot: string) => ({ projectRoot, projectId: "repo", sessionName: canonicalSession }),
+        ensureProjectSession: (projectRoot: string) => ({
+          projectRoot,
+          projectId: "repo",
+          sessionName: canonicalSession,
+        }),
+        configureManagedSession: (sessionName: string, projectRoot: string) =>
+          configured.push([sessionName, projectRoot]),
+        getOpenSessionName: (sessionName: string) => sessionName,
+        ensureDashboardWindow: () => target,
+        getWindowOption: () => null,
+        isWindowAlive: () => true,
+        respawnWindow: () => undefined,
+        setSessionOption: () => undefined,
+        setWindowOption: () => undefined,
+        listManagedWindows: () => [],
+        applyManagedAgentWindowPolicy: () => undefined,
+      } as unknown as TmuxRuntimeManager;
+
+      repairTmuxRuntime(tmux, { projectRoot: aliasRoot });
+
+      expect(configured).toContainEqual([aliasSession, canonicalRoot]);
+      expect(configured).toContainEqual([canonicalSession, canonicalRoot]);
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

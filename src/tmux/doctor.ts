@@ -354,6 +354,14 @@ export function repairTmuxRuntime(
   for (const sessionName of tmux.listSessionNames()) {
     if (sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession)) {
       managedSessions.add(sessionName);
+      continue;
+    }
+    if (!tmux.isManagedSessionName(sessionName)) {
+      continue;
+    }
+    const storedProjectRoot = tmux.getSessionOption(sessionName, "@aimux-project-root");
+    if (storedProjectRoot && canonicalizeProjectRoot(storedProjectRoot) === canonicalProjectRoot) {
+      managedSessions.add(sessionName);
     }
   }
   if (

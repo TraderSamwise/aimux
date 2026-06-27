@@ -219,7 +219,9 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
       await host.deleteGraveyardWorktree(entry.path);
     }
     if (host.mode === "dashboard") {
-      await refreshGraveyardEntriesFromService(host, { force: true, lifecycle });
+      if (!(await refreshGraveyardEntriesFromService(host, { force: true, lifecycle }))) {
+        throw new Error("graveyard refresh failed");
+      }
       await refreshDashboardAfterGraveyardMutation(host, lifecycle);
     } else {
       applyGraveyardPayload(host, emptyGraveyardPayload());

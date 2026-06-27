@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
@@ -70,6 +70,37 @@ describe("services", () => {
     expect(host.offlineServices).toEqual([]);
     expect(host.saveState).not.toHaveBeenCalled();
     expect(readSavedServices()).toEqual([]);
+  });
+
+  it("preserves unrelated state keys when committing services", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify({
+        savedAt: "old",
+        cwd: "/old",
+        sessions: { "codex-1": { id: "codex-1" } },
+        services: [{ id: "svc-1", label: "shell", status: "offline" }],
+      }),
+    );
+    const host = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        findManagedWindow: vi.fn(() => null),
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      adjustAfterRemove: vi.fn(),
+      dashboardWorktreeGroupsCache: [],
+      noteLastUsedItem: vi.fn(),
+    };
+
+    removeOfflineService(host, "svc-1");
+
+    const state = JSON.parse(readFileSync(getStatePath(), "utf-8"));
+    expect(state.sessions).toEqual({ "codex-1": { id: "codex-1" } });
+    expect(state.services).toEqual([]);
   });
 
   it("stops a running service by interrupting and retaining its tmux window", async () => {
