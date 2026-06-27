@@ -5,25 +5,16 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
   BookOpen,
-  ChevronDown,
   ChevronLeft,
-  ChevronRight,
   FolderKanban,
   MessageSquare,
   Network,
 } from "lucide-react-native";
-import { AgentActions } from "@/components/agent-actions";
 import { Text } from "@/components/ui/text";
-import { ServiceActions } from "@/components/service-actions";
-import { StatusDotMini, TypeTag } from "@/components/status-dot";
+import { WorktreeList } from "@/components/WorktreeDashboard";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import type {
-  DesktopService,
-  DesktopSession,
-  DesktopState,
-  WorktreeBucket,
-} from "@/lib/desktop-state";
+import type { DesktopState } from "@/lib/desktop-state";
 import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main-tabs";
 import {
   buildViewHref,
@@ -32,7 +23,6 @@ import {
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
-import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import {
   desktopStateErrorFamily,
@@ -69,10 +59,6 @@ function routePrefersViews(tab: MainTabId): boolean {
     tab === "inbox" ||
     tab === "threads"
   );
-}
-
-function worktreeHasChildren(bucket: WorktreeBucket): boolean {
-  return bucket.sessions.length > 0 || bucket.services.length > 0;
 }
 
 // ─── Project picker ───────────────────────────────────────────────────────
@@ -185,221 +171,6 @@ function ProjectHeader({
   );
 }
 
-// ─── Agent / service child rows ──────────────────────────────────────────────
-
-function IndexBadge({ digit }: { digit: number }) {
-  return <Text className="w-6 shrink-0 font-mono text-[11px] text-[#787a83]">{`[${digit}]`}</Text>;
-}
-
-function AgentRow({
-  session,
-  digit,
-  isSelected,
-  endpoint,
-  token,
-  mainCheckoutPath,
-  onKilled,
-  onPress,
-}: {
-  session: DesktopSession;
-  digit: number;
-  isSelected: boolean;
-  endpoint: ServiceEndpoint | null;
-  token: string | null;
-  mainCheckoutPath?: string | null;
-  onKilled: (sessionId: string) => void;
-  onPress: () => void;
-}) {
-  const tool = firstTokenOf(session.command);
-  return (
-    <View
-      className={cn(
-        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-2.5 pr-2",
-        isSelected ? "bg-[#232733]" : "hover:bg-[#232429] active:bg-[#26272d]",
-      )}
-    >
-      <Pressable
-        onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
-      >
-        <StatusDotMini status={session.status} />
-        <IndexBadge digit={digit} />
-        <Text
-          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {session.label || session.id}
-        </Text>
-        {session.role || tool ? (
-          <Text className="ml-auto shrink-0 font-mono text-[12px] text-[#787a83]" numberOfLines={1}>
-            {session.role ?? tool}
-          </Text>
-        ) : null}
-      </Pressable>
-      <AgentActions
-        session={session}
-        endpoint={endpoint}
-        token={token}
-        compact
-        mainCheckoutPath={mainCheckoutPath}
-        onKilled={() => onKilled(session.id)}
-      />
-    </View>
-  );
-}
-
-function ServiceRow({
-  service,
-  digit,
-  endpoint,
-  token,
-  onPress,
-}: {
-  service: DesktopService;
-  digit: number;
-  endpoint: ServiceEndpoint | null;
-  token: string | null;
-  onPress: () => void;
-}) {
-  return (
-    <View className="min-h-[40px] flex-row items-center gap-2 rounded-md pl-2.5 pr-2 hover:bg-[#232429]">
-      <Pressable
-        onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
-      >
-        <StatusDotMini status={service.status} shape="diamond" />
-        <IndexBadge digit={digit} />
-        <Text
-          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {service.label || service.id}
-        </Text>
-        <TypeTag label="service" />
-      </Pressable>
-      <ServiceActions service={service} endpoint={endpoint} token={token} compact />
-    </View>
-  );
-}
-
-// ─── Worktree group (collapsible header + child rows) ─────────────────────────
-
-function WorktreeGroup({
-  bucket,
-  endpoint,
-  token,
-  selectedSessionId,
-  onPickSession,
-  onPickService,
-  onKillSession,
-}: {
-  bucket: WorktreeBucket;
-  endpoint: ServiceEndpoint | null;
-  token: string | null;
-  selectedSessionId: string | null;
-  onPickSession: (sessionId: string) => void;
-  onPickService: (serviceId: string) => void;
-  onKillSession: (sessionId: string) => void;
-}) {
-  const hasChildren = worktreeHasChildren(bucket);
-  const [collapsed, setCollapsed] = useState(false);
-  const runningCount = [...bucket.sessions, ...bucket.services].filter(
-    (x) => x.status === "running",
-  ).length;
-  const anyRunning = runningCount > 0;
-  const bright = hasChildren || bucket.isMainCheckout;
-
-  const header = (
-    <>
-      {hasChildren ? (
-        collapsed ? (
-          <ChevronRight size={13} color="#5b5d66" />
-        ) : (
-          <ChevronDown size={13} color="#5b5d66" />
-        )
-      ) : (
-        <View className="w-[13px]" />
-      )}
-      <StatusDotMini
-        status={anyRunning ? "running" : undefined}
-        hollow={!hasChildren}
-        shape="square"
-        outline
-      />
-      <Text
-        className={cn(
-          "shrink-0 text-[14px] font-semibold",
-          bright ? "text-[#edeef0]" : "font-medium text-[#a6a8b0]",
-        )}
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
-        {bucket.name}
-      </Text>
-      {bucket.branch ? (
-        <Text
-          className="min-w-0 shrink font-mono text-[12px] text-[#787a83]"
-          numberOfLines={1}
-          ellipsizeMode="middle"
-        >
-          {`· ${bucket.branch}`}
-        </Text>
-      ) : null}
-      {runningCount > 0 ? (
-        <Text className="ml-auto shrink-0 pl-1.5 font-mono text-[11px] text-emerald-400">
-          {`${runningCount} running`}
-        </Text>
-      ) : null}
-    </>
-  );
-
-  const headerClass = "flex-row items-center gap-2.5 rounded-md px-2.5 py-2.5";
-
-  return (
-    <View>
-      {hasChildren ? (
-        <Pressable
-          onPress={() => setCollapsed((c) => !c)}
-          className={cn(headerClass, "hover:bg-[#232429] active:bg-[#26272d]")}
-        >
-          {header}
-        </Pressable>
-      ) : (
-        <View className={headerClass}>{header}</View>
-      )}
-      {hasChildren && !collapsed ? (
-        <View className="ml-[20px] border-l border-[#2e3038] pl-0.5">
-          {bucket.sessions.map((session, i) => (
-            <AgentRow
-              key={session.id}
-              session={session}
-              digit={i + 1}
-              isSelected={session.id === selectedSessionId}
-              endpoint={endpoint}
-              token={token}
-              mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
-              onKilled={onKillSession}
-              onPress={() => onPickSession(session.id)}
-            />
-          ))}
-          {bucket.services.map((service, i) => (
-            <ServiceRow
-              key={service.id}
-              service={service}
-              digit={bucket.sessions.length + i + 1}
-              endpoint={endpoint}
-              token={token}
-              onPress={() => onPickService(service.id)}
-            />
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 // ─── Worktree tree (top-level for the project) ────────────────────────────
 
 function SidebarStateCard({
@@ -450,7 +221,6 @@ function WorktreeTree({
   onKillSession: (sessionId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
-  const [showEmpty, setShowEmpty] = useState(false);
 
   if (!endpoint && desktopState === null) {
     return (
@@ -482,57 +252,22 @@ function WorktreeTree({
     );
   }
 
-  // Main checkout stays pinned/visible; remaining worktrees split into active
-  // (have agents/services) and empty (collapsed behind a disclosure).
-  const main = groups.find((g) => g.isMainCheckout);
-  const rest = groups.filter((g) => !g.isMainCheckout);
-  const activeRest = rest.filter(worktreeHasChildren);
-  const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
-
-  const groupProps = {
-    endpoint,
-    token,
-    selectedSessionId,
-    onPickSession,
-    onPickService,
-    onKillSession,
-  };
-
+  // The sidebar's Dashboard view is the worktree dashboard, narrower: reuse the
+  // same cards in their compact (navigation-only) variant.
   return (
-    <View className="p-2">
-      {main ? <WorktreeGroup bucket={main} {...groupProps} /> : null}
-      {activeRest.map((bucket) => (
-        <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
-      ))}
-
-      {emptyRest.length > 0 ? (
-        <View className="mt-0.5">
-          <Pressable
-            onPress={() => setShowEmpty((s) => !s)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: showEmpty }}
-            accessibilityLabel={`${showEmpty ? "Hide" : "Show"} ${emptyRest.length} empty worktree${
-              emptyRest.length > 1 ? "s" : ""
-            }`}
-            className="flex-row items-center gap-2.5 rounded-md px-2.5 py-2.5 hover:bg-[#232429] active:bg-[#26272d]"
-          >
-            {showEmpty ? (
-              <ChevronDown size={13} color="#5b5d66" />
-            ) : (
-              <ChevronRight size={13} color="#5b5d66" />
-            )}
-            <Text className="text-[13px] text-[#787a83]">
-              <Text className="font-bold text-[#a6a8b0]">{emptyRest.length}</Text> empty worktree
-              {emptyRest.length > 1 ? "s" : ""}
-            </Text>
-          </Pressable>
-          {showEmpty
-            ? emptyRest.map((bucket) => (
-                <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
-              ))
-            : null}
-        </View>
-      ) : null}
+    <View className="px-2 pb-2">
+      <WorktreeList
+        groups={groups}
+        endpoint={endpoint}
+        token={token}
+        padded={false}
+        compact
+        activeOnly
+        selectedSessionId={selectedSessionId}
+        onPickSession={onPickSession}
+        onPickService={onPickService}
+        onKillSession={onKillSession}
+      />
     </View>
   );
 }
