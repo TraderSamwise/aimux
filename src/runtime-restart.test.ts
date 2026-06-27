@@ -1385,6 +1385,59 @@ describe("restartAimuxControlPlane", () => {
     expect(result.summary.failures).toBe(0);
   });
 
+  it("uses a startup-grace default for post-restart verification", async () => {
+    const transient = okCoherenceReport();
+    transient.projects[0] = {
+      ...transient.projects[0]!,
+      status: "needs-restart",
+      service: {
+        ...transient.projects[0]!.service,
+        status: "unreachable",
+        error: "metadata endpoint missing",
+      },
+    };
+    transient.summary = { projects: 2, ok: 1, needsRestart: 1, runtimeRebuildRequired: 0 };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(coherenceReport())
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(okCoherenceReport());
+    const sleep = vi.fn(async () => {});
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationIntervalMs: 1000,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      sleep,
+    });
+
+    expect(buildRuntimeCoherenceReport).toHaveBeenCalledTimes(8);
+    expect(sleep).toHaveBeenCalledTimes(6);
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.failures).toBe(0);
+  });
+
   it("does not fail restart for a transient service ensure race when verification is healthy", async () => {
     const buildRuntimeCoherenceReport = vi
       .fn()
