@@ -22,7 +22,7 @@ import {
   TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
   TMUX_RUNTIME_OWNER_OPTION,
 } from "./runtime-owner.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
@@ -84,10 +84,12 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       | "listSessionNames"
       | "listWindows"
       | "linkWindowToSession"
+      | "killWindow"
       | "selectWindow"
       | "setSessionOption"
       | "getSessionOption"
       | "configureManagedSession"
+      | "unlinkWindow"
     >
   >;
 
@@ -317,6 +319,39 @@ function selectRuntimeRepairProjectRoots(before: RuntimeCoherenceReport): Set<st
   );
 }
 
+export function cleanupStaleDashboardLinks(
+  tmux: Pick<TmuxRuntimeManager, "listWindows" | "unlinkWindow"> & Partial<Pick<TmuxRuntimeManager, "killWindow">>,
+  sessionName: string,
+  linkedDashboard: TmuxTarget,
+): string[] {
+  const errors: string[] = [];
+  for (const window of tmux.listWindows(sessionName)) {
+    if (!isDashboardWindowName(window.name) || window.id === linkedDashboard.windowId) continue;
+    const staleTarget = {
+      sessionName,
+      windowId: window.id,
+      windowIndex: window.index,
+      windowName: window.name,
+    };
+    try {
+      tmux.unlinkWindow(staleTarget);
+    } catch (error) {
+      const message = errorMessage(error);
+      if (message.includes("only linked to one session") && tmux.killWindow) {
+        try {
+          tmux.killWindow(staleTarget);
+          continue;
+        } catch (killError) {
+          errors.push(`${window.id}: ${errorMessage(killError)}`);
+          continue;
+        }
+      }
+      errors.push(`${window.id}: ${errorMessage(error)}`);
+    }
+  }
+  return errors;
+}
+
 function relinkDashboardToClientSessions(
   projectRoot: string,
   tmux: RuntimeRestartTmux,
@@ -339,6 +374,10 @@ function relinkDashboardToClientSessions(
       const linked = tmux.linkWindowToSession(sessionName, dashboardTarget, 0);
       if (linked.windowIndex !== 0) {
         throw new Error(`dashboard linked at index ${linked.windowIndex}, expected 0`);
+      }
+      if (tmux.unlinkWindow) {
+        const cleanupErrors = cleanupStaleDashboardLinks(tmux as TmuxRuntimeManager, sessionName, linked);
+        if (cleanupErrors.length > 0) throw new Error(`stale dashboard cleanup failed for ${cleanupErrors.join("; ")}`);
       }
     } catch (indexedError) {
       errors.push(`${sessionName}: indexed=${errorMessage(indexedError)}`);

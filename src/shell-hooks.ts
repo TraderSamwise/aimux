@@ -47,6 +47,11 @@ function buildZshIntegration(): string {
     '  [ -n "$AIMUX_TOOL" ] || AIMUX_TOOL="shell"',
     '  local state_key="$1:${2:-}"',
     '  [ "${AIMUX_LAST_SHELL_STATE:-}" = "$state_key" ] && return 0',
+    '  if { [ "$1" = "prompt" ] || [ "$1" = "idle" ]; } && [ -n "$AIMUX_SHELL_STATE_SUPPRESS_FILE" ] && [ -f "$AIMUX_SHELL_STATE_SUPPRESS_FILE" ]; then',
+    '    rm -f "$AIMUX_SHELL_STATE_SUPPRESS_FILE"',
+    '    AIMUX_LAST_SHELL_STATE="$state_key"',
+    "    return 0",
+    "  fi",
     '  local endpoint="" payload="" command_json="" escaped_command=""',
     '  endpoint="$(_aimux_read_endpoint)" || return 0',
     '  if [ -n "${2:-}" ]; then',
@@ -111,6 +116,11 @@ function buildBashIntegration(): string {
     '  [ -n "$AIMUX_TOOL" ] || AIMUX_TOOL="shell"',
     '  local state_key="$1:${2:-}"',
     '  [ "${AIMUX_LAST_SHELL_STATE:-}" = "$state_key" ] && return 0',
+    '  if { [ "$1" = "prompt" ] || [ "$1" = "idle" ]; } && [ -n "$AIMUX_SHELL_STATE_SUPPRESS_FILE" ] && [ -f "$AIMUX_SHELL_STATE_SUPPRESS_FILE" ]; then',
+    '    rm -f "$AIMUX_SHELL_STATE_SUPPRESS_FILE"',
+    '    AIMUX_LAST_SHELL_STATE="$state_key"',
+    "    return 0",
+    "  fi",
     '  local endpoint="" payload="" command_json="" escaped_command=""',
     '  endpoint="$(_aimux_read_endpoint)" || return 0',
     '  if [ -n "${2:-}" ]; then',
@@ -203,6 +213,7 @@ export function wrapCommandWithShellIntegration(opts: {
     `AIMUX_TOOL=${opts.tool}`,
     `AIMUX_METADATA_ENDPOINT_FILE=${join(getProjectStateDirFor(opts.projectRoot), "metadata-api.txt")}`,
     `AIMUX_SHELL_INTEGRATION_SCRIPT=${prepared.integrationScriptPath}`,
+    `AIMUX_SHELL_STATE_SUPPRESS_FILE=${join(getProjectStateDirFor(opts.projectRoot), "shell-state-suppress", opts.sessionId)}`,
   ];
   const commandString = [opts.command, ...opts.args].map(shellQuote).join(" ");
   const shellArgs =
@@ -229,6 +240,7 @@ export function wrapInteractiveShellWithIntegration(opts: {
     `AIMUX_TOOL=${opts.tool}`,
     `AIMUX_METADATA_ENDPOINT_FILE=${join(getProjectStateDirFor(opts.projectRoot), "metadata-api.txt")}`,
     `AIMUX_SHELL_INTEGRATION_SCRIPT=${prepared.integrationScriptPath}`,
+    `AIMUX_SHELL_STATE_SUPPRESS_FILE=${join(getProjectStateDirFor(opts.projectRoot), "shell-state-suppress", opts.sessionId)}`,
   ];
   const shellArgs =
     prepared.shellName === "bash"
