@@ -47,6 +47,20 @@ function flashPendingDashboardItem(
   host.renderDashboard();
 }
 
+function isBlockedOfflineSession(entry: DashboardSession | undefined): boolean {
+  return Boolean(
+    entry && (entry.status === "offline" || entry.status === "exited") && entry.restoreState === "blocked",
+  );
+}
+
+function flashBlockedOfflineSession(host: any, entry: DashboardSession): void {
+  const label = entry.label ?? entry.command ?? entry.id;
+  const reason = entry.restoreBlockedReason ?? "not restorable";
+  host.footerFlash = `Cannot restore ${label}: ${reason}`;
+  host.footerFlashTicks = 4;
+  host.renderDashboard();
+}
+
 function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined): any | undefined {
   return host.dashboardWorktreeGroupsCache.find((group: any) => group.path === worktreePath);
 }
@@ -800,6 +814,11 @@ export const dashboardInteractionMethods = {
       this.persistDashboardUiState();
     }
 
+    if (isBlockedOfflineSession(entry)) {
+      flashBlockedOfflineSession(this, entry);
+      return "blocked";
+    }
+
     if (this.mode === "dashboard" && (entry.status === "offline" || entry.status === "exited")) {
       await this.resumeOfflineSessionWithFeedback(
         this.offlineSessions?.find((session: any) => session.id === entry.id) ?? entry,
@@ -841,6 +860,10 @@ export const dashboardInteractionMethods = {
 
     if (entry.status === "offline" || entry.status === "exited") {
       const offline = this.offlineSessions.find((session: any) => session.id === entry.id);
+      if (isBlockedOfflineSession(offline ?? entry)) {
+        flashBlockedOfflineSession(this, offline ?? entry);
+        return "blocked";
+      }
       await this.resumeOfflineSessionWithFeedback(offline ?? entry);
       return "opened";
     }

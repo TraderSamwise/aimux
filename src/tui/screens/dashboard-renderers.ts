@@ -76,6 +76,21 @@ const COL_IDENTITY = 16;
 const COL_STATUS = 14;
 const COL_TIME = 16;
 
+function canRestoreSession(session: DashboardSession | undefined): boolean {
+  return Boolean(
+    session && (session.status === "offline" || session.status === "exited") && session.restoreState !== "blocked",
+  );
+}
+
+function dashboardEnterVerb(session: DashboardSession | undefined, service: DashboardService | undefined): string {
+  if (service) return "open";
+  if (!session) return "focus";
+  if (session.status === "offline" || session.status === "exited") {
+    return canRestoreSession(session) ? "resume" : "unavailable";
+  }
+  return "focus";
+}
+
 function parseTimestamp(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -339,7 +354,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
   const selectedService = state.selectedServiceId
     ? state.services.find((s) => s.id === state.selectedServiceId)
     : undefined;
-  const enterVerb = selectedService ? "open" : selectedSession?.status === "offline" ? "resume" : "focus";
+  const enterVerb = dashboardEnterVerb(selectedSession, selectedService);
   const killVerb = selectedService
     ? "stop"
     : selectedSession?.status === "offline"
