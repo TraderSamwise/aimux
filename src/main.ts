@@ -3258,10 +3258,11 @@ doctorCmd
   .option("--window-id <id>", "Specific tmux window id to inspect")
   .option("--json", "Emit JSON")
   .action(async (opts: { projectRoot: string; session?: string; windowId?: string; json?: boolean }) => {
-    await initPaths(opts.projectRoot);
+    const projectRoot = resolveProjectRoot(opts.projectRoot);
+    await initPaths(projectRoot);
     const tmux = new TmuxRuntimeManager();
     const report = buildTmuxDoctorReport(tmux, {
-      projectRoot: opts.projectRoot,
+      projectRoot,
       sessionName: opts.session,
       windowId: opts.windowId,
     });

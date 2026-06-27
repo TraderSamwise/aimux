@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./doctor.js";
 import { TmuxRuntimeManager, type TmuxExec } from "./runtime-manager.js";
 
@@ -96,5 +99,49 @@ describe("tmux doctor", () => {
     expect(text).toContain("xterm*:hyperlinks: present");
     expect(text).toContain("statusline:");
     expect(text).toContain("status-format[1]: #(bottom)");
+  });
+
+  it("canonicalizes symlinked project roots before deriving the managed session", () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), "aimux-doctor-"));
+    const realRoot = join(tmpRoot, "repo");
+    const aliasRoot = join(tmpRoot, "repo-link");
+    mkdirSync(realRoot);
+    symlinkSync(realRoot, aliasRoot, "dir");
+
+    try {
+      const expectedSession = new TmuxRuntimeManager(createDoctorExec()).getProjectSession(
+        realpathSync(aliasRoot),
+      ).sessionName;
+      const aliasSession = new TmuxRuntimeManager(createDoctorExec()).getProjectSession(aliasRoot).sessionName;
+      const exec: TmuxExec = (args: string[]) => {
+        const joined = args.join(" ");
+        if (joined === "-V") return "tmux 3.5a";
+        if (joined === `has-session -t ${expectedSession}`) return "";
+        if (joined === `show-options -v -t ${expectedSession} prefix`) return "C-a";
+        if (joined === `show-options -v -t ${expectedSession} prefix2`) return "C-b";
+        if (joined === `show-options -v -t ${expectedSession} mouse`) return "on";
+        if (joined === `show-options -v -t ${expectedSession} window-size`) return "latest";
+        if (joined === `show-options -v -t ${expectedSession} extended-keys`) return "always";
+        if (joined === `show-options -v -t ${expectedSession} extended-keys-format`) return "csi-u";
+        if (joined === `show-options -v -t ${expectedSession} terminal-features`) {
+          return "xterm*:extkeys\nxterm*:hyperlinks";
+        }
+        if (joined === `show-options -v -t ${expectedSession} status-format[0]`) return "#(top)";
+        if (joined === `show-options -v -t ${expectedSession} status-format[1]`) return "#(bottom)";
+        if (joined.startsWith(`list-windows -t ${expectedSession} -F `)) return "";
+        throw new Error(`Unhandled tmux call: ${joined}`);
+      };
+
+      const report = buildTmuxDoctorReport(new TmuxRuntimeManager(exec), {
+        projectRoot: aliasRoot,
+        env: {} as NodeJS.ProcessEnv,
+      });
+
+      expect(aliasSession).not.toBe(expectedSession);
+      expect(report.managedSession.sessionName).toBe(expectedSession);
+      expect(report.managedSession.exists).toBe(true);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 });

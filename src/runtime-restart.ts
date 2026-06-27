@@ -20,6 +20,7 @@ import {
   AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
   TMUX_RUNTIME_CONTRACT_OPTION,
   TMUX_RUNTIME_REBUILD_REQUIRED_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
 } from "./runtime-owner.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
@@ -85,6 +86,7 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       | "linkWindowToSession"
       | "selectWindow"
       | "setSessionOption"
+      | "getSessionOption"
       | "configureManagedSession"
     >
   >;
@@ -273,15 +275,39 @@ function reconcileProjectResultsWithVerification(
 }
 
 function selectProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string): string[] {
+  if (projectRoot) return uniqueSorted([projectRoot]);
   const roots = before.projects.map((project) => project.projectRoot);
-  if (projectRoot) roots.push(projectRoot);
   return uniqueSorted(roots);
+}
+
+function dashboardIsOwnedByRuntime(
+  dashboard: RuntimeCoherenceReport["projects"][number]["dashboards"][number],
+  expectedRuntimeOwner: string,
+): boolean {
+  const ownerOk = dashboard.owner === null || dashboard.owner === expectedRuntimeOwner;
+  const runtimeOwnerOk = dashboard.runtimeOwner === null || dashboard.runtimeOwner === expectedRuntimeOwner;
+  return ownerOk && runtimeOwnerOk;
+}
+
+function projectNeedsCurrentRuntimeRepair(
+  project: RuntimeCoherenceReport["projects"][number],
+  expectedRuntimeOwner: string,
+): boolean {
+  if (project.runtime.rebuildRequired) return true;
+  if (project.service.status !== "ok") return true;
+  return project.dashboards.some(
+    (dashboard) => dashboardIsOwnedByRuntime(dashboard, expectedRuntimeOwner) && dashboard.status !== "ok",
+  );
 }
 
 function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string): Set<string> {
   if (projectRoot) return new Set([projectRoot]);
   return new Set(
-    before.projects.filter((project) => project.dashboards.length > 0).map((project) => project.projectRoot),
+    before.projects
+      .filter((project) =>
+        project.dashboards.some((dashboard) => dashboardIsOwnedByRuntime(dashboard, before.expected.runtimeOwner)),
+      )
+      .map((project) => project.projectRoot),
   );
 }
 
@@ -356,6 +382,7 @@ function repairRuntimeContract(input: {
   projectRoot: string;
   tmux: RuntimeRestartTmux;
   required: boolean;
+  expectedRuntimeOwner: string;
 }): RuntimeRestartProjectResult["runtime"] {
   if (!input.tmux.isAvailable() || !input.tmux.getProjectSession || !input.tmux.setSessionOption) {
     return input.required
@@ -365,6 +392,10 @@ function repairRuntimeContract(input: {
 
   const hostSession = input.tmux.getProjectSession(input.projectRoot).sessionName;
   try {
+    const runtimeOwner = input.tmux.getSessionOption?.(hostSession, TMUX_RUNTIME_OWNER_OPTION);
+    if (runtimeOwner && runtimeOwner !== input.expectedRuntimeOwner) {
+      return { status: "skipped", error: null };
+    }
     const repairedSessions = [hostSession];
     if (input.required) {
       if (!input.tmux.configureManagedSession) {
@@ -535,8 +566,7 @@ async function verifyPostRestartCoherence(input: {
       const failedProjects = after.projects
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
-          if (project.status === "ok") return false;
-          return true;
+          return projectNeedsCurrentRuntimeRepair(project, after.expected.runtimeOwner);
         })
         .map((project) => project.projectRoot);
       const unhealthyProjects = [...missingProjects, ...failedProjects];
@@ -664,6 +694,7 @@ async function restartAimuxControlPlaneUnlocked(
       projectRoot,
       tmux,
       required: runtimeRepairProjectRoots.has(projectRoot),
+      expectedRuntimeOwner: before.expected.runtimeOwner,
     });
     try {
       await stopService(projectRoot);
