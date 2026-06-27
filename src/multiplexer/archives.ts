@@ -154,17 +154,16 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
         : host.resurrectGraveyardSession(item.entry.id);
   void promise
     .then(async () => {
+      let graveyardRefreshed = true;
       if (host.mode === "dashboard") {
-        if (!(await refreshGraveyardEntriesFromService(host, { force: true, lifecycle }))) {
-          throw new Error("graveyard snapshot unavailable after resurrection");
-        }
+        graveyardRefreshed = await refreshGraveyardEntriesFromService(host, { force: true, lifecycle });
         await refreshDashboardAfterGraveyardMutation(host, lifecycle);
       } else {
         applyGraveyardPayload(host, emptyGraveyardPayload());
       }
       if (lifecycle.mode === "dashboard" && !isDashboardLifecycleCurrent(host, lifecycle)) return;
       host.graveyardWorktreeDeleteConfirm = null;
-      if (getSelectableGraveyardRows(host).length === 0) {
+      if (!graveyardRefreshed || getSelectableGraveyardRows(host).length === 0) {
         host.setDashboardScreen("dashboard");
         if (host.mode === "dashboard") {
           host.renderDashboard();
@@ -220,9 +219,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
       await host.deleteGraveyardWorktree(entry.path);
     }
     if (host.mode === "dashboard") {
-      if (!(await refreshGraveyardEntriesFromService(host, { force: true, lifecycle }))) {
-        throw new Error("graveyard snapshot unavailable after delete");
-      }
+      await refreshGraveyardEntriesFromService(host, { force: true, lifecycle });
       await refreshDashboardAfterGraveyardMutation(host, lifecycle);
     } else {
       applyGraveyardPayload(host, emptyGraveyardPayload());

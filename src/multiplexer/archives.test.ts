@@ -310,7 +310,7 @@ describe("resurrectGraveyardEntry", () => {
     );
   });
 
-  it("treats successful resurrection with failed authoritative refresh as stale", async () => {
+  it("uses dashboard refresh when successful resurrection cannot reload the graveyard snapshot", async () => {
     const initial = graveyardPayload();
     const host: any = {
       mode: "dashboard",
@@ -328,13 +328,10 @@ describe("resurrectGraveyardEntry", () => {
 
     resurrectGraveyardEntry(host, 0);
 
-    await vi.waitFor(() =>
-      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to resurrect "codex-old"', [
-        "graveyard snapshot unavailable after resurrection",
-      ]),
-    );
-    expect(host.setDashboardScreen).not.toHaveBeenCalled();
-    expect(host.renderDashboard).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalled());
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.setDashboardScreen).toHaveBeenCalledWith("dashboard");
+    expect(host.renderDashboard).toHaveBeenCalled();
   });
 
   it("clears worktree delete confirmation after delete failures", async () => {
@@ -362,7 +359,7 @@ describe("resurrectGraveyardEntry", () => {
     expect(host.graveyardWorktreeDeleteConfirm).toBeNull();
   });
 
-  it("refreshes service state when worktree delete cannot reload the authoritative snapshot", async () => {
+  it("uses dashboard refresh when worktree delete cannot reload the graveyard snapshot", async () => {
     const entry = { name: "demo", path: "/repo/.aimux/worktrees/demo" };
     const host: any = {
       mode: "dashboard",
@@ -382,18 +379,17 @@ describe("resurrectGraveyardEntry", () => {
 
     handleGraveyardKey(host, Buffer.from("y"));
 
-    await vi.waitFor(() =>
-      expect(host.showDashboardError).toHaveBeenCalledWith('Failed to delete "demo"', [
-        "graveyard snapshot unavailable after delete",
-      ]),
-    );
-    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(host.getFromProjectService).toHaveBeenCalledTimes(1));
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
       true,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ inputEpoch: 0, screen: "graveyard" }),
       }),
     );
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.graveyardWorktreeDeleteConfirm).toBeNull();
+    expect(host.setDashboardScreen).toHaveBeenCalledWith("dashboard");
+    expect(host.renderDashboard).toHaveBeenCalled();
   });
 
   it("suppresses stale worktree delete errors after leaving graveyard", async () => {
