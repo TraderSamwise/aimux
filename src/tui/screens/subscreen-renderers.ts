@@ -312,7 +312,9 @@ export function renderProjectDetails(ctx: any, width: number, height: number): s
   return padDetail(
     [
       ...card({ tone: "muted", title: style("Story", "strong"), rows, width }),
-      ...(bodyRows.length ? ["", ...card({ tone: "muted", title: style("Body", "strong"), rows: bodyRows, width })] : []),
+      ...(bodyRows.length
+        ? ["", ...card({ tone: "muted", title: style("Body", "strong"), rows: bodyRows, width })]
+        : []),
     ],
     height,
   );

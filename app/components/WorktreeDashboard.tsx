@@ -2,14 +2,13 @@ import React, { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { AgentCreatePanel } from "@/components/agent-create-panel";
 import { AgentActions } from "@/components/agent-actions";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
-import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
+import { StatusDotMini } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
@@ -28,32 +27,133 @@ import {
 } from "@/stores/projects";
 import { projectStateErrorCopy } from "@/lib/project-connection-display";
 
-// Linear-style worktree dashboard: worktrees as collapsible group headers
-// (square outline = worktree) with agents (circle) / services (diamond) as
-// guide-lined child rows. Rendered as the Project screen's "Dashboard"
-// section; kept route-agnostic via `padded`. Child guide line #3a3c44.
-const PRESS = "hover:bg-[#232429] active:bg-[#26272d]";
+// TUI-styled worktree dashboard: each worktree is a contained, tinted card
+// (left accent bar = aggregate state) with a header row (square glyph · name ·
+// branch · count chips) and agent/service rows beneath. Mirrors the terminal
+// dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
+// #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
+const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
 }
 
-function StatusWord({ status }: { status: string }) {
-  const tone =
-    status === "running"
-      ? "text-[#4ade80]"
-      : status === "waiting"
-        ? "text-amber-400"
-        : "text-[#787a83]";
+function cap(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+type StateKind =
+  | "running"
+  | "waiting"
+  | "idle"
+  | "offline"
+  | "exited"
+  | "error"
+  | "needs"
+  | "blocked";
+
+interface AgentState {
+  label: string;
+  kind: StateKind;
+  pill: boolean;
+}
+
+// Precedence mirrors the TUI: a transient pending action (stopping/forking/…)
+// shows first, then attention signals that need the user, then the runtime
+// status. Pill states read as active; the rest are quiet words.
+function deriveAgentState(session: DesktopSession): AgentState {
+  if (session.pendingAction)
+    return { label: cap(session.pendingAction), kind: "waiting", pill: false };
+  switch (session.attention) {
+    case "error":
+      return { label: "Error", kind: "error", pill: true };
+    case "blocked":
+      return { label: "Blocked", kind: "blocked", pill: true };
+    case "needs_input":
+      return { label: "Needs input", kind: "needs", pill: true };
+    case "needs_response":
+      return { label: "Needs reply", kind: "needs", pill: true };
+  }
+  if (session.status === "running") return { label: "Running", kind: "running", pill: true };
+  if (session.status === "waiting") return { label: "Waiting", kind: "waiting", pill: true };
+  if (session.status === "idle") return { label: "Idle", kind: "idle", pill: false };
+  if (session.status === "exited") return { label: "Exited", kind: "exited", pill: false };
+  return { label: "Offline", kind: "offline", pill: false };
+}
+
+// Split bg/text so the background class lands only on the View and the text
+// color only on the Text — on native a Text background composites over the
+// parent's, which would darken the pill under the label.
+const PILL_BG: Record<StateKind, string> = {
+  running: "bg-emerald-500/15",
+  waiting: "bg-amber-500/15",
+  needs: "bg-amber-500/15",
+  error: "bg-red-500/15",
+  blocked: "bg-fuchsia-500/15",
+  idle: "bg-zinc-500/15",
+  offline: "bg-zinc-500/10",
+  exited: "bg-red-500/10",
+};
+
+const WORD_CLASS: Record<StateKind, string> = {
+  running: "text-emerald-400",
+  waiting: "text-amber-400",
+  needs: "text-amber-400",
+  error: "text-red-400",
+  blocked: "text-fuchsia-300",
+  idle: "text-[#7c7e88]",
+  offline: "text-[#7c7e88]",
+  exited: "text-red-400/80",
+};
+
+function StatusCell({ state }: { state: AgentState }) {
+  if (state.pill) {
+    return (
+      <View className={cn("rounded-[5px] px-2 py-0.5", PILL_BG[state.kind])}>
+        <Text
+          className={cn("text-[10.5px] font-bold uppercase tracking-wide", WORD_CLASS[state.kind])}
+        >
+          {state.label}
+        </Text>
+      </View>
+    );
+  }
   return (
-    <Text className={cn("min-w-[62px] text-right font-mono text-[13px]", tone)} numberOfLines={1}>
-      {status}
+    <Text className={cn("font-mono text-[12px]", WORD_CLASS[state.kind])} numberOfLines={1}>
+      {state.label}
+    </Text>
+  );
+}
+
+function IndexBadge({ digit }: { digit: number }) {
+  return <Text className="w-7 shrink-0 font-mono text-[12px] text-[#7c7e88]">{`[${digit}]`}</Text>;
+}
+
+function SelectMark({ selected }: { selected: boolean }) {
+  return (
+    <Text className="w-3 shrink-0 text-center text-[13px] text-[#e0b341]">
+      {selected ? "▸" : ""}
+    </Text>
+  );
+}
+
+function TrailingHint({ text }: { text?: string }) {
+  if (!text) return <View className="min-w-0 flex-1" />;
+  return (
+    <Text
+      className="min-w-0 flex-1 font-mono text-[12px] text-[#565862]"
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {`· ${text}`}
     </Text>
   );
 }
 
 function AgentRow({
   session,
+  digit,
+  selected,
   endpoint,
   token,
   mainCheckoutPath,
@@ -61,6 +161,8 @@ function AgentRow({
   onPress,
 }: {
   session: DesktopSession;
+  digit: number;
+  selected: boolean;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   mainCheckoutPath?: string | null;
@@ -68,32 +170,41 @@ function AgentRow({
   onPress: () => void;
 }) {
   const tool = firstTokenOf(session.command);
+  const state = deriveAgentState(session);
   return (
-    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4 hover:bg-[#232429]">
+    <View
+      className={cn(
+        "flex-row items-center gap-2 rounded-md px-2.5 py-2",
+        selected ? "bg-[#232733]" : PRESS,
+      )}
+    >
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <StatusDotMini status={session.status} />
-        <Text
-          className="min-w-0 shrink text-[15px] font-medium text-[#edeef0]"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {session.label || session.id}
-        </Text>
-        {tool ? (
+        <SelectMark selected={selected} />
+        <View className="w-4 items-center justify-center">
+          <StatusDotMini status={session.status} />
+        </View>
+        <IndexBadge digit={digit} />
+        <View className="min-w-0 max-w-[55%] shrink flex-row items-baseline gap-2">
           <Text
-            className="min-w-0 shrink font-mono text-[13px] text-[#787a83]"
+            className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
-            {tool}
+            {session.label || session.id}
           </Text>
-        ) : null}
+          {session.role || tool ? (
+            <Text className="shrink-0 font-mono text-[12px] text-[#7c7e88]" numberOfLines={1}>
+              {session.role ?? tool}
+            </Text>
+          ) : null}
+        </View>
+        <TrailingHint text={session.headline || session.previewLine || undefined} />
       </Pressable>
-      <View className="flex-row items-center gap-5 pl-4">
-        <StatusWord status={session.status} />
+      <View className="shrink-0 flex-row items-center gap-3 pl-2">
+        <StatusCell state={state} />
         <AgentActions
           session={session}
           endpoint={endpoint}
@@ -109,53 +220,88 @@ function AgentRow({
 
 function ServiceRow({
   service,
+  digit,
   endpoint,
   token,
   onPress,
 }: {
   service: DesktopService;
+  digit: number;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onPress: () => void;
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
+  const word =
+    service.status === "running"
+      ? "text-emerald-400"
+      : service.status === "exited"
+        ? "text-red-400/80"
+        : "text-[#7c7e88]";
   return (
-    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4 hover:bg-[#232429]">
+    <View className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025]">
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <StatusDotMini status={service.status} shape="diamond" />
-        <Text
-          className="min-w-0 shrink text-[15px] font-medium text-[#edeef0]"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {service.label || service.id}
-        </Text>
-        <TypeTag label="service" />
-        {detail ? (
-          <Text
-            className="min-w-0 shrink font-mono text-[13px] text-[#787a83]"
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {detail}
+        <SelectMark selected={false} />
+        <View className="w-4 items-center justify-center">
+          <StatusDotMini status={service.status} shape="diamond" />
+        </View>
+        <IndexBadge digit={digit} />
+        <View className="min-w-0 max-w-[55%] shrink flex-row items-baseline gap-2">
+          <Text className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]" numberOfLines={1}>
+            {service.label || service.id}
           </Text>
-        ) : null}
+          <Text className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-[#7c7e88]">
+            svc
+          </Text>
+        </View>
+        <TrailingHint text={detail || undefined} />
       </Pressable>
-      <View className="flex-row items-center gap-5 pl-4">
-        <StatusWord status={service.status} />
+      <View className="shrink-0 flex-row items-center gap-3 pl-2">
+        <Text className={cn("font-mono text-[12px]", word)} numberOfLines={1}>
+          {service.pendingAction ?? service.status}
+        </Text>
         <ServiceActions service={service} endpoint={endpoint} token={token} compact />
       </View>
     </View>
   );
 }
 
-function WorktreeGroup({
+interface CountChip {
+  label: string;
+  active: boolean;
+}
+
+function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
+  let running = 0;
+  let waiting = 0;
+  let idle = 0;
+  let offline = 0;
+  for (const session of bucket.sessions) {
+    if (session.status === "running") running++;
+    else if (session.status === "waiting") waiting++;
+    else if (session.status === "idle") idle++;
+    else offline++; // offline + exited
+  }
+  for (const service of bucket.services) {
+    if (service.status === "running") running++;
+    else offline++;
+  }
+  const chips: CountChip[] = [];
+  if (running > 0) chips.push({ label: `${running} running`, active: true });
+  if (waiting > 0) chips.push({ label: `${waiting} waiting`, active: true });
+  if (idle > 0) chips.push({ label: `${idle} idle`, active: false });
+  if (offline > 0) chips.push({ label: `${offline} offline`, active: false });
+  return chips;
+}
+
+function WorktreeCard({
   bucket,
   endpoint,
   token,
+  selectedSessionId,
   onPickSession,
   onPickService,
   onKillSession,
@@ -163,75 +309,84 @@ function WorktreeGroup({
   bucket: WorktreeBucket;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
 }) {
-  const hasChildren = worktreeHasChildren(bucket);
-  const isEmpty = !hasChildren;
-  const [collapsed, setCollapsed] = useState(false);
-
   const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
-  const countParts: string[] = [];
-  if (bucket.sessions.length > 0) {
-    countParts.push(`${bucket.sessions.length} agent${bucket.sessions.length > 1 ? "s" : ""}`);
-  }
-  if (bucket.services.length > 0) {
-    countParts.push(`${bucket.services.length} service${bucket.services.length > 1 ? "s" : ""}`);
-  }
-  const countLabel = isEmpty ? "empty" : countParts.join(" · ");
-
-  const headerInner = (
-    <>
-      {hasChildren ? (
-        collapsed ? (
-          <ChevronRight size={14} color="#5b5d66" />
-        ) : (
-          <ChevronDown size={14} color="#5b5d66" />
-        )
-      ) : (
-        <View className="w-[14px]" />
-      )}
-      <StatusDotMini
-        status={anyRunning ? "running" : undefined}
-        hollow={isEmpty}
-        shape="square"
-        outline
-      />
-      <Text
-        className={cn(
-          "shrink-0 text-[15px]",
-          isEmpty ? "font-semibold text-[#a6a8b0]" : "font-bold text-[#edeef0]",
-        )}
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
-        {bucket.name}
-      </Text>
-      {bucket.branch ? <BranchChip branch={bucket.branch} /> : null}
-      <Text className="ml-auto pl-4 text-[13px] text-[#787a83]" numberOfLines={1}>
-        {countLabel}
-      </Text>
-    </>
-  );
-
-  const headerClass = "flex-row items-center gap-3 rounded-md px-3 py-3";
+  const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
+  const barColor = containsSelected ? "#e0b341" : anyRunning ? "#3f9c6d" : "#26272d";
+  const chips = worktreeCountChips(bucket);
 
   return (
-    <View>
-      {hasChildren ? (
-        <Pressable onPress={() => setCollapsed((c) => !c)} className={cn(headerClass, PRESS)}>
-          {headerInner}
-        </Pressable>
-      ) : (
-        <View className={headerClass}>{headerInner}</View>
+    <View
+      className={cn(
+        "mb-3 overflow-hidden rounded-xl",
+        containsSelected ? "bg-[#181a1f]" : "bg-[#15161a]",
       )}
-      {hasChildren && !collapsed ? (
-        <View className="ml-[22px] border-l-2 border-[#3a3c44]">
-          {bucket.sessions.map((session) => (
+      style={{
+        borderWidth: 1,
+        borderColor: containsSelected ? "#3a3c44" : "#26272d",
+        borderLeftWidth: 3,
+        borderLeftColor: barColor,
+      }}
+    >
+      <View className="flex-row items-center gap-2.5 px-3.5 py-2.5">
+        <StatusDotMini
+          status={anyRunning ? "running" : undefined}
+          hollow={!anyRunning}
+          shape="square"
+          outline
+        />
+        <Text
+          className={cn(
+            "shrink-0 text-[13.5px] font-bold",
+            containsSelected ? "text-[#e0b341]" : "text-[#edeef0]",
+          )}
+          numberOfLines={1}
+        >
+          {bucket.name}
+        </Text>
+        {bucket.branch ? (
+          <Text
+            className="min-w-0 shrink font-mono text-[12.5px] text-[#7c7e88]"
+            numberOfLines={1}
+            ellipsizeMode="middle"
+          >
+            {`· ${bucket.branch}`}
+          </Text>
+        ) : null}
+        <View className="ml-auto shrink-0 flex-row items-center gap-1.5 pl-3">
+          {chips.map((chip) => (
+            <View
+              key={chip.label}
+              className={cn(
+                "rounded-[5px] px-2 py-0.5",
+                chip.active ? "bg-emerald-500/10" : "bg-[#202127]",
+              )}
+            >
+              <Text
+                className={cn(
+                  "font-mono text-[11px]",
+                  chip.active ? "text-emerald-400" : "text-[#7c7e88]",
+                )}
+              >
+                {chip.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {worktreeHasChildren(bucket) ? (
+        <View className="border-t border-[#202127] p-1">
+          {bucket.sessions.map((session, i) => (
             <AgentRow
               key={session.id}
               session={session}
+              digit={i + 1}
+              selected={session.id === selectedSessionId}
               endpoint={endpoint}
               token={token}
               mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
@@ -239,10 +394,11 @@ function WorktreeGroup({
               onPress={() => onPickSession(session.id)}
             />
           ))}
-          {bucket.services.map((service) => (
+          {bucket.services.map((service, i) => (
             <ServiceRow
               key={service.id}
               service={service}
+              digit={bucket.sessions.length + i + 1}
               endpoint={endpoint}
               token={token}
               onPress={() => onPickService(service.id)}
@@ -259,6 +415,7 @@ function WorktreeList({
   endpoint,
   token,
   padded,
+  selectedSessionId,
   onPickSession,
   onPickService,
   onKillSession,
@@ -267,6 +424,7 @@ function WorktreeList({
   endpoint: ServiceEndpoint | null;
   token: string | null;
   padded: boolean;
+  selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
@@ -278,13 +436,20 @@ function WorktreeList({
   const activeRest = rest.filter(worktreeHasChildren);
   const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
 
-  const groupProps = { endpoint, token, onPickSession, onPickService, onKillSession };
+  const cardProps = {
+    endpoint,
+    token,
+    selectedSessionId,
+    onPickSession,
+    onPickService,
+    onKillSession,
+  };
 
   return (
     <View className={cn("py-3", padded && "px-4")}>
-      {main ? <WorktreeGroup bucket={main} {...groupProps} /> : null}
+      {main ? <WorktreeCard bucket={main} {...cardProps} /> : null}
       {activeRest.map((bucket) => (
-        <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
+        <WorktreeCard key={bucket.key} bucket={bucket} {...cardProps} />
       ))}
 
       {emptyRest.length > 0 ? (
@@ -296,21 +461,19 @@ function WorktreeList({
             accessibilityLabel={`${showEmpty ? "Hide" : "Show"} ${emptyRest.length} empty worktree${
               emptyRest.length > 1 ? "s" : ""
             }`}
-            className={cn("flex-row items-center gap-3 rounded-md px-3 py-3", PRESS)}
+            className={cn("flex-row items-center gap-2 rounded-md px-2.5 py-2.5", PRESS)}
           >
-            {showEmpty ? (
-              <ChevronDown size={14} color="#5b5d66" />
-            ) : (
-              <ChevronRight size={14} color="#5b5d66" />
-            )}
-            <Text className="text-[14px] text-[#787a83]">
+            <Text className="w-3 text-center font-mono text-[11px] text-[#565862]">
+              {showEmpty ? "▾" : "▸"}
+            </Text>
+            <Text className="font-mono text-[13px] text-[#7c7e88]">
               <Text className="font-bold text-[#a6a8b0]">{emptyRest.length}</Text> empty worktree
               {emptyRest.length > 1 ? "s" : ""}
             </Text>
           </Pressable>
           {showEmpty
             ? emptyRest.map((bucket) => (
-                <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
+                <WorktreeCard key={bucket.key} bucket={bucket} {...cardProps} />
               ))
             : null}
         </View>
@@ -411,6 +574,7 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
         endpoint={endpoint}
         token={token}
         padded={false}
+        selectedSessionId={selectedSessionId}
         onPickSession={handlePickSession}
         onPickService={handlePickService}
         onKillSession={handleKillSession}

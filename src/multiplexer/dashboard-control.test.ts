@@ -125,11 +125,9 @@ describe("postToProjectService", () => {
       .mockResolvedValueOnce({ status: 200, json: { ok: true } });
     const { postToProjectService } = await import("./dashboard-control.js");
 
-    const result = await postToProjectService(
-      { dashboardServiceRecovery: null, projectRoot },
-      "/agents/resume",
-      { sessionId: "claude-1" },
-    );
+    const result = await postToProjectService({ dashboardServiceRecovery: null, projectRoot }, "/agents/resume", {
+      sessionId: "claude-1",
+    });
 
     expect(result).toEqual({ ok: true });
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(projectRoot);

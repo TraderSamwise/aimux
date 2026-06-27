@@ -15,7 +15,7 @@ import {
 import { AgentActions } from "@/components/agent-actions";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
+import { StatusDotMini, TypeTag } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type {
@@ -187,8 +187,13 @@ function ProjectHeader({
 
 // ─── Agent / service child rows ──────────────────────────────────────────────
 
+function IndexBadge({ digit }: { digit: number }) {
+  return <Text className="w-6 shrink-0 font-mono text-[11px] text-[#787a83]">{`[${digit}]`}</Text>;
+}
+
 function AgentRow({
   session,
+  digit,
   isSelected,
   endpoint,
   token,
@@ -197,6 +202,7 @@ function AgentRow({
   onPress,
 }: {
   session: DesktopSession;
+  digit: number;
   isSelected: boolean;
   endpoint: ServiceEndpoint | null;
   token: string | null;
@@ -208,15 +214,16 @@ function AgentRow({
   return (
     <View
       className={cn(
-        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-3 pr-2",
-        isSelected ? "bg-[#26272d]" : "hover:bg-[#232429]",
+        "min-h-[40px] flex-row items-center gap-2 rounded-md pl-2.5 pr-2",
+        isSelected ? "bg-[#232733]" : "hover:bg-[#232429] active:bg-[#26272d]",
       )}
     >
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         <StatusDotMini status={session.status} />
+        <IndexBadge digit={digit} />
         <Text
           className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
           numberOfLines={1}
@@ -224,9 +231,9 @@ function AgentRow({
         >
           {session.label || session.id}
         </Text>
-        {tool ? (
-          <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
-            {tool}
+        {session.role || tool ? (
+          <Text className="ml-auto shrink-0 font-mono text-[12px] text-[#787a83]" numberOfLines={1}>
+            {session.role ?? tool}
           </Text>
         ) : null}
       </Pressable>
@@ -244,22 +251,25 @@ function AgentRow({
 
 function ServiceRow({
   service,
+  digit,
   endpoint,
   token,
   onPress,
 }: {
   service: DesktopService;
+  digit: number;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onPress: () => void;
 }) {
   return (
-    <View className="min-h-[40px] flex-row items-center gap-2 rounded-md pl-3 pr-2 hover:bg-[#232429]">
+    <View className="min-h-[40px] flex-row items-center gap-2 rounded-md pl-2.5 pr-2 hover:bg-[#232429]">
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         <StatusDotMini status={service.status} shape="diamond" />
+        <IndexBadge digit={digit} />
         <Text
           className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
           numberOfLines={1}
@@ -295,7 +305,10 @@ function WorktreeGroup({
 }) {
   const hasChildren = worktreeHasChildren(bucket);
   const [collapsed, setCollapsed] = useState(false);
-  const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
+  const runningCount = [...bucket.sessions, ...bucket.services].filter(
+    (x) => x.status === "running",
+  ).length;
+  const anyRunning = runningCount > 0;
   const bright = hasChildren || bucket.isMainCheckout;
 
   const header = (
@@ -325,7 +338,20 @@ function WorktreeGroup({
       >
         {bucket.name}
       </Text>
-      {bucket.branch ? <BranchChip branch={bucket.branch} /> : null}
+      {bucket.branch ? (
+        <Text
+          className="min-w-0 shrink font-mono text-[12px] text-[#787a83]"
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {`· ${bucket.branch}`}
+        </Text>
+      ) : null}
+      {runningCount > 0 ? (
+        <Text className="ml-auto shrink-0 pl-1.5 font-mono text-[11px] text-emerald-400">
+          {`${runningCount} running`}
+        </Text>
+      ) : null}
     </>
   );
 
@@ -344,11 +370,12 @@ function WorktreeGroup({
         <View className={headerClass}>{header}</View>
       )}
       {hasChildren && !collapsed ? (
-        <View className="ml-[20px] border-l-2 border-[#3a3c44]">
-          {bucket.sessions.map((session) => (
+        <View className="ml-[20px] border-l border-[#2e3038] pl-0.5">
+          {bucket.sessions.map((session, i) => (
             <AgentRow
               key={session.id}
               session={session}
+              digit={i + 1}
               isSelected={session.id === selectedSessionId}
               endpoint={endpoint}
               token={token}
@@ -357,10 +384,11 @@ function WorktreeGroup({
               onPress={() => onPickSession(session.id)}
             />
           ))}
-          {bucket.services.map((service) => (
+          {bucket.services.map((service, i) => (
             <ServiceRow
               key={service.id}
               service={service}
+              digit={bucket.sessions.length + i + 1}
               endpoint={endpoint}
               token={token}
               onPress={() => onPickService(service.id)}

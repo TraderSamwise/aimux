@@ -98,8 +98,7 @@ function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: str
     const projectRoot = dashboardProjectRoot(host);
     const data = loadStatusline(projectRoot);
     if (!data) return;
-    const currentPath =
-      host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? projectRoot;
+    const currentPath = host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? projectRoot;
     const top = renderTmuxStatuslineFromData(data, projectRoot, "top", {
       currentWindow: target.windowName,
       currentWindowId: target.windowId,

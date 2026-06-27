@@ -288,7 +288,10 @@ export const dashboardStateMethods = {
     return readTmuxProcessInfoImpl(this, target);
   },
 
-  buildDesktopStateSnapshot(this: any, options: { includeRuntimeInfo?: boolean } = {}): {
+  buildDesktopStateSnapshot(
+    this: any,
+    options: { includeRuntimeInfo?: boolean } = {},
+  ): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
     services: DashboardService[];

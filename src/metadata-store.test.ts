@@ -117,17 +117,9 @@ describe("metadata store", () => {
     await initPaths(repoRoot);
     const paths = getReadOnlyProjectPathsFor(repoRoot);
 
-    updateSessionMetadata(
-      "worker-1",
-      (current) => ({ ...current, status: { text: "ready", tone: "info" } }),
-      repoRoot,
-    );
+    updateSessionMetadata("worker-1", (current) => ({ ...current, status: { text: "ready", tone: "info" } }), repoRoot);
     const first = readFileSync(paths.metadataPath, "utf-8");
-    updateSessionMetadata(
-      "worker-1",
-      (current) => ({ ...current, status: { text: "ready", tone: "info" } }),
-      repoRoot,
-    );
+    updateSessionMetadata("worker-1", (current) => ({ ...current, status: { text: "ready", tone: "info" } }), repoRoot);
 
     expect(readFileSync(paths.metadataPath, "utf-8")).toBe(first);
 

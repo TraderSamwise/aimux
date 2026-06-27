@@ -272,11 +272,13 @@ export function upsertNotification(input: {
   return writeNotification({ ...input, replaceTarget: Boolean(normalizeTargetKey(input)) });
 }
 
-export function listNotifications(opts?: {
-  unreadOnly?: boolean;
-  includeCleared?: boolean;
-  sessionId?: string;
-} & NotificationStoreOptions): NotificationRecord[] {
+export function listNotifications(
+  opts?: {
+    unreadOnly?: boolean;
+    includeCleared?: boolean;
+    sessionId?: string;
+  } & NotificationStoreOptions,
+): NotificationRecord[] {
   return notificationRecords(notificationStore(opts?.projectRoot).read()).filter((record) => {
     if (!opts?.includeCleared && record.cleared) return false;
     if (opts?.unreadOnly && !record.unread) return false;

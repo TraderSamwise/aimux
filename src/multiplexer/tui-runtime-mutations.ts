@@ -124,10 +124,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   scheduleFlush(host, queue.context && !requeuedFailedContext ? 0 : retryDelay(queue.attempt - 1));
 }
 
-export function queueTuiNotificationContext(
-  host: TuiRuntimeMutationHost,
-  patch: NotificationContextPatch,
-): void {
+export function queueTuiNotificationContext(host: TuiRuntimeMutationHost, patch: NotificationContextPatch): void {
   const queue = getQueue(host);
   queue.context = mergeContext(queue.context, patch);
   scheduleFlush(host, 0, { preempt: true });

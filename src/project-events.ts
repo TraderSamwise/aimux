@@ -130,7 +130,9 @@ export class ProjectEventBus {
       dedupeKey,
       createdAt: ts,
       unread:
-        !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId, alert.projectRoot),
+        !alert.sessionId || alert.forceNotify
+          ? true
+          : !isSessionNotificationFocused(alert.sessionId, alert.projectRoot),
       interaction: alert.interaction,
     });
 
