@@ -547,6 +547,53 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("scan(explorer)");
   });
 
+  it("does not list offline worktree entries as active in details", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/wt",
+        sessions: [
+          {
+            index: 0,
+            id: "codex-offline",
+            command: "codex",
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            status: "offline",
+            active: false,
+          },
+        ],
+        services: [
+          {
+            id: "svc-offline",
+            command: "shell",
+            args: [],
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            status: "offline",
+            active: false,
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "wt",
+            branch: "wt",
+            path: "/repo/.aimux/worktrees/wt",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      140,
+      40,
+    );
+
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("Agents: 1");
+    expect(plain).toContain("Services: 1");
+    expect(plain).not.toContain("Active:");
+    expect(plain).not.toContain("Running:");
+  });
+
   it("renders a dedicated Overseer line above the worktrees when an overseer exists", () => {
     const overseerSession = {
       index: 0,
