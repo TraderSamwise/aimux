@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { buildAimuxCliShellCommand } from "../cli-launcher.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
@@ -35,6 +36,12 @@ function buildDashboardEnvCommandPrefix(env: NodeJS.ProcessEnv): string {
     return value ? [`${key}=${shellQuote(value)}`] : [];
   });
   return entries.length > 0 ? `env ${entries.join(" ")} ` : "";
+}
+
+function buildDashboardStamp(scriptPath: string, command: string): string {
+  const mtime = String(statSync(scriptPath).mtimeMs);
+  const commandHash = createHash("sha256").update(command).digest("hex").slice(0, 16);
+  return `${mtime}-${commandHash}`;
 }
 
 export function getDashboardCommandSpec(projectRoot: string, env: NodeJS.ProcessEnv = process.env): DashboardCommandSpec {
@@ -143,7 +150,7 @@ export function getDashboardCommandSpec(projectRoot: string, env: NodeJS.Process
   ].join(" ");
   return {
     scriptPath,
-    dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
+    dashboardBuildStamp: buildDashboardStamp(scriptPath, wrappedDashboardCommand),
     dashboardCommand: {
       cwd: projectRoot,
       command: "bash",

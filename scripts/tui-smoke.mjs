@@ -95,6 +95,17 @@ const env = {
   PATH: `${binDir}:${process.env.PATH ?? ""}`,
   TERM: process.env.TERM || "xterm-256color",
 };
+const DASHBOARD_ENV_KEYS = [
+  "AIMUX_HOME",
+  "AIMUX_DAEMON_HOST",
+  "AIMUX_DAEMON_PORT",
+  "AIMUX_ENV",
+  "AIMUX_WEB_APP_URL",
+  "AIMUX_CLI_BIN",
+  "AIMUX_INSTALL_ROOT",
+  "PATH",
+  "TERM",
+];
 
 const startedAt = Date.now();
 let failed = false;
@@ -243,12 +254,13 @@ function configureProject() {
 }
 
 async function startDashboard() {
+  const dashboardEnv = Object.fromEntries(DASHBOARD_ENV_KEYS.flatMap((key) => (env[key] ? [[key, env[key]]] : [])));
   const command = [
     "cd",
     shellQuote(repoRoot),
     "&&",
     "env",
-    ...Object.entries(env).map(([key, value]) => `${key}=${shellQuote(value)}`),
+    ...Object.entries(dashboardEnv).map(([key, value]) => `${key}=${shellQuote(value)}`),
     shellQuote(cliShim),
   ].join(" ");
   await run(["tmux", "new-session", "-d", "-s", tmuxClient, "-c", repoRoot, command], {
@@ -393,7 +405,9 @@ async function runCli(args, opts = {}) {
     try {
       return JSON.parse(result.stdout);
     } catch (err) {
-      throw new Error(`failed to parse JSON from aimux ${args.join(" ")}: ${result.stdout || result.stderr}`);
+      throw new Error(`failed to parse JSON from aimux ${args.join(" ")}: ${result.stdout || result.stderr}`, {
+        cause: err,
+      });
     }
   }
   return result;
@@ -510,7 +524,13 @@ async function run(args, opts = {}) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("error", finish);
+    child.on("error", (err) => {
+      if (opts.allowFailure) {
+        finish(null, { code: null, signal: null, stdout, stderr: `${stderr}${err.message}\n` });
+      } else {
+        finish(err);
+      }
+    });
     child.on("close", (code, signal) => {
       if (code === 0 || opts.allowFailure) {
         finish(null, { code, signal, stdout, stderr });
