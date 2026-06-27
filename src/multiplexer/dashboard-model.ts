@@ -1390,7 +1390,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
         ),
       recordBackendSessionId: (input: any) =>
         host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
-      sendAgentInput: (input: any) => host.sendAgentInput(input.sessionId, input.text),
+      sendAgentInput: (input: any) =>
+        host.sendAgentInput(input.sessionId, input.text, { waitForSubmit: input.waitForSubmit }),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
     },
     onChange: () => {

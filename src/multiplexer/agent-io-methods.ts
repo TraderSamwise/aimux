@@ -209,8 +209,8 @@ export const agentIoMethods = {
     return resizeAgentPaneImpl(this, sessionId, cols, rows);
   },
 
-  async sendAgentInput(this: any, sessionId: string, text: string): Promise<any> {
-    return sendAgentInputImpl(this, sessionId, text);
+  async sendAgentInput(this: any, sessionId: string, text: string, opts?: { waitForSubmit?: boolean }): Promise<any> {
+    return sendAgentInputImpl(this, sessionId, text, opts);
   },
 
   async readAgentOutput(this: any, sessionId: string, startLine?: number): Promise<any> {
