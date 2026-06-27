@@ -6,7 +6,7 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { commandKey, parseKeys, type KeyEvent } from "../key-parser.js";
+import { commandKey, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import {
@@ -965,35 +965,37 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
 
-    const event = events[0];
-    const key = commandKey(event);
+    for (const event of events) {
+      const key = commandKey(event);
 
-    if (key === "escape") {
-      this.clearDashboardOverlay();
-      this.restoreDashboardAfterOverlayDismiss();
-      return;
-    }
-
-    if (key === "enter" || key === "return") {
-      this.clearDashboardOverlay();
-      if (this.mode !== "dashboard") {
-        this.showDashboardError("Failed to create service", ["Service creation requires the project service."]);
+      if (key === "escape") {
+        this.clearDashboardOverlay();
+        this.restoreDashboardAfterOverlayDismiss();
         return;
       }
-      void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
-      this.restoreDashboardAfterOverlayDismiss();
-      return;
-    }
 
-    if (key === "backspace" || key === "delete") {
-      this.serviceInputBuffer = this.serviceInputBuffer.slice(0, -1);
-      this.renderServiceInput();
-      return;
-    }
+      if (key === "enter" || key === "return") {
+        this.clearDashboardOverlay();
+        if (this.mode !== "dashboard") {
+          this.showDashboardError("Failed to create service", ["Service creation requires the project service."]);
+          return;
+        }
+        void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
+        this.restoreDashboardAfterOverlayDismiss();
+        return;
+      }
 
-    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-      this.serviceInputBuffer += event.char;
-      this.renderServiceInput();
+      if (key === "backspace" || key === "delete") {
+        this.serviceInputBuffer = this.serviceInputBuffer.slice(0, -1);
+        this.renderServiceInput();
+        continue;
+      }
+
+      const text = printableInputText(event);
+      if (text) {
+        this.serviceInputBuffer += text;
+        this.renderServiceInput();
+      }
     }
   },
 
@@ -1001,38 +1003,40 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
 
-    const event = events[0];
-    const key = commandKey(event);
+    for (const event of events) {
+      const key = commandKey(event);
 
-    if (key === "escape") {
-      this.clearDashboardOverlay();
-      this.labelInputTarget = null;
-      this.restoreDashboardAfterOverlayDismiss();
-      return;
-    }
-
-    if (key === "enter" || key === "return") {
-      this.clearDashboardOverlay();
-      const label = this.labelInputBuffer.trim();
-      const targetId = this.labelInputTarget;
-      this.labelInputTarget = null;
-      if (targetId) {
-        void this.updateSessionLabel(targetId, label || undefined);
+      if (key === "escape") {
+        this.clearDashboardOverlay();
+        this.labelInputTarget = null;
+        this.restoreDashboardAfterOverlayDismiss();
         return;
       }
-      this.restoreDashboardAfterOverlayDismiss();
-      return;
-    }
 
-    if (key === "backspace" || key === "delete") {
-      this.labelInputBuffer = this.labelInputBuffer.slice(0, -1);
-      this.renderLabelInput();
-      return;
-    }
+      if (key === "enter" || key === "return") {
+        this.clearDashboardOverlay();
+        const label = this.labelInputBuffer.trim();
+        const targetId = this.labelInputTarget;
+        this.labelInputTarget = null;
+        if (targetId) {
+          void this.updateSessionLabel(targetId, label || undefined);
+          return;
+        }
+        this.restoreDashboardAfterOverlayDismiss();
+        return;
+      }
 
-    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-      this.labelInputBuffer += event.char;
-      this.renderLabelInput();
+      if (key === "backspace" || key === "delete") {
+        this.labelInputBuffer = this.labelInputBuffer.slice(0, -1);
+        this.renderLabelInput();
+        continue;
+      }
+
+      const text = printableInputText(event);
+      if (text) {
+        this.labelInputBuffer += text;
+        this.renderLabelInput();
+      }
     }
   },
 

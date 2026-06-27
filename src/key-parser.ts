@@ -25,6 +25,12 @@ export function commandKey(event: KeyEvent): string {
   return key.length === 1 ? key.toLowerCase() : key;
 }
 
+export function printableInputText(event: KeyEvent): string {
+  if (event.ctrl || event.alt) return "";
+  if (event.name && event.name !== "paste") return "";
+  return event.char.replace(/[\u0000-\u001f\u007f]/g, "");
+}
+
 // Modifier bitmask (shared by xterm and standard CSI):
 // 1=none, 2=shift, 3=alt, 4=shift+alt, 5=ctrl, 6=ctrl+shift, 7=ctrl+alt, 8=ctrl+shift+alt
 function parseModifier(mod: number): { shift: boolean; ctrl: boolean; alt: boolean } {

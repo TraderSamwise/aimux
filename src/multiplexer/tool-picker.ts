@@ -377,8 +377,6 @@ export function handleToolOptionsKey(host: ToolPickerHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
 
-  const event = events[0];
-  const key = commandKey(event);
   const state: LaunchOptionsState | null = host.launchOptionsState;
 
   const backToPicker = () => {
@@ -387,47 +385,56 @@ export function handleToolOptionsKey(host: ToolPickerHost, data: Buffer): void {
     renderToolPicker(host);
   };
 
-  if (!state || key === "escape") {
+  if (!state) {
     backToPicker();
     return;
   }
 
-  if (key === "tab" || key === "up" || key === "down") {
-    state.activeField = state.activeField === "args" ? "env" : "args";
-    redrawOverlay(host, buildToolOptionsOverlayOutput);
-    return;
-  }
+  for (const event of events) {
+    const key = commandKey(event);
 
-  if (key === "enter" || key === "return") {
-    const selected = enabledTools().find(([toolKey]) => toolKey === state.toolKey);
-    if (!selected) {
+    if (key === "escape") {
       backToPicker();
       return;
     }
-    const [toolKey, tool] = selected;
-    let extraArgs: string[];
-    let env: Record<string, string>;
-    try {
-      extraArgs = parseShellArgs(state.args.text);
-      env = parseEnvAssignments(state.env.text);
-    } catch (error) {
-      state.error = errorMessage(error);
+
+    if (key === "tab" || key === "up" || key === "down") {
+      state.activeField = state.activeField === "args" ? "env" : "args";
       redrawOverlay(host, buildToolOptionsOverlayOutput);
       return;
     }
-    const override: LaunchOverride = {
-      command: tool.command,
-      args: [...tool.args, ...extraArgs],
-      env: Object.keys(env).length ? env : undefined,
-    };
-    host.clearDashboardOverlay();
-    runSelectedTool(host, toolKey, tool, { override });
-    return;
-  }
 
-  const field = state.activeField === "args" ? state.args : state.env;
-  if (applyLineEdit(field, event)) {
-    state.error = null;
-    redrawOverlay(host, buildToolOptionsOverlayOutput);
+    if (key === "enter" || key === "return") {
+      const selected = enabledTools().find(([toolKey]) => toolKey === state.toolKey);
+      if (!selected) {
+        backToPicker();
+        return;
+      }
+      const [toolKey, tool] = selected;
+      let extraArgs: string[];
+      let env: Record<string, string>;
+      try {
+        extraArgs = parseShellArgs(state.args.text);
+        env = parseEnvAssignments(state.env.text);
+      } catch (error) {
+        state.error = errorMessage(error);
+        redrawOverlay(host, buildToolOptionsOverlayOutput);
+        return;
+      }
+      const override: LaunchOverride = {
+        command: tool.command,
+        args: [...tool.args, ...extraArgs],
+        env: Object.keys(env).length ? env : undefined,
+      };
+      host.clearDashboardOverlay();
+      runSelectedTool(host, toolKey, tool, { override });
+      return;
+    }
+
+    const field = state.activeField === "args" ? state.args : state.env;
+    if (applyLineEdit(field, event)) {
+      state.error = null;
+      redrawOverlay(host, buildToolOptionsOverlayOutput);
+    }
   }
 }
