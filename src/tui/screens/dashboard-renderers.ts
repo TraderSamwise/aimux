@@ -614,6 +614,8 @@ export function renderDashboardFrame(
       }
       lines.push(...wrapKeyValue("Agents", String(focusedSessions.length), width));
       lines.push(...wrapKeyValue("Services", String(focusedServices.length), width));
+      const activeSessions = focusedSessions.filter((session) => !isSessionOffline(session));
+      const runningServices = focusedServices.filter((service) => service.status === "running");
       const activeWorktreeRemoval =
         state.worktreeRemoval?.path === focusedWorktreePath ? state.worktreeRemoval : undefined;
       if (activeWorktreeRemoval) {
@@ -629,11 +631,11 @@ export function renderDashboardFrame(
           lines.push(...wrapKeyValue("Progress", detailLines.join(" | "), width));
         }
       }
-      if (focusedSessions.length > 0) {
+      if (activeSessions.length > 0) {
         lines.push(
           ...wrapKeyValue(
             "Active",
-            focusedSessions
+            activeSessions
               .map((session) => session.label ?? session.command)
               .slice(0, 3)
               .join(", "),
@@ -641,11 +643,11 @@ export function renderDashboardFrame(
           ),
         );
       }
-      if (focusedServices.length > 0) {
+      if (runningServices.length > 0) {
         lines.push(
           ...wrapKeyValue(
             "Running",
-            focusedServices
+            runningServices
               .map((service) => service.label ?? service.command)
               .slice(0, 3)
               .join(", "),
