@@ -1385,6 +1385,57 @@ describe("restartAimuxControlPlane", () => {
     expect(result.summary.failures).toBe(0);
   });
 
+  it("repairs unhealthy project services during post-restart verification", async () => {
+    const transient = okCoherenceReport();
+    transient.projects[0] = {
+      ...transient.projects[0]!,
+      status: "needs-restart",
+      service: {
+        ...transient.projects[0]!.service,
+        status: "unreachable",
+        endpoint: null,
+        pid: 1003,
+        error: "daemon state exists but project service endpoint is missing",
+      },
+    };
+    transient.summary = { projects: 2, ok: 1, needsRestart: 1, runtimeRebuildRequired: 0 };
+    const buildRuntimeCoherenceReport = vi
+      .fn()
+      .mockResolvedValueOnce(coherenceReport())
+      .mockResolvedValueOnce(transient)
+      .mockResolvedValueOnce(okCoherenceReport());
+    const ensureProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1005 : 1004,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 1000,
+      verificationIntervalMs: 250,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService,
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+      sleep: vi.fn(async () => {}),
+    });
+
+    expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(ensureProjectService).toHaveBeenCalledTimes(3);
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.failures).toBe(0);
+  });
+
   it("uses a startup-grace default for post-restart verification", async () => {
     const transient = okCoherenceReport();
     transient.projects[0] = {

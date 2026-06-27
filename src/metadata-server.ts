@@ -9,6 +9,7 @@ import {
   updateSessionMetadata,
   clearSessionLogs,
   saveMetadataEndpoint,
+  loadMetadataEndpoint,
   loadMetadataState,
   setSessionLoop,
   clearSessionLoop,
@@ -1124,6 +1125,12 @@ export class MetadataServer {
     await this.listen(desiredPort()).catch(async () => {
       await this.listen(0);
     });
+    this.publishEndpoint();
+  }
+
+  private publishEndpoint(): void {
+    const existing = loadMetadataEndpoint();
+    if (existing?.host === "127.0.0.1" && existing.port === this.port && existing.pid === process.pid) return;
     saveMetadataEndpoint({
       host: "127.0.0.1",
       port: this.port,
@@ -1704,6 +1711,7 @@ export class MetadataServer {
     }
 
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.health) {
+      this.publishEndpoint();
       send(res, 200, {
         ok: true,
         projectStateDir: getProjectStateDir(),
@@ -1713,6 +1721,7 @@ export class MetadataServer {
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.diagnostics) {
+      this.publishEndpoint();
       send(res, 200, {
         ok: true,
         projectStateDir: getProjectStateDir(),

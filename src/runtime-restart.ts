@@ -515,6 +515,7 @@ async function waitForPidsExit(input: {
 async function verifyPostRestartCoherence(input: {
   buildRuntimeCoherenceReport: typeof buildRuntimeCoherenceReport;
   coherence: BuildRuntimeCoherenceReportOptions | undefined;
+  ensureProjectService?: typeof ensureProjectService;
   projectRoots: Set<string>;
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
@@ -547,6 +548,15 @@ async function verifyPostRestartCoherence(input: {
           after,
           error: null,
         };
+      }
+      if (input.ensureProjectService && attempt < attempts - 1) {
+        for (const projectRoot of unhealthyProjects) {
+          try {
+            await input.ensureProjectService(projectRoot);
+          } catch (error) {
+            latestError = `post-restart service repair failed for ${projectRoot}: ${errorMessage(error)}`;
+          }
+        }
       }
     } catch (error) {
       latestError = errorMessage(error);
@@ -709,6 +719,7 @@ async function restartAimuxControlPlaneUnlocked(
     verification = await verifyPostRestartCoherence({
       buildRuntimeCoherenceReport: options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport,
       coherence: options.coherence,
+      ensureProjectService: ensureService,
       projectRoots: verificationProjectRoots,
       sleep,
       timeoutMs: options.verificationTimeoutMs ?? POST_RESTART_VERIFICATION_TIMEOUT_MS,
