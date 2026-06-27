@@ -174,11 +174,14 @@ describe("session runtime prompt submission", () => {
       // The carriage-return submit has not happened yet — it runs in the background.
       expect(tmuxRuntimeManager.sendCarriageReturn).not.toHaveBeenCalled();
 
-      // Draining the background timers still submits the prompt.
+      // Draining the background timers still submits the prompt exactly once:
+      // waitForDraft polls (300ms, then 250ms) until the draft is stable, then
+      // submitStep sends the carriage return (200ms) and confirms it cleared (700ms).
       await vi.advanceTimersByTimeAsync(300);
       await vi.advanceTimersByTimeAsync(250);
       await vi.advanceTimersByTimeAsync(200);
       await vi.advanceTimersByTimeAsync(700);
+      expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledTimes(1);
       expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
     } finally {
       transport.destroy();
