@@ -476,6 +476,9 @@ interface MetadataServerOptions {
     sendAgentInput?: (input: {
       sessionId: string;
       text: string;
+      // When false, the call returns once the input is accepted and confirms the
+      // tmux submit in the background (output arrives via SSE, not this response).
+      waitForSubmit?: boolean;
     }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
     readAgentOutput?: (input: {
       sessionId: string;
@@ -3826,7 +3829,14 @@ export class MetadataServer {
           text,
           attachments.filter((entry): entry is AttachmentRecord => !!entry),
         );
-        const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: formattedText });
+        // Return as soon as the input is accepted; the tmux submit-confirmation
+        // runs in the background. Agent output is delivered over /events (SSE),
+        // so blocking this response on confirmation only risks a client timeout.
+        const result = await this.options.lifecycle.sendAgentInput({
+          sessionId,
+          text: formattedText,
+          waitForSubmit: false,
+        });
         this.notifyChange();
         send(res, 200, { ok: true, ...result });
         return;

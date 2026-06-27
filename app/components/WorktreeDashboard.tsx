@@ -38,6 +38,17 @@ function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
 }
 
+// "Active" = the agent/service is live in tmux (anything but offline/exited).
+// Used to focus the sidebar on live worktrees; the full dashboard always shows
+// everything, including stopped agents.
+function isLiveStatus(status: string): boolean {
+  return status !== "offline" && status !== "exited";
+}
+
+function worktreeIsActive(bucket: WorktreeBucket): boolean {
+  return [...bucket.sessions, ...bucket.services].some((entry) => isLiveStatus(entry.status));
+}
+
 function cap(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
@@ -154,6 +165,7 @@ function AgentRow({
   session,
   digit,
   selected,
+  compact,
   endpoint,
   token,
   mainCheckoutPath,
@@ -163,6 +175,7 @@ function AgentRow({
   session: DesktopSession;
   digit: number;
   selected: boolean;
+  compact?: boolean;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   mainCheckoutPath?: string | null;
@@ -171,6 +184,57 @@ function AgentRow({
 }) {
   const tool = firstTokenOf(session.command);
   const state = deriveAgentState(session);
+  const identity = (
+    <>
+      <SelectMark selected={selected} />
+      <View className="w-4 items-center justify-center">
+        <StatusDotMini status={session.status} />
+      </View>
+      <IndexBadge digit={digit} />
+      <View
+        className={cn(
+          "min-w-0 flex-row items-baseline gap-2",
+          compact ? "flex-1" : "max-w-[55%] shrink",
+        )}
+      >
+        <Text
+          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {session.label || session.id}
+        </Text>
+        {session.role || tool ? (
+          <Text
+            className={cn("shrink-0 font-mono text-[12px] text-[#7c7e88]", compact && "ml-auto")}
+            numberOfLines={1}
+          >
+            {session.role ?? tool}
+          </Text>
+        ) : null}
+      </View>
+      {compact ? null : (
+        <TrailingHint text={session.headline || session.previewLine || undefined} />
+      )}
+    </>
+  );
+
+  // Compact (sidebar nav): identity only — status + management actions live on
+  // the full-width dashboard, where there's room.
+  if (compact) {
+    return (
+      <Pressable
+        onPress={onPress}
+        className={cn(
+          "flex-row items-center gap-2 rounded-md px-2.5 py-2",
+          selected ? "bg-[#232733]" : PRESS,
+        )}
+      >
+        {identity}
+      </Pressable>
+    );
+  }
+
   return (
     <View
       className={cn(
@@ -182,26 +246,7 @@ function AgentRow({
         onPress={onPress}
         className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <SelectMark selected={selected} />
-        <View className="w-4 items-center justify-center">
-          <StatusDotMini status={session.status} />
-        </View>
-        <IndexBadge digit={digit} />
-        <View className="min-w-0 max-w-[55%] shrink flex-row items-baseline gap-2">
-          <Text
-            className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {session.label || session.id}
-          </Text>
-          {session.role || tool ? (
-            <Text className="shrink-0 font-mono text-[12px] text-[#7c7e88]" numberOfLines={1}>
-              {session.role ?? tool}
-            </Text>
-          ) : null}
-        </View>
-        <TrailingHint text={session.headline || session.previewLine || undefined} />
+        {identity}
       </Pressable>
       <View className="shrink-0 flex-row items-center gap-3 pl-2">
         <StatusCell state={state} />
@@ -221,12 +266,14 @@ function AgentRow({
 function ServiceRow({
   service,
   digit,
+  compact,
   endpoint,
   token,
   onPress,
 }: {
   service: DesktopService;
   digit: number;
+  compact?: boolean;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onPress: () => void;
@@ -238,26 +285,53 @@ function ServiceRow({
       : service.status === "exited"
         ? "text-red-400/80"
         : "text-[#7c7e88]";
+  const identity = (
+    <>
+      <SelectMark selected={false} />
+      <View className="w-4 items-center justify-center">
+        <StatusDotMini status={service.status} shape="diamond" />
+      </View>
+      <IndexBadge digit={digit} />
+      <View
+        className={cn(
+          "min-w-0 flex-row items-baseline gap-2",
+          compact ? "flex-1" : "max-w-[55%] shrink",
+        )}
+      >
+        <Text className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]" numberOfLines={1}>
+          {service.label || service.id}
+        </Text>
+        <Text
+          className={cn(
+            "shrink-0 font-mono text-[10px] uppercase tracking-wide text-[#7c7e88]",
+            compact && "ml-auto",
+          )}
+        >
+          svc
+        </Text>
+      </View>
+      {compact ? null : <TrailingHint text={detail || undefined} />}
+    </>
+  );
+
+  if (compact) {
+    return (
+      <Pressable
+        onPress={onPress}
+        className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025] active:opacity-70"
+      >
+        {identity}
+      </Pressable>
+    );
+  }
+
   return (
     <View className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025]">
       <Pressable
         onPress={onPress}
         className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <SelectMark selected={false} />
-        <View className="w-4 items-center justify-center">
-          <StatusDotMini status={service.status} shape="diamond" />
-        </View>
-        <IndexBadge digit={digit} />
-        <View className="min-w-0 max-w-[55%] shrink flex-row items-baseline gap-2">
-          <Text className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]" numberOfLines={1}>
-            {service.label || service.id}
-          </Text>
-          <Text className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-[#7c7e88]">
-            svc
-          </Text>
-        </View>
-        <TrailingHint text={detail || undefined} />
+        {identity}
       </Pressable>
       <View className="shrink-0 flex-row items-center gap-3 pl-2">
         <Text className={cn("font-mono text-[12px]", word)} numberOfLines={1}>
@@ -302,6 +376,7 @@ function WorktreeCard({
   endpoint,
   token,
   selectedSessionId,
+  compact,
   onPickSession,
   onPickService,
   onKillSession,
@@ -310,6 +385,7 @@ function WorktreeCard({
   endpoint: ServiceEndpoint | null;
   token: string | null;
   selectedSessionId: string | null;
+  compact?: boolean;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
   onKillSession: (sessionId: string) => void;
@@ -322,7 +398,8 @@ function WorktreeCard({
   return (
     <View
       className={cn(
-        "mb-3 overflow-hidden rounded-xl",
+        "overflow-hidden rounded-xl",
+        compact ? "mb-2" : "mb-3",
         containsSelected ? "bg-[#181a1f]" : "bg-[#15161a]",
       )}
       style={{
@@ -332,7 +409,9 @@ function WorktreeCard({
         borderLeftColor: barColor,
       }}
     >
-      <View className="flex-row items-center gap-2.5 px-3.5 py-2.5">
+      <View
+        className={cn("flex-row items-center gap-2.5", compact ? "px-3 py-2" : "px-3.5 py-2.5")}
+      >
         <StatusDotMini
           status={anyRunning ? "running" : undefined}
           hollow={!anyRunning}
@@ -387,6 +466,7 @@ function WorktreeCard({
               session={session}
               digit={i + 1}
               selected={session.id === selectedSessionId}
+              compact={compact}
               endpoint={endpoint}
               token={token}
               mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
@@ -399,6 +479,7 @@ function WorktreeCard({
               key={service.id}
               service={service}
               digit={bucket.sessions.length + i + 1}
+              compact={compact}
               endpoint={endpoint}
               token={token}
               onPress={() => onPickService(service.id)}
@@ -410,11 +491,13 @@ function WorktreeCard({
   );
 }
 
-function WorktreeList({
+export function WorktreeList({
   groups,
   endpoint,
   token,
   padded,
+  compact,
+  activeOnly,
   selectedSessionId,
   onPickSession,
   onPickService,
@@ -424,6 +507,8 @@ function WorktreeList({
   endpoint: ServiceEndpoint | null;
   token: string | null;
   padded: boolean;
+  compact?: boolean;
+  activeOnly?: boolean;
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
@@ -431,15 +516,25 @@ function WorktreeList({
 }) {
   const [showEmpty, setShowEmpty] = useState(false);
 
-  const main = groups.find((g) => g.isMainCheckout);
-  const rest = groups.filter((g) => !g.isMainCheckout);
+  const shown = activeOnly ? groups.filter(worktreeIsActive) : groups;
+  const main = shown.find((g) => g.isMainCheckout);
+  const rest = shown.filter((g) => !g.isMainCheckout);
   const activeRest = rest.filter(worktreeHasChildren);
   const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
+
+  if (activeOnly && shown.length === 0) {
+    return (
+      <View className={cn("py-3", padded && "px-4")}>
+        <Text className="px-2 font-mono text-[13px] text-[#7c7e88]">No active agents</Text>
+      </View>
+    );
+  }
 
   const cardProps = {
     endpoint,
     token,
     selectedSessionId,
+    compact,
     onPickSession,
     onPickService,
     onKillSession,

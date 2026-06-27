@@ -3004,6 +3004,34 @@ describe("MetadataServer threads API", () => {
     expect(sent).toEqual([{ sessionId: "codex-1", text: "hello from gui" }]);
   });
 
+  it("returns on acceptance: the input route does not block on submit confirmation", async () => {
+    const calls: Array<{ sessionId: string; text: string; waitForSubmit?: boolean }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: (input) => {
+          calls.push(input);
+          return { sessionId: input.sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/live-pane/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "write me a poem" }),
+    });
+    expect(res.ok).toBe(true);
+    // Output is delivered over SSE, so the route returns as soon as the input is
+    // accepted and confirms the tmux submit in the background.
+    expect(calls).toEqual([{ sessionId: "codex-1", text: "write me a poem", waitForSubmit: false }]);
+  });
+
   it("rejects blank agent input over HTTP", async () => {
     const sent: Array<{ sessionId: string; text: string }> = [];
     server?.stop();
