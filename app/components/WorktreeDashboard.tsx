@@ -55,8 +55,9 @@ interface AgentState {
   pill: boolean;
 }
 
-// Attention/activity win over plain status (they need the user); otherwise fall
-// back to the runtime status. Pill states read as active; the rest are quiet words.
+// Precedence mirrors the TUI: a transient pending action (stopping/forking/…)
+// shows first, then attention signals that need the user, then the runtime
+// status. Pill states read as active; the rest are quiet words.
 function deriveAgentState(session: DesktopSession): AgentState {
   if (session.pendingAction)
     return { label: cap(session.pendingAction), kind: "waiting", pill: false };
@@ -77,15 +78,18 @@ function deriveAgentState(session: DesktopSession): AgentState {
   return { label: "Offline", kind: "offline", pill: false };
 }
 
-const PILL_CLASS: Record<StateKind, string> = {
-  running: "bg-emerald-500/15 text-emerald-400",
-  waiting: "bg-amber-500/15 text-amber-400",
-  needs: "bg-amber-500/15 text-amber-400",
-  error: "bg-red-500/15 text-red-400",
-  blocked: "bg-fuchsia-500/15 text-fuchsia-300",
-  idle: "bg-zinc-500/15 text-zinc-300",
-  offline: "bg-zinc-500/10 text-zinc-400",
-  exited: "bg-red-500/10 text-red-400",
+// Split bg/text so the background class lands only on the View and the text
+// color only on the Text — on native a Text background composites over the
+// parent's, which would darken the pill under the label.
+const PILL_BG: Record<StateKind, string> = {
+  running: "bg-emerald-500/15",
+  waiting: "bg-amber-500/15",
+  needs: "bg-amber-500/15",
+  error: "bg-red-500/15",
+  blocked: "bg-fuchsia-500/15",
+  idle: "bg-zinc-500/15",
+  offline: "bg-zinc-500/10",
+  exited: "bg-red-500/10",
 };
 
 const WORD_CLASS: Record<StateKind, string> = {
@@ -102,9 +106,9 @@ const WORD_CLASS: Record<StateKind, string> = {
 function StatusCell({ state }: { state: AgentState }) {
   if (state.pill) {
     return (
-      <View className={cn("rounded-[5px] px-2 py-0.5", PILL_CLASS[state.kind])}>
+      <View className={cn("rounded-[5px] px-2 py-0.5", PILL_BG[state.kind])}>
         <Text
-          className={cn("text-[10.5px] font-bold uppercase tracking-wide", PILL_CLASS[state.kind])}
+          className={cn("text-[10.5px] font-bold uppercase tracking-wide", WORD_CLASS[state.kind])}
         >
           {state.label}
         </Text>
@@ -250,20 +254,23 @@ interface CountChip {
 function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   let running = 0;
   let waiting = 0;
-  let quiet = 0;
+  let idle = 0;
+  let offline = 0;
   for (const session of bucket.sessions) {
     if (session.status === "running") running++;
     else if (session.status === "waiting") waiting++;
-    else quiet++;
+    else if (session.status === "idle") idle++;
+    else offline++; // offline + exited
   }
   for (const service of bucket.services) {
     if (service.status === "running") running++;
-    else quiet++;
+    else offline++;
   }
   const chips: CountChip[] = [];
   if (running > 0) chips.push({ label: `${running} running`, active: true });
   if (waiting > 0) chips.push({ label: `${waiting} waiting`, active: true });
-  if (quiet > 0) chips.push({ label: `${quiet} offline`, active: false });
+  if (idle > 0) chips.push({ label: `${idle} idle`, active: false });
+  if (offline > 0) chips.push({ label: `${offline} offline`, active: false });
   return chips;
 }
 
@@ -347,27 +354,29 @@ function WorktreeCard({
         </View>
       </View>
 
-      <View className="border-t border-[#202127] p-1">
-        {bucket.sessions.map((session, i) => (
-          <AgentRow
-            key={session.id}
-            session={session}
-            digit={i + 1}
-            selected={session.id === selectedSessionId}
-            onPress={() => onPickSession(session.id)}
-          />
-        ))}
-        {bucket.services.map((service, i) => (
-          <ServiceRow
-            key={service.id}
-            service={service}
-            digit={bucket.sessions.length + i + 1}
-            endpoint={endpoint}
-            token={token}
-            onPress={() => onPickService(service.id)}
-          />
-        ))}
-      </View>
+      {worktreeHasChildren(bucket) ? (
+        <View className="border-t border-[#202127] p-1">
+          {bucket.sessions.map((session, i) => (
+            <AgentRow
+              key={session.id}
+              session={session}
+              digit={i + 1}
+              selected={session.id === selectedSessionId}
+              onPress={() => onPickSession(session.id)}
+            />
+          ))}
+          {bucket.services.map((service, i) => (
+            <ServiceRow
+              key={service.id}
+              service={service}
+              digit={bucket.sessions.length + i + 1}
+              endpoint={endpoint}
+              token={token}
+              onPress={() => onPickService(service.id)}
+            />
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
