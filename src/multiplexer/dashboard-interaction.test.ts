@@ -857,7 +857,10 @@ describe("dashboardInteractionMethods", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.openLiveTmuxWindowForService).not.toHaveBeenCalled();
-    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1", 60_000);
+    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "service-1", tmuxWindowId: "@service" }),
+      60_000,
+    );
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.refreshDashboardModelFromService.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(host.dashboardPendingActions.clearServiceActionIfToken).toHaveBeenCalledWith("service-1", 1);
@@ -887,7 +890,7 @@ describe("dashboardInteractionMethods", () => {
     await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("missing");
 
     expect(host.openLiveTmuxWindowForService).not.toHaveBeenCalled();
-    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1");
+    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith(service);
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
     expect(host.footerFlash).toBe("Service shell is not available yet");
     expect(host.renderDashboard).toHaveBeenCalledOnce();
@@ -1324,7 +1327,7 @@ describe("dashboardInteractionMethods", () => {
     );
     expect(host.persistDashboardUiState).toHaveBeenCalled();
     expect(host.openLiveTmuxWindowForService).not.toHaveBeenCalled();
-    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1");
+    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith(service);
   });
 
   it("routes selected worktree session activation through the unified entry path", () => {
