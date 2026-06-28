@@ -55,4 +55,27 @@ describe("last-used recency", () => {
 
     expect(loadLastUsedState(projectRoot).items["agent-a"]?.lastUsedAt).toBe("2026-06-28T04:00:03.000Z");
   });
+
+  it("keeps each client's recency independent from other clients using the same item", () => {
+    markLastUsed(projectRoot, {
+      itemId: "agent-a",
+      clientSession: "client-1",
+      usedAt: "2026-06-28T04:00:01.000Z",
+    });
+    markLastUsed(projectRoot, {
+      itemId: "agent-a",
+      clientSession: "client-2",
+      usedAt: "2026-06-28T04:00:03.000Z",
+    });
+    markLastUsed(projectRoot, {
+      itemId: "agent-b",
+      clientSession: "client-1",
+      usedAt: "2026-06-28T04:00:02.000Z",
+    });
+
+    const state = loadLastUsedState(projectRoot);
+    expect(state.projectRecentIds.slice(0, 2)).toEqual(["agent-a", "agent-b"]);
+    expect(state.clients["client-1"]?.recentIds.slice(0, 2)).toEqual(["agent-b", "agent-a"]);
+    expect(state.clients["client-2"]?.recentIds.slice(0, 1)).toEqual(["agent-a"]);
+  });
 });

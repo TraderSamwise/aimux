@@ -15,7 +15,7 @@ import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest 
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import type { TmuxClientInfo } from "../tmux/runtime-manager.js";
-import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
+import { openManagedServiceWindow, openManagedSessionWindow, type TmuxServiceTarget } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
@@ -761,20 +761,23 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
 
 export function openLiveTmuxWindowForService(
   host: DashboardControlHost,
-  serviceId: string,
+  service: string | TmuxServiceTarget,
   focusContext?: { currentClientSession?: string; clientTty?: string },
 ): "opened" | "missing" | "error" {
+  const serviceTarget = normalizeServiceTarget(service);
   try {
     const target = openManagedServiceWindow(
       host.tmuxRuntimeManager,
       dashboardProjectRoot(host),
-      serviceId,
+      serviceTarget,
       focusContext,
     );
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
-    void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
-    noteLastUsedItem(host, serviceId, focusContext?.currentClientSession);
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceTarget.id }).catch(
+      () => {},
+    );
+    noteLastUsedItem(host, serviceTarget.id, focusContext?.currentClientSession);
     return "opened";
   } catch (error) {
     host.showDashboardError("Failed to open service", [
@@ -787,13 +790,14 @@ export function openLiveTmuxWindowForService(
 
 export async function waitAndOpenLiveTmuxWindowForService(
   host: DashboardControlHost,
-  serviceId: string,
+  service: string | TmuxServiceTarget,
   timeoutMs = 3000,
 ): Promise<"opened" | "missing" | "error"> {
+  const serviceTarget = normalizeServiceTarget(service);
   const activationToken = host.dashboardActivationToken;
   const deadline = Date.now() + timeoutMs;
   if (host.mode === "dashboard" && canFocusLocalTmux(host)) {
-    const localResult = openLiveTmuxWindowForService(host, serviceId, dashboardControlClientContext(host));
+    const localResult = openLiveTmuxWindowForService(host, serviceTarget, dashboardControlClientContext(host));
     if (localResult !== "missing") return localResult;
   }
   while (Date.now() < deadline) {
@@ -801,8 +805,8 @@ export async function waitAndOpenLiveTmuxWindowForService(
     const remainingMs = Math.max(100, deadline - Date.now());
     const result =
       host.mode === "dashboard"
-        ? await openProjectServiceNotificationTarget(host, serviceId, "service", remainingMs, activationToken)
-        : openLiveTmuxWindowForService(host, serviceId);
+        ? await openProjectServiceNotificationTarget(host, serviceTarget.id, "service", remainingMs, activationToken)
+        : openLiveTmuxWindowForService(host, serviceTarget);
     if (result !== "missing") return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -866,10 +870,12 @@ function dashboardControlClientContext(host: DashboardControlHost): {
 } {
   try {
     const tmux = host.tmuxRuntimeManager;
-    const dashboardPaneTarget =
+    const viewportTarget =
       typeof host.getDashboardViewportTarget === "function"
         ? (host.getDashboardViewportTarget() ?? undefined)
-        : process.env.TMUX_PANE?.trim() || undefined;
+        : undefined;
+    const envDashboardPaneTarget = process.env.TMUX_PANE?.trim() || undefined;
+    const dashboardPaneTarget = viewportTarget ?? envDashboardPaneTarget;
     const dashboardWindowId =
       (dashboardPaneTarget ? tmux.displayMessage?.("#{window_id}", dashboardPaneTarget) : null) ??
       tmux.displayMessage?.("#{window_id}") ??
@@ -891,6 +897,10 @@ function dashboardControlClientContext(host: DashboardControlHost): {
   } catch {
     return {};
   }
+}
+
+function normalizeServiceTarget(service: string | TmuxServiceTarget): TmuxServiceTarget {
+  return typeof service === "string" ? { id: service } : service;
 }
 
 export function noteLastUsedItem(host: DashboardControlHost, itemId: string, clientSession?: string): void {

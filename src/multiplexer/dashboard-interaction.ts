@@ -867,7 +867,9 @@ export const dashboardInteractionMethods = {
           : await this.resumeOfflineServiceWithFeedback(service).then(() => "resumed" as const);
       if (resumeResult !== "resumed") return resumeResult;
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      const result = await this.waitAndOpenLiveTmuxWindowForService(service.id, 60_000);
+      const serviceForOpen =
+        this.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? service;
+      const result = await this.waitAndOpenLiveTmuxWindowForService(serviceForOpen, 60_000);
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       void refreshDashboardAfterServiceOpen(this, activationToken);
       if (result !== "opened") {
@@ -877,7 +879,7 @@ export const dashboardInteractionMethods = {
       }
       return result;
     }
-    const openResult = await this.waitAndOpenLiveTmuxWindowForService(service.id);
+    const openResult = await this.waitAndOpenLiveTmuxWindowForService(service);
     if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
     if (openResult !== "opened") {
       await refreshDashboardModelThroughApi(this, { force: true });

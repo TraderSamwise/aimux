@@ -906,11 +906,18 @@ describe("dashboard live target activation", () => {
         windowIndex: 3,
         windowName: "shell",
       };
+      const duplicateTarget = {
+        sessionName: "aimux-repo",
+        windowId: "@duplicate-service",
+        windowIndex: 4,
+        windowName: "shell",
+      };
       const host: any = {
         mode: "dashboard",
         projectRoot,
         postToProjectService: vi.fn(async () => ({ ok: true })),
         invalidateDesktopStateSnapshot: vi.fn(),
+        getDashboardViewportTarget: vi.fn(() => undefined),
         tmuxRuntimeManager: {
           currentClientSession: vi.fn(() => "stale-client-session"),
           displayMessage: vi.fn((format: string, targetArg?: string) => {
@@ -931,6 +938,10 @@ describe("dashboard live target activation", () => {
           listProjectManagedWindows: vi.fn(() => [
             {
               metadata: { kind: "service", sessionId: "service-1" },
+              target: duplicateTarget,
+            },
+            {
+              metadata: { kind: "service", sessionId: "service-1" },
               target,
             },
           ]),
@@ -941,9 +952,12 @@ describe("dashboard live target activation", () => {
         showDashboardError: vi.fn(),
       };
 
-      await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1", 1200)).resolves.toBe("opened");
+      await expect(
+        waitAndOpenLiveTmuxWindowForService(host, { id: "service-1", tmuxWindowId: "@service" }, 1200),
+      ).resolves.toBe("opened");
 
       expect(host.tmuxRuntimeManager.switchClientToTarget).toHaveBeenCalledWith("/dev/live", target);
+      expect(host.tmuxRuntimeManager.displayMessage).toHaveBeenCalledWith("#{window_id}", "%dashboard");
       expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]?.recentIds[0]).toBe("service-1");
       expect(loadLastUsedState(projectRoot).clients["stale-client-session"]).toBeUndefined();
       expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
