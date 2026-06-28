@@ -111,11 +111,8 @@ function showWindowOptions() {
   const targetIndex = args.indexOf("-t");
   const windowId = targetIndex >= 0 ? args[targetIndex + 1] : "";
   const key = args.at(-1);
-  let value =
+  const value =
     key === "@aimux-meta" ? state.windowMetadata?.[windowId] && JSON.stringify(state.windowMetadata[windowId]) : state.windowOptions?.[windowId]?.[key];
-  if (value == null && key === "@aimux-dashboard-ready") {
-    value = state.windowOptions?.[windowId]?.["@aimux-dashboard-build"];
-  }
   if (value == null) fail();
   out(value);
 }
@@ -404,6 +401,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-current",
         },
       },
@@ -507,6 +505,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-current",
         },
       },
@@ -571,6 +570,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-current",
         },
       },
@@ -841,6 +841,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-current",
         },
       },
@@ -909,6 +910,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-stale",
         },
       },
@@ -973,6 +975,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-current",
         },
       },
@@ -1025,6 +1028,7 @@ describe("tmux-control.sh", () => {
       windowOptions: {
         "@dash": {
           "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-ready": "build-current",
           "@aimux-dashboard-owner": "owner-current",
         },
       },

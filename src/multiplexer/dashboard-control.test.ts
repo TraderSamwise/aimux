@@ -2200,6 +2200,35 @@ describe("refreshRuntimeGuard", () => {
     }
   });
 
+  it("only replays the first local navigation key from coalesced busy-overlay input", async () => {
+    vi.useFakeTimers();
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    try {
+      const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+      expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("\rn"))).toBe(true);
+      expect(host.handleDashboardKey).not.toHaveBeenCalled();
+
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+      host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+      host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+      host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(host.handleDashboardKey).toHaveBeenCalledOnce();
+      expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not replay mutating keys swallowed by reconnect overlays", async () => {
     mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = runtimeGuardHost() as any;
