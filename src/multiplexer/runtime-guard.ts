@@ -1,4 +1,5 @@
-import { requestJson } from "../http-client.js";
+import { realpathSync } from "node:fs";
+import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
 import { getProjectStateDirFor } from "../paths.js";
 import {
@@ -17,6 +18,31 @@ import {
 
 // A dead/wedged service must not stall the dashboard loop, so the health probe is bounded.
 const HEALTH_TIMEOUT_MS = 2500;
+
+function sameFilesystemPath(a: string | null, b: string): boolean {
+  if (!a) return false;
+  const normalize = (value: string) => {
+    try {
+      return realpathSync(value);
+    } catch {
+      return value;
+    }
+  };
+  return normalize(a) === normalize(b);
+}
+
+function isProjectServiceConnectionError(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "EPIPE" ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("ECONNRESET") ||
+    message.includes("socket hang up")
+  );
+}
 
 /**
  * Whether the running dashboard is safe to act through. Drift states trigger repair;
@@ -121,16 +147,29 @@ function readRuntimeRebuildRequired(projectRoot: string): boolean {
     if (!tmux.isAvailable()) return false;
     const sessionName = tmux.getProjectSession(projectRoot).sessionName;
     const sessionNames = tmux.listSessionNames();
-    if (!sessionNames.includes(sessionName)) return false;
-    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1") return true;
-    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
+    if (!sessionNames.includes(sessionName)) {
+      return false;
+    }
+    const rebuildMarker = tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION);
+    if (rebuildMarker === "1") {
+      return true;
+    }
+    const hostProjectRoot = tmux.getSessionOption(sessionName, "@aimux-project-root") || projectRoot;
+    const hostContract = tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
+    if (hostContract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
       return true;
     }
     return sessionNames
       .filter((name) => isTmuxClientSessionForHost(name, sessionName))
-      .some(
-        (name) => tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
-      );
+      .some((name) => {
+        const clientHost = tmux.getSessionOption(name, "@aimux-host-session");
+        if (clientHost !== sessionName) return false;
+        const clientRoot = tmux.getSessionOption(name, "@aimux-project-root");
+        if (!sameFilesystemPath(clientRoot, hostProjectRoot)) return false;
+        const clientContract = tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION);
+        if (clientContract === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) return false;
+        return true;
+      });
   } catch {
     return false;
   }
@@ -163,8 +202,12 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
         } else {
           serviceManifest = "unreachable";
         }
-      } catch {
-        serviceManifest = "unreachable";
+      } catch (error) {
+        if (isHttpTimeoutError(error) && !isProjectServiceConnectionError(error)) {
+          serviceManifest = getProjectServiceManifest();
+        } else {
+          serviceManifest = "unreachable";
+        }
       }
     }
   } catch {
