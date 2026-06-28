@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -45,13 +45,16 @@ function shouldHideDesktopProject(projectPath: string, tmpDirs = getHiddenProjec
     return true;
   }
   const name = basename(projectPath);
-  const isTmpProject = [...tmpDirs].some((tmpDir) => projectPath.startsWith(tmpDir));
+  const isTmpProject = [...tmpDirs].some((tmpDir) => {
+    const rel = relative(tmpDir, projectPath);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  });
   return isTmpProject && name.startsWith("aimux-");
 }
 
-function getConfiguredTmuxSessionPrefix(): string {
+function getConfiguredTmuxSessionPrefix(projectRoot: string): string {
   try {
-    return loadConfig().runtime.tmux.sessionPrefix || "aimux";
+    return loadConfig({ projectRoot }).runtime.tmux.sessionPrefix || "aimux";
   } catch {
     return "aimux";
   }
@@ -233,15 +236,17 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
 
 export function listRegisteredDesktopProjects(): DesktopProjectInfo[] {
   const tmpDirs = getHiddenProjectTmpDirs();
-  const sessionPrefix = getConfiguredTmuxSessionPrefix();
   return listProjects()
     .filter((entry) => !shouldHideDesktopProject(entry.repoRoot, tmpDirs))
-    .map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      path: entry.repoRoot,
-      lastSeen: entry.lastSeen,
-      dashboardSessionName: `${sessionPrefix}-${entry.id}`,
-    }))
+    .map((entry) => {
+      const sessionPrefix = getConfiguredTmuxSessionPrefix(entry.repoRoot);
+      return {
+        id: entry.id,
+        name: entry.name,
+        path: entry.repoRoot,
+        lastSeen: entry.lastSeen,
+        dashboardSessionName: `${sessionPrefix}-${entry.id}`,
+      };
+    })
     .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 }

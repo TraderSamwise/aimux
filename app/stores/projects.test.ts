@@ -33,4 +33,16 @@ describe("reconcileProjectList", () => {
     expect(next).not.toBe(previous);
     expect(next.map((entry) => entry.name)).toEqual(["Alpha", "Beta"]);
   });
+
+  it("sorts duplicate project names by stable project identity", () => {
+    const incoming = [
+      project({ id: "z", name: "Same", path: "/repo/z" }),
+      project({ id: "a", name: "Same", path: "/repo/a" }),
+      project({ id: "b", name: "Same", path: "/repo/a" }),
+    ];
+
+    const next = reconcileProjectList([], incoming);
+
+    expect(next.map((entry) => entry.id)).toEqual(["a", "b", "z"]);
+  });
 });

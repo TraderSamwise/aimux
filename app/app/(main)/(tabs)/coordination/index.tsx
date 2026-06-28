@@ -113,14 +113,14 @@ function WorklistSection({
 export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint } = useRouteProject();
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
+  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const [items, setItems] = useState<CoordinationWorklistItem[]>([]);
   const [itemsKey, setItemsKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -186,15 +186,15 @@ export default function CoordinationScreen() {
   function handlePressItem(item: CoordinationWorklistItem) {
     if (item.sessionId) {
       selectSession(item.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", item.sessionId, project?.path));
+      router.push(detailHrefForPath(pathname, "agent", item.sessionId, projectPath));
       return;
     }
     const threadId = threadIdFor(item);
     if (threadId) {
-      router.push(buildViewHref("/threads", { project: project?.path, threadId }));
+      router.push(buildViewHref("/threads", { project: projectPath, threadId }));
       return;
     }
-    router.push(buildViewHref("/notifications", { project: project?.path }));
+    router.push(buildViewHref("/notifications", { project: projectPath }));
   }
 
   return (

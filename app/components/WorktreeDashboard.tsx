@@ -578,7 +578,7 @@ export function WorktreeList({
 // horizontal page padding for full-bleed callers; embedded callers (the Project
 // screen) pass false to align with their own page padding.
 export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { projectPath, endpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
   const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
   const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectPath));
@@ -607,18 +607,18 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
 
   function handlePickSession(sessionId: string) {
     selectSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, project?.path));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
+    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
   }
 
   function handleKillSession(sessionId: string) {
     if (selectedSessionId !== sessionId) return;
     selectSession(null);
     if (pathname.includes("/agent/")) {
-      router.replace(parentViewHrefForPath(pathname, project?.path));
+      router.replace(parentViewHrefForPath(pathname, projectPath));
     }
   }
 

@@ -46,7 +46,7 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function ServiceDetailScreen() {
   const params = useLocalSearchParams<{ serviceId?: string | string[] }>();
   const serviceId = singleRouteParam(params.serviceId);
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { projectPath, endpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
   const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const setDesktopState = useSetAtom(desktopStateFamily(stateProjectPath));
@@ -141,7 +141,7 @@ export default function ServiceDetailScreen() {
 
   function goBack() {
     if (router.canGoBack()) router.back();
-    else router.replace(parentViewHrefForPath(pathname, project?.path));
+    else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
 
   return (

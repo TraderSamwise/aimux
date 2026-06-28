@@ -56,7 +56,7 @@ function DocumentRow({
 export default function LibraryScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
@@ -68,7 +68,7 @@ export default function LibraryScreen() {
   const [error, setError] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
+  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
   const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
@@ -180,7 +180,7 @@ export default function LibraryScreen() {
                 selected={document.id === selectedDocument?.id}
                 onPress={() =>
                   router.replace(
-                    buildViewHref("/library", { project: project?.path, document: document.id }),
+                    buildViewHref("/library", { project: projectPath, document: document.id }),
                   )
                 }
               />

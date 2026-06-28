@@ -14,7 +14,7 @@ import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { cn } from "@/lib/utils";
 
 export default function ThreadsScreen() {
-  const { project, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint } = useRouteProject();
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -32,7 +32,7 @@ export default function ThreadsScreen() {
   const endpointHost = endpoint?.host;
   const endpointPort = endpoint?.port;
   const endpointKey =
-    endpointHost && endpointPort ? `${project?.path ?? ""}|${endpointHost}:${endpointPort}` : null;
+    endpointHost && endpointPort ? `${projectPath ?? ""}|${endpointHost}:${endpointPort}` : null;
   const visibleThreads = threadsKey === endpointKey ? threads : [];
   const visibleError = errorKey === endpointKey ? error : null;
 
@@ -118,7 +118,7 @@ export default function ThreadsScreen() {
                 onPress={() =>
                   router.replace(
                     buildViewHref("/threads", {
-                      project: project?.path,
+                      project: projectPath,
                       threadId: t.thread.id,
                     }),
                   )

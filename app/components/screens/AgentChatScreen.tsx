@@ -453,7 +453,7 @@ export default function ChatScreen() {
 
   function goBack() {
     if (router.canGoBack()) router.back();
-    else router.replace(parentViewHrefForPath(pathname, project?.path));
+    else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
 
   const terminalPane = (
@@ -528,7 +528,10 @@ export default function ChatScreen() {
                   sessionId
                     ? router.push({
                         pathname: "/plans/[sessionId]",
-                        params: { sessionId },
+                        params: {
+                          sessionId,
+                          ...(projectPath ? { project: projectPath } : {}),
+                        },
                       })
                     : undefined
                 }

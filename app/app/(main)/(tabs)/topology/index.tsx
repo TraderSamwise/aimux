@@ -196,14 +196,14 @@ function RowsList({
 }
 
 export default function TopologyScreen() {
-  const { project, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
     project?: string | string[];
   }>();
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
+  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
@@ -275,11 +275,11 @@ export default function TopologyScreen() {
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, project?.path));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
+    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
   }
 
   return (
@@ -331,9 +331,7 @@ export default function TopologyScreen() {
               options={VIEW_OPTIONS}
               value={mode}
               onChange={(nextMode) =>
-                router.replace(
-                  buildViewHref("/topology", { project: project.path, mode: nextMode }),
-                )
+                router.replace(buildViewHref("/topology", { project: projectPath, mode: nextMode }))
               }
               className="ml-3"
             />
