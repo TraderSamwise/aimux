@@ -61,7 +61,12 @@ if [ -f "$ICON_SRC" ] && command -v sips >/dev/null 2>&1 && command -v iconutil 
   sips -z 512 512 "$ICON_SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
   sips -z 512 512 "$ICON_SRC" --out "$ICONSET/icon_512x512.png" >/dev/null
   cp "$ICON_SRC" "$ICONSET/icon_512x512@2x.png"
-  iconutil -c icns "$ICONSET" -o "$RESOURCES_DIR/Aimux.icns"
+  if ! iconutil -c icns "$ICONSET" -o "$RESOURCES_DIR/Aimux.icns"; then
+    echo "warning: failed to build Aimux.icns; continuing with default app icon" >&2
+    if command -v plutil >/dev/null 2>&1; then
+      plutil -remove CFBundleIconFile "$CONTENTS_DIR/Info.plist" >/dev/null 2>&1 || true
+    fi
+  fi
 fi
 
 chmod +x "$MACOS_DIR/aimux-notifier"
