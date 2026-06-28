@@ -96,7 +96,7 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "./runtime-owner.js";
 import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
@@ -2287,13 +2287,16 @@ export class MetadataServer {
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
+        const currentReadyStamp = tmux.getWindowOption(target, TMUX_DASHBOARD_READY_OPTION);
         const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
         const currentOwner = getRuntimeOwnerId();
         if (
           !tmux.isWindowAlive(target) ||
           currentBuildStamp !== dashboardBuildStamp ||
+          currentReadyStamp !== dashboardBuildStamp ||
           currentDashboardOwner !== currentOwner
         ) {
+          tmux.setWindowOption(target, TMUX_DASHBOARD_READY_OPTION, "");
           tmux.respawnWindow(target, dashboardCommand);
         }
         tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
