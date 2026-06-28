@@ -1112,6 +1112,58 @@ describe("daemon routing (relay + proxy)", () => {
     expect(res.body).toMatchObject({ ok: false });
   });
 
+  it("does not report retained unverified project records as live services", async () => {
+    execFileSyncMock.mockReturnValue("node unrelated-process.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const retainedPid = 43_101;
+    livePids.add(retainedPid);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(retainedPid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: retainedPid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    const res = await daemon.routeRequest("GET", "/projects");
+
+    expect(res.status).toBe(200);
+    const [project] = (res.body as any).projects;
+    expect(project.serviceAlive).toBe(false);
+    expect(project.service).toBeNull();
+  });
+
+  it("reports verified retained project records as live services", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const retainedPid = 43_102;
+    livePids.add(retainedPid);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(retainedPid);
+    execFileSyncMock.mockReturnValue(
+      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
+        projectRoot,
+      )} --project-root ${projectRoot}`,
+    );
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: retainedPid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    const res = await daemon.routeRequest("GET", "/projects");
+
+    expect(res.status).toBe(200);
+    const [project] = (res.body as any).projects;
+    expect(project.serviceAlive).toBe(true);
+    expect(project.service).toMatchObject({ pid: retainedPid });
+  });
+
   it("allows browser preflight requests to daemon routes", async () => {
     const originalPort = process.env.AIMUX_DAEMON_PORT;
     const port = "49191";

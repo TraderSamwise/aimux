@@ -2294,7 +2294,10 @@ describe("refreshRuntimeGuard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
-  it("does not replay a swallowed mutating key after reconnect", async () => {
+  it.each([
+    ["mutating key", "n"],
+    ["shifted Library shortcut", "L"],
+  ])("does not replay a swallowed %s after reconnect", async (_label, rawKey) => {
     mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = runtimeGuardHost() as any;
     host.runtimeGuardState = { kind: "disconnected" };
@@ -2305,7 +2308,7 @@ describe("refreshRuntimeGuard", () => {
     host.getDashboardSessions = vi.fn(() => []);
 
     const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
-    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("n"))).toBe(true);
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from(rawKey))).toBe(true);
 
     host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
     host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
