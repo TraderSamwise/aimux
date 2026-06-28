@@ -27,11 +27,15 @@ export function useRouteProject(): RouteProject {
     [projects, routeProjectPath],
   );
   const project = routeProjectPath ? routeProject : selectedProject;
+  const endpoint = useMemo(() => getProjectServiceEndpoint(project), [project]);
 
-  return {
-    project,
-    projectPath: routeProjectPath ?? project?.path ?? null,
-    endpoint: getProjectServiceEndpoint(project),
-    routeProjectPath,
-  };
+  return useMemo(
+    () => ({
+      project,
+      projectPath: routeProjectPath ?? project?.path ?? null,
+      endpoint,
+      routeProjectPath,
+    }),
+    [endpoint, project, routeProjectPath],
+  );
 }
