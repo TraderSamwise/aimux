@@ -31,6 +31,12 @@ export interface HeartbeatHandle {
   stop: () => void;
 }
 
+type EventSourceLike = {
+  addEventListener: (name: string, handler: (ev: MessageEvent) => void) => void;
+  close: () => void;
+  onerror?: ((event: Event) => void) | null;
+};
+
 const SSE_EVENT_NAMES = [
   PROJECT_API_EVENT_NAMES.ready,
   PROJECT_API_EVENT_NAMES.alert,
@@ -73,23 +79,28 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
 
   const url = `${getServiceUrl(serviceEndpoint)}${eventPath}`;
 
-  // heartbeatTimeout: how long we tolerate silence on the wire before the polyfill
-  // tears down and reconnects. Server sends `: keepalive\n\n` every 15s; pick 30s.
-  const es = new EventSourcePolyfill(url, {
-    headers,
-    heartbeatTimeout: 30_000,
-    withCredentials: false,
-  });
+  const NativeEventSource = getNativeBrowserEventSource(serviceEndpoint);
+  const es: EventSourceLike = NativeEventSource
+    ? new NativeEventSource(url)
+    : new EventSourcePolyfill(url, {
+        headers,
+        heartbeatTimeout: 30_000,
+        withCredentials: false,
+      });
 
   let stopped = false;
 
   function dispatch(name: string, ev: MessageEvent) {
     if (stopped) return;
+    const raw = typeof ev.data === "string" ? ev.data.trim() : "";
+    if (!raw) return;
+
     let payload: unknown;
     try {
-      payload = JSON.parse(ev.data);
+      payload = JSON.parse(raw);
     } catch (err) {
-      onError?.(err instanceof Error ? err : new Error(String(err)));
+      const detail = err instanceof Error ? err.message : String(err);
+      onError?.(new Error(`heartbeat event ${name} included invalid JSON: ${detail}`));
       return;
     }
     dispatchPayload(name, payload, onEvent, onError);
@@ -99,12 +110,8 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   // event names; cast to bypass that restriction so we can listen to custom events.
   // bind(es) is required because the polyfill's addEventListener uses `this._listeners`
   // internally — calling the bare function reference loses the EventSource instance.
-  const addListener = es.addEventListener.bind(es) as unknown as (
-    name: string,
-    handler: (ev: MessageEvent) => void,
-  ) => void;
   for (const name of SSE_EVENT_NAMES) {
-    addListener(name, (ev) => dispatch(name, ev));
+    es.addEventListener(name, (ev) => dispatch(name, ev));
   }
 
   es.onerror = (event) => {
@@ -128,6 +135,19 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
       es.close();
     },
   };
+}
+
+function getNativeBrowserEventSource(
+  serviceEndpoint: ServiceEndpoint,
+): (new (url: string) => EventSourceLike) | null {
+  if (!isLoopbackHost(serviceEndpoint.host)) return null;
+  if (typeof window === "undefined") return null;
+  if (typeof window.EventSource !== "function") return null;
+  return window.EventSource as unknown as new (url: string) => EventSourceLike;
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
 function dispatchPayload(

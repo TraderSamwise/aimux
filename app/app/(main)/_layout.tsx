@@ -373,14 +373,14 @@ export default function MainLayout() {
           },
           onError: (err) => {
             if (!cancelled) {
-              console.warn("notification heartbeat failed:", err);
+              console.warn("notification heartbeat failed:", getErrorMessage(err));
               scheduleReconnect();
             }
           },
         });
       } catch (err) {
         if (!cancelled) {
-          console.warn("notification heartbeat setup failed:", err);
+          console.warn("notification heartbeat setup failed:", getErrorMessage(err));
           scheduleReconnect();
         }
       }
@@ -449,4 +449,8 @@ function isProjectScopedPath(pathname: string) {
   return PROJECT_SCOPED_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || (prefix !== "/" && pathname.startsWith(`${prefix}/`)),
   );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
