@@ -11,11 +11,11 @@ import { getDesktopState } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { singleRouteParam } from "@/lib/route-params";
+import { useRouteProject } from "@/lib/use-route-project";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
-import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 import { relayStatusAtom } from "@/stores/relay";
 
 function findService(
@@ -46,11 +46,10 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function ServiceDetailScreen() {
   const params = useLocalSearchParams<{ serviceId?: string | string[] }>();
   const serviceId = singleRouteParam(params.serviceId);
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
-  const projectPath = project?.path ?? "";
-  const groups = useAtomValue(worktreeGroupsFamily(projectPath));
-  const setDesktopState = useSetAtom(desktopStateFamily(projectPath));
+  const { project, projectPath, endpoint } = useRouteProject();
+  const stateProjectPath = projectPath ?? "";
+  const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
+  const setDesktopState = useSetAtom(desktopStateFamily(stateProjectPath));
   const relayStatus = useAtomValue(relayStatusAtom);
   const router = useRouter();
   const pathname = usePathname();

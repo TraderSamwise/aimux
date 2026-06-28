@@ -33,10 +33,10 @@ import {
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { useRouteProject } from "@/lib/use-route-project";
 import { useKeyboardInset } from "@/lib/use-keyboard-visible";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import {
@@ -46,7 +46,7 @@ import {
   parsedOutputFamily,
 } from "@/stores/chat";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
-import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
@@ -69,9 +69,10 @@ export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
-  const project = useAtomValue(selectedProjectAtom);
-  const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
-  const worktreeGroups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
+  const { project, projectPath, endpoint: serviceEndpoint } = useRouteProject();
+  const stateProjectPath = projectPath ?? "";
+  const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
+  const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
@@ -127,7 +128,6 @@ export default function ChatScreen() {
     };
   }, [getToken]);
 
-  const serviceEndpoint = getProjectServiceEndpoint(project);
   const endpointKey = serviceEndpoint ? `${serviceEndpoint.host}:${serviceEndpoint.port}` : null;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
 

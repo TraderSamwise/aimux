@@ -16,13 +16,10 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { useRouteProject } from "@/lib/use-route-project";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
-import {
-  selectedProjectAtom,
-  selectedProjectEndpointAtom,
-  selectedSessionIdAtom,
-} from "@/stores/projects";
+import { selectedSessionIdAtom } from "@/stores/projects";
 
 function reachabilityLabel(reachability: CoordinationReachability): string {
   switch (reachability) {
@@ -116,8 +113,7 @@ function WorklistSection({
 export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const { project, endpoint } = useRouteProject();
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const { getToken } = useAuth();

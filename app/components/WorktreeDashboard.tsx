@@ -14,17 +14,14 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
+import { useRouteProject } from "@/lib/use-route-project";
 import { detailHrefForPath, parentViewHrefForPath } from "@/lib/view-location";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
   worktreeGroupsFamily,
 } from "@/stores/desktopState";
-import {
-  selectedProjectAtom,
-  selectedProjectEndpointAtom,
-  selectedSessionIdAtom,
-} from "@/stores/projects";
+import { selectedSessionIdAtom } from "@/stores/projects";
 import { projectStateErrorCopy } from "@/lib/project-connection-display";
 
 // TUI-styled worktree dashboard: each worktree is a contained, tinted card
@@ -581,11 +578,11 @@ export function WorktreeList({
 // horizontal page padding for full-bleed callers; embedded callers (the Project
 // screen) pass false to align with their own page padding.
 export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
-  const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
-  const desktopStateError = useAtomValue(desktopStateErrorFamily(project?.path ?? ""));
-  const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
+  const { project, projectPath, endpoint } = useRouteProject();
+  const stateProjectPath = projectPath ?? "";
+  const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
+  const desktopStateError = useAtomValue(desktopStateErrorFamily(stateProjectPath));
+  const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
