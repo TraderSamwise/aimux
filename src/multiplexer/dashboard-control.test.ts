@@ -670,7 +670,7 @@ describe("dashboard live target activation", () => {
       await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1200)).resolves.toBe("opened");
 
       expect(host.tmuxRuntimeManager.switchClientToTarget).toHaveBeenCalledWith("/dev/live", target);
-      expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]?.recentIds[0]).toBe("codex-1");
+      expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]).toBeUndefined();
       expect(loadLastUsedState(projectRoot).clients["stale-client-session"]).toBeUndefined();
       expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
         itemId: "codex-1",
@@ -719,6 +719,38 @@ describe("dashboard live target activation", () => {
     await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1200)).resolves.toBe("opened");
 
     expect(host.tmuxRuntimeManager.switchClientToTarget).not.toHaveBeenCalled();
+    expect(host.postToProjectService).toHaveBeenNthCalledWith(
+      1,
+      "/control/open-notification-target",
+      {
+        sessionId: "codex-1",
+        focus: false,
+      },
+      { timeoutMs: expect.any(Number) },
+    );
+  });
+
+  it("falls back to the project-service control API when local agent focus errors", async () => {
+    const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+        listClients: vi.fn(() => []),
+        listProjectManagedWindows: vi.fn(() => {
+          throw new Error("tmux list failed");
+        }),
+      },
+      showDashboardError: vi.fn(),
+    };
+
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1", status: "running" }, 1200)).resolves.toBe(
+      "opened",
+    );
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
     expect(host.postToProjectService).toHaveBeenNthCalledWith(
       1,
       "/control/open-notification-target",
@@ -958,7 +990,7 @@ describe("dashboard live target activation", () => {
 
       expect(host.tmuxRuntimeManager.switchClientToTarget).toHaveBeenCalledWith("/dev/live", target);
       expect(host.tmuxRuntimeManager.displayMessage).toHaveBeenCalledWith("#{window_id}", "%dashboard");
-      expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]?.recentIds[0]).toBe("service-1");
+      expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]).toBeUndefined();
       expect(loadLastUsedState(projectRoot).clients["stale-client-session"]).toBeUndefined();
       expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
         itemId: "service-1",
@@ -1007,6 +1039,36 @@ describe("dashboard live target activation", () => {
     await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1", 1200)).resolves.toBe("opened");
 
     expect(host.tmuxRuntimeManager.switchClientToTarget).not.toHaveBeenCalled();
+    expect(host.postToProjectService).toHaveBeenNthCalledWith(
+      1,
+      "/control/open-notification-target",
+      {
+        sessionId: "service-1",
+        focus: false,
+      },
+      { timeoutMs: expect.any(Number) },
+    );
+  });
+
+  it("falls back to the project-service control API when local service focus errors", async () => {
+    const { waitAndOpenLiveTmuxWindowForService } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+        listClients: vi.fn(() => []),
+        listProjectManagedWindows: vi.fn(() => {
+          throw new Error("tmux list failed");
+        }),
+      },
+      showDashboardError: vi.fn(),
+    };
+
+    await expect(waitAndOpenLiveTmuxWindowForService(host, "service-1", 1200)).resolves.toBe("opened");
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
     expect(host.postToProjectService).toHaveBeenNthCalledWith(
       1,
       "/control/open-notification-target",
