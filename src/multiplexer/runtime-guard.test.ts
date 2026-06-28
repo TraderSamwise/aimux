@@ -553,10 +553,10 @@ describe("handleRuntimeGuardKey", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
-  it("swallows lowercase right-navigation while guarded on the dashboard", () => {
+  it("lets lowercase right-navigation focus a live local tmux agent while guarded", () => {
     const host = stubHost({ kind: "disconnected" });
-    expect(handleRuntimeGuardKey(host, Buffer.from("l"))).toBe(true);
-    expect(host.footerFlash).toContain("reconnecting");
+    expect(handleRuntimeGuardKey(host, Buffer.from("l"))).toBe(false);
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
   it("keeps Enter blocked for offline sessions because they resume through the API", () => {
@@ -618,6 +618,7 @@ describe("handleRuntimeGuardKey", () => {
     host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
 
     expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(false);
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("l"))).toBe(false);
     expect(handleActiveDashboardOverlayKey(host, Buffer.from("n"))).toBe(true);
 
     host.runtimeGuardRepairBusy = false;
@@ -629,6 +630,7 @@ describe("handleRuntimeGuardKey", () => {
     };
 
     expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(false);
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("l"))).toBe(false);
     expect(handleActiveDashboardOverlayKey(host, Buffer.from("n"))).toBe(true);
   });
 });

@@ -201,7 +201,7 @@ function isGuardedLocalDashboardNavigation(host: DashboardControlHost, key: stri
   if (host.dashboardState?.screen !== "dashboard") return false;
   const command = key.length === 1 ? key.toLowerCase() : key;
   if (command === "escape" || command === "left" || command === "h") return true;
-  if (command !== "enter" && command !== "return" && command !== "right") return false;
+  if (command !== "enter" && command !== "return" && command !== "right" && command !== "l") return false;
   if (host.dashboardState?.level === "worktrees") return true;
   if (!canFocusLocalTmux(host)) return false;
   const selected = selectedDashboardWorktreeEntry(host);
@@ -219,6 +219,7 @@ function isDashboardLocalNavigationKey(host: DashboardControlHost, key: string):
     command === "escape" ||
     command === "left" ||
     command === "h" ||
+    command === "l" ||
     command === "enter" ||
     command === "return" ||
     command === "right"
