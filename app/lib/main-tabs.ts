@@ -3,7 +3,7 @@ import { useGlobalSearchParams, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
 import { selectedProjectPathAtom } from "@/stores/projects";
 import {
-  buildViewPath,
+  buildViewHref,
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
@@ -112,7 +112,7 @@ export function useMainTabNavigation() {
 
   return useCallback(
     (tabId: MainTabId) => {
-      router.navigate(buildViewPath(MAIN_TAB_ROUTES[tabId].href, { project: currentProjectPath }));
+      router.replace(buildViewHref(MAIN_TAB_ROUTES[tabId].href, { project: currentProjectPath }));
     },
     [currentProjectPath, router],
   );
