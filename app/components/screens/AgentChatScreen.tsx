@@ -159,7 +159,7 @@ export default function ChatScreen() {
         },
         onError: (err) => {
           if (cancelled) return;
-          console.warn("heartbeat error:", err);
+          console.warn("heartbeat error:", getErrorMessage(err));
           scheduleReconnect();
         },
       });
@@ -784,4 +784,8 @@ export default function ChatScreen() {
       </View>
     </View>
   );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
