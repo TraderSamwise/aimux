@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
@@ -8,6 +8,7 @@ import { ThreadWorkflowActions } from "@/components/workflow-actions";
 import { useAuth } from "@/lib/auth";
 import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { selectedProjectAtom } from "@/stores/projects";
@@ -17,6 +18,7 @@ export default function ThreadsScreen() {
   const project = useAtomValue(selectedProjectAtom);
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
+  const getTokenRef = useRef(getToken);
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ threadId?: string | string[] }>();
   const selectedThreadId = cleanSearchValue(searchParams.threadId);
@@ -34,29 +36,36 @@ export default function ThreadsScreen() {
   const visibleError = errorKey === endpointKey ? error : null;
 
   useEffect(() => {
-    if (!endpointHost || !endpointPort || !endpointKey) return;
+    getTokenRef.current = getToken;
+  }, [getToken]);
+
+  const refresh = useCallback(async () => {
+    if (!endpointHost || !endpointPort || !endpointKey) {
+      setThreads([]);
+      setThreadsKey(null);
+      setError(null);
+      setErrorKey(null);
+      return;
+    }
     const currentEndpoint = { host: endpointHost, port: endpointPort };
-    let cancelled = false;
-    (async () => {
-      try {
-        const token = await getToken();
-        const data = await listThreads(currentEndpoint, undefined, { token });
-        if (cancelled) return;
-        setThreads(Array.isArray(data) ? data : []);
-        setThreadsKey(endpointKey);
-        setError(null);
-        setErrorKey(null);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-          setErrorKey(endpointKey);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [endpointHost, endpointKey, endpointPort, getToken, refreshNonce]);
+    try {
+      const token = await getTokenRef.current();
+      const data = await listThreads(currentEndpoint, undefined, { token });
+      setThreads(Array.isArray(data) ? data : []);
+      setThreadsKey(endpointKey);
+      setError(null);
+      setErrorKey(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setErrorKey(endpointKey);
+    }
+  }, [endpointHost, endpointKey, endpointPort]);
+
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
+
+  useEffect(() => {
+    void serializedRefresh();
+  }, [endpointKey, refreshNonce, serializedRefresh]);
 
   return (
     <Page>
