@@ -2909,7 +2909,11 @@ describe("MetadataServer threads API", () => {
         "",
       );
       expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
-      expect(setWindowOptionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      const clearReadyCallIndex = setWindowOptionMock.mock.calls.findIndex(
+        ([, key, value]) => key === TMUX_DASHBOARD_READY_OPTION && value === "",
+      );
+      expect(clearReadyCallIndex).toBeGreaterThanOrEqual(0);
+      expect(setWindowOptionMock.mock.invocationCallOrder[clearReadyCallIndex]).toBeLessThan(
         respawnWindowMock.mock.invocationCallOrder[0],
       );
       expect(switchClientToTargetMock).toHaveBeenCalledOnce();
