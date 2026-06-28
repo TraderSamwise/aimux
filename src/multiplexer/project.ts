@@ -100,7 +100,6 @@ export async function refreshProjectObservability(
 
 export function showProject(host: ProjectHost): void {
   host.clearDashboardSubscreens();
-  ensureProjectObservability(host);
   host.setDashboardScreen("project");
   host.writeStatuslineFile();
   renderProject(host);
@@ -117,7 +116,6 @@ export function showProject(host: ProjectHost): void {
 }
 
 export function renderProject(host: ProjectHost): void {
-  ensureProjectObservability(host);
   renderProjectScreen(host);
 }
 

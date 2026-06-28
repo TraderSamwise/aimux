@@ -55,11 +55,15 @@ function isOpenTask(status: TaskStatus): boolean {
   return status !== "done" && status !== "failed";
 }
 
+function isRunningAgent(status: string | undefined): boolean {
+  return status === "running" || status === "idle" || status === "ready";
+}
+
 export function buildProjectObservability(input: ProjectObservabilityInput): ProjectObservability {
   const { sessions, services, worktrees, tasks, notifications } = input;
 
   const summary: ProjectSummary = {
-    agentsRunning: sessions.filter((s) => s.status === "running" || s.status === "idle").length,
+    agentsRunning: sessions.filter((s) => isRunningAgent(s.status)).length,
     agentsWaiting: sessions.filter((s) => s.status === "waiting").length,
     agentsOffline: sessions.filter((s) => s.status === "offline" || s.status === "exited").length,
     services: services.length,

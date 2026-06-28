@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildGraveyardViewModel } from "../../multiplexer/graveyard-view-model.js";
 import { keycap, statusDot } from "../render/theme.js";
 import { stripAnsi } from "../render/text.js";
-import { renderGraveyardDetails, renderGraveyardScreen } from "./subscreen-renderers.js";
+import { renderGraveyardDetails, renderGraveyardScreen, renderProjectScreen } from "./subscreen-renderers.js";
 
 const ago = (days: number): string => new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
@@ -101,5 +101,28 @@ describe("renderGraveyardScreen", () => {
     expect(frame).toContain(keycap("1"));
     // No card chrome is drawn around a group-less orphan agent.
     expect(frame).not.toContain("╭");
+  });
+});
+
+describe("renderProjectScreen", () => {
+  it("shows loading instead of fake empty counts before the API model arrives", () => {
+    let out = "";
+    const ctx = {
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      projectObservabilityLoaded: false,
+      projectObservability: null,
+      dashboardState: { detailsSidebarVisible: true },
+      centerInWidth: (s: string) => s,
+      writeFrame: (f: string) => {
+        out = f;
+      },
+    };
+
+    renderProjectScreen(ctx as never);
+
+    const plain = stripAnsi(out);
+    expect(plain).toContain("Loading project...");
+    expect(plain).not.toContain("agents 0");
+    expect(plain).not.toContain("No recent activity.");
   });
 });
