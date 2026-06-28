@@ -18,7 +18,6 @@ import type { DesktopState } from "@/lib/desktop-state";
 import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
 import {
   buildViewHref,
-  buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
@@ -323,7 +322,11 @@ function SidebarModeTabs({
 function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
+  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const activeTab = mainTabForPath(pathname);
+  const routeProjectPath =
+    projectPath ?? projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
 
   return (
     <View className="p-1.5">
@@ -334,7 +337,9 @@ function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
           <Pressable
             key={id}
             onPress={() =>
-              router.navigate(buildViewPath(MAIN_TAB_ROUTES[tabId].href, { project: projectPath }))
+              router.replace(
+                buildViewHref(MAIN_TAB_ROUTES[tabId].href, { project: routeProjectPath }),
+              )
             }
             className={cn(
               "mb-0.5 flex-row items-center gap-2 rounded-md px-2 py-2",
@@ -378,6 +383,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
   const effectiveProject =
     projects.find((project) => project.path === effectiveProjectPath) ?? selectedProject;
+  const routeProjectPath = effectiveProject?.path ?? effectiveProjectPath;
   const endpoint = effectiveProject
     ? getProjectServiceEndpoint(effectiveProject)
     : selectedProjectEndpoint;
@@ -425,9 +431,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
     }
   }, [routeTab, setSidebarMode, showPrimaryNav]);
 
-  const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));
+  const desktopState = useAtomValue(desktopStateFamily(routeProjectPath ?? EMPTY_PROJECT_PATH));
   const desktopStateError = useAtomValue(
-    desktopStateErrorFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH),
+    desktopStateErrorFamily(routeProjectPath ?? EMPTY_PROJECT_PATH),
   );
   const pickerMode = !effectiveProject || showPicker;
 
@@ -440,18 +446,18 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   function handlePickSession(sessionId: string) {
     setSelectedSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, effectiveProjectPath));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, routeProjectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, effectiveProjectPath));
+    router.push(detailHrefForPath(pathname, "service", serviceId, routeProjectPath));
   }
 
   function handleKillSession(sessionId: string) {
     if (selectedSessionId !== sessionId) return;
     setSelectedSession(null);
     if (pathname.includes("/agent/")) {
-      router.replace(parentViewHrefForPath(pathname, effectiveProjectPath));
+      router.replace(parentViewHrefForPath(pathname, routeProjectPath));
     }
   }
 
@@ -477,7 +483,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
               <>
                 <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
                 {sidebarMode === "views" ? (
-                  <SidebarPrimaryNav projectPath={effectiveProjectPath} />
+                  <SidebarPrimaryNav projectPath={routeProjectPath} />
                 ) : (
                   <WorktreeTree
                     projectPath={effectiveProject!.path}

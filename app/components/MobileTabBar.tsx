@@ -11,7 +11,7 @@ import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { MAIN_TAB_ROUTES, type MainTabId } from "@/lib/main-tabs";
 import {
-  buildViewPath,
+  buildViewHref,
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
@@ -59,7 +59,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
                 canPreventDefault: true,
               });
               if (!active && !event.defaultPrevented) {
-                router.navigate(buildViewPath(tabRoute.href, { project: currentProjectPath }));
+                router.replace(buildViewHref(tabRoute.href, { project: currentProjectPath }));
               }
             }}
             className="flex-1 items-center justify-center active:bg-accent/50"
