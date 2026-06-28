@@ -282,24 +282,10 @@ function selectProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string
   return uniqueSorted(roots);
 }
 
-function dashboardIsOwnedByRuntime(
-  dashboard: RuntimeCoherenceReport["projects"][number]["dashboards"][number],
-  expectedRuntimeOwner: string,
-): boolean {
-  const ownerOk = dashboard.owner === null || dashboard.owner === expectedRuntimeOwner;
-  const runtimeOwnerOk = dashboard.runtimeOwner === null || dashboard.runtimeOwner === expectedRuntimeOwner;
-  return ownerOk && runtimeOwnerOk;
-}
-
-function projectNeedsCurrentRuntimeRepair(
-  project: RuntimeCoherenceReport["projects"][number],
-  expectedRuntimeOwner: string,
-): boolean {
+function projectNeedsCurrentRuntimeRepair(project: RuntimeCoherenceReport["projects"][number]): boolean {
   if (project.runtime.rebuildRequired) return true;
   if (project.service.status !== "ok") return true;
-  return project.dashboards.some(
-    (dashboard) => dashboardIsOwnedByRuntime(dashboard, expectedRuntimeOwner) && dashboard.status !== "ok",
-  );
+  return project.dashboards.some((dashboard) => dashboard.status !== "ok");
 }
 
 function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string): Set<string> {
@@ -308,8 +294,7 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
     before.projects
       .filter(
         (project) =>
-          (project.dashboards.length === 0 && project.sources.includes("tmux")) ||
-          project.dashboards.some((dashboard) => dashboardIsOwnedByRuntime(dashboard, before.expected.runtimeOwner)),
+          (project.dashboards.length === 0 && project.sources.includes("tmux")) || project.dashboards.length > 0,
       )
       .map((project) => project.projectRoot),
   );
@@ -607,7 +592,7 @@ async function verifyPostRestartCoherence(input: {
       const failedProjects = after.projects
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
-          return projectNeedsCurrentRuntimeRepair(project, after.expected.runtimeOwner);
+          return projectNeedsCurrentRuntimeRepair(project);
         })
         .map((project) => project.projectRoot);
       const unhealthyProjects = [...missingProjects, ...failedProjects];
