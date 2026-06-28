@@ -28,7 +28,6 @@ export function WorktreeManagementPanel({
   const [removePath, setRemovePath] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<WorktreeAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
 
@@ -50,12 +49,10 @@ export function WorktreeManagementPanel({
     if (!endpoint || busyAction) return;
     setBusyAction(action);
     setError(null);
-    setStatus(null);
     try {
       await fn();
       kickDesktopRefresh();
       kickProjectViewRefresh();
-      setStatus(action === "create" ? "Worktree requested" : "Worktree removed");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -149,7 +146,6 @@ export function WorktreeManagementPanel({
         </View>
       </View>
       {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
-      {status ? <Text className="mt-2 text-xs text-muted-foreground">{status}</Text> : null}
     </Card>
   );
 }

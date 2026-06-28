@@ -28,7 +28,6 @@ export function AgentCreatePanel({
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastCreated, setLastCreated] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
 
@@ -44,9 +43,8 @@ export function AgentCreatePanel({
     if (!endpoint || busy) return;
     setBusy(true);
     setError(null);
-    setLastCreated(null);
     try {
-      const result = await spawnAgent(
+      await spawnAgent(
         endpoint,
         {
           tool,
@@ -55,7 +53,6 @@ export function AgentCreatePanel({
         },
         { token },
       );
-      setLastCreated(result.sessionId ?? "created");
       kickDesktopRefresh();
       kickProjectViewRefresh();
     } catch (e) {
@@ -127,9 +124,6 @@ export function AgentCreatePanel({
         </Button>
       </View>
       {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
-      {lastCreated ? (
-        <Text className="mt-2 text-xs text-muted-foreground">Created {lastCreated}</Text>
-      ) : null}
     </Card>
   );
 }
