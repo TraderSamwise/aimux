@@ -6,7 +6,7 @@ vi.mock("../tui/screens/subscreen-renderers.js", () => ({
   renderProjectScreen,
 }));
 
-import { handleProjectKey, refreshProjectObservability } from "./project.js";
+import { handleProjectKey, refreshProjectObservability, showProject } from "./project.js";
 
 describe("refreshProjectObservability", () => {
   function projectModel(story: any[] = []) {
@@ -82,6 +82,24 @@ describe("refreshProjectObservability", () => {
     expect(host.projectObservability.story).toEqual([]);
   });
 
+  it("redraws the project screen after first-load fallback is applied", async () => {
+    vi.clearAllMocks();
+    const host: any = {
+      mode: "dashboard",
+      clearDashboardSubscreens: vi.fn(),
+      setDashboardScreen: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      isDashboardScreen: vi.fn((screen: string) => screen === "project"),
+      getFromProjectService: vi.fn(async () => ({ ok: true, project: { summary: {}, progress: {}, story: [] } })),
+    };
+
+    showProject(host);
+    await vi.waitFor(() => expect(renderProjectScreen).toHaveBeenCalledTimes(2));
+
+    expect(host.projectObservabilityLoaded).toBe(true);
+    expect(host.projectObservability.story).toEqual([]);
+  });
+
   it("preserves the loaded project model when a refresh payload is invalid", async () => {
     const project = projectModel([{ id: "task:1", kind: "task", title: "Keep me", meta: "open", createdAt: "now" }]);
     const invalidProject = projectModel([
@@ -133,6 +151,7 @@ describe("refreshProjectObservability", () => {
   });
 
   it("does not redraw project after manual refresh when the user has navigated away", async () => {
+    vi.clearAllMocks();
     const host: any = {
       projectObservability: { story: [] },
       getFromProjectService: vi.fn(async () => ({ ok: true, project: projectModel([]) })),

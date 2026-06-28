@@ -517,21 +517,31 @@ export const dashboardInteractionMethods = {
     if (key < "1" || key > "9") return false;
     this.clearDashboardQuickJump();
     const digit = Number.parseInt(key, 10);
+
+    if (this.dashboardState.level === "sessions") {
+      this.updateWorktreeSessions();
+      const entryIndex = digit - 1;
+      if (entryIndex < 0 || entryIndex >= this.dashboardState.worktreeEntries.length) return true;
+      this.dashboardState.sessionIndex = entryIndex;
+      const selectedEntry = this.dashboardState.worktreeEntries[entryIndex];
+      if (selectedEntry) {
+        this.preferDashboardEntrySelection(
+          selectedEntry.kind,
+          selectedEntry.id,
+          this.dashboardState.focusedWorktreePath,
+        );
+        this.persistDashboardUiState();
+      }
+      this.activateSelectedDashboardWorktreeEntry();
+      return true;
+    }
+
     const worktrees = buildDashboardQuickJumpWorktrees({
       sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
       services: this.dashboardServicesCache,
       worktreeGroups: this.dashboardWorktreeGroupsCache,
       mainCheckout: this.dashboardMainCheckoutInfoCache,
     });
-
-    if (this.dashboardState.level === "sessions") {
-      const worktree = worktrees.find((entry) => entry.path === this.dashboardState.focusedWorktreePath);
-      const entryIndex = worktree?.entries.findIndex((entry) => entry.digit === digit) ?? -1;
-      if (!worktree || entryIndex < 0) return true;
-      this.focusDashboardQuickJumpEntry(worktree.path, entryIndex, { render: false });
-      this.activateSelectedDashboardWorktreeEntry();
-      return true;
-    }
 
     const worktree = worktrees.find((entry) => entry.digit === digit);
     if (!worktree) return true;
