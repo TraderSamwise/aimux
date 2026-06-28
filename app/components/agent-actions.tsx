@@ -5,6 +5,7 @@ import { GitFork, Play, Square, Trash2 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { forkAgent, killAgent, resumeAgent, stopAgent } from "@/lib/api";
+import { canResumeSession } from "@/lib/agent-lifecycle";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
@@ -36,6 +37,7 @@ export function AgentActions({
   const canAct = !!endpoint && !busy;
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
+  const canResume = canResumeSession(session);
   const forkTool = agentToolForFork(session);
   const forkWorktreePath =
     session.worktreePath && session.worktreePath !== mainCheckoutPath
@@ -79,7 +81,7 @@ export function AgentActions({
             disabled={!canAct}
             label={`Stop ${session.label || session.id}`}
           />
-        ) : (
+        ) : canResume ? (
           <ActionButton
             icon={Play}
             iconSize={iconSize}
@@ -88,7 +90,7 @@ export function AgentActions({
             disabled={!canAct}
             label={`Resume ${session.label || session.id}`}
           />
-        )}
+        ) : null}
         {forkTool ? (
           <ActionButton
             icon={GitFork}
