@@ -414,16 +414,9 @@ export function loadDaemonState(): DaemonState {
   });
   const projects: Record<string, ProjectServiceState> = {};
   for (const [projectId, entry] of Object.entries(raw.projects ?? {})) {
-    if (entry && isPidAlive(entry.pid)) {
+    if (entry) {
       projects[projectId] = entry;
     }
-  }
-  if (Object.keys(projects).length !== Object.keys(raw.projects ?? {}).length) {
-    saveJson(getDaemonStatePath(), {
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      projects,
-    } satisfies DaemonState);
   }
   return {
     version: 1,
@@ -674,12 +667,12 @@ export class AimuxDaemon {
   private refreshState(): void {
     const nextProjects: Record<string, ProjectServiceState> = {};
     for (const [projectId, entry] of Object.entries(this.state.projects)) {
-      if (isPidAlive(entry.pid)) {
-        nextProjects[projectId] = {
-          ...entry,
-          updatedAt: new Date().toISOString(),
-        };
-      }
+      nextProjects[projectId] = isPidAlive(entry.pid)
+        ? {
+            ...entry,
+            updatedAt: new Date().toISOString(),
+          }
+        : entry;
     }
     this.state = {
       version: 1,
@@ -693,6 +686,12 @@ export class AimuxDaemon {
       startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     } satisfies AimuxDaemonInfo);
+  }
+
+  private isProjectServiceLive(entry: ProjectServiceState): boolean {
+    const child = this.children.get(entry.projectId);
+    if (child?.pid === entry.pid) return isPidAlive(entry.pid);
+    return isAimuxProjectServiceProcess(entry.pid, entry);
   }
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
@@ -747,7 +746,10 @@ export class AimuxDaemon {
       }
       const current = this.state.projects[projectId];
       if (current?.pid === state.pid) {
-        delete this.state.projects[projectId];
+        this.state.projects[projectId] = {
+          ...current,
+          updatedAt: new Date().toISOString(),
+        };
         this.refreshState();
       }
     });
@@ -1117,13 +1119,17 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === "/projects") {
-      const liveById = this.state.projects;
-      const projects = listDesktopProjects().map((project) => ({
-        ...project,
-        service: liveById[project.id] ?? null,
-        serviceAlive: Boolean(liveById[project.id]),
-        serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
-      }));
+      const servicesById = this.state.projects;
+      const projects = listDesktopProjects().map((project) => {
+        const service = servicesById[project.id] ?? null;
+        const serviceAlive = service ? this.isProjectServiceLive(service) : false;
+        return {
+          ...project,
+          service: serviceAlive ? service : null,
+          serviceAlive,
+          serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
+        };
+      });
       return { status: 200, body: { ok: true, projects } };
     }
 

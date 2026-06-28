@@ -562,6 +562,52 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
+  it("recreates missing dashboards for tmux-backed projects during global restart", async () => {
+    const report = coherenceReport();
+    report.projects = report.projects.map((project) =>
+      project.projectRoot === "/repo/alpha"
+        ? {
+            ...project,
+            dashboards: [],
+            status: "needs-restart",
+          }
+        : project,
+    );
+    const resolveDashboardTarget = vi.fn((projectRoot: string) => ({
+      dashboardSession: { sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222" },
+      dashboardTarget: {
+        sessionName: projectRoot.endsWith("alpha") ? "aimux-alpha-111" : "aimux-beta-222",
+        windowId: projectRoot.endsWith("alpha") ? "@1" : "@2",
+        windowIndex: 0,
+        windowName: "dashboard",
+      },
+    }));
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => report),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      stopProjectService: vi.fn(async () => null),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget,
+      isPidAlive: () => false,
+    });
+
+    expect(result.projects.find((project) => project.projectRoot === "/repo/alpha")?.dashboard.status).toBe("reloaded");
+    expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/alpha", expect.any(Object), {
+      forceReload: true,
+      openInHostSession: true,
+    });
+  });
+
   it("does not reload or mutate dashboards owned by another runtime owner", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",

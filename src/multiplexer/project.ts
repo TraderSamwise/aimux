@@ -138,7 +138,7 @@ export function handleProjectKey(host: ProjectHost, data: Buffer): void {
     host.renderDashboard();
     return;
   }
-  if (host.handleDashboardSubscreenNavigationKey(key, "project")) return;
+  if (host.handleDashboardSubscreenNavigationKey(key, "project", event)) return;
   if (key === "?") {
     host.showHelp();
     return;

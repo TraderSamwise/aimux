@@ -25,6 +25,11 @@ export function commandKey(event: KeyEvent): string {
   return key.length === 1 ? key.toLowerCase() : key;
 }
 
+export function isShiftedLetterCommand(event: KeyEvent, lowerKey: string, letter: string): boolean {
+  const rawKey = event.name || event.char;
+  return lowerKey === letter && (event.shift || rawKey === letter.toUpperCase());
+}
+
 export function printableInputText(event: KeyEvent): string {
   if (event.ctrl || event.alt) return "";
   if (event.name && event.name !== "paste") return "";

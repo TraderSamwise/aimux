@@ -306,8 +306,10 @@ function selectDashboardProjectRoots(before: RuntimeCoherenceReport, projectRoot
   if (projectRoot) return new Set([projectRoot]);
   return new Set(
     before.projects
-      .filter((project) =>
-        project.dashboards.some((dashboard) => dashboardIsOwnedByRuntime(dashboard, before.expected.runtimeOwner)),
+      .filter(
+        (project) =>
+          (project.dashboards.length === 0 && project.sources.includes("tmux")) ||
+          project.dashboards.some((dashboard) => dashboardIsOwnedByRuntime(dashboard, before.expected.runtimeOwner)),
       )
       .map((project) => project.projectRoot),
   );
