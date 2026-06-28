@@ -18,7 +18,12 @@ import {
   saveRuntimeTopologySessions,
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
+import {
+  getRuntimeOwnerId,
+  TMUX_DASHBOARD_OWNER_OPTION,
+  TMUX_DASHBOARD_READY_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "./runtime-owner.js";
 import { loadLastUsedState } from "./last-used.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
@@ -1579,9 +1584,11 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
       key === TMUX_DASHBOARD_OWNER_OPTION
         ? getRuntimeOwnerId()
-        : key === "@aimux-dashboard-build"
+        : key === TMUX_DASHBOARD_READY_OPTION
           ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
-          : "";
+          : key === "@aimux-dashboard-build"
+            ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+            : "";
     TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
       key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";
@@ -1676,9 +1683,11 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
       key === TMUX_DASHBOARD_OWNER_OPTION
         ? getRuntimeOwnerId()
-        : key === "@aimux-dashboard-build"
+        : key === TMUX_DASHBOARD_READY_OPTION
           ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
-          : "";
+          : key === "@aimux-dashboard-build"
+            ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+            : "";
     TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
       key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";
@@ -2754,6 +2763,16 @@ describe("MetadataServer threads API", () => {
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
     const setSessionOptionMock = vi.fn();
     const setWindowOptionMock = vi.fn();
+    const respawnWindowMock = vi.fn();
+    const expectedDashboardBuildStamp = getDashboardCommandSpec(process.cwd()).dashboardBuildStamp;
+    const switchClientToTargetMock = vi.fn((_tty: string, _target: unknown) => {
+      expect(dashboardReadyStamp).toBe(expectedDashboardBuildStamp);
+    });
+    const sendFocusInMock = vi.fn((_target: unknown) => {
+      expect(dashboardReadyStamp).toBe(expectedDashboardBuildStamp);
+    });
+    let dashboardReadyStamp = expectedDashboardBuildStamp;
+    let readyPollsBeforeReady = 0;
 
     TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
@@ -2765,9 +2784,18 @@ describe("MetadataServer threads API", () => {
         windowIndex: 0,
         windowName: "dashboard-123",
       }) as any;
-    TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
+    TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
+      key === TMUX_DASHBOARD_OWNER_OPTION
+        ? getRuntimeOwnerId()
+        : key === TMUX_DASHBOARD_READY_OPTION
+          ? dashboardReadyStamp === "pending-ready" && readyPollsBeforeReady++ > 0
+            ? (dashboardReadyStamp = expectedDashboardBuildStamp)
+            : dashboardReadyStamp
+          : key === "@aimux-dashboard-build"
+            ? expectedDashboardBuildStamp
+            : "";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
-    TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
+    TmuxRuntimeManager.prototype.respawnWindow = respawnWindowMock;
     TmuxRuntimeManager.prototype.setSessionOption = setSessionOptionMock;
     TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
@@ -2786,9 +2814,9 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.findClientByTty = () =>
       ({ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-12345678" }) as any;
     TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
-    TmuxRuntimeManager.prototype.switchClientToTarget = () => undefined as any;
+    TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTargetMock;
     TmuxRuntimeManager.prototype.refreshStatus = () => undefined as any;
-    TmuxRuntimeManager.prototype.sendFocusIn = () => undefined as any;
+    TmuxRuntimeManager.prototype.sendFocusIn = sendFocusInMock;
 
     try {
       const endpoint = server?.getAddress();
@@ -2801,6 +2829,7 @@ describe("MetadataServer threads API", () => {
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
+      expect(respawnWindowMock).not.toHaveBeenCalled();
       expect(setSessionOptionMock).toHaveBeenCalledWith("aimux-repo-abc", "@aimux-dashboard-build", expect.any(String));
       expect(setWindowOptionMock).toHaveBeenCalledWith(
         expect.objectContaining({ windowId: "@99" }),
@@ -2843,6 +2872,12 @@ describe("MetadataServer threads API", () => {
       const deadBody = (await deadRes.json()) as { ok: boolean };
       expect(deadRes.ok).toBe(true);
       expect(deadBody.ok).toBe(true);
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        TMUX_DASHBOARD_READY_OPTION,
+        "",
+      );
+      expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
       const deadSnapshot = JSON.parse(
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
@@ -2857,6 +2892,32 @@ describe("MetadataServer threads API", () => {
         `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       expect(liveAgainRes.ok).toBe(true);
+      setWindowOptionMock.mockClear();
+      respawnWindowMock.mockClear();
+      switchClientToTargetMock.mockClear();
+      sendFocusInMock.mockClear();
+      dashboardReadyStamp = "pending-ready";
+      readyPollsBeforeReady = 0;
+      const staleReadyRes = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
+      );
+      expect(staleReadyRes.ok).toBe(true);
+      expect(readyPollsBeforeReady).toBeGreaterThan(1);
+      expect(setWindowOptionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        TMUX_DASHBOARD_READY_OPTION,
+        "",
+      );
+      expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
+      const clearReadyCallIndex = setWindowOptionMock.mock.calls.findIndex(
+        ([, key, value]) => key === TMUX_DASHBOARD_READY_OPTION && value === "",
+      );
+      expect(clearReadyCallIndex).toBeGreaterThanOrEqual(0);
+      expect(setWindowOptionMock.mock.invocationCallOrder[clearReadyCallIndex]).toBeLessThan(
+        respawnWindowMock.mock.invocationCallOrder[0],
+      );
+      expect(switchClientToTargetMock).toHaveBeenCalledOnce();
+      expect(sendFocusInMock).toHaveBeenCalledOnce();
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
       const dashboardWindowRes = await fetch(
         `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4099&focus=true`,

@@ -96,7 +96,7 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION } from "./runtime-owner.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "./runtime-owner.js";
 import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
@@ -946,6 +946,22 @@ function focusControlTarget(
 ): { focused: boolean; focusMode?: string } {
   if (!focus) return { focused: false };
   return openTargetForClient(tmux, target, currentClientSession, clientTty);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForDashboardReady(
+  tmux: TmuxRuntimeManager,
+  target: TmuxTarget,
+  dashboardBuildStamp: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (tmux.getWindowOption(target, TMUX_DASHBOARD_READY_OPTION) === dashboardBuildStamp) return true;
+    await sleep(50);
+  }
+  return false;
 }
 
 function sendControlAction(
@@ -2287,18 +2303,25 @@ export class MetadataServer {
             : tmux.getOpenSessionName(dashboardSession.sessionName);
         const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
         const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
+        const currentReadyStamp = tmux.getWindowOption(target, TMUX_DASHBOARD_READY_OPTION);
         const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
         const currentOwner = getRuntimeOwnerId();
         if (
           !tmux.isWindowAlive(target) ||
           currentBuildStamp !== dashboardBuildStamp ||
+          currentReadyStamp !== dashboardBuildStamp ||
           currentDashboardOwner !== currentOwner
         ) {
+          tmux.setWindowOption(target, TMUX_DASHBOARD_READY_OPTION, "");
           tmux.respawnWindow(target, dashboardCommand);
         }
         tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
+        if (!(await waitForDashboardReady(tmux, target, dashboardBuildStamp))) {
+          send(res, 503, { ok: false, error: "dashboard did not become ready" });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
         return;

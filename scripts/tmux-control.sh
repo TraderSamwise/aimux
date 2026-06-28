@@ -183,6 +183,25 @@ refresh_navigation_client() {
   fi
 }
 
+dashboard_ready_for_build() {
+  ready_window_id="$1"
+  ready_build="$2"
+  ready_value=$(tmux show-window-options -v -t "$ready_window_id" @aimux-dashboard-ready 2>/dev/null || true)
+  [ -n "$ready_build" ] && [ "$ready_value" = "$ready_build" ]
+}
+
+wait_for_dashboard_ready() {
+  ready_window_id="$1"
+  ready_build="$2"
+  ready_attempt=0
+  while [ "$ready_attempt" -lt 40 ]; do
+    dashboard_ready_for_build "$ready_window_id" "$ready_build" && return 0
+    ready_attempt=$((ready_attempt + 1))
+    sleep 0.05
+  done
+  return 1
+}
+
 validate_dashboard_target() {
   validate_session="$1"
   validate_index="$2"
@@ -207,6 +226,7 @@ validate_dashboard_target() {
   expected_dashboard_build=$(tmux show-options -v -t "$validate_host_session" @aimux-dashboard-build 2>/dev/null || true)
   dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
   [ -n "$expected_dashboard_build" ] && [ "$dashboard_build" = "$expected_dashboard_build" ] || return 1
+  wait_for_dashboard_ready "$dashboard_window_id" "$expected_dashboard_build" || return 1
 
   expected_runtime_owner=$(tmux show-options -v -t "$validate_host_session" @aimux-runtime-owner 2>/dev/null || true)
   target_runtime_owner=$(tmux show-options -v -t "$validate_session" @aimux-runtime-owner 2>/dev/null || true)
@@ -285,6 +305,7 @@ dashboard_candidate_needs_reload() {
   dashboard_build=$(tmux show-window-options -v -t "$dashboard_window_id" @aimux-dashboard-build 2>/dev/null || true)
   [ -n "$expected_dashboard_build" ] && [ -n "$dashboard_build" ] || return 0
   [ "$dashboard_build" != "$expected_dashboard_build" ] && return 0
+  dashboard_ready_for_build "$dashboard_window_id" "$expected_dashboard_build" || return 0
 
   dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
   case "$dashboard_preview" in

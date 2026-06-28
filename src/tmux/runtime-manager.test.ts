@@ -534,6 +534,22 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
   });
 
+  it("stamps a new project session runtime contract before long configuration", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const session = manager.ensureProjectSession("/repo/mobile");
+    const contractIndex = exec.calls.findIndex(
+      (call) => call.args[0] === "set-option" && call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION,
+    );
+    const projectRootIndex = exec.calls.findIndex(
+      (call) => call.args.join(" ") === `set-option -t ${session.sessionName} @aimux-project-root /repo/mobile`,
+    );
+
+    expect(contractIndex).toBeGreaterThan(-1);
+    expect(projectRootIndex).toBeGreaterThan(-1);
+    expect(contractIndex).toBeLessThan(projectRootIndex);
+  });
+
   it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
     const prev = process.env.AIMUX_HOME;
     process.env.AIMUX_HOME = "/home/user/.aimux-custom";
@@ -1418,6 +1434,27 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(false);
     expect(calls.some((call) => call.args.join(" ") === `move-window -s @1 -t ${clientSessionName}:0`)).toBe(true);
     expect(calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-runtime-build")).toBe(true);
+  });
+
+  it("stamps a new client session runtime contract before long configuration", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const hostSessionName = manager.getProjectSession("/repo/mobile").sessionName;
+    const clientSessionName = `${hostSessionName}-client-deadbeef`;
+
+    (
+      manager as unknown as { ensureClientSession: (host: string, client: string, root: string) => void }
+    ).ensureClientSession(hostSessionName, clientSessionName, "/repo/mobile");
+
+    const contractIndex = exec.calls.findIndex(
+      (call) => call.args[0] === "set-option" && call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION,
+    );
+    const projectRootIndex = exec.calls.findIndex(
+      (call) => call.args.join(" ") === `set-option -t ${clientSessionName} @aimux-project-root /repo/mobile`,
+    );
+    expect(contractIndex).toBeGreaterThan(-1);
+    expect(projectRootIndex).toBeGreaterThan(-1);
+    expect(contractIndex).toBeLessThan(projectRootIndex);
   });
 
   it("leaves managed tmux sessions by switching back when nested", () => {

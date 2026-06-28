@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
 import { getProjectStateDirFor } from "../paths.js";
@@ -17,6 +18,18 @@ import {
 
 // A dead/wedged service must not stall the dashboard loop, so the health probe is bounded.
 const HEALTH_TIMEOUT_MS = 2500;
+
+function sameFilesystemPath(a: string | null, b: string): boolean {
+  if (!a) return false;
+  const normalize = (value: string) => {
+    try {
+      return realpathSync(value);
+    } catch {
+      return value;
+    }
+  };
+  return normalize(a) === normalize(b);
+}
 
 /**
  * Whether the running dashboard is safe to act through. Drift states trigger repair;
@@ -121,55 +134,82 @@ function readRuntimeRebuildRequired(projectRoot: string): boolean {
     if (!tmux.isAvailable()) return false;
     const sessionName = tmux.getProjectSession(projectRoot).sessionName;
     const sessionNames = tmux.listSessionNames();
-    if (!sessionNames.includes(sessionName)) return false;
-    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION) === "1") return true;
-    if (tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
+    if (!sessionNames.includes(sessionName)) {
+      return false;
+    }
+    const rebuildMarker = tmux.getSessionOption(sessionName, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION);
+    if (rebuildMarker === "1") {
+      return true;
+    }
+    const hostProjectRoot = tmux.getSessionOption(sessionName, "@aimux-project-root") || projectRoot;
+    const hostContract = tmux.getSessionOption(sessionName, TMUX_RUNTIME_CONTRACT_OPTION);
+    if (hostContract !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) {
       return true;
     }
     return sessionNames
       .filter((name) => isTmuxClientSessionForHost(name, sessionName))
-      .some(
-        (name) => tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION) !== AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
-      );
+      .some((name) => {
+        const clientHost = tmux.getSessionOption(name, "@aimux-host-session");
+        if (clientHost !== sessionName) return false;
+        const clientRoot = tmux.getSessionOption(name, "@aimux-project-root");
+        if (!sameFilesystemPath(clientRoot, hostProjectRoot)) return false;
+        const clientContract = tmux.getSessionOption(name, TMUX_RUNTIME_CONTRACT_OPTION);
+        if (clientContract === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION) return false;
+        return true;
+      });
   } catch {
     return false;
   }
 }
 
-/** Best-effort probe. Never throws; any failure gathering inputs resolves to a safe state. */
+/** Best-effort probe. Endpoint discovery and service transport failures resolve to a guard state. */
 export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Promise<RuntimeGuardState> {
   const selfDrift = hasProjectServiceBuildDrift();
   const runtimeRebuildRequired = readRuntimeRebuildRequired(projectRoot);
   let endpointPresent = false;
   let serviceManifest: ProjectServiceManifest | null | "unreachable" = null;
   let serviceIdentityMismatch = false;
+  let endpoint: ReturnType<typeof loadMetadataEndpoint> | undefined;
   try {
-    const endpoint = loadMetadataEndpoint(projectRoot);
-    endpointPresent = Boolean(endpoint);
-    if (endpoint) {
-      try {
-        const { status, json } = await requestJson<{
-          pid?: number;
-          projectStateDir?: string;
-          serviceInfo?: ProjectServiceManifest;
-        }>(`http://${endpoint.host}:${endpoint.port}/health`, { timeoutMs: HEALTH_TIMEOUT_MS });
-        if (status >= 200 && status < 300) {
-          if (json?.serviceInfo) serviceManifest = json.serviceInfo;
-          else serviceManifest = getProjectServiceManifest();
-          serviceIdentityMismatch =
-            json?.pid !== endpoint.pid ||
-            json?.projectStateDir !== getProjectStateDirFor(projectRoot) ||
-            !json?.serviceInfo;
-        } else {
-          serviceManifest = "unreachable";
-        }
-      } catch {
-        serviceManifest = "unreachable";
-      }
-    }
+    endpoint = loadMetadataEndpoint(projectRoot);
   } catch {
     endpointPresent = false;
     serviceManifest = null;
+  }
+  endpointPresent = Boolean(endpoint);
+  if (endpoint) {
+    let health:
+      | {
+          status: number;
+          json?: {
+            pid?: number;
+            projectStateDir?: string;
+            serviceInfo?: ProjectServiceManifest;
+          };
+        }
+      | undefined;
+    try {
+      health = await requestJson<{
+        pid?: number;
+        projectStateDir?: string;
+        serviceInfo?: ProjectServiceManifest;
+      }>(`http://${endpoint.host}:${endpoint.port}/health`, { timeoutMs: HEALTH_TIMEOUT_MS });
+    } catch {
+      serviceManifest = "unreachable";
+    }
+    if (health) {
+      const { status, json } = health;
+      if (status >= 200 && status < 300) {
+        if (json?.serviceInfo) serviceManifest = json.serviceInfo;
+        else serviceManifest = getProjectServiceManifest();
+        serviceIdentityMismatch =
+          json?.pid !== endpoint.pid ||
+          json?.projectStateDir !== getProjectStateDirFor(projectRoot) ||
+          !json?.serviceInfo;
+      } else {
+        serviceManifest = "unreachable";
+      }
+    }
   }
   return evaluateRuntimeGuard({
     selfDrift,
