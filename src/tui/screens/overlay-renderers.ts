@@ -212,7 +212,7 @@ export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): s
     "  ?  show help",
     "  1-9  jump to visible item",
     "  arrows / h j k  navigate",
-    "  Enter  step in, open, resume, or focus",
+    "  Enter / →  step in, open, resume, or focus",
     "  Tab  toggle details",
     "  c  coordination",
     "  p  project",

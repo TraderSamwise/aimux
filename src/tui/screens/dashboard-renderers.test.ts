@@ -73,7 +73,7 @@ describe("buildDashboardFooterHints", () => {
         selectedSessionId: "a",
       }),
     );
-    expect(hints.find((h) => h[0] === "Enter")).toEqual(["Enter", "unavailable"]);
+    expect(hints.find((h) => h[0] === "Enter/→")).toEqual(["Enter/→", "unavailable"]);
   });
 
   it("advertises resume for restorable exited sessions", () => {
@@ -85,7 +85,7 @@ describe("buildDashboardFooterHints", () => {
         selectedSessionId: "a",
       }),
     );
-    expect(hints.find((h) => h[0] === "Enter")).toEqual(["Enter", "resume"]);
+    expect(hints.find((h) => h[0] === "Enter/→")).toEqual(["Enter/→", "resume"]);
   });
 
   it("shows every active key per state variant", () => {
@@ -95,7 +95,7 @@ describe("buildDashboardFooterHints", () => {
     );
     // worktree level
     expect(keys({ hasWorktrees: true, navLevel: "worktrees" })).toEqual(
-      new Set(["↑↓/jk", "1-9", "Enter", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
+      new Set(["↑↓/jk", "1-9", "Enter/→", "u", "Tab", "n", "v", "f", "w", "?", "q"]),
     );
     // session level with worktrees + a selected session + a teammate
     expect(
@@ -111,7 +111,7 @@ describe("buildDashboardFooterHints", () => {
         "↑↓/jk",
         "⇧↑↓",
         "1-9",
-        "Enter",
+        "Enter/→",
         "Esc/h",
         "u",
         "Tab",
@@ -133,7 +133,7 @@ describe("buildDashboardFooterHints", () => {
     );
     // flat session list with a selected session
     expect(keys({ hasWorktrees: false, navLevel: "sessions", sessions: sess(), selectedSessionId: "a" })).toEqual(
-      new Set(["↑↓/jk", "Enter", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "R", "x", "r", "?", "q"]),
+      new Set(["↑↓/jk", "Enter/→", "u", "Tab", "n", "v", "f", "w", "s", "H", "T", "o", "R", "x", "r", "?", "q"]),
     );
   });
 });

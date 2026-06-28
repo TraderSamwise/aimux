@@ -2909,6 +2909,9 @@ describe("MetadataServer threads API", () => {
         "",
       );
       expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
+      expect(setWindowOptionMock.mock.invocationCallOrder[0]).toBeLessThan(
+        respawnWindowMock.mock.invocationCallOrder[0],
+      );
       expect(switchClientToTargetMock).toHaveBeenCalledOnce();
       expect(sendFocusInMock).toHaveBeenCalledOnce();
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
