@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { quarantineCorruptFile, writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
-import { getProjectStateDir, getProjectStateDirFor } from "./paths.js";
+import { getProjectStateDir, getProjectStateDirById, getProjectStateDirFor } from "./paths.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
 
 export type MetadataTone = "neutral" | "info" | "success" | "warn" | "error";
@@ -119,6 +119,10 @@ function metadataPathFor(projectRoot?: string): string {
 
 function endpointPathFor(projectRoot?: string): string {
   return join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "metadata-api.json");
+}
+
+function endpointPathForProjectId(projectId: string): string {
+  return join(getProjectStateDirById(projectId), "metadata-api.json");
 }
 
 function endpointTextPathFor(projectRoot?: string): string {
@@ -265,6 +269,10 @@ export function findOverseerSessionId(state: MetadataState): string | undefined 
 
 export function loadMetadataEndpoint(projectRoot?: string): MetadataApiEndpoint | null {
   return loadJson<MetadataApiEndpoint | null>(endpointPathFor(projectRoot), null);
+}
+
+export function loadMetadataEndpointByProjectId(projectId: string): MetadataApiEndpoint | null {
+  return loadJson<MetadataApiEndpoint | null>(endpointPathForProjectId(projectId), null);
 }
 
 export function resolveProjectServiceEndpoint(projectRoot?: string): { host: string; port: number } | null {

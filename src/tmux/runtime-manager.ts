@@ -185,6 +185,8 @@ export function buildDefaultRootMouseBindingsConfig(input: {
 }
 
 export class TmuxRuntimeManager {
+  private sessionPrefixCache: string | null = null;
+
   constructor(
     private readonly exec: TmuxExec = DEFAULT_EXEC,
     private readonly interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
@@ -209,10 +211,7 @@ export class TmuxRuntimeManager {
 
   getProjectSession(projectRoot: string): TmuxSessionRef {
     const projectId = getProjectIdFor(projectRoot);
-    let prefix = "aimux";
-    try {
-      prefix = loadConfig().runtime.tmux.sessionPrefix || "aimux";
-    } catch {}
+    const prefix = this.getSessionPrefix();
     return {
       projectRoot,
       projectId,
@@ -443,10 +442,13 @@ export class TmuxRuntimeManager {
   }
 
   private getSessionPrefix(): string {
+    if (this.sessionPrefixCache) return this.sessionPrefixCache;
     try {
-      return loadConfig().runtime.tmux.sessionPrefix || "aimux";
+      this.sessionPrefixCache = loadConfig().runtime.tmux.sessionPrefix || "aimux";
+      return this.sessionPrefixCache;
     } catch {
-      return "aimux";
+      this.sessionPrefixCache = "aimux";
+      return this.sessionPrefixCache;
     }
   }
 

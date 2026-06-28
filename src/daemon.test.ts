@@ -29,13 +29,19 @@ vi.mock("./paths.js", () => ({
   getAuthPath: () => join(tmpRoot, ".aimux", "auth.json"),
   getProjectStateDir: () => join(tmpRoot, ".aimux", "projects", "global"),
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
+  getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
   getProjectServiceStdioLogPathFor: (cwd: string) =>
     join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`, "logs", "project-service-stdio.log"),
 }));
 
 vi.mock("./project-scanner.js", () => ({
-  listDesktopProjects: () => [
+  listDesktopProjects: () => listMockDesktopProjects(),
+  listRegisteredDesktopProjects: () => listMockDesktopProjects(),
+}));
+
+function listMockDesktopProjects() {
+  return [
     {
       id: `proj-${basename(projectRoot)}`,
       name: basename(projectRoot),
@@ -43,8 +49,8 @@ vi.mock("./project-scanner.js", () => ({
       dashboardSessionName: "aimux-test",
       sessions: [],
     },
-  ],
-}));
+  ];
+}
 
 vi.mock("./http-client.js", () => ({
   requestJson: vi.fn(async () => ({
@@ -869,6 +875,8 @@ describe("daemon routing (relay + proxy)", () => {
     livePids = new Set();
     childrenByPid = new Map();
     nextPid = 30_000;
+    vi.mocked(requestJson).mockReset();
+    mockHealthyRequests();
 
     spawnMock.mockImplementation(() => {
       const pid = nextPid++;
@@ -881,8 +889,21 @@ describe("daemon routing (relay + proxy)", () => {
       };
       livePids.add(pid);
       childrenByPid.set(pid, child);
+      mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+      writeMetadataEndpointFor(pid);
       return child;
     });
+    vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      const numericPid = Number(pid);
+      if (!livePids.has(numericPid)) {
+        throw new Error(`pid ${numericPid} is not alive`);
+      }
+      if (signal && signal !== 0) {
+        livePids.delete(numericPid);
+        childrenByPid.get(numericPid)?.emit("exit", 0, signal);
+      }
+      return true;
+    }) as typeof process.kill);
   });
 
   afterEach(() => {
@@ -1162,6 +1183,49 @@ describe("daemon routing (relay + proxy)", () => {
     const [project] = (res.body as any).projects;
     expect(project.serviceAlive).toBe(true);
     expect(project.service).toMatchObject({ pid: retainedPid });
+  });
+
+  it("caches retained project service verification for project list polling", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const retainedPid = 43_103;
+    livePids.add(retainedPid);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(retainedPid);
+    execFileSyncMock.mockReturnValue(
+      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
+        projectRoot,
+      )} --project-root ${projectRoot}`,
+    );
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: retainedPid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    execFileSyncMock.mockClear();
+    await daemon.routeRequest("GET", "/projects");
+    await daemon.routeRequest("GET", "/projects");
+
+    const psCalls = execFileSyncMock.mock.calls.filter(([cmd]) => cmd === "ps");
+    expect(psCalls).toHaveLength(1);
+  });
+
+  it("invalidates the cached project list after ensuring a project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const before = await daemon.routeRequest("GET", "/projects");
+    expect((before.body as any).projects[0].serviceAlive).toBe(false);
+
+    const ensured = await daemon.routeRequest("POST", "/projects/ensure", { projectRoot });
+    expect(ensured.status).toBe(200);
+
+    const after = await daemon.routeRequest("GET", "/projects");
+    expect((after.body as any).projects[0].serviceAlive).toBe(true);
+    expect((after.body as any).projects[0].service).toMatchObject({ pid: 30_000 });
   });
 
   it("allows browser preflight requests to daemon routes", async () => {

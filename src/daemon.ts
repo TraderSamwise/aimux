@@ -11,8 +11,8 @@ import {
   getProjectIdFor,
   getProjectServiceStdioLogPathFor,
 } from "./paths.js";
-import { listDesktopProjects } from "./project-scanner.js";
-import { loadMetadataEndpoint } from "./metadata-store.js";
+import { listRegisteredDesktopProjects } from "./project-scanner.js";
+import { loadMetadataEndpoint, loadMetadataEndpointByProjectId } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
@@ -37,6 +37,8 @@ const PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD = 3;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
+const PROJECT_SERVICE_LIVENESS_CACHE_MS = 30_000;
+const PROJECTS_ROUTE_CACHE_MS = 30_000;
 const PROXY_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
@@ -102,6 +104,12 @@ interface DaemonState {
   updatedAt: string;
   projects: Record<string, ProjectServiceState>;
 }
+
+type ProjectsRouteProject = ReturnType<typeof listRegisteredDesktopProjects>[number] & {
+  service: ProjectServiceState | null;
+  serviceAlive: boolean;
+  serviceEndpoint: ReturnType<typeof loadMetadataEndpointByProjectId>;
+};
 
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -561,6 +569,8 @@ export class AimuxDaemon {
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly children = new Map<string, ChildProcess>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
+  private readonly projectServiceLivenessCache = new Map<string, { pid: number; alive: boolean; checkedAt: number }>();
+  private projectsRouteCache: { expiresAt: number; projects: ProjectsRouteProject[] } | null = null;
   // Consecutive failed health checks per project; a single transient stall
   // (event loop briefly busy) must not trigger a restart.
   private readonly projectHealthFailures = new Map<string, number>();
@@ -653,6 +663,8 @@ export class AimuxDaemon {
       } catch {}
     }
     this.children.clear();
+    this.projectServiceLivenessCache.clear();
+    this.invalidateProjectsRouteCache();
     this.state = {
       version: 1,
       updatedAt: new Date().toISOString(),
@@ -691,7 +703,48 @@ export class AimuxDaemon {
   private isProjectServiceLive(entry: ProjectServiceState): boolean {
     const child = this.children.get(entry.projectId);
     if (child?.pid === entry.pid) return isPidAlive(entry.pid);
-    return isAimuxProjectServiceProcess(entry.pid, entry);
+    const cached = this.projectServiceLivenessCache.get(entry.projectId);
+    if (cached?.pid === entry.pid && Date.now() - cached.checkedAt < PROJECT_SERVICE_LIVENESS_CACHE_MS) {
+      if (cached.alive && !isPidAlive(entry.pid)) {
+        this.projectServiceLivenessCache.delete(entry.projectId);
+        return false;
+      }
+      return cached.alive;
+    }
+    const alive = isAimuxProjectServiceProcess(entry.pid, entry);
+    this.projectServiceLivenessCache.set(entry.projectId, {
+      pid: entry.pid,
+      alive,
+      checkedAt: Date.now(),
+    });
+    return alive;
+  }
+
+  private invalidateProjectsRouteCache(): void {
+    this.projectsRouteCache = null;
+  }
+
+  private listProjectsForRoute(): ProjectsRouteProject[] {
+    const now = Date.now();
+    if (this.projectsRouteCache && now < this.projectsRouteCache.expiresAt) {
+      return this.projectsRouteCache.projects;
+    }
+    const servicesById = this.state.projects;
+    const projects = listRegisteredDesktopProjects().map((project) => {
+      const service = servicesById[project.id] ?? null;
+      const serviceAlive = service ? this.isProjectServiceLive(service) : false;
+      return {
+        ...project,
+        service: serviceAlive ? service : null,
+        serviceAlive,
+        serviceEndpoint: loadMetadataEndpointByProjectId(project.id),
+      };
+    });
+    this.projectsRouteCache = {
+      expiresAt: now + PROJECTS_ROUTE_CACHE_MS,
+      projects,
+    };
+    return projects;
   }
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
@@ -718,6 +771,8 @@ export class AimuxDaemon {
       throw error;
     }
     this.children.set(projectId, child);
+    this.projectServiceLivenessCache.delete(projectId);
+    this.invalidateProjectsRouteCache();
     const now = new Date().toISOString();
     const state: ProjectServiceState = {
       projectId,
@@ -744,6 +799,8 @@ export class AimuxDaemon {
       if (this.children.get(projectId) === child) {
         this.children.delete(projectId);
       }
+      this.projectServiceLivenessCache.delete(projectId);
+      this.invalidateProjectsRouteCache();
       const current = this.state.projects[projectId];
       if (current?.pid === state.pid) {
         this.state.projects[projectId] = {
@@ -754,6 +811,7 @@ export class AimuxDaemon {
       }
     });
     this.refreshState();
+    this.invalidateProjectsRouteCache();
     return state;
   }
 
@@ -807,6 +865,7 @@ export class AimuxDaemon {
       const ready = await this.waitForProjectServiceReady(resolvedRoot, projectId, spawned);
       this.state.projects[projectId] = ready;
       this.refreshState();
+      this.invalidateProjectsRouteCache();
       return ready;
     } catch (error) {
       log.warn("spawned project service failed readiness check", "daemon", {
@@ -820,6 +879,7 @@ export class AimuxDaemon {
       if (current?.pid === spawned.pid) {
         delete this.state.projects[projectId];
         this.refreshState();
+        this.invalidateProjectsRouteCache();
       }
       throw error;
     }
@@ -853,6 +913,7 @@ export class AimuxDaemon {
         };
         this.state.projects[projectId] = next;
         this.refreshState();
+        this.invalidateProjectsRouteCache();
         return next;
       };
       const waitForExistingReady = async (): Promise<ProjectServiceState> => {
@@ -861,6 +922,7 @@ export class AimuxDaemon {
           this.projectHealthFailures.delete(projectId);
           this.state.projects[projectId] = ready;
           this.refreshState();
+          this.invalidateProjectsRouteCache();
           return ready;
         } catch (error) {
           log.warn("just-started project service failed readiness check", "daemon", {
@@ -969,11 +1031,14 @@ export class AimuxDaemon {
     if (current?.pid === existing.pid) {
       delete this.state.projects[projectId];
     }
+    this.projectServiceLivenessCache.delete(projectId);
+    this.invalidateProjectsRouteCache();
     const child = this.children.get(projectId);
     if (child?.pid === existing.pid) {
       this.children.delete(projectId);
     }
     this.refreshState();
+    this.invalidateProjectsRouteCache();
     return this.spawnReadyProjectService(resolvedRoot, projectId);
   }
 
@@ -1059,6 +1124,8 @@ export class AimuxDaemon {
     }
     delete this.state.projects[projectId];
     this.projectHealthFailures.delete(projectId);
+    this.projectServiceLivenessCache.delete(projectId);
+    this.invalidateProjectsRouteCache();
     if (this.children.get(projectId)?.pid === existing.pid) {
       this.children.delete(projectId);
     }
@@ -1119,18 +1186,7 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === "/projects") {
-      const servicesById = this.state.projects;
-      const projects = listDesktopProjects().map((project) => {
-        const service = servicesById[project.id] ?? null;
-        const serviceAlive = service ? this.isProjectServiceLive(service) : false;
-        return {
-          ...project,
-          service: serviceAlive ? service : null,
-          serviceAlive,
-          serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
-        };
-      });
-      return { status: 200, body: { ok: true, projects } };
+      return { status: 200, body: { ok: true, projects: this.listProjectsForRoute() } };
     }
 
     if (method === "GET" && pathname.startsWith("/projects/")) {
