@@ -56,21 +56,26 @@ export function markLastUsed(projectRoot: string, options: MarkLastUsedOptions):
   const itemId = options.itemId?.trim();
   if (!itemId) return loadLastUsedState(projectRoot);
 
-  const usedAt = options.usedAt?.trim() || new Date().toISOString();
+  const requestedUsedAt = options.usedAt?.trim() || new Date().toISOString();
+  const usedAt = parseRecencyTimestamp(requestedUsedAt) == null ? new Date().toISOString() : requestedUsedAt;
   const state = loadLastUsedState(projectRoot);
-  state.items[itemId] = { lastUsedAt: usedAt };
-  state.projectRecentIds = pushRecentId(state.projectRecentIds, itemId);
+  const existingUsedAt = state.items[itemId]?.lastUsedAt;
+  if (!existingUsedAt || recencyMs(usedAt) >= recencyMs(existingUsedAt)) {
+    state.items[itemId] = { lastUsedAt: usedAt };
+  }
+  state.projectRecentIds = sortRecentIds(pushRecentId(state.projectRecentIds, itemId), state.items);
 
   const clientSession = options.clientSession?.trim();
   if (clientSession) {
     const existing = state.clients[clientSession] ?? { recentIds: [], updatedAt: usedAt };
+    const updatedAt = recencyMs(usedAt) >= recencyMs(existing.updatedAt) ? usedAt : existing.updatedAt;
     state.clients[clientSession] = {
-      recentIds: pushRecentId(existing.recentIds, itemId),
-      updatedAt: usedAt,
+      recentIds: sortRecentIds(pushRecentId(existing.recentIds, itemId), state.items),
+      updatedAt,
     };
   }
 
-  state.updatedAt = usedAt;
+  state.updatedAt = !state.updatedAt || recencyMs(usedAt) >= recencyMs(state.updatedAt) ? usedAt : state.updatedAt;
   persistLastUsedState(projectRoot, state);
   return state;
 }
@@ -133,4 +138,18 @@ function normalizeLastUsedState(state: Partial<LastUsedState>): LastUsedState {
 
 function pushRecentId(ids: string[], itemId: string): string[] {
   return [itemId, ...ids.filter((entry) => entry !== itemId)].slice(0, MAX_RECENT_IDS);
+}
+
+function sortRecentIds(ids: string[], items: Record<string, LastUsedEntry>): string[] {
+  return [...ids]
+    .sort((a, b) => {
+      const diff = recencyMs(items[b]?.lastUsedAt) - recencyMs(items[a]?.lastUsedAt);
+      if (diff !== 0) return diff;
+      return ids.indexOf(a) - ids.indexOf(b);
+    })
+    .slice(0, MAX_RECENT_IDS);
+}
+
+function recencyMs(value?: string): number {
+  return parseRecencyTimestamp(value) ?? 0;
 }

@@ -1984,7 +1984,7 @@ export class MetadataServer {
         send(res, 400, { ok: false, error: "itemId is required" });
         return;
       }
-      const state = markLastUsed(process.cwd(), {
+      const state = markLastUsed(metadataProjectRoot() ?? process.cwd(), {
         itemId,
         clientSession: body.clientSession?.trim() || undefined,
         usedAt: body.usedAt?.trim() || undefined,
