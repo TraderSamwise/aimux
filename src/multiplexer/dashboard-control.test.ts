@@ -565,6 +565,119 @@ describe("dashboard live target activation", () => {
     expect(host.postToProjectService.mock.calls[0][2].timeoutMs).toBeLessThanOrEqual(1200);
   });
 
+  it("focuses the client attached to the dashboard pane instead of stale ambient tmux context", async () => {
+    const previousPane = process.env.TMUX_PANE;
+    process.env.TMUX_PANE = "%dashboard";
+    try {
+      const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+      const host: any = {
+        mode: "dashboard",
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        tmuxRuntimeManager: {
+          currentClientSession: vi.fn(() => "stale-client-session"),
+          displayMessage: vi.fn((format: string, target?: string) => {
+            if (target === "%dashboard" && format === "#{window_id}") return "@dashboard";
+            if (format === "#{client_tty}") return "/dev/stale";
+            if (format === "#{window_id}") return "@stale";
+            return undefined;
+          }),
+          listClients: vi.fn(() => [
+            {
+              tty: "/dev/live",
+              sessionName: "aimux-repo-client-live",
+              windowId: "@dashboard",
+              name: "live",
+            },
+            {
+              tty: "/dev/stale",
+              sessionName: "stale-client-session",
+              windowId: "@stale",
+              name: "stale",
+            },
+          ]),
+        },
+        showDashboardError: vi.fn(),
+      };
+
+      await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1200)).resolves.toBe("opened");
+
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(
+        2,
+        "/control/open-notification-target",
+        {
+          sessionId: "codex-1",
+          focus: true,
+          currentClientSession: "aimux-repo-client-live",
+          clientTty: "/dev/live",
+          currentWindowId: "@dashboard",
+        },
+        { timeoutMs: expect.any(Number) },
+      );
+    } finally {
+      if (previousPane === undefined) delete process.env.TMUX_PANE;
+      else process.env.TMUX_PANE = previousPane;
+    }
+  });
+
+  it("focuses live dashboard agents through local tmux before falling back to the service API", async () => {
+    const previousPane = process.env.TMUX_PANE;
+    process.env.TMUX_PANE = "%dashboard";
+    try {
+      const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+      const target = {
+        sessionName: "aimux-repo",
+        windowId: "@agent",
+        windowIndex: 2,
+        windowName: "codex(coder)",
+      };
+      const host: any = {
+        mode: "dashboard",
+        projectRoot: "/repo",
+        postToProjectService: vi.fn(async () => ({ ok: true })),
+        invalidateDesktopStateSnapshot: vi.fn(),
+        tmuxRuntimeManager: {
+          currentClientSession: vi.fn(() => "stale-client-session"),
+          displayMessage: vi.fn((format: string, targetArg?: string) => {
+            if (targetArg === "%dashboard" && format === "#{window_id}") return "@dashboard";
+            if (format === "#{client_tty}") return "/dev/stale";
+            if (format === "#{pane_current_path}") return "/repo";
+            return undefined;
+          }),
+          listClients: vi.fn(() => [
+            {
+              tty: "/dev/live",
+              sessionName: "aimux-repo-client-live",
+              windowId: "@dashboard",
+              name: "live",
+            },
+          ]),
+          findClientByTty: vi.fn((tty: string) => (tty === "/dev/live" ? { tty } : null)),
+          listProjectManagedWindows: vi.fn(() => [
+            {
+              metadata: { kind: "agent", sessionId: "codex-1" },
+              target,
+            },
+          ]),
+          switchClientToTarget: vi.fn(),
+          refreshStatus: vi.fn(),
+        },
+        showDashboardError: vi.fn(),
+      };
+
+      await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1" }, 1200)).resolves.toBe("opened");
+
+      expect(host.tmuxRuntimeManager.switchClientToTarget).toHaveBeenCalledWith("/dev/live", target);
+      expect(host.postToProjectService).not.toHaveBeenCalledWith(
+        "/control/open-notification-target",
+        expect.anything(),
+        expect.anything(),
+      );
+    } finally {
+      if (previousPane === undefined) delete process.env.TMUX_PANE;
+      else process.env.TMUX_PANE = previousPane;
+    }
+  });
+
   it("uses a restore-sized service timeout for offline agent activation", async () => {
     const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
     const host: any = {

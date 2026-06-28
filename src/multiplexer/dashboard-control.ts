@@ -14,6 +14,7 @@ import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
 import { isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
+import type { TmuxClientInfo } from "../tmux/runtime-manager.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
@@ -702,9 +703,10 @@ export function handleDashboardSubscreenNavigationKey(
 export function openLiveTmuxWindowForEntry(
   host: DashboardControlHost,
   entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
+  focusContext?: { currentClientSession?: string; clientTty?: string },
 ): "opened" | "missing" | "error" {
   try {
-    const target = openManagedSessionWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), entry);
+    const target = openManagedSessionWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), entry, focusContext);
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
@@ -740,6 +742,10 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
   const activationToken = host.dashboardActivationToken;
   const effectiveTimeoutMs = timeoutMs ?? (entry.status === "offline" || entry.status === "exited" ? 60_000 : 3000);
   const deadline = Date.now() + effectiveTimeoutMs;
+  if (host.mode === "dashboard" && entry.status !== "offline" && entry.status !== "exited" && canFocusLocalTmux(host)) {
+    const localResult = openLiveTmuxWindowForEntry(host, entry, dashboardControlClientContext(host));
+    if (localResult !== "missing") return localResult;
+  }
   while (Date.now() < deadline) {
     if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
     const remainingMs = Math.max(100, deadline - Date.now());
@@ -756,9 +762,15 @@ export async function waitAndOpenLiveTmuxWindowForEntry(
 export function openLiveTmuxWindowForService(
   host: DashboardControlHost,
   serviceId: string,
+  focusContext?: { currentClientSession?: string; clientTty?: string },
 ): "opened" | "missing" | "error" {
   try {
-    const target = openManagedServiceWindow(host.tmuxRuntimeManager, dashboardProjectRoot(host), serviceId);
+    const target = openManagedServiceWindow(
+      host.tmuxRuntimeManager,
+      dashboardProjectRoot(host),
+      serviceId,
+      focusContext,
+    );
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
@@ -780,6 +792,10 @@ export async function waitAndOpenLiveTmuxWindowForService(
 ): Promise<"opened" | "missing" | "error"> {
   const activationToken = host.dashboardActivationToken;
   const deadline = Date.now() + timeoutMs;
+  if (host.mode === "dashboard" && canFocusLocalTmux(host)) {
+    const localResult = openLiveTmuxWindowForService(host, serviceId, dashboardControlClientContext(host));
+    if (localResult !== "missing") return localResult;
+  }
   while (Date.now() < deadline) {
     if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
     const remainingMs = Math.max(100, deadline - Date.now());
@@ -796,6 +812,10 @@ export async function waitAndOpenLiveTmuxWindowForService(
 function dashboardActivationStillCurrent(host: DashboardControlHost, token: any | undefined): boolean {
   if (!token) return true;
   return host.dashboardActivationToken === token && (host.dashboardInputEpoch ?? 0) === token.inputEpoch;
+}
+
+function canFocusLocalTmux(host: DashboardControlHost): boolean {
+  return typeof host.tmuxRuntimeManager?.listProjectManagedWindows === "function";
 }
 
 async function openProjectServiceNotificationTarget(
@@ -845,10 +865,28 @@ function dashboardControlClientContext(host: DashboardControlHost): {
   currentWindowId?: string;
 } {
   try {
+    const tmux = host.tmuxRuntimeManager;
+    const dashboardPaneTarget =
+      typeof host.getDashboardViewportTarget === "function"
+        ? (host.getDashboardViewportTarget() ?? undefined)
+        : process.env.TMUX_PANE?.trim() || undefined;
+    const dashboardWindowId =
+      (dashboardPaneTarget ? tmux.displayMessage?.("#{window_id}", dashboardPaneTarget) : null) ??
+      tmux.displayMessage?.("#{window_id}") ??
+      undefined;
+    const ambientClientTty = tmux.displayMessage?.("#{client_tty}") ?? undefined;
+    const ambientClientSession = tmux.currentClientSession?.() ?? undefined;
+    const clients: TmuxClientInfo[] = tmux.listClients?.() ?? [];
+    const dashboardClients = dashboardWindowId ? clients.filter((client) => client.windowId === dashboardWindowId) : [];
+    const ambientClient = ambientClientTty ? clients.find((client) => client.tty === ambientClientTty) : undefined;
+    const visibleClient =
+      (ambientClient && dashboardClients.some((client) => client.tty === ambientClient.tty)
+        ? ambientClient
+        : dashboardClients[0]) ?? ambientClient;
     return {
-      currentClientSession: host.tmuxRuntimeManager.currentClientSession() ?? undefined,
-      clientTty: host.tmuxRuntimeManager.displayMessage?.("#{client_tty}") ?? undefined,
-      currentWindowId: host.tmuxRuntimeManager.displayMessage?.("#{window_id}") ?? undefined,
+      currentClientSession: visibleClient?.sessionName ?? ambientClientSession,
+      clientTty: visibleClient?.tty ?? ambientClientTty,
+      currentWindowId: dashboardWindowId ?? visibleClient?.windowId,
     };
   } catch {
     return {};
