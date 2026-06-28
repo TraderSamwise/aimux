@@ -2210,7 +2210,10 @@ describe("refreshRuntimeGuard", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
-  it("retries queued local tmux focus after the busy overlay clears", async () => {
+  it.each([
+    ["Enter", "\r"],
+    ["lowercase l", "l"],
+  ])("retries queued local tmux focus for %s after the busy overlay clears", async (_label, rawKey) => {
     vi.useFakeTimers();
     const host = runtimeGuardHost() as any;
     host.runtimeGuardState = { kind: "disconnected" };
@@ -2222,7 +2225,7 @@ describe("refreshRuntimeGuard", () => {
 
     try {
       const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
-      expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("\r"))).toBe(true);
+      expect(handleActiveDashboardOverlayKey(host as never, Buffer.from(rawKey))).toBe(true);
       expect(host.handleDashboardKey).not.toHaveBeenCalled();
 
       host.dashboardBusyState = null;
@@ -2233,7 +2236,7 @@ describe("refreshRuntimeGuard", () => {
       await vi.advanceTimersByTimeAsync(50);
 
       expect(host.handleDashboardKey).toHaveBeenCalledOnce();
-      expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+      expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from(rawKey));
     } finally {
       vi.useRealTimers();
     }
@@ -2291,7 +2294,7 @@ describe("refreshRuntimeGuard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
-  it("does not replay a swallowed local navigation key after reconnect", async () => {
+  it("does not replay a swallowed mutating key after reconnect", async () => {
     mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = runtimeGuardHost() as any;
     host.runtimeGuardState = { kind: "disconnected" };
@@ -2302,7 +2305,7 @@ describe("refreshRuntimeGuard", () => {
     host.getDashboardSessions = vi.fn(() => []);
 
     const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
-    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("l"))).toBe(true);
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("n"))).toBe(true);
 
     host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
     host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
