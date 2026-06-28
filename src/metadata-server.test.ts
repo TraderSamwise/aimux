@@ -1279,6 +1279,67 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("falls back to a live same-session notification target when the rendered window id is stale", async () => {
+    server?.stop();
+    const staleTarget = { sessionName: "aimux-test", windowId: "@stale", windowIndex: 7, windowName: "codex" } as any;
+    const liveTarget = { sessionName: "aimux-test", windowId: "@live", windowIndex: 8, windowName: "codex" } as any;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "agent-1", command: "codex", status: "running", tmuxWindowId: "@stale" }],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    TmuxRuntimeManager.prototype.isWindowAlive = (target) => target.windowId !== "@stale";
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target: staleTarget,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+        {
+          target: liveTarget,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "agent-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; target?: { windowId?: string } };
+
+      expect(res.ok).toBe(true);
+      expect(body.ok).toBe(true);
+      expect(body.target?.windowId).toBe("@live");
+    } finally {
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
   it("rejects unmanaged focus-window targets", async () => {
     const target = { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "outside" } as any;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;

@@ -917,16 +917,15 @@ function findProjectManagedWindow(
   projectRoot: string,
   matcher: { windowId?: string; sessionId?: string },
 ): { target: TmuxTarget; metadata: TmuxWindowMetadata } | null {
-  return (
-    tmux
-      .listProjectManagedWindows(projectRoot)
-      .find(
-        (entry) =>
-          (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
-          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true) &&
-          tmux.isWindowAlive(entry.target),
-      ) ?? null
-  );
+  const candidates = tmux.listProjectManagedWindows(projectRoot).filter((entry) => tmux.isWindowAlive(entry.target));
+  const exact =
+    candidates.find(
+      (entry) =>
+        (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
+        (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true),
+    ) ?? null;
+  if (exact || !matcher.windowId || !matcher.sessionId) return exact;
+  return candidates.find((entry) => entry.metadata.sessionId === matcher.sessionId) ?? null;
 }
 
 function serializeControlTarget(target: TmuxTarget): Record<string, unknown> {
