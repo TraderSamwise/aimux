@@ -82,7 +82,7 @@ function bucketRule(bucket: string, count: number): string {
 // Footer hints contextual to the selected row's kind — and, for asleep agents, honest that
 // Enter wakes (a slow resume) rather than opens instantly.
 function coordinationFooterHints(item: any, filterThreads: boolean): string {
-  const tail = "[d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit";
+  const tail = "[d/c/p/L/t/g] screens  [Esc] dashboard  [q] quit";
   const filterHint = `[Tab] ${filterThreads ? "all" : "threads"}`;
   if (item?.kind === "thread") {
     return `[↑↓] select  ${filterHint}  [Enter] jump  [s] reply  [A] accept  [c] complete  [b/o/x] state  [P/J/E] review  ${tail}`;
@@ -250,9 +250,7 @@ export function renderProjectScreen(ctx: any): void {
         rows,
         header,
         content: listLines,
-        footerLines: [
-          footerHints("[Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
-        ],
+        footerLines: [footerHints("[Tab] details  [r] refresh  [d/c/p/L/t/g] screens  [Esc] dashboard  [q] quit")],
         focusLine: 1,
         twoPane,
         rightPanel: (_width, height) => new Array(height).fill(""),
@@ -308,7 +306,7 @@ export function renderProjectScreen(ctx: any): void {
       header,
       content: listLines,
       footerLines: [
-        footerHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
+        footerHints("[↑↓] select  [Tab] details  [r] refresh  [d/c/p/L/t/g] screens  [Esc] dashboard  [q] quit"),
       ],
       focusLine,
       twoPane,
@@ -395,7 +393,7 @@ export function renderTopologyScreen(ctx: any): void {
       content: listLines,
       footerLines: [
         footerHints(
-          "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit",
+          "[↑↓] select  [Tab] details  [Enter] open  [r] refresh  [d/c/p/L/t/g] screens  [Esc] dashboard  [q] quit",
         ),
       ],
       focusLine,
@@ -602,7 +600,7 @@ export function renderGraveyardScreen(ctx: any): void {
     content: listLines,
     footerLines: [
       footerHints(
-        "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+        "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
       ),
     ],
     focusLine,
@@ -729,7 +727,7 @@ export function renderLibraryScreen(ctx: any): void {
       content: listLines,
       footerLines: [
         footerHints(
-          "[↑↓] select  [Tab] details  [d/c/p/l/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+          "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
         ),
       ],
       focusLine,

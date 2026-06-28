@@ -553,7 +553,7 @@ describe("handleRuntimeGuardKey", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
-  it("swallows lowercase library hotkey while guarded on the dashboard", () => {
+  it("swallows lowercase right-navigation while guarded on the dashboard", () => {
     const host = stubHost({ kind: "disconnected" });
     expect(handleRuntimeGuardKey(host, Buffer.from("l"))).toBe(true);
     expect(host.footerFlash).toContain("reconnecting");

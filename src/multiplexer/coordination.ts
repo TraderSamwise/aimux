@@ -234,7 +234,7 @@ export function handleCoordinationKey(host: CoordinationHost, data: Buffer): voi
     host.renderDashboard();
     return;
   }
-  if (host.handleDashboardSubscreenNavigationKey(key, "coordination")) return;
+  if (host.handleDashboardSubscreenNavigationKey(key, "coordination", event)) return;
   if (key === "?") {
     host.showHelp();
     return;

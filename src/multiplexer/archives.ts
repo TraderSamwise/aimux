@@ -86,7 +86,7 @@ export function handleGraveyardKey(host: ArchivesHost, data: Buffer): void {
     host.renderDashboard();
     return;
   }
-  if (host.handleDashboardSubscreenNavigationKey(key, "graveyard")) return;
+  if (host.handleDashboardSubscreenNavigationKey(key, "graveyard", event)) return;
 
   if (key === "?") {
     host.showHelp();

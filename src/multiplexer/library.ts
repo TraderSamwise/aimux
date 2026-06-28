@@ -138,7 +138,7 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     host.renderDashboard();
     return;
   }
-  if (host.handleDashboardSubscreenNavigationKey(key, "library")) return;
+  if (host.handleDashboardSubscreenNavigationKey(key, "library", event)) return;
   if (key === "?") {
     host.showHelp();
     return;

@@ -399,7 +399,7 @@ describe("daemon supervision", () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 
-  it("prunes dead services from persisted daemon state", async () => {
+  it("keeps dead services in daemon state so repair can rediscover the project", async () => {
     const daemonStatePath = join(tmpRoot, ".aimux", "daemon", "state.json");
     writeFileSync(
       daemonStatePath,
@@ -429,9 +429,9 @@ describe("daemon supervision", () => {
     const { loadDaemonState } = await import("./daemon.js");
     const state = loadDaemonState();
 
-    expect(Object.keys(state.projects)).toEqual(["proj-live"]);
+    expect(Object.keys(state.projects)).toEqual(["proj-live", "proj-dead"]);
     const persisted = JSON.parse(readFileSync(daemonStatePath, "utf-8")) as { projects: Record<string, unknown> };
-    expect(Object.keys(persisted.projects)).toEqual(["proj-live"]);
+    expect(Object.keys(persisted.projects)).toEqual(["proj-live", "proj-dead"]);
   });
 
   it("stops child services when the daemon stops", async () => {
