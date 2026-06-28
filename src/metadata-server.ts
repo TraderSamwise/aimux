@@ -1978,7 +1978,7 @@ export class MetadataServer {
       return;
     }
     if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.usageMark) {
-      const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
+      const body = (await readJson(req)) as { itemId?: string; clientSession?: string; usedAt?: string };
       const itemId = body.itemId?.trim() || "";
       if (!itemId) {
         send(res, 400, { ok: false, error: "itemId is required" });
@@ -1987,6 +1987,7 @@ export class MetadataServer {
       const state = markLastUsed(process.cwd(), {
         itemId,
         clientSession: body.clientSession?.trim() || undefined,
+        usedAt: body.usedAt?.trim() || undefined,
       });
       send(res, 200, {
         ok: true,

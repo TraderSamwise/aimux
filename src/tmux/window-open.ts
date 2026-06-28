@@ -80,17 +80,23 @@ export function openManagedSessionWindow(
   entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
   focusContext?: TmuxFocusContext,
 ): TmuxTarget | null {
+  const candidates = tmux
+    .listProjectManagedWindows(projectRoot)
+    .filter(
+      (candidate) =>
+        candidate.metadata.kind === "agent" &&
+        (typeof tmux.isWindowAlive !== "function" || tmux.isWindowAlive(candidate.target)),
+    );
   const match =
-    tmux
-      .listProjectManagedWindows(projectRoot)
-      .find(
-        (candidate) =>
-          candidate.metadata.kind === "agent" &&
-          (typeof tmux.isWindowAlive !== "function" || tmux.isWindowAlive(candidate.target)) &&
-          ((entry.tmuxWindowId && candidate.target.windowId === entry.tmuxWindowId) ||
-            candidate.metadata.sessionId === entry.id ||
-            (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId)),
-      ) ?? null;
+    (entry.tmuxWindowId
+      ? candidates.find((candidate) => candidate.target.windowId === entry.tmuxWindowId)
+      : undefined) ??
+    candidates.find(
+      (candidate) =>
+        candidate.metadata.sessionId === entry.id ||
+        (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId),
+    ) ??
+    null;
   if (!match) return null;
   if (focusContext) {
     openTargetForClient(tmux, match.target, focusContext.currentClientSession, focusContext.clientTty);

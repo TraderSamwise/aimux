@@ -103,6 +103,39 @@ describe("managed window open", () => {
     expect(tmux.openTarget).toHaveBeenCalledWith(liveTarget, { insideTmux: false });
   });
 
+  it("prefers an exact agent tmux window id over an earlier duplicate live session match", () => {
+    const duplicateTarget = {
+      sessionName: "project-client-1",
+      windowId: "@duplicate-agent",
+      windowIndex: 2,
+      windowName: "codex",
+    };
+    const exactTarget = {
+      sessionName: "project-client-1",
+      windowId: "@exact-agent",
+      windowIndex: 5,
+      windowName: "codex",
+    };
+    const tmux = host({
+      listProjectManagedWindows: vi.fn(() => [
+        {
+          target: duplicateTarget,
+          metadata: { kind: "agent", sessionId: "codex-1", backendSessionId: "backend-1" },
+        },
+        {
+          target: exactTarget,
+          metadata: { kind: "agent", sessionId: "codex-1", backendSessionId: "backend-1" },
+        },
+      ]),
+      isWindowAlive: vi.fn(() => true),
+    });
+
+    const target = openManagedSessionWindow(tmux, "/repo", { id: "codex-1", tmuxWindowId: "@exact-agent" });
+
+    expect(target?.windowId).toBe("@exact-agent");
+    expect(tmux.openTarget).toHaveBeenCalledWith(exactTarget, { insideTmux: false });
+  });
+
   it("opens service windows from project-wide managed windows", () => {
     const tmux = host();
 
