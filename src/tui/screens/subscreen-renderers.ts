@@ -242,6 +242,25 @@ export function renderProjectScreen(ctx: any): void {
   const obs = ctx.projectObservability ?? { summary: null, progress: null, story: [] };
   const listLines: string[] = [];
 
+  if (!ctx.projectObservabilityLoaded) {
+    listLines.push(`  ${style("Loading project...", "muted")}`);
+    ctx.writeFrame(
+      composeScreenFrame({
+        cols,
+        rows,
+        header,
+        content: listLines,
+        footerLines: [
+          footerHints("[Tab] details  [r] refresh  [d/c/p/l/t/g] screens  [Esc] dashboard  [q] quit"),
+        ],
+        focusLine: 1,
+        twoPane,
+        rightPanel: (_width, height) => new Array(height).fill(""),
+      }).frame,
+    );
+    return;
+  }
+
   if (obs.summary) {
     const s = obs.summary;
     listLines.push(`  ${style("Summary", "strong")}`);

@@ -35,6 +35,7 @@ describe("buildProjectObservability", () => {
       sessions: [
         { status: "running" },
         { status: "idle" },
+        { status: "ready" },
         { status: "waiting" },
         { status: "offline" },
         { status: "exited" },
@@ -49,7 +50,7 @@ describe("buildProjectObservability", () => {
       notifications: [notif({ id: "n1", unread: true }), notif({ id: "n2", unread: false })],
     });
     expect(result.summary).toMatchObject({
-      agentsRunning: 2,
+      agentsRunning: 3,
       agentsWaiting: 1,
       agentsOffline: 2,
       services: 2,
