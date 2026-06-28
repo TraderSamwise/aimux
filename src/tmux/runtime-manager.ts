@@ -325,6 +325,7 @@ export class TmuxRuntimeManager {
         ],
         { cwd: projectRoot },
       );
+      this.setCurrentRuntimeContract(clientSessionName);
       this.configureSession(clientSessionName, projectRoot);
       this.setCurrentRuntimeContract(clientSessionName);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
@@ -498,6 +499,7 @@ export class TmuxRuntimeManager {
               "printf ''",
             ];
       this.exec(argv, { cwd: projectRoot });
+      this.setCurrentRuntimeContract(session.sessionName);
     }
     this.configureSession(session.sessionName, projectRoot);
     if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);

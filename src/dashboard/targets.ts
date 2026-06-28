@@ -2,7 +2,12 @@ import type { TmuxRuntimeManager, TmuxTarget, TmuxSessionRef } from "../tmux/run
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { isTmuxClientSessionForHost } from "../tmux/session-names.js";
 import { getDashboardCommandSpec } from "./command-spec.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "../runtime-owner.js";
+import {
+  getRuntimeOwnerId,
+  TMUX_DASHBOARD_OWNER_OPTION,
+  TMUX_DASHBOARD_READY_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "../runtime-owner.js";
 
 export interface DashboardTargetRef {
   dashboardSession: TmuxSessionRef;
@@ -16,6 +21,7 @@ export function isUsableDashboardTarget(
   dashboardTarget: TmuxTarget,
 ): boolean {
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+  const currentReadyStamp = tmux.getWindowOption(dashboardTarget, TMUX_DASHBOARD_READY_OPTION);
   const currentOwner = getRuntimeOwnerId();
   const targetRuntimeOwner = tmux.getSessionOption(dashboardTarget.sessionName, TMUX_RUNTIME_OWNER_OPTION);
   const targetDashboardOwner = tmux.getWindowOption(dashboardTarget, TMUX_DASHBOARD_OWNER_OPTION);
@@ -28,6 +34,7 @@ export function isUsableDashboardTarget(
     targetRuntimeOwner === currentOwner &&
     targetDashboardOwner === currentOwner &&
     currentBuildStamp === dashboardBuildStamp &&
+    currentReadyStamp === dashboardBuildStamp &&
     paneCommand !== "cat" &&
     paneCommand !== "tail" &&
     !paneTail.includes("aimux dashboard failed to start.")
@@ -97,14 +104,17 @@ export function resolveDashboardTarget(
     : tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
   const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+  const currentReadyStamp = tmux.getWindowOption(dashboardTarget, TMUX_DASHBOARD_READY_OPTION);
   const currentOwner = getRuntimeOwnerId();
   const currentDashboardOwner = tmux.getWindowOption(dashboardTarget, TMUX_DASHBOARD_OWNER_OPTION);
   const shouldRespawn =
     options.forceReload === true ||
     !tmux.isWindowAlive(dashboardTarget) ||
     currentBuildStamp !== dashboardBuildStamp ||
+    currentReadyStamp !== dashboardBuildStamp ||
     currentDashboardOwner !== currentOwner;
   if (shouldRespawn) {
+    tmux.setWindowOption(dashboardTarget, TMUX_DASHBOARD_READY_OPTION, "");
     tmux.respawnWindow(dashboardTarget, dashboardCommand);
   }
   tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);

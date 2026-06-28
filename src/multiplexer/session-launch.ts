@@ -25,6 +25,8 @@ import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashbo
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
 import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
+import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
+import { TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
 
 type SessionLaunchHost = any;
 
@@ -159,6 +161,30 @@ export async function run(host: SessionLaunchHost, opts: { command: string; args
   return 0;
 }
 
+const DASHBOARD_FOCUS_IN_REPORT = Buffer.from("\x1b[I");
+
+function stripDashboardFocusInReports(data: Buffer): Buffer {
+  const chunks: Buffer[] = [];
+  let start = 0;
+  let index = data.indexOf(DASHBOARD_FOCUS_IN_REPORT);
+  while (index >= 0) {
+    if (index > start) chunks.push(data.subarray(start, index));
+    start = index + DASHBOARD_FOCUS_IN_REPORT.length;
+    index = data.indexOf(DASHBOARD_FOCUS_IN_REPORT, start);
+  }
+  if (start < data.length) chunks.push(data.subarray(start));
+  return chunks.length === 0 ? Buffer.alloc(0) : Buffer.concat(chunks);
+}
+
+function markDashboardReadyForInput(host: SessionLaunchHost): void {
+  const paneId = process.env.TMUX_PANE?.trim();
+  if (!paneId || !host.tmuxRuntimeManager?.setWindowOption) return;
+  try {
+    const { dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
+    host.tmuxRuntimeManager.setWindowOption(paneId, TMUX_DASHBOARD_READY_OPTION, dashboardBuildStamp);
+  } catch {}
+}
+
 export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.startHeartbeat();
@@ -177,47 +203,50 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.terminalHost.enterRawMode();
 
   host.onStdinData = (data: Buffer) => {
-    if (host.isFocusInReport(data)) {
+    let input = data;
+    if (host.isFocusInReport(input)) {
       host.handleDashboardFocusIn();
-      return;
+      input = stripDashboardFocusInReports(input);
+      if (input.length === 0) return;
     }
     host.dashboardInputEpoch = (host.dashboardInputEpoch ?? 0) + 1;
-    if (host.handleActiveDashboardOverlayKey(data)) {
+    if (host.handleActiveDashboardOverlayKey(input)) {
       return;
     }
-    if (host.handleRuntimeGuardKey(data)) {
+    if (host.handleRuntimeGuardKey(input)) {
       return;
     }
     if (host.isDashboardScreen("coordination")) {
-      host.handleCoordinationKey(data);
+      host.handleCoordinationKey(input);
       return;
     }
     if (host.isDashboardScreen("project")) {
-      host.handleProjectKey(data);
+      host.handleProjectKey(input);
       return;
     }
     if (host.isDashboardScreen("library")) {
-      host.handleLibraryKey(data);
+      host.handleLibraryKey(input);
       return;
     }
     if (host.isDashboardScreen("topology")) {
-      host.handleTopologyKey(data);
+      host.handleTopologyKey(input);
       return;
     }
     if (host.isDashboardScreen("help")) {
-      host.handleHelpKey(data);
+      host.handleHelpKey(input);
       return;
     }
     if (host.isDashboardScreen("graveyard")) {
-      host.handleGraveyardKey(data);
+      host.handleGraveyardKey(input);
       return;
     }
 
     if (host.mode === "dashboard") {
-      host.handleDashboardKey(data);
+      host.handleDashboardKey(input);
     }
   };
   process.stdin.on("data", host.onStdinData);
+  markDashboardReadyForInput(host);
 
   host.onResize = () => {
     host.dashboardLastViewportKey = host.getViewportKey();

@@ -18,7 +18,12 @@ import {
   saveRuntimeTopologySessions,
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
+import {
+  getRuntimeOwnerId,
+  TMUX_DASHBOARD_OWNER_OPTION,
+  TMUX_DASHBOARD_READY_OPTION,
+  TMUX_RUNTIME_OWNER_OPTION,
+} from "./runtime-owner.js";
 import { loadLastUsedState } from "./last-used.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
@@ -1579,9 +1584,11 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
       key === TMUX_DASHBOARD_OWNER_OPTION
         ? getRuntimeOwnerId()
-        : key === "@aimux-dashboard-build"
+        : key === TMUX_DASHBOARD_READY_OPTION
           ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
-          : "";
+          : key === "@aimux-dashboard-build"
+            ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+            : "";
     TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
       key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";
@@ -1676,9 +1683,11 @@ describe("MetadataServer threads API", () => {
     TmuxRuntimeManager.prototype.getWindowOption = (_target, key) =>
       key === TMUX_DASHBOARD_OWNER_OPTION
         ? getRuntimeOwnerId()
-        : key === "@aimux-dashboard-build"
+        : key === TMUX_DASHBOARD_READY_OPTION
           ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
-          : "";
+          : key === "@aimux-dashboard-build"
+            ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+            : "";
     TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
       key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";

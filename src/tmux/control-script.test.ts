@@ -111,8 +111,11 @@ function showWindowOptions() {
   const targetIndex = args.indexOf("-t");
   const windowId = targetIndex >= 0 ? args[targetIndex + 1] : "";
   const key = args.at(-1);
-  const value =
+  let value =
     key === "@aimux-meta" ? state.windowMetadata?.[windowId] && JSON.stringify(state.windowMetadata[windowId]) : state.windowOptions?.[windowId]?.[key];
+  if (value == null && key === "@aimux-dashboard-ready") {
+    value = state.windowOptions?.[windowId]?.["@aimux-dashboard-build"];
+  }
   if (value == null) fail();
   out(value);
 }
@@ -635,6 +638,75 @@ describe("tmux-control.sh", () => {
         "@dash": {
           "@aimux-dashboard-build": "build-old",
           "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: projectRoot,
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), `${projectRoot}\n`);
+
+    runControl(envRoot, [
+      "dashboard",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--project-root",
+      projectRoot,
+      "--current-client-session",
+      "aimux-proj-client-1234abcd",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      projectRoot,
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
+    expect(readAimuxLog(envRoot)).toEqual([
+      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
+    ]);
+  });
+
+  it("reloads instead of switching to a dashboard without a current readiness stamp", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-control-project-"));
+    tempRoots.push(projectRoot);
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": projectRoot,
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-dashboard-owner": "owner-current",
+          "@aimux-dashboard-ready": "build-old",
         },
       },
       panes: {
