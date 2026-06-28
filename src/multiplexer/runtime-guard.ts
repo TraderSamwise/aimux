@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isHttpTimeoutError, requestJson } from "../http-client.js";
+import { requestJson } from "../http-client.js";
 import { loadMetadataEndpoint } from "../metadata-store.js";
 import { getProjectStateDirFor } from "../paths.js";
 import {
@@ -29,21 +29,6 @@ function sameFilesystemPath(a: string | null, b: string): boolean {
     }
   };
   return normalize(a) === normalize(b);
-}
-
-function isProjectServiceConnectionError(error: unknown): boolean {
-  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    code === "ECONNREFUSED" ||
-    code === "ECONNRESET" ||
-    code === "EPIPE" ||
-    (code === "ETIMEDOUT" && message.includes("connect")) ||
-    message.includes("ECONNREFUSED") ||
-    message.includes("ECONNRESET") ||
-    message.includes("connect ETIMEDOUT") ||
-    message.includes("socket hang up")
-  );
 }
 
 /**
@@ -204,12 +189,8 @@ export async function probeRuntimeGuard(projectRoot: string = process.cwd()): Pr
         } else {
           serviceManifest = "unreachable";
         }
-      } catch (error) {
-        if (isHttpTimeoutError(error) && !isProjectServiceConnectionError(error)) {
-          serviceManifest = getProjectServiceManifest();
-        } else {
-          serviceManifest = "unreachable";
-        }
+      } catch {
+        serviceManifest = "unreachable";
       }
     }
   } catch {

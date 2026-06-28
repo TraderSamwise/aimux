@@ -30,7 +30,6 @@ vi.mock("../metadata-store.js", () => ({
 
 vi.mock("../http-client.js", () => ({
   requestJson: requestJsonMock,
-  isHttpTimeoutError: (error: unknown) => (error as { code?: unknown })?.code === "ETIMEDOUT",
 }));
 
 vi.mock("../tmux/runtime-manager.js", () => ({
@@ -261,7 +260,7 @@ describe("probeRuntimeGuard", () => {
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
-  it("keeps the guard ok when a busy local service misses the health timeout", async () => {
+  it("reports disconnected when a local service accepts the socket but misses the health timeout", async () => {
     loadMetadataEndpointMock.mockReturnValue({
       host: "127.0.0.1",
       port: 45123,
@@ -272,7 +271,7 @@ describe("probeRuntimeGuard", () => {
       Object.assign(new Error("request timed out after 2500ms"), { code: "ETIMEDOUT" }),
     );
 
-    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
   });
 
   it("reports disconnected when the local service socket is gone", async () => {
