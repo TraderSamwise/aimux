@@ -5,6 +5,7 @@ import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { RuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { topologySessionToSessionState } from "./runtime-core/topology-sessions.js";
+import { loadConfig } from "./config.js";
 
 export interface GlobalSession {
   id: string;
@@ -28,6 +29,32 @@ export interface DesktopProjectInfo {
   path: string;
   lastSeen?: string;
   dashboardSessionName: string;
+}
+
+function getHiddenProjectTmpDirs(): Set<string> {
+  const osTmpDir = tmpdir();
+  const dirs = new Set([osTmpDir]);
+  try {
+    dirs.add(realpathSync(osTmpDir));
+  } catch {}
+  return dirs;
+}
+
+function shouldHideDesktopProject(projectPath: string, tmpDirs = getHiddenProjectTmpDirs()): boolean {
+  if (!projectPath || !existsSync(projectPath)) {
+    return true;
+  }
+  const name = basename(projectPath);
+  const isTmpProject = [...tmpDirs].some((tmpDir) => projectPath.startsWith(tmpDir));
+  return isTmpProject && name.startsWith("aimux-");
+}
+
+function getConfiguredTmuxSessionPrefix(): string {
+  try {
+    return loadConfig().runtime.tmux.sessionPrefix || "aimux";
+  } catch {
+    return "aimux";
+  }
 }
 
 function topologyStatusToGlobalStatus(status: string | undefined): GlobalSession["status"] {
@@ -175,28 +202,10 @@ export function scanAllProjects(): ProjectInfo[] {
 export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopProjectInfo[] {
   const scannedByPath = new Map(scanAllProjects().map((project) => [project.path, project]));
   const projects = new Map<string, DesktopProjectInfo>();
-  const osTmpDir = tmpdir();
-  const realOsTmpDir = (() => {
-    try {
-      return realpathSync(osTmpDir);
-    } catch {
-      return osTmpDir;
-    }
-  })();
-
-  function shouldHideDesktopProject(projectPath: string): boolean {
-    if (!projectPath || !existsSync(projectPath)) {
-      return true;
-    }
-    const name = basename(projectPath);
-    if (!projectPath.startsWith(osTmpDir) && !projectPath.startsWith(realOsTmpDir)) {
-      return false;
-    }
-    return name.startsWith("aimux-");
-  }
+  const tmpDirs = getHiddenProjectTmpDirs();
 
   for (const entry of listProjects()) {
-    if (shouldHideDesktopProject(entry.repoRoot)) continue;
+    if (shouldHideDesktopProject(entry.repoRoot, tmpDirs)) continue;
     const tmuxSession = tmux.getProjectSession(entry.repoRoot);
     projects.set(entry.repoRoot, {
       id: entry.id,
@@ -208,7 +217,7 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
   }
 
   for (const scanned of scannedByPath.values()) {
-    if (shouldHideDesktopProject(scanned.path)) continue;
+    if (shouldHideDesktopProject(scanned.path, tmpDirs)) continue;
     if (projects.has(scanned.path)) continue;
     const tmuxSession = tmux.getProjectSession(scanned.path);
     projects.set(scanned.path, {
@@ -220,4 +229,19 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
   }
 
   return [...projects.values()].sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+}
+
+export function listRegisteredDesktopProjects(): DesktopProjectInfo[] {
+  const tmpDirs = getHiddenProjectTmpDirs();
+  const sessionPrefix = getConfiguredTmuxSessionPrefix();
+  return listProjects()
+    .filter((entry) => !shouldHideDesktopProject(entry.repoRoot, tmpDirs))
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      path: entry.repoRoot,
+      lastSeen: entry.lastSeen,
+      dashboardSessionName: `${sessionPrefix}-${entry.id}`,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 }
