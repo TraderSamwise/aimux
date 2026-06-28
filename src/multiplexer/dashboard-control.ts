@@ -712,7 +712,7 @@ export function openLiveTmuxWindowForEntry(
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: entry.id }).catch(() => {});
     noteTuiNotificationContext(host, { screen: "agent", sessionId: entry.id, panelOpen: false });
     markTuiSessionSeen(host, entry.id);
-    noteLastUsedItem(host, entry.id);
+    noteLastUsedItem(host, entry.id, focusContext?.currentClientSession);
     return "opened";
   } catch (error) {
     host.showDashboardError("Failed to open agent", [
@@ -774,7 +774,7 @@ export function openLiveTmuxWindowForService(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void mutateDashboardApi(host, PROJECT_API_ROUTES.statuslineRefresh, { sessionId: serviceId }).catch(() => {});
-    noteLastUsedItem(host, serviceId);
+    noteLastUsedItem(host, serviceId, focusContext?.currentClientSession);
     return "opened";
   } catch (error) {
     host.showDashboardError("Failed to open service", [
@@ -893,10 +893,10 @@ function dashboardControlClientContext(host: DashboardControlHost): {
   }
 }
 
-export function noteLastUsedItem(host: DashboardControlHost, itemId: string): void {
+export function noteLastUsedItem(host: DashboardControlHost, itemId: string, clientSession?: string): void {
   markLastUsed(dashboardProjectRoot(host), {
     itemId,
-    clientSession: host.tmuxRuntimeManager.currentClientSession() ?? undefined,
+    clientSession: clientSession ?? host.tmuxRuntimeManager.currentClientSession() ?? undefined,
   });
   host.invalidateDesktopStateSnapshot();
 }
