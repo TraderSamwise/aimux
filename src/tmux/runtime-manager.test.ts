@@ -550,6 +550,90 @@ describe("TmuxRuntimeManager", () => {
     expect(contractIndex).toBeLessThan(projectRootIndex);
   });
 
+  it("keeps default project host sessions alive", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+
+    manager.ensureProjectSession("/repo/mobile");
+
+    expect(exec.calls.find((call) => call.args[0] === "new-session")?.args.join(" ")).toContain(
+      "sh -lc tail -f /dev/null",
+    );
+  });
+
+  it("recreates a project session when tmux drops it during contract stamping", () => {
+    let sessionExists = false;
+    let dropNextContract = true;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined.startsWith("has-session -t ")) {
+        if (!sessionExists) throw new Error("missing");
+        return "";
+      }
+      if (joined === "list-sessions -F #{session_name}") return "";
+      if (joined.startsWith("new-session -d -s ")) {
+        sessionExists = true;
+        return "";
+      }
+      if (args[0] === "set-option" && args[3] === TMUX_RUNTIME_CONTRACT_OPTION && dropNextContract) {
+        dropNextContract = false;
+        sessionExists = false;
+        throw new Error("no such session: aimux-mobile-abc");
+      }
+      if (joined.startsWith("list-windows -t ")) return "";
+      if (joined.startsWith("show-options -v -t ") && joined.endsWith(" terminal-features")) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec);
+
+    manager.ensureProjectSession("/repo/mobile");
+
+    expect(calls.filter((call) => call.args[0] === "new-session")).toHaveLength(2);
+    expect(
+      calls.filter((call) => call.args[0] === "set-option" && call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION),
+    ).toHaveLength(3);
+  });
+
+  it("recreates a project session when tmux drops it during configuration", () => {
+    let sessionExists = false;
+    let dropNextConfiguration = true;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined.startsWith("has-session -t ")) {
+        if (!sessionExists) throw new Error("missing");
+        return "";
+      }
+      if (joined === "list-sessions -F #{session_name}") return "";
+      if (joined.startsWith("new-session -d -s ")) {
+        sessionExists = true;
+        return "";
+      }
+      if (args[0] === "set-option" && args[3] === "@aimux-project-root" && dropNextConfiguration) {
+        dropNextConfiguration = false;
+        sessionExists = false;
+        throw new Error("no such session: aimux-mobile-abc");
+      }
+      if (joined.startsWith("list-windows -t ")) return "";
+      if (joined.startsWith("show-options -v -t ") && joined.endsWith(" terminal-features")) return "";
+      return "";
+    };
+    const manager = new TmuxRuntimeManager(exec);
+
+    const session = manager.ensureProjectSession("/repo/mobile");
+
+    expect(session.sessionName).toMatch(/^aimux-mobile-/);
+    expect(calls.filter((call) => call.args[0] === "new-session")).toHaveLength(2);
+    expect(
+      calls.filter((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-project-root"),
+    ).toHaveLength(2);
+  });
+
   it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
     const prev = process.env.AIMUX_HOME;
     process.env.AIMUX_HOME = "/home/user/.aimux-custom";
