@@ -125,14 +125,18 @@ function normalizeLastUsedState(state: Partial<LastUsedState>): LastUsedState {
     ),
   );
   const clients = Object.fromEntries(
-    Object.entries(state.clients ?? {}).map(([clientSession, value]) => [
-      clientSession,
-      {
-        recentIds: Array.isArray(value?.recentIds) ? value.recentIds.filter(Boolean).slice(0, MAX_RECENT_IDS) : [],
-        items: normalizeItems(value?.items),
-        updatedAt: typeof value?.updatedAt === "string" ? value.updatedAt : "",
-      },
-    ]),
+    Object.entries(state.clients ?? {}).map(([clientSession, value]) => {
+      const recentIds = Array.isArray(value?.recentIds) ? value.recentIds.filter(Boolean).slice(0, MAX_RECENT_IDS) : [];
+      const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt : "";
+      return [
+        clientSession,
+        {
+          recentIds,
+          items: normalizeClientItems(recentIds, value?.items, items, updatedAt),
+          updatedAt,
+        },
+      ];
+    }),
   );
   return {
     version: LAST_USED_VERSION,
@@ -151,6 +155,24 @@ function normalizeItems(items: unknown): Record<string, LastUsedEntry> {
     Object.entries(items as Record<string, Partial<LastUsedEntry>>).flatMap(([itemId, value]) =>
       typeof value?.lastUsedAt === "string" ? [[itemId, { lastUsedAt: value.lastUsedAt }]] : [],
     ),
+  );
+}
+
+function normalizeClientItems(
+  recentIds: string[],
+  items: unknown,
+  projectItems: Record<string, LastUsedEntry>,
+  updatedAt: string,
+): Record<string, LastUsedEntry> {
+  const normalizedItems = normalizeItems(items);
+  if (Object.keys(normalizedItems).length > 0) return pickRecentItems(recentIds, normalizedItems);
+
+  const baseMs = recencyMs(updatedAt) || Math.max(0, ...recentIds.map((id) => recencyMs(projectItems[id]?.lastUsedAt)));
+  return Object.fromEntries(
+    recentIds.map((id, index) => [
+      id,
+      { lastUsedAt: baseMs > 0 ? new Date(baseMs - index).toISOString() : (projectItems[id]?.lastUsedAt ?? "") },
+    ]),
   );
 }
 
