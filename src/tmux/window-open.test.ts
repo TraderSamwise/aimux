@@ -179,4 +179,37 @@ describe("managed window open", () => {
     expect(target?.windowId).toBe("@live-service");
     expect(tmux.openTarget).toHaveBeenCalledWith(liveTarget, { insideTmux: false });
   });
+
+  it("prefers an exact service tmux window id over an earlier duplicate live service match", () => {
+    const duplicateTarget = {
+      sessionName: "project-client-1",
+      windowId: "@duplicate-service",
+      windowIndex: 4,
+      windowName: "shell",
+    };
+    const exactTarget = {
+      sessionName: "project-client-1",
+      windowId: "@exact-service",
+      windowIndex: 6,
+      windowName: "shell",
+    };
+    const tmux = host({
+      listProjectManagedWindows: vi.fn(() => [
+        {
+          target: duplicateTarget,
+          metadata: { kind: "service", sessionId: "service-1" },
+        },
+        {
+          target: exactTarget,
+          metadata: { kind: "service", sessionId: "service-1" },
+        },
+      ]),
+      isWindowAlive: vi.fn(() => true),
+    });
+
+    const target = openManagedServiceWindow(tmux, "/repo", { id: "service-1", tmuxWindowId: "@exact-service" });
+
+    expect(target?.windowId).toBe("@exact-service");
+    expect(tmux.openTarget).toHaveBeenCalledWith(exactTarget, { insideTmux: false });
+  });
 });

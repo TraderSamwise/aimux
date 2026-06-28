@@ -13,6 +13,7 @@ export interface LastUsedEntry {
 
 export interface LastUsedClientState {
   recentIds: string[];
+  items: Record<string, LastUsedEntry>;
   updatedAt: string;
 }
 
@@ -67,10 +68,16 @@ export function markLastUsed(projectRoot: string, options: MarkLastUsedOptions):
 
   const clientSession = options.clientSession?.trim();
   if (clientSession) {
-    const existing = state.clients[clientSession] ?? { recentIds: [], updatedAt: usedAt };
+    const existing = state.clients[clientSession] ?? { recentIds: [], items: {}, updatedAt: usedAt };
+    const clientItems = { ...existing.items };
+    const existingClientUsedAt = clientItems[itemId]?.lastUsedAt;
+    if (!existingClientUsedAt || recencyMs(usedAt) >= recencyMs(existingClientUsedAt)) {
+      clientItems[itemId] = { lastUsedAt: usedAt };
+    }
     const updatedAt = recencyMs(usedAt) >= recencyMs(existing.updatedAt) ? usedAt : existing.updatedAt;
     state.clients[clientSession] = {
-      recentIds: sortRecentIds(pushRecentId(existing.recentIds, itemId), state.items),
+      recentIds: sortRecentIds(pushRecentId(existing.recentIds, itemId), clientItems),
+      items: clientItems,
       updatedAt,
     };
   }
@@ -121,6 +128,7 @@ function normalizeLastUsedState(state: Partial<LastUsedState>): LastUsedState {
       clientSession,
       {
         recentIds: Array.isArray(value?.recentIds) ? value.recentIds.filter(Boolean).slice(0, MAX_RECENT_IDS) : [],
+        items: normalizeItems(value?.items),
         updatedAt: typeof value?.updatedAt === "string" ? value.updatedAt : "",
       },
     ]),
@@ -134,6 +142,15 @@ function normalizeLastUsedState(state: Partial<LastUsedState>): LastUsedState {
       : [],
     updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : undefined,
   };
+}
+
+function normalizeItems(items: unknown): Record<string, LastUsedEntry> {
+  if (!items || typeof items !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(items as Record<string, Partial<LastUsedEntry>>).flatMap(([itemId, value]) =>
+      typeof value?.lastUsedAt === "string" ? [[itemId, { lastUsedAt: value.lastUsedAt }]] : [],
+    ),
+  );
 }
 
 function pushRecentId(ids: string[], itemId: string): string[] {
