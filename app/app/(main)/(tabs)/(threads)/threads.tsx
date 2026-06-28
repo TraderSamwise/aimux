@@ -7,15 +7,14 @@ import { Text } from "@/components/ui/text";
 import { ThreadWorkflowActions } from "@/components/workflow-actions";
 import { useAuth } from "@/lib/auth";
 import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { useRouteProject } from "@/lib/use-route-project";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
-import { selectedProjectAtom } from "@/stores/projects";
 import { cn } from "@/lib/utils";
 
 export default function ThreadsScreen() {
-  const project = useAtomValue(selectedProjectAtom);
+  const { project, projectPath, endpoint } = useRouteProject();
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -27,14 +26,13 @@ export default function ThreadsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<string | null>(null);
 
-  const endpoint = getProjectServiceEndpoint(project);
   const endpointRef = useRef(endpoint);
   const endpointKeyRef = useRef<string | null>(null);
   const refreshSeqRef = useRef(0);
   const endpointHost = endpoint?.host;
   const endpointPort = endpoint?.port;
   const endpointKey =
-    endpointHost && endpointPort ? `${project?.path ?? ""}|${endpointHost}:${endpointPort}` : null;
+    endpointHost && endpointPort ? `${projectPath ?? ""}|${endpointHost}:${endpointPort}` : null;
   const visibleThreads = threadsKey === endpointKey ? threads : [];
   const visibleError = errorKey === endpointKey ? error : null;
 
@@ -120,7 +118,7 @@ export default function ThreadsScreen() {
                 onPress={() =>
                   router.replace(
                     buildViewHref("/threads", {
-                      project: project?.path,
+                      project: projectPath,
                       threadId: t.thread.id,
                     }),
                   )

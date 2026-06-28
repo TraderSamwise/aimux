@@ -28,18 +28,14 @@ import {
 } from "@/lib/for-you-feed";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
+import { useRouteProject } from "@/lib/use-route-project";
 import { desktopStateFamily } from "@/stores/desktopState";
 import {
   kickNotificationFeedRefreshAtom,
   notificationFeedErrorFamily,
   notificationFeedFamily,
 } from "@/stores/notifications";
-import {
-  selectedProjectAtom,
-  selectedProjectEndpointAtom,
-  selectedProjectPathAtom,
-  selectedSessionIdAtom,
-} from "@/stores/projects";
+import { selectedSessionIdAtom } from "@/stores/projects";
 import {
   clearSecurityEventsAtom,
   markSecurityEventsReadAtom,
@@ -267,10 +263,8 @@ export default function NotificationsScreen() {
   const pathname = usePathname();
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const project = useAtomValue(selectedProjectAtom);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
-  const projectPathKey = selectedProjectPath ?? EMPTY_PROJECT_PATH;
+  const { project, projectPath, endpoint } = useRouteProject();
+  const projectPathKey = projectPath ?? EMPTY_PROJECT_PATH;
   const feed = useAtomValue(notificationFeedFamily(projectPathKey));
   const feedError = useAtomValue(notificationFeedErrorFamily(projectPathKey));
   const desktopState = useAtomValue(desktopStateFamily(projectPathKey));
@@ -363,9 +357,9 @@ export default function NotificationsScreen() {
     }
     if (card.sessionId) {
       selectSession(card.sessionId);
-      router.push(detailHrefForPath(pathname, "agent", card.sessionId, selectedProjectPath));
+      router.push(detailHrefForPath(pathname, "agent", card.sessionId, projectPath));
     } else if (card.serviceId) {
-      router.push(detailHrefForPath(pathname, "service", card.serviceId, selectedProjectPath));
+      router.push(detailHrefForPath(pathname, "service", card.serviceId, projectPath));
     }
   }
 
@@ -401,7 +395,10 @@ export default function NotificationsScreen() {
             active={lens === item.id}
             onPress={() =>
               router.replace(
-                buildViewHref("/notifications", { project: selectedProjectPath, lens: item.id }),
+                buildViewHref("/notifications", {
+                  project: projectPath ?? undefined,
+                  lens: item.id,
+                }),
               )
             }
           />
