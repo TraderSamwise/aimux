@@ -52,7 +52,8 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
 // Otherwise falls back to the first sorted project and clears stale session
 // selection.
 export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProject[]) => {
-  const sorted = [...incoming].sort((a, b) => a.name.localeCompare(b.name));
+  const previousProjects = get(projectsAtom);
+  const sorted = reconcileProjectList(previousProjects, incoming);
   let nextPath = get(selectedProjectPathAtom);
   let nextSession = get(selectedSessionIdAtom);
 
@@ -66,9 +67,9 @@ export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProje
   }
   // else: stored path is still present — keep it.
 
-  set(projectsAtom, sorted);
-  set(selectedProjectPathAtom, nextPath);
-  set(selectedSessionIdAtom, nextSession);
+  if (sorted !== previousProjects) set(projectsAtom, sorted);
+  if (nextPath !== get(selectedProjectPathAtom)) set(selectedProjectPathAtom, nextPath);
+  if (nextSession !== get(selectedSessionIdAtom)) set(selectedSessionIdAtom, nextSession);
   set(lastSyncAtAtom, Date.now());
 });
 
@@ -77,3 +78,19 @@ export const selectProjectAtom = atom(null, (_get, set, path: string | null) => 
   set(selectedProjectPathAtom, path);
   set(selectedSessionIdAtom, null);
 });
+
+export function reconcileProjectList(
+  previous: readonly DaemonProject[],
+  incoming: readonly DaemonProject[],
+): DaemonProject[] {
+  const sorted = [...incoming].sort((a, b) => a.name.localeCompare(b.name));
+  if (previous.length !== sorted.length) return sorted;
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (!sameProjectSnapshot(previous[i], sorted[i])) return sorted;
+  }
+  return previous as DaemonProject[];
+}
+
+function sameProjectSnapshot(a: DaemonProject, b: DaemonProject): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
