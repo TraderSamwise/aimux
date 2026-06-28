@@ -108,9 +108,7 @@ export function showProject(host: ProjectHost): void {
     { screen: "project" },
     (lifecycle) => refreshProjectObservability(host, { lifecycle }),
     {
-      onSuccess: (refreshed) => {
-        if (refreshed) renderProject(host);
-      },
+      onSuccess: () => renderProject(host),
     },
   );
 }
