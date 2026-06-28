@@ -15,9 +15,10 @@ import { WorktreeList } from "@/components/WorktreeDashboard";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopState } from "@/lib/desktop-state";
-import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main-tabs";
+import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
 import {
   buildViewHref,
+  buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
@@ -319,9 +320,9 @@ function SidebarModeTabs({
   );
 }
 
-function SidebarPrimaryNav() {
+function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
   const pathname = usePathname();
-  const navigateTab = useMainTabNavigation();
+  const router = useRouter();
   const activeTab = mainTabForPath(pathname);
 
   return (
@@ -332,7 +333,9 @@ function SidebarPrimaryNav() {
         return (
           <Pressable
             key={id}
-            onPress={() => navigateTab(tabId)}
+            onPress={() =>
+              router.navigate(buildViewPath(MAIN_TAB_ROUTES[tabId].href, { project: projectPath }))
+            }
             className={cn(
               "mb-0.5 flex-row items-center gap-2 rounded-md px-2 py-2",
               active ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
@@ -474,7 +477,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
               <>
                 <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
                 {sidebarMode === "views" ? (
-                  <SidebarPrimaryNav />
+                  <SidebarPrimaryNav projectPath={effectiveProjectPath} />
                 ) : (
                   <WorktreeTree
                     projectPath={effectiveProject!.path}

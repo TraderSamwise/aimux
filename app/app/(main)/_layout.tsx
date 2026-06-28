@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { Platform } from "react-native";
-import { Stack, useGlobalSearchParams } from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
@@ -52,6 +52,15 @@ import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 
 const POLL_INTERVAL_MS = 2000;
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
+const PROJECT_SCOPED_PATH_PREFIXES = [
+  "/",
+  "/project",
+  "/coordination",
+  "/topology",
+  "/library",
+  "/notifications",
+  "/threads",
+];
 
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
@@ -70,6 +79,7 @@ export default function MainLayout() {
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
+  const pathname = usePathname();
   const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
@@ -96,6 +106,19 @@ export default function MainLayout() {
     store.set(selectedProjectPathAtom, urlProjectPath);
     store.set(selectedSessionIdAtom, null);
   }, [activeShare, selectedProjectPath, store, urlProjectPath]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!effectiveProjectPath || !isProjectScopedPath(pathname)) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("project") === effectiveProjectPath) return;
+    url.searchParams.set("project", effectiveProjectPath);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  });
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
@@ -420,4 +443,10 @@ function projectFromActiveShare(activeShare: ActiveSharedSession) {
     serviceAlive: true,
     serviceEndpoint: activeShare.serviceEndpoint,
   };
+}
+
+function isProjectScopedPath(pathname: string) {
+  return PROJECT_SCOPED_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || (prefix !== "/" && pathname.startsWith(`${prefix}/`)),
+  );
 }
