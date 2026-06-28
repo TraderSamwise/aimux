@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import { buildDashboardQuickJumpWorktrees } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
-import { commandKey, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
+import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { isLiveDashboardServiceRuntimeEntry } from "../dashboard/runtime-evidence.js";
@@ -205,14 +205,13 @@ function isCurrentDashboardActivation(host: any, token: any | undefined): boolea
 }
 
 function isShiftedCommand(event: KeyEvent, lowerKey: string, letter: string): boolean {
-  const rawKey = event.name || event.char;
-  return lowerKey === letter && (event.shift || rawKey === letter.toUpperCase());
+  return isShiftedLetterCommand(event, lowerKey, letter);
 }
 
 function isPlainDashboardNavigationEvent(event: KeyEvent, key: string): boolean {
   if (event.shift || event.ctrl || event.alt) return false;
   if (["up", "down", "left", "right", "enter", "escape"].includes(key)) return true;
-  if (!["h", "j", "k"].includes(key)) return false;
+  if (!["h", "j", "k", "l"].includes(key)) return false;
   return event.name === "" && event.char === key;
 }
 
@@ -263,7 +262,8 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
         }
         return true;
       case "enter":
-      case "right": {
+      case "right":
+      case "l": {
         const entry = host.getDashboardSessions()[host.activeIndex];
         if (entry) {
           void host.activateDashboardEntry(entry);
@@ -304,6 +304,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       }
       case "enter":
       case "right":
+      case "l":
         stepIntoFocusedDashboardWorktree(host);
         return true;
       case "escape":
@@ -336,6 +337,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       return true;
     case "enter":
     case "right":
+    case "l":
       host.activateSelectedDashboardWorktreeEntry();
       return true;
     case "escape":
@@ -696,9 +698,6 @@ export const dashboardInteractionMethods = {
         return;
       case "p":
         this.showProject();
-        return;
-      case "l":
-        this.showLibrary();
         return;
       case "t":
         this.showTopology();

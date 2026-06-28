@@ -141,7 +141,7 @@ export function handleTopologyKey(host: TopologyHost, data: Buffer): void {
     host.renderDashboard();
     return;
   }
-  if (host.handleDashboardSubscreenNavigationKey(key, "topology")) return;
+  if (host.handleDashboardSubscreenNavigationKey(key, "topology", event)) return;
   if (key === "?") {
     host.showHelp();
     return;

@@ -168,8 +168,8 @@ export const dashboardActionMethods = {
   buildActiveDashboardOverlayOutput(this: any, viewport?: { cols: number; rows: number }): string | null {
     return buildActiveDashboardOverlayOutputImpl(this, viewport);
   },
-  handleDashboardSubscreenNavigationKey(this: any, key: string, currentScreen: any): boolean {
-    return handleDashboardSubscreenNavigationKeyImpl(this, key, currentScreen);
+  handleDashboardSubscreenNavigationKey(this: any, key: string, currentScreen: any, event?: any): boolean {
+    return handleDashboardSubscreenNavigationKeyImpl(this, key, currentScreen, event);
   },
   openLiveTmuxWindowForEntry(
     this: any,
