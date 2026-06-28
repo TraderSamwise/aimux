@@ -57,6 +57,8 @@ const POLL_INTERVAL_MS = 2000;
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 const PROJECT_SCOPED_PATH_PREFIXES = [
   "/",
+  "/agent",
+  "/service",
   "/project",
   "/coordination",
   "/topology",

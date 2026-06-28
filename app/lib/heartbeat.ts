@@ -79,7 +79,7 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
 
   const url = `${getServiceUrl(serviceEndpoint)}${eventPath}`;
 
-  const NativeEventSource = getNativeBrowserEventSource(serviceEndpoint);
+  const NativeEventSource = token ? null : getNativeBrowserEventSource(serviceEndpoint);
   const es: EventSourceLike = NativeEventSource
     ? new NativeEventSource(url)
     : new EventSourcePolyfill(url, {
