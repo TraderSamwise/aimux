@@ -11,7 +11,10 @@ import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser
 import { env } from "@/lib/env";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { evaluateAlertEvent } from "@/lib/notification-policy";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import {
+  getProjectServiceEndpoint,
+  isProjectHostOfflineError,
+} from "@/lib/project-connection-display";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
@@ -236,7 +239,9 @@ export default function MainLayout() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
           store.set(desktopStateErrorFamily(effectiveProjectPath!), msg);
-          console.warn("desktop-state fetch failed:", err);
+          if (!isProjectHostOfflineError(msg)) {
+            console.warn("desktop-state fetch failed:", err);
+          }
         }
       }
       if (cancelled) return;
@@ -283,7 +288,9 @@ export default function MainLayout() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
           store.set(notificationFeedErrorFamily(effectiveProjectPath!), msg);
-          console.warn("notification fetch failed:", err);
+          if (!isProjectHostOfflineError(msg)) {
+            console.warn("notification fetch failed:", err);
+          }
         }
       }
       if (cancelled) return;
