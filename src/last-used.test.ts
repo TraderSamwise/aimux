@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadLastUsedState, markLastUsed } from "./last-used.js";
+import { getLastUsedPath, loadLastUsedState, markLastUsed } from "./last-used.js";
 
 let previousAimuxHome: string | undefined;
 let aimuxHome = "";
@@ -93,5 +93,35 @@ describe("last-used recency", () => {
     expect(Object.keys(client?.items ?? {})).toHaveLength(64);
     expect(client?.items["agent-69"]?.lastUsedAt).toBe("2026-06-28T04:01:09.000Z");
     expect(client?.items["agent-0"]).toBeUndefined();
+  });
+
+  it("seeds legacy client recency timestamps from saved order", () => {
+    const path = getLastUsedPath(projectRoot);
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        items: {
+          "agent-a": { lastUsedAt: "2026-06-28T04:00:01.000Z" },
+          "agent-b": { lastUsedAt: "2026-06-28T04:00:02.000Z" },
+        },
+        clients: {
+          "client-1": {
+            recentIds: ["agent-a", "agent-b"],
+            updatedAt: "2026-06-28T04:00:03.000Z",
+          },
+        },
+        projectRecentIds: ["agent-b", "agent-a"],
+      }),
+    );
+
+    markLastUsed(projectRoot, {
+      itemId: "agent-b",
+      clientSession: "client-1",
+      usedAt: "2026-06-28T04:00:02.000Z",
+    });
+
+    expect(loadLastUsedState(projectRoot).clients["client-1"]?.recentIds.slice(0, 2)).toEqual(["agent-a", "agent-b"]);
   });
 });
