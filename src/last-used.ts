@@ -75,9 +75,10 @@ export function markLastUsed(projectRoot: string, options: MarkLastUsedOptions):
       clientItems[itemId] = { lastUsedAt: usedAt };
     }
     const updatedAt = recencyMs(usedAt) >= recencyMs(existing.updatedAt) ? usedAt : existing.updatedAt;
+    const recentIds = sortRecentIds(pushRecentId(existing.recentIds, itemId), clientItems);
     state.clients[clientSession] = {
-      recentIds: sortRecentIds(pushRecentId(existing.recentIds, itemId), clientItems),
-      items: clientItems,
+      recentIds,
+      items: pickRecentItems(recentIds, clientItems),
       updatedAt,
     };
   }
@@ -165,6 +166,10 @@ function sortRecentIds(ids: string[], items: Record<string, LastUsedEntry>): str
       return ids.indexOf(a) - ids.indexOf(b);
     })
     .slice(0, MAX_RECENT_IDS);
+}
+
+function pickRecentItems(ids: string[], items: Record<string, LastUsedEntry>): Record<string, LastUsedEntry> {
+  return Object.fromEntries(ids.flatMap((id) => (items[id] ? [[id, items[id]]] : [])));
 }
 
 function recencyMs(value?: string): number {

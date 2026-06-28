@@ -78,4 +78,20 @@ describe("last-used recency", () => {
     expect(state.clients["client-1"]?.recentIds.slice(0, 2)).toEqual(["agent-b", "agent-a"]);
     expect(state.clients["client-2"]?.recentIds.slice(0, 1)).toEqual(["agent-a"]);
   });
+
+  it("prunes per-client item timestamps to the recent id limit", () => {
+    for (let index = 0; index < 70; index += 1) {
+      markLastUsed(projectRoot, {
+        itemId: `agent-${index}`,
+        clientSession: "client-1",
+        usedAt: new Date(Date.UTC(2026, 5, 28, 4, 0, index)).toISOString(),
+      });
+    }
+
+    const client = loadLastUsedState(projectRoot).clients["client-1"];
+    expect(client?.recentIds).toHaveLength(64);
+    expect(Object.keys(client?.items ?? {})).toHaveLength(64);
+    expect(client?.items["agent-69"]?.lastUsedAt).toBe("2026-06-28T04:01:09.000Z");
+    expect(client?.items["agent-0"]).toBeUndefined();
+  });
 });
