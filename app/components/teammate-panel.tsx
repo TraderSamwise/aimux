@@ -60,6 +60,7 @@ export function TeammatePanel({
   const canAct = Boolean(endpoint) && !busyAction;
   const canCreate = canAct && Boolean(session.id);
   const canAssignTask = canAct && Boolean(selectedTeammate?.id) && Boolean(trimmedTask);
+  const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}-team`;
 
   const applyTeammates = useCallback((result: TeammateListResponse) => {
     setTeammates(result.teammates);
@@ -207,6 +208,8 @@ export function TeammatePanel({
           <PanelLabel label="Team" />
           <View className="mt-2 flex-row gap-2">
             <Input
+              nativeID={`${fieldIdPrefix}-role`}
+              accessibilityLabel="Role"
               value={role}
               onChangeText={setRole}
               placeholder="Role"
@@ -215,6 +218,8 @@ export function TeammatePanel({
               autoCorrect={false}
             />
             <Input
+              nativeID={`${fieldIdPrefix}-label`}
+              accessibilityLabel="Label"
               value={label}
               onChangeText={setLabel}
               placeholder="Label"
@@ -251,6 +256,10 @@ export function TeammatePanel({
           <PanelLabel label="Task" />
           <View className="mt-2 flex-row gap-2">
             <Input
+              nativeID={`${fieldIdPrefix}-task`}
+              accessibilityLabel={
+                selectedTeammate ? `Task ${displayTeammateName(selectedTeammate)}` : "Task teammate"
+              }
               value={taskBody}
               onChangeText={setTaskBody}
               placeholder={

@@ -69,6 +69,7 @@ export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
+  const composerFieldId = `agent-${sessionKey.replace(/[^A-Za-z0-9_-]/g, "-")}-message`;
   const { project, projectPath, endpoint: serviceEndpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
   const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
@@ -756,6 +757,8 @@ export default function ChatScreen() {
                 ) : null}
                 <View className="flex-row items-end gap-2">
                   <Input
+                    nativeID={composerFieldId}
+                    accessibilityLabel="Message the agent"
                     value={draft}
                     onChangeText={setDraft}
                     onKeyPress={handleComposerKeyPress}
