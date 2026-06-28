@@ -554,6 +554,12 @@ describe("handleRuntimeGuardKey", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
+  it("swallows lowercase library hotkey while guarded on the dashboard", () => {
+    const host = stubHost({ kind: "disconnected" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("l"))).toBe(true);
+    expect(host.footerFlash).toContain("reconnecting");
+  });
+
   it("keeps Enter blocked for offline sessions because they resume through the API", () => {
     const host = stubHost({ kind: "disconnected" });
     host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "offline" }];

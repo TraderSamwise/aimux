@@ -212,7 +212,7 @@ function isShiftedCommand(event: KeyEvent, lowerKey: string, letter: string): bo
 function isPlainDashboardNavigationEvent(event: KeyEvent, key: string): boolean {
   if (event.shift || event.ctrl || event.alt) return false;
   if (["up", "down", "left", "right", "enter", "escape"].includes(key)) return true;
-  if (!["h", "j", "k", "l"].includes(key)) return false;
+  if (!["h", "j", "k"].includes(key)) return false;
   return event.name === "" && event.char === key;
 }
 
@@ -263,8 +263,7 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
         }
         return true;
       case "enter":
-      case "right":
-      case "l": {
+      case "right": {
         const entry = host.getDashboardSessions()[host.activeIndex];
         if (entry) {
           void host.activateDashboardEntry(entry);
@@ -305,7 +304,6 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       }
       case "enter":
       case "right":
-      case "l":
         stepIntoFocusedDashboardWorktree(host);
         return true;
       case "escape":
@@ -338,7 +336,6 @@ function handleDashboardNavigationKey(host: any, key: string, hasWorktrees: bool
       return true;
     case "enter":
     case "right":
-    case "l":
       host.activateSelectedDashboardWorktreeEntry();
       return true;
     case "escape":
@@ -699,6 +696,9 @@ export const dashboardInteractionMethods = {
         return;
       case "p":
         this.showProject();
+        return;
+      case "l":
+        this.showLibrary();
         return;
       case "t":
         this.showTopology();
