@@ -215,4 +215,37 @@ describe("startHeartbeat local transport", () => {
     NativeEventSourceMock.instances[0].emit("ready", JSON.stringify({ projectId: "project-1" }));
     expect(events).toEqual([{ type: "ready", projectId: "project-1" }]);
   });
+
+  it("uses the polyfill for authenticated loopback streams", () => {
+    class NativeEventSourceMock {
+      static instances: NativeEventSourceMock[] = [];
+
+      constructor(readonly url: string) {
+        NativeEventSourceMock.instances.push(this);
+      }
+
+      addEventListener() {}
+      close() {}
+    }
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { EventSource: NativeEventSourceMock },
+    });
+
+    startHeartbeat({
+      serviceEndpoint: { host: "127.0.0.1", port: 43210 },
+      sessionId: null,
+      token: "token",
+      onEvent: () => {},
+    });
+
+    expect(NativeEventSourceMock.instances).toHaveLength(0);
+    expect(eventSourceMock.EventSourcePolyfill).toHaveBeenCalledWith(
+      "http://127.0.0.1:43210/events",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer token" },
+      }),
+    );
+  });
 });
