@@ -1522,6 +1522,7 @@ daemonCmd
     const info = loadDaemonInfo();
     const state = loadDaemonState();
     let relay: unknown = { status: "off" };
+    const serviceAliveById = new Map<string, boolean>();
     if (info) {
       try {
         const result = await requestDaemonJson("/relay/status");
@@ -1529,10 +1530,21 @@ daemonCmd
       } catch {
         // Relay status unavailable — leave as off.
       }
+      try {
+        const result = await requestDaemonJson("/projects");
+        for (const project of (result.projects ?? []) as Array<{ id?: string; serviceAlive?: boolean }>) {
+          if (project.id) serviceAliveById.set(project.id, Boolean(project.serviceAlive));
+        }
+      } catch {
+        // Project liveness unavailable — retained records remain non-live diagnostics.
+      }
     }
     const payload = {
       daemon: info,
-      projects: Object.values(state.projects),
+      projects: Object.values(state.projects).map((project) => ({
+        ...project,
+        serviceAlive: serviceAliveById.get(project.projectId) ?? false,
+      })),
       relay,
     };
     if (opts.json) {
@@ -1544,7 +1556,9 @@ daemonCmd
       return;
     }
     console.log(`Daemon pid=${info.pid} port=${info.port}`);
-    console.log(`Managed projects: ${Object.keys(state.projects).length}`);
+    const liveProjectServices = Array.from(serviceAliveById.values()).filter(Boolean).length;
+    console.log(`Known projects: ${Object.keys(state.projects).length}`);
+    console.log(`Live project services: ${liveProjectServices}`);
     const r = relay as { status?: string; relayUrl?: string };
     if (r.status && r.status !== "off") {
       console.log(`Relay: ${r.status}${r.relayUrl ? ` (${r.relayUrl})` : ""}`);

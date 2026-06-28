@@ -688,6 +688,12 @@ export class AimuxDaemon {
     } satisfies AimuxDaemonInfo);
   }
 
+  private isProjectServiceLive(entry: ProjectServiceState): boolean {
+    const child = this.children.get(entry.projectId);
+    if (child?.pid === entry.pid) return isPidAlive(entry.pid);
+    return isAimuxProjectServiceProcess(entry.pid, entry);
+  }
+
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
     // A fresh service instance starts with a clean health-failure slate, so a
     // new pid never inherits the previous instance's accumulated failure debt.
@@ -1113,13 +1119,17 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === "/projects") {
-      const liveById = this.state.projects;
-      const projects = listDesktopProjects().map((project) => ({
-        ...project,
-        service: liveById[project.id] ?? null,
-        serviceAlive: Boolean(liveById[project.id]),
-        serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
-      }));
+      const servicesById = this.state.projects;
+      const projects = listDesktopProjects().map((project) => {
+        const service = servicesById[project.id] ?? null;
+        const serviceAlive = service ? this.isProjectServiceLive(service) : false;
+        return {
+          ...project,
+          service: serviceAlive ? service : null,
+          serviceAlive,
+          serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
+        };
+      });
       return { status: 200, body: { ok: true, projects } };
     }
 

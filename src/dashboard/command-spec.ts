@@ -27,6 +27,7 @@ const DASHBOARD_ENV_STAMP_DEFAULTS: Partial<Record<(typeof DASHBOARD_ENV_KEYS)[n
   AIMUX_ENV: "production",
   AIMUX_WEB_APP_URL: "https://aimux.app",
 };
+const STABLE_SHIM_ENV_KEYS = ["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"] as const;
 
 function resolveDashboardScriptPath(): string {
   const compiledPath = fileURLToPath(new URL("../main.js", import.meta.url));
@@ -34,13 +35,18 @@ function resolveDashboardScriptPath(): string {
   return fileURLToPath(new URL("../main.ts", import.meta.url));
 }
 
-function buildDashboardEnvCommandPrefix(env: NodeJS.ProcessEnv, options: { forStamp?: boolean } = {}): string {
+function buildDashboardEnvCommandPrefix(
+  env: NodeJS.ProcessEnv,
+  options: { forStamp?: boolean; unsetKeys?: readonly string[] } = {},
+): string {
+  const unsets = (options.unsetKeys ?? []).map((key) => `-u ${shellQuote(key)}`);
   const entries = DASHBOARD_ENV_KEYS.flatMap((key) => {
     const value = env[key]?.trim();
     if (options.forStamp && value && DASHBOARD_ENV_STAMP_DEFAULTS[key] === value) return [];
     return value ? [`${key}=${shellQuote(value)}`] : [];
   });
-  return entries.length > 0 ? `env ${entries.join(" ")} ` : "";
+  const args = [...unsets, ...entries];
+  return args.length > 0 ? `env ${args.join(" ")} ` : "";
 }
 
 function dashboardEnvForLaunch(env: NodeJS.ProcessEnv, source: "stable-shim" | "current-entry"): NodeJS.ProcessEnv {
@@ -63,8 +69,12 @@ export function getDashboardCommandSpec(
   const launch = getAimuxCliLaunchCommand(["--tmux-dashboard-internal"], { env, currentArgvEntry: scriptPath });
   const aimuxCommand = [launch.command, ...launch.args].map(shellQuote).join(" ");
   const dashboardEnv = dashboardEnvForLaunch(env, launch.source);
-  const dashboardEntrypoint = `${buildDashboardEnvCommandPrefix(dashboardEnv)}${aimuxCommand}`;
-  const dashboardStampEntrypoint = `${buildDashboardEnvCommandPrefix(dashboardEnv, { forStamp: true })}${aimuxCommand}`;
+  const unsetKeys = launch.source === "current-entry" ? STABLE_SHIM_ENV_KEYS : [];
+  const dashboardEntrypoint = `${buildDashboardEnvCommandPrefix(dashboardEnv, { unsetKeys })}${aimuxCommand}`;
+  const dashboardStampEntrypoint = `${buildDashboardEnvCommandPrefix(dashboardEnv, {
+    forStamp: true,
+    unsetKeys,
+  })}${aimuxCommand}`;
   const wrappedDashboardCommand = [
     "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
     ";",

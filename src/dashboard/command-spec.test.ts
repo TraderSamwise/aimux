@@ -20,7 +20,7 @@ describe("getDashboardCommandSpec", () => {
       SECRET_TOKEN: "not-for-tmux",
     } as NodeJS.ProcessEnv);
     const command = spec.dashboardCommand.args[1] ?? "";
-    expect(command).toContain(`env AIMUX_HOME='/tmp/custom'"'"'home; echo unsafe'`);
+    expect(command).toContain(`AIMUX_HOME='/tmp/custom'"'"'home; echo unsafe'`);
     expect(command).toContain("AIMUX_DAEMON_PORT='43219'");
     expect(command).not.toContain("SECRET_TOKEN");
     expect(command).not.toContain("not-for-tmux");
@@ -35,9 +35,10 @@ describe("getDashboardCommandSpec", () => {
     const command = spec.dashboardCommand.args[1] ?? "";
     expect(command).toContain("AIMUX_HOME='/tmp/aimux'");
     expect(command).toContain(spec.scriptPath);
-    expect(command).not.toContain("AIMUX_CLI_BIN");
-    expect(command).not.toContain("AIMUX_INSTALL_ROOT");
+    expect(command).toMatch(/-u '?AIMUX_CLI_BIN'?/);
+    expect(command).toMatch(/-u '?AIMUX_INSTALL_ROOT'?/);
     expect(command).not.toContain("/Users/sam/.local/bin/aimux");
+    expect(command).not.toContain("/Users/sam/.aimux/native");
   });
 
   it("changes the dashboard build stamp when the baked environment changes", () => {

@@ -181,8 +181,9 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   // Unrecognized/empty sequences can't mutate (no handler acts on them); let them fall through
   // rather than eat them, so the guard only ever swallows actual recognized keystrokes.
   if (events.length === 0) return false;
-  const key = commandKey(events[0]);
-  if (isGuardedLocalDashboardNavigation(host, key)) return false;
+  const event = events[0];
+  const key = commandKey(event);
+  if (isGuardedLocalDashboardNavigation(host, event)) return false;
   const disposition = runtimeGuardKeyDisposition(key);
   if (disposition === "passthrough") return false;
   showDashboardFooterFlash(
@@ -196,12 +197,21 @@ export function handleRuntimeGuardKey(host: DashboardControlHost, data: Buffer):
   return true;
 }
 
-function isGuardedLocalDashboardNavigation(host: DashboardControlHost, key: string): boolean {
+function isPlainLocalNavigationEvent(event: KeyEvent): boolean {
+  const command = commandKey(event);
+  const rawKey = event.name || event.char;
+  if (event.ctrl || event.alt || event.shift) return false;
+  if (command === "escape" || command === "left" || command === "right") return true;
+  if (command === "enter" || command === "return") return true;
+  return (command === "h" || command === "l") && rawKey === command;
+}
+
+function isGuardedLocalDashboardNavigation(host: DashboardControlHost, event: KeyEvent): boolean {
   if (host.mode !== "dashboard") return false;
   if (host.dashboardState?.screen !== "dashboard") return false;
-  const command = key.length === 1 ? key.toLowerCase() : key;
+  if (!isPlainLocalNavigationEvent(event)) return false;
+  const command = commandKey(event);
   if (command === "escape" || command === "left" || command === "h") return true;
-  if (command !== "enter" && command !== "return" && command !== "right" && command !== "l") return false;
   if (host.dashboardState?.level === "worktrees") return true;
   if (!canFocusLocalTmux(host)) return false;
   const selected = selectedDashboardWorktreeEntry(host);
@@ -211,25 +221,16 @@ function isGuardedLocalDashboardNavigation(host: DashboardControlHost, key: stri
   return isLiveDashboardSession(session);
 }
 
-function isDashboardLocalNavigationKey(host: DashboardControlHost, key: string): boolean {
+function isDashboardLocalNavigationEvent(host: DashboardControlHost, event: KeyEvent): boolean {
   if (host.mode !== "dashboard") return false;
   if (host.dashboardState?.screen !== "dashboard") return false;
-  const command = key.length === 1 ? key.toLowerCase() : key;
-  return (
-    command === "escape" ||
-    command === "left" ||
-    command === "h" ||
-    command === "l" ||
-    command === "enter" ||
-    command === "return" ||
-    command === "right"
-  );
+  return isPlainLocalNavigationEvent(event);
 }
 
-function queuePendingDashboardLocalNavigation(host: DashboardControlHost, data: Buffer, key: string): void {
+function queuePendingDashboardLocalNavigation(host: DashboardControlHost, data: Buffer, event: KeyEvent): void {
   host.pendingDashboardLocalNavigation = {
     data: Buffer.from(data),
-    key,
+    key: commandKey(event),
     queuedAt: Date.now(),
   };
   schedulePendingDashboardLocalNavigationFlush(host);
@@ -243,11 +244,13 @@ function flushPendingDashboardLocalNavigation(host: DashboardControlHost): boole
     return false;
   }
   if (host.dashboardBusyState || host.dashboardErrorState) return false;
-  if (!isDashboardLocalNavigationKey(host, pending.key)) {
+  const events = parseKeys(pending.data);
+  const event = events[0];
+  if (!event || !isDashboardLocalNavigationEvent(host, event)) {
     host.pendingDashboardLocalNavigation = undefined;
     return false;
   }
-  if (!isGuardedLocalDashboardNavigation(host, pending.key)) return false;
+  if (!isGuardedLocalDashboardNavigation(host, event)) return false;
   host.pendingDashboardLocalNavigation = undefined;
   host.handleDashboardKey?.(pending.data);
   return true;
@@ -494,7 +497,6 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
     return;
   }
-  const launch = resolveDashboardReloadLaunch(projectRoot);
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
   host.runtimeGuardRepairBusy = true;
@@ -574,6 +576,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   };
 
   try {
+    const launch = resolveDashboardReloadLaunch(projectRoot);
     const child = spawn(launch.command, launch.args, { detached: true, env: launch.env, stdio: "ignore" });
     if (typeof child.pid === "number" && child.pid > 0) {
       writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
@@ -684,10 +687,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     const events = parseKeys(data);
     if (events.length > 0) {
       const event = events[0];
-      const key = commandKey(event);
-      if (isGuardedLocalDashboardNavigation(host, key)) return false;
-      if (isDashboardLocalNavigationKey(host, key)) {
-        queuePendingDashboardLocalNavigation(host, Buffer.from(event.raw), key);
+      if (isGuardedLocalDashboardNavigation(host, event)) return false;
+      if (isDashboardLocalNavigationEvent(host, event)) {
+        queuePendingDashboardLocalNavigation(host, Buffer.from(event.raw), event);
       }
     }
     return true;
