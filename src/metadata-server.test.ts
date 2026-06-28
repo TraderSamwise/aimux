@@ -19,6 +19,7 @@ import {
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
+import { loadLastUsedState } from "./last-used.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -147,6 +148,28 @@ describe("MetadataServer threads API", () => {
     const health = await fetch(`${base}/diagnostics`);
     const json = await health.json();
     expect(json.recentSlowRequests).toEqual([]);
+  });
+
+  it("marks usage through the project service and notifies clients", async () => {
+    server?.stop();
+    const onChange = vi.fn();
+    server = new MetadataServer({ onChange });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/usage/mark`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ itemId: "service-1", clientSession: "aimux-client-1" }),
+    });
+    const body = (await res.json()) as { ok: boolean; itemId: string; lastUsedAt: string | null };
+
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({ ok: true, itemId: "service-1", lastUsedAt: expect.any(String) });
+    expect(loadLastUsedState(repoRoot).clients["aimux-client-1"]?.recentIds[0]).toBe("service-1");
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("exposes plugin startup diagnostics in health", async () => {

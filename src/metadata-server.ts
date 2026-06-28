@@ -1993,6 +1993,7 @@ export class MetadataServer {
         itemId,
         lastUsedAt: state.items[itemId]?.lastUsedAt ?? null,
       });
+      this.notifyChange();
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.controls.switchableAgents) {

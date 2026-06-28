@@ -70,6 +70,39 @@ describe("managed window open", () => {
     });
   });
 
+  it("skips dead stale agent matches and opens a later live replacement", () => {
+    const deadTarget = {
+      sessionName: "project-client-1",
+      windowId: "@dead-agent",
+      windowIndex: 2,
+      windowName: "codex",
+    };
+    const liveTarget = {
+      sessionName: "project-client-1",
+      windowId: "@live-agent",
+      windowIndex: 5,
+      windowName: "codex",
+    };
+    const tmux = host({
+      listProjectManagedWindows: vi.fn(() => [
+        {
+          target: deadTarget,
+          metadata: { kind: "agent", sessionId: "codex-1", backendSessionId: "backend-1" },
+        },
+        {
+          target: liveTarget,
+          metadata: { kind: "agent", sessionId: "codex-1", backendSessionId: "backend-1" },
+        },
+      ]),
+      isWindowAlive: vi.fn((target) => target.windowId !== "@dead-agent"),
+    });
+
+    const target = openManagedSessionWindow(tmux, "/repo", { id: "codex-1", backendSessionId: "backend-1" });
+
+    expect(target?.windowId).toBe("@live-agent");
+    expect(tmux.openTarget).toHaveBeenCalledWith(liveTarget, { insideTmux: false });
+  });
+
   it("opens service windows from project-wide managed windows", () => {
     const tmux = host();
 
@@ -79,5 +112,38 @@ describe("managed window open", () => {
     expect(tmux.openTarget).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@service" }), {
       insideTmux: false,
     });
+  });
+
+  it("skips dead stale service matches and opens a later live replacement", () => {
+    const deadTarget = {
+      sessionName: "project-client-1",
+      windowId: "@dead-service",
+      windowIndex: 4,
+      windowName: "shell",
+    };
+    const liveTarget = {
+      sessionName: "project-client-1",
+      windowId: "@live-service",
+      windowIndex: 6,
+      windowName: "shell",
+    };
+    const tmux = host({
+      listProjectManagedWindows: vi.fn(() => [
+        {
+          target: deadTarget,
+          metadata: { kind: "service", sessionId: "service-1" },
+        },
+        {
+          target: liveTarget,
+          metadata: { kind: "service", sessionId: "service-1" },
+        },
+      ]),
+      isWindowAlive: vi.fn((target) => target.windowId !== "@dead-service"),
+    });
+
+    const target = openManagedServiceWindow(tmux, "/repo", "service-1");
+
+    expect(target?.windowId).toBe("@live-service");
+    expect(tmux.openTarget).toHaveBeenCalledWith(liveTarget, { insideTmux: false });
   });
 });

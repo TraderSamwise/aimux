@@ -672,6 +672,10 @@ describe("dashboard live target activation", () => {
       expect(host.tmuxRuntimeManager.switchClientToTarget).toHaveBeenCalledWith("/dev/live", target);
       expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]?.recentIds[0]).toBe("codex-1");
       expect(loadLastUsedState(projectRoot).clients["stale-client-session"]).toBeUndefined();
+      expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
+        itemId: "codex-1",
+        clientSession: "aimux-repo-client-live",
+      });
       expect(host.postToProjectService).not.toHaveBeenCalledWith(
         "/control/open-notification-target",
         expect.anything(),
@@ -941,6 +945,10 @@ describe("dashboard live target activation", () => {
       expect(host.tmuxRuntimeManager.switchClientToTarget).toHaveBeenCalledWith("/dev/live", target);
       expect(loadLastUsedState(projectRoot).clients["aimux-repo-client-live"]?.recentIds[0]).toBe("service-1");
       expect(loadLastUsedState(projectRoot).clients["stale-client-session"]).toBeUndefined();
+      expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
+        itemId: "service-1",
+        clientSession: "aimux-repo-client-live",
+      });
       expect(host.postToProjectService).not.toHaveBeenCalledWith(
         "/control/open-notification-target",
         expect.anything(),

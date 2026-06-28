@@ -894,10 +894,17 @@ function dashboardControlClientContext(host: DashboardControlHost): {
 }
 
 export function noteLastUsedItem(host: DashboardControlHost, itemId: string, clientSession?: string): void {
+  const resolvedClientSession = clientSession ?? host.tmuxRuntimeManager.currentClientSession() ?? undefined;
   markLastUsed(dashboardProjectRoot(host), {
     itemId,
-    clientSession: clientSession ?? host.tmuxRuntimeManager.currentClientSession() ?? undefined,
+    clientSession: resolvedClientSession,
   });
+  if (typeof host.postToProjectService === "function") {
+    void mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.usageMark, {
+      itemId,
+      clientSession: resolvedClientSession,
+    }).catch(() => {});
+  }
   host.invalidateDesktopStateSnapshot();
 }
 
