@@ -77,6 +77,7 @@ export function AgentManagementPanel({
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
+  const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 
   if (!endpoint) {
     return null;
@@ -89,6 +90,8 @@ export function AgentManagementPanel({
           <PanelLabel icon={Pencil} label="Label" />
           <View className="mt-2 flex-row gap-2">
             <Input
+              nativeID={`${fieldIdPrefix}-label`}
+              accessibilityLabel="Agent label"
               value={label}
               onChangeText={setLabel}
               placeholder="Agent label"
@@ -154,6 +157,8 @@ export function AgentManagementPanel({
           <PanelLabel icon={Repeat2} label="Loop" />
           <View className="mt-2 flex-row gap-2">
             <Input
+              nativeID={`${fieldIdPrefix}-loop-goal`}
+              accessibilityLabel="Loop goal"
               value={loopGoal}
               onChangeText={setLoopGoal}
               placeholder="Loop goal"
