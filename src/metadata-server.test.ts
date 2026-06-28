@@ -176,6 +176,25 @@ describe("MetadataServer threads API", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps out-of-order usage marks monotonic", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const markUsage = (itemId: string, usedAt: string) =>
+      fetch(`${base}/usage/mark`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ itemId, clientSession: "aimux-client-1", usedAt }),
+      });
+
+    await markUsage("agent-b", "2026-06-28T04:00:02.000Z");
+    await markUsage("agent-a", "2026-06-28T04:00:01.000Z");
+
+    const state = loadLastUsedState(repoRoot);
+    expect(state.projectRecentIds.slice(0, 2)).toEqual(["agent-b", "agent-a"]);
+    expect(state.clients["aimux-client-1"]?.recentIds.slice(0, 2)).toEqual(["agent-b", "agent-a"]);
+  });
+
   it("exposes plugin startup diagnostics in health", async () => {
     server?.stop();
     server = new MetadataServer({
