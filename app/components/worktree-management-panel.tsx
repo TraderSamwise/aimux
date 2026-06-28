@@ -79,6 +79,8 @@ export function WorktreeManagementPanel({
           </View>
           <View className="mt-2 flex-row gap-2">
             <Input
+              nativeID="worktree-name"
+              accessibilityLabel="New worktree name"
               value={name}
               onChangeText={setName}
               placeholder="New worktree name"

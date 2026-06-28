@@ -53,7 +53,8 @@ import {
 import { addSecurityEventAtom } from "@/stores/security";
 import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 
-const POLL_INTERVAL_MS = 2000;
+const PROJECT_LIST_POLL_INTERVAL_MS = 10_000;
+const PROJECT_VIEW_FALLBACK_POLL_INTERVAL_MS = 10_000;
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 const PROJECT_SCOPED_PATH_PREFIXES = [
   "/",
@@ -177,7 +178,7 @@ export default function MainLayout() {
     };
   }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
 
-  // Poll /projects every 2s; reconcile into the projects atom.
+  // Poll /projects as a discovery fallback; project-service updates arrive over SSE.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -188,7 +189,7 @@ export default function MainLayout() {
         reconcileProjects([projectFromActiveShare(activeShare)]);
         store.set(selectedProjectPathAtom, activeShare.projectRoot);
         store.set(selectedSessionIdAtom, activeShare.sessionId);
-        timer = setTimeout(loop, POLL_INTERVAL_MS);
+        timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
         return;
       }
       if (!relayReadyForRequests) return;
@@ -201,7 +202,7 @@ export default function MainLayout() {
         if (!cancelled) console.warn("project list refresh failed:", err);
       }
       if (cancelled) return;
-      timer = setTimeout(loop, POLL_INTERVAL_MS);
+      timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
     }
 
     void loop();
@@ -212,7 +213,7 @@ export default function MainLayout() {
     };
   }, [activeShare, reconcileProjects, relayReadyForRequests, store]);
 
-  // Poll /desktop-state for the selected project every 2s. Re-triggers on
+  // Poll /desktop-state for the selected project as an SSE fallback. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
   // Keyed by host:port primitives so the timer survives project-list reconciles
   // that create new array identities.
@@ -247,7 +248,7 @@ export default function MainLayout() {
         }
       }
       if (cancelled) return;
-      timer = setTimeout(poll, POLL_INTERVAL_MS);
+      timer = setTimeout(poll, PROJECT_VIEW_FALLBACK_POLL_INTERVAL_MS);
     }
 
     void poll();
@@ -296,7 +297,7 @@ export default function MainLayout() {
         }
       }
       if (cancelled) return;
-      timer = setTimeout(poll, POLL_INTERVAL_MS);
+      timer = setTimeout(poll, PROJECT_VIEW_FALLBACK_POLL_INTERVAL_MS);
     }
 
     void poll();

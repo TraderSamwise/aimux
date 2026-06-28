@@ -18,6 +18,7 @@ import type { DesktopState } from "@/lib/desktop-state";
 import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
 import {
   buildViewHref,
+  buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
@@ -338,7 +339,7 @@ function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
             key={id}
             onPress={() =>
               router.replace(
-                buildViewHref(MAIN_TAB_ROUTES[tabId].href, { project: routeProjectPath }),
+                buildViewPath(MAIN_TAB_ROUTES[tabId].href, { project: routeProjectPath }),
               )
             }
             className={cn(
