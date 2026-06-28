@@ -675,6 +675,7 @@ describe("dashboard live target activation", () => {
       expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
         itemId: "codex-1",
         clientSession: "aimux-repo-client-live",
+        usedAt: expect.any(String),
       });
       expect(host.postToProjectService).not.toHaveBeenCalledWith(
         "/control/open-notification-target",
@@ -948,6 +949,7 @@ describe("dashboard live target activation", () => {
       expect(host.postToProjectService).toHaveBeenCalledWith("/usage/mark", {
         itemId: "service-1",
         clientSession: "aimux-repo-client-live",
+        usedAt: expect.any(String),
       });
       expect(host.postToProjectService).not.toHaveBeenCalledWith(
         "/control/open-notification-target",

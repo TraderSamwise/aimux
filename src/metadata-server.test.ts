@@ -162,12 +162,16 @@ describe("MetadataServer threads API", () => {
     const res = await fetch(`${base}/usage/mark`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ itemId: "service-1", clientSession: "aimux-client-1" }),
+      body: JSON.stringify({
+        itemId: "service-1",
+        clientSession: "aimux-client-1",
+        usedAt: "2026-06-28T04:00:00.000Z",
+      }),
     });
     const body = (await res.json()) as { ok: boolean; itemId: string; lastUsedAt: string | null };
 
     expect(res.ok).toBe(true);
-    expect(body).toMatchObject({ ok: true, itemId: "service-1", lastUsedAt: expect.any(String) });
+    expect(body).toMatchObject({ ok: true, itemId: "service-1", lastUsedAt: "2026-06-28T04:00:00.000Z" });
     expect(loadLastUsedState(repoRoot).clients["aimux-client-1"]?.recentIds[0]).toBe("service-1");
     expect(onChange).toHaveBeenCalledTimes(1);
   });
