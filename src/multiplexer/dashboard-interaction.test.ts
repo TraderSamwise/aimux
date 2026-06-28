@@ -281,7 +281,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
-  it("uses lowercase l for library instead of dashboard step-in", () => {
+  it("uses lowercase l for dashboard step-in instead of library", () => {
     const host: any = {
       mode: "dashboard",
       dashboardOverlayState: { kind: "none" },
@@ -292,18 +292,21 @@ describe("dashboardInteractionMethods", () => {
         focusedWorktreePath: "/repo/.aimux/worktrees/demo",
         worktreeNavOrder: ["/repo/.aimux/worktrees/demo"],
       },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", name: "demo" }],
       isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       handleDashboardQuickJumpDigit: vi.fn(() => false),
-      updateWorktreeSessions: vi.fn(),
+      updateWorktreeSessions: vi.fn(function (this: any) {
+        this.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+      }),
       showLibrary: vi.fn(),
       renderDashboard: vi.fn(),
     };
 
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
 
-    expect(host.showLibrary).toHaveBeenCalledOnce();
-    expect(host.updateWorktreeSessions).not.toHaveBeenCalled();
-    expect(host.dashboardState.level).toBe("worktrees");
+    expect(host.showLibrary).not.toHaveBeenCalled();
+    expect(host.updateWorktreeSessions).toHaveBeenCalledOnce();
+    expect(host.dashboardState.level).toBe("sessions");
   });
 
   it("blocks stepping into a removing worktree", () => {
@@ -1470,7 +1473,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
   });
 
-  it("uses lowercase hjk for worktree-level dashboard navigation before commands", () => {
+  it("uses lowercase hjkl for worktree-level dashboard navigation before commands", () => {
     const host: any = {
       dashboardState: {
         hasWorktrees: () => true,
@@ -1506,7 +1509,7 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("h"));
     expect(host.showOrchestrationRoutePicker).not.toHaveBeenCalled();
 
-    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\r"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
     expect(host.updateWorktreeSessions).toHaveBeenCalledOnce();
     expect(host.dashboardState.level).toBe("sessions");
     expect(host.dashboardState.sessionIndex).toBe(0);
@@ -1542,7 +1545,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.dashboardState.focusedWorktreePath).toBe("/repo");
   });
 
-  it("uses lowercase hjk for session-level dashboard navigation before commands", () => {
+  it("uses lowercase hjkl for session-level dashboard navigation before commands", () => {
     const host: any = {
       dashboardState: {
         hasWorktrees: () => true,
@@ -1569,7 +1572,7 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("k"));
     expect(host.dashboardState.sessionIndex).toBe(0);
 
-    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\r"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
     expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
     expect(host.showLibrary).not.toHaveBeenCalled();
 
@@ -1578,7 +1581,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.showOrchestrationRoutePicker).not.toHaveBeenCalled();
   });
 
-  it("uses right to focus flat dashboard entries", () => {
+  it("uses lowercase l to focus flat dashboard entries", () => {
     const entry = { id: "claude-1", status: "offline" };
     const host: any = {
       dashboardState: { hasWorktrees: () => false, quickJumpDigits: "" },
@@ -1591,21 +1594,23 @@ describe("dashboardInteractionMethods", () => {
       sessions: [],
     };
 
-    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\r"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
 
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
     expect(host.showLibrary).not.toHaveBeenCalled();
   });
 
-  it("uses lowercase l to open Library from the dashboard", () => {
+  it("uses shifted L to open Library from the dashboard", () => {
     const host: any = {
       dashboardState: { hasWorktrees: () => false, quickJumpDigits: "" },
       isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       handleDashboardQuickJumpDigit: vi.fn(() => false),
       showLibrary: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
     };
 
-    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("l"));
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("L"));
 
     expect(host.showLibrary).toHaveBeenCalledOnce();
   });

@@ -1,5 +1,5 @@
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
-import { commandKey, parseKeys } from "../key-parser.js";
+import { commandKey, isShiftedLetterCommand, parseKeys } from "../key-parser.js";
 import {
   buildHelpOverlayOutput,
   buildMigratePickerOverlayOutput,
@@ -105,7 +105,7 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
     dismissHelp(host);
     return;
   }
-  if (key === "l") {
+  if (isShiftedLetterCommand(event, key, "l")) {
     dismissHelp(host);
     host.showLibrary();
     return;

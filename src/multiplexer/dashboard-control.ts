@@ -1,5 +1,6 @@
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
+import { getAimuxCliLaunchCommand } from "../cli-launcher.js";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import type { DashboardScreen } from "../dashboard/state.js";
 import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
-import { commandKey, parseKeys, printableInputText } from "../key-parser.js";
+import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService, stopProjectService } from "../daemon.js";
 import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "../project-service-manifest.js";
@@ -297,6 +298,11 @@ function showDashboardFooterFlash(host: DashboardControlHost, message: string, t
   host.footerFlashTicks = ticks;
 }
 
+function scrubStableShimEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { AIMUX_CLI_BIN: _cliBin, AIMUX_INSTALL_ROOT: _installRoot, ...rest } = env;
+  return rest;
+}
+
 function runtimeGuardRepairLockPath(): string {
   return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
 }
@@ -487,7 +493,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
     return;
   }
-  const command = resolveDashboardReloadCommand();
+  const launch = resolveDashboardReloadLaunch(projectRoot);
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
   host.runtimeGuardRepairBusy = true;
@@ -567,7 +573,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   };
 
   try {
-    const child = spawn(command, ["restart", "--project", projectRoot], { detached: true, stdio: "ignore" });
+    const child = spawn(launch.command, launch.args, { detached: true, env: launch.env, stdio: "ignore" });
     if (typeof child.pid === "number" && child.pid > 0) {
       writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
     }
@@ -648,8 +654,28 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
   }
 }
 
-export function resolveDashboardReloadCommand(): string {
-  return process.env.AIMUX_CLI_BIN?.trim() || "aimux";
+export interface DashboardReloadLaunch {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  source: "stable-shim" | "current-entry";
+}
+
+export function resolveDashboardReloadLaunch(
+  projectRoot: string,
+  options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
+): DashboardReloadLaunch {
+  const env = options.env ?? process.env;
+  const launch = getAimuxCliLaunchCommand(["restart", "--project", projectRoot], {
+    env,
+    currentArgvEntry: options.currentArgvEntry,
+  });
+  return {
+    command: launch.command,
+    args: launch.args,
+    env: launch.source === "current-entry" ? scrubStableShimEnv(env) : env,
+    source: launch.source,
+  };
 }
 
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {
@@ -788,6 +814,7 @@ export function handleDashboardSubscreenNavigationKey(
   host: DashboardControlHost,
   key: string,
   currentScreen: Exclude<DashboardScreen, "dashboard">,
+  event?: KeyEvent,
 ): boolean {
   if (key === "d") {
     setDashboardScreen(host, "dashboard");
@@ -808,7 +835,7 @@ export function handleDashboardSubscreenNavigationKey(
     host.showProject();
     return true;
   }
-  if (key === "l") {
+  if (event && isShiftedLetterCommand(event, key, "l")) {
     if (currentScreen === "library") return false;
     host.showLibrary();
     return true;

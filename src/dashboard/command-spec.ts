@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { buildAimuxCliShellCommand } from "../cli-launcher.js";
+import { getAimuxCliLaunchCommand } from "../cli-launcher.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
 function shellQuote(value: string): string {
@@ -23,6 +23,10 @@ const DASHBOARD_ENV_KEYS = [
   "AIMUX_CLI_BIN",
   "AIMUX_INSTALL_ROOT",
 ] as const;
+const DASHBOARD_ENV_STAMP_DEFAULTS: Partial<Record<(typeof DASHBOARD_ENV_KEYS)[number], string>> = {
+  AIMUX_ENV: "production",
+  AIMUX_WEB_APP_URL: "https://aimux.app",
+};
 
 function resolveDashboardScriptPath(): string {
   const compiledPath = fileURLToPath(new URL("../main.js", import.meta.url));
@@ -30,12 +34,19 @@ function resolveDashboardScriptPath(): string {
   return fileURLToPath(new URL("../main.ts", import.meta.url));
 }
 
-function buildDashboardEnvCommandPrefix(env: NodeJS.ProcessEnv): string {
+function buildDashboardEnvCommandPrefix(env: NodeJS.ProcessEnv, options: { forStamp?: boolean } = {}): string {
   const entries = DASHBOARD_ENV_KEYS.flatMap((key) => {
     const value = env[key]?.trim();
+    if (options.forStamp && value && DASHBOARD_ENV_STAMP_DEFAULTS[key] === value) return [];
     return value ? [`${key}=${shellQuote(value)}`] : [];
   });
   return entries.length > 0 ? `env ${entries.join(" ")} ` : "";
+}
+
+function dashboardEnvForLaunch(env: NodeJS.ProcessEnv, source: "stable-shim" | "current-entry"): NodeJS.ProcessEnv {
+  if (source === "stable-shim") return env;
+  const { AIMUX_CLI_BIN: _cliBin, AIMUX_INSTALL_ROOT: _installRoot, ...rest } = env;
+  return rest;
 }
 
 function buildDashboardStamp(scriptPath: string, command: string): string {
@@ -44,9 +55,16 @@ function buildDashboardStamp(scriptPath: string, command: string): string {
   return `${mtime}-${commandHash}`;
 }
 
-export function getDashboardCommandSpec(projectRoot: string, env: NodeJS.ProcessEnv = process.env): DashboardCommandSpec {
+export function getDashboardCommandSpec(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+): DashboardCommandSpec {
   const scriptPath = resolveDashboardScriptPath();
-  const dashboardEntrypoint = `${buildDashboardEnvCommandPrefix(env)}${buildAimuxCliShellCommand(["--tmux-dashboard-internal"])}`;
+  const launch = getAimuxCliLaunchCommand(["--tmux-dashboard-internal"], { env, currentArgvEntry: scriptPath });
+  const aimuxCommand = [launch.command, ...launch.args].map(shellQuote).join(" ");
+  const dashboardEnv = dashboardEnvForLaunch(env, launch.source);
+  const dashboardEntrypoint = `${buildDashboardEnvCommandPrefix(dashboardEnv)}${aimuxCommand}`;
+  const dashboardStampEntrypoint = `${buildDashboardEnvCommandPrefix(dashboardEnv, { forStamp: true })}${aimuxCommand}`;
   const wrappedDashboardCommand = [
     "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
     ";",
@@ -148,9 +166,10 @@ export function getDashboardCommandSpec(projectRoot: string, env: NodeJS.Process
     ";",
     "fi",
   ].join(" ");
+  const stampCommand = wrappedDashboardCommand.replace(dashboardEntrypoint, dashboardStampEntrypoint);
   return {
     scriptPath,
-    dashboardBuildStamp: buildDashboardStamp(scriptPath, wrappedDashboardCommand),
+    dashboardBuildStamp: buildDashboardStamp(scriptPath, stampCommand),
     dashboardCommand: {
       cwd: projectRoot,
       command: "bash",

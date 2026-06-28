@@ -1240,7 +1240,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.dashboardBusyState).toBeNull();
   });
 
-  it("uses PATH aimux restart for guarded repair", async () => {
+  it("uses the current source entrypoint for guarded repair", async () => {
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     const originalArgv = process.argv[1];
     const originalCliBin = process.env.AIMUX_CLI_BIN;
@@ -1262,10 +1262,18 @@ describe("startRuntimeGuardRepair", () => {
       else process.env.AIMUX_CLI_BIN = originalCliBin;
     }
 
-    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart", "--project", "/repo/app"], {
-      detached: true,
-      stdio: "ignore",
-    });
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      process.execPath,
+      [expect.stringContaining("main."), "restart", "--project", "/repo/app"],
+      {
+        detached: true,
+        env: expect.not.objectContaining({
+          AIMUX_CLI_BIN: expect.any(String),
+          AIMUX_INSTALL_ROOT: expect.any(String),
+        }),
+        stdio: "ignore",
+      },
+    );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
@@ -1966,17 +1974,43 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
   });
 
-  it("uses AIMUX_CLI_BIN when the install shim exported a custom path", async () => {
-    const { resolveDashboardReloadCommand } = await import("./dashboard-control.js");
-    const originalCliBin = process.env.AIMUX_CLI_BIN;
-    process.env.AIMUX_CLI_BIN = "/custom/bin/aimux";
+  it("scrubs stable-shim env when repair launches from a source checkout", async () => {
+    const { resolveDashboardReloadLaunch } = await import("./dashboard-control.js");
+    const launch = resolveDashboardReloadLaunch("/repo/app", {
+      currentArgvEntry: "/Users/sam/cs/aimux/dist/main.js",
+      env: {
+        AIMUX_CLI_BIN: "/custom/bin/aimux",
+        AIMUX_INSTALL_ROOT: "/Users/sam/.aimux/native",
+        AIMUX_DAEMON_PORT: "43219",
+      },
+    });
 
-    try {
-      expect(resolveDashboardReloadCommand()).toBe("/custom/bin/aimux");
-    } finally {
-      if (originalCliBin === undefined) delete process.env.AIMUX_CLI_BIN;
-      else process.env.AIMUX_CLI_BIN = originalCliBin;
-    }
+    expect(launch.source).toBe("current-entry");
+    expect(launch.command).toBe(process.execPath);
+    expect(launch.args).toEqual([expect.stringContaining("main."), "restart", "--project", "/repo/app"]);
+    expect(launch.env).toEqual({ AIMUX_DAEMON_PORT: "43219" });
+  });
+
+  it("keeps stable-shim env when repair launches from an installed shim", async () => {
+    const { resolveDashboardReloadLaunch } = await import("./dashboard-control.js");
+    const shimPath = join(testAimuxHome!, "bin", "aimux");
+    mkdirSync(join(testAimuxHome!, "bin"), { recursive: true });
+    writeFileSync(shimPath, "#!/bin/sh\n");
+    const env = {
+      AIMUX_CLI_BIN: shimPath,
+      AIMUX_INSTALL_ROOT: join(testAimuxHome!, "native"),
+      AIMUX_DAEMON_PORT: "43219",
+    };
+
+    const launch = resolveDashboardReloadLaunch("/repo/app", {
+      currentArgvEntry: shimPath,
+      env,
+    });
+
+    expect(launch.source).toBe("stable-shim");
+    expect(launch.command).toBe(shimPath);
+    expect(launch.args).toEqual(["restart", "--project", "/repo/app"]);
+    expect(launch.env).toBe(env);
   });
 });
 
@@ -2063,10 +2097,15 @@ describe("refreshRuntimeGuard", () => {
     await refreshRuntimeGuard(host as never);
 
     expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
-    expect(mocks.spawn).toHaveBeenCalledWith("aimux", ["restart", "--project", "/repo/app"], {
-      detached: true,
-      stdio: "ignore",
-    });
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      process.execPath,
+      [expect.stringContaining("main."), "restart", "--project", "/repo/app"],
+      {
+        detached: true,
+        env: expect.any(Object),
+        stdio: "ignore",
+      },
+    );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
@@ -2252,7 +2291,7 @@ describe("refreshRuntimeGuard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
-  it("does not replay the library hotkey as local dashboard navigation after reconnect", async () => {
+  it("does not replay a swallowed local navigation key after reconnect", async () => {
     mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
     const host = runtimeGuardHost() as any;
     host.runtimeGuardState = { kind: "disconnected" };
@@ -2291,19 +2330,20 @@ describe("handleDashboardSubscreenNavigationKey", () => {
     };
   }
 
-  it("maps leading-letter hotkeys to their screens (c/p/l/t/g)", async () => {
+  it("maps screen hotkeys to their screens (c/p/L/t/g)", async () => {
     const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
-    const cases: Array<[string, keyof ReturnType<typeof makeHost>, string]> = [
-      ["c", "showCoordination", "project"],
-      ["p", "showProject", "coordination"],
-      ["l", "showLibrary", "coordination"],
-      ["t", "showTopology", "coordination"],
-      ["g", "showGraveyard", "coordination"],
+    const cases: Array<[Buffer, string, keyof ReturnType<typeof makeHost>, string]> = [
+      [Buffer.from("c"), "c", "showCoordination", "project"],
+      [Buffer.from("p"), "p", "showProject", "coordination"],
+      [Buffer.from("L"), "l", "showLibrary", "coordination"],
+      [Buffer.from("t"), "t", "showTopology", "coordination"],
+      [Buffer.from("g"), "g", "showGraveyard", "coordination"],
     ];
-    for (const [key, method, otherScreen] of cases) {
+    for (const [raw, key, method, otherScreen] of cases) {
       const host = makeHost();
+      const [event] = (await import("../key-parser.js")).parseKeys(raw);
       // currentScreen differs from target, so the show* (not render*) path runs.
-      const handled = handleDashboardSubscreenNavigationKey(host as never, key, otherScreen as never);
+      const handled = handleDashboardSubscreenNavigationKey(host as never, key, otherScreen as never, event);
       expect(handled).toBe(true);
       expect(host[method]).toHaveBeenCalledTimes(1);
     }
@@ -2312,19 +2352,29 @@ describe("handleDashboardSubscreenNavigationKey", () => {
   it("declines (returns false) when the hotkey matches the current screen, so the screen's own handler can act", async () => {
     const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
     // e.g. on coordination, [c] must reach the section handler (clear/complete), not re-nav.
-    const cases: Array<[string, string, keyof ReturnType<typeof makeHost>]> = [
-      ["c", "coordination", "showCoordination"],
-      ["p", "project", "showProject"],
-      ["l", "library", "showLibrary"],
-      ["t", "topology", "showTopology"],
-      ["g", "graveyard", "showGraveyard"],
+    const cases: Array<[Buffer, string, string, keyof ReturnType<typeof makeHost>]> = [
+      [Buffer.from("c"), "c", "coordination", "showCoordination"],
+      [Buffer.from("p"), "p", "project", "showProject"],
+      [Buffer.from("L"), "l", "library", "showLibrary"],
+      [Buffer.from("t"), "t", "topology", "showTopology"],
+      [Buffer.from("g"), "g", "graveyard", "showGraveyard"],
     ];
-    for (const [key, screen, showMethod] of cases) {
+    for (const [raw, key, screen, showMethod] of cases) {
       const host = makeHost();
-      expect(handleDashboardSubscreenNavigationKey(host as never, key, screen as never)).toBe(false);
+      const [event] = (await import("../key-parser.js")).parseKeys(raw);
+      expect(handleDashboardSubscreenNavigationKey(host as never, key, screen as never, event)).toBe(false);
       // Declining must not also fire the switch — the key belongs to the screen's own handler.
       expect(host[showMethod]).not.toHaveBeenCalled();
     }
+  });
+
+  it("leaves lowercase l available for local navigation on subscreens", async () => {
+    const { handleDashboardSubscreenNavigationKey } = await import("./dashboard-control.js");
+    const { parseKeys } = await import("../key-parser.js");
+    const host = makeHost();
+    const [event] = parseKeys(Buffer.from("l"));
+    expect(handleDashboardSubscreenNavigationKey(host as never, "l", "coordination", event)).toBe(false);
+    expect(host.showLibrary).not.toHaveBeenCalled();
   });
 
   it("no longer treats the retired i/y keys as navigation", async () => {

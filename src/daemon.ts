@@ -414,16 +414,9 @@ export function loadDaemonState(): DaemonState {
   });
   const projects: Record<string, ProjectServiceState> = {};
   for (const [projectId, entry] of Object.entries(raw.projects ?? {})) {
-    if (entry && isPidAlive(entry.pid)) {
+    if (entry) {
       projects[projectId] = entry;
     }
-  }
-  if (Object.keys(projects).length !== Object.keys(raw.projects ?? {}).length) {
-    saveJson(getDaemonStatePath(), {
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      projects,
-    } satisfies DaemonState);
   }
   return {
     version: 1,
@@ -674,12 +667,12 @@ export class AimuxDaemon {
   private refreshState(): void {
     const nextProjects: Record<string, ProjectServiceState> = {};
     for (const [projectId, entry] of Object.entries(this.state.projects)) {
-      if (isPidAlive(entry.pid)) {
-        nextProjects[projectId] = {
-          ...entry,
-          updatedAt: new Date().toISOString(),
-        };
-      }
+      nextProjects[projectId] = isPidAlive(entry.pid)
+        ? {
+            ...entry,
+            updatedAt: new Date().toISOString(),
+          }
+        : entry;
     }
     this.state = {
       version: 1,
@@ -747,7 +740,10 @@ export class AimuxDaemon {
       }
       const current = this.state.projects[projectId];
       if (current?.pid === state.pid) {
-        delete this.state.projects[projectId];
+        this.state.projects[projectId] = {
+          ...current,
+          updatedAt: new Date().toISOString(),
+        };
         this.refreshState();
       }
     });
