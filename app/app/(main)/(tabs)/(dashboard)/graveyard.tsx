@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { View } from "react-native";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useSetAtom } from "jotai";
 import { GitBranch, RotateCcw, Trash2 } from "lucide-react-native";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import { useRouteProject } from "@/lib/use-route-project";
 import {
   deleteGraveyardWorktree,
   listGraveyard,
@@ -16,7 +16,6 @@ import {
   type WorktreeGraveyardEntryResponse,
 } from "@/lib/api";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
-import { selectedProjectAtom } from "@/stores/projects";
 
 type GraveyardState = {
   endpointKey: string | null;
@@ -26,7 +25,7 @@ type GraveyardState = {
 };
 
 export default function GraveyardScreen() {
-  const project = useAtomValue(selectedProjectAtom);
+  const { project, endpoint } = useRouteProject();
   const { getToken } = useAuth();
   const [graveyardState, setGraveyardState] = useState<GraveyardState>({
     endpointKey: null,
@@ -37,7 +36,6 @@ export default function GraveyardScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
 
-  const endpoint = getProjectServiceEndpoint(project);
   const endpointHost = endpoint?.host;
   const endpointPort = endpoint?.port;
   const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;

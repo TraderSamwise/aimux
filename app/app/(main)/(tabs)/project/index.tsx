@@ -20,8 +20,8 @@ import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { useRouteProject } from "@/lib/use-route-project";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
-import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
 
 type ProjectSection =
@@ -211,8 +211,7 @@ export default function ProjectScreen() {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const { project, endpoint } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();

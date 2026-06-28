@@ -12,9 +12,9 @@ import { Text } from "@/components/ui/text";
 import { listProjectLibrary, type LibraryDocument } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
-import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 
 function formatBytes(size: number): string {
@@ -56,8 +56,7 @@ function DocumentRow({
 export default function LibraryScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const { project, endpoint } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
