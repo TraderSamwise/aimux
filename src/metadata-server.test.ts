@@ -2882,6 +2882,8 @@ describe("MetadataServer threads API", () => {
         `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       expect(liveAgainRes.ok).toBe(true);
+      setWindowOptionMock.mockClear();
+      respawnWindowMock.mockClear();
       dashboardReadyStamp = "old-build";
       const staleReadyRes = await fetch(
         `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
@@ -2892,6 +2894,7 @@ describe("MetadataServer threads API", () => {
         TMUX_DASHBOARD_READY_OPTION,
         "",
       );
+      expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;
       const dashboardWindowRes = await fetch(
         `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4099&focus=true`,
