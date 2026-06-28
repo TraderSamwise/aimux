@@ -917,16 +917,15 @@ function findProjectManagedWindow(
   projectRoot: string,
   matcher: { windowId?: string; sessionId?: string },
 ): { target: TmuxTarget; metadata: TmuxWindowMetadata } | null {
-  return (
-    tmux
-      .listProjectManagedWindows(projectRoot)
-      .find(
-        (entry) =>
-          (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
-          (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true) &&
-          tmux.isWindowAlive(entry.target),
-      ) ?? null
-  );
+  const candidates = tmux.listProjectManagedWindows(projectRoot).filter((entry) => tmux.isWindowAlive(entry.target));
+  const exact =
+    candidates.find(
+      (entry) =>
+        (matcher.windowId ? entry.target.windowId === matcher.windowId : true) &&
+        (matcher.sessionId ? entry.metadata.sessionId === matcher.sessionId : true),
+    ) ?? null;
+  if (exact || !matcher.windowId || !matcher.sessionId) return exact;
+  return candidates.find((entry) => entry.metadata.sessionId === matcher.sessionId) ?? null;
 }
 
 function serializeControlTarget(target: TmuxTarget): Record<string, unknown> {
@@ -1978,21 +1977,23 @@ export class MetadataServer {
       return;
     }
     if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.usageMark) {
-      const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
+      const body = (await readJson(req)) as { itemId?: string; clientSession?: string; usedAt?: string };
       const itemId = body.itemId?.trim() || "";
       if (!itemId) {
         send(res, 400, { ok: false, error: "itemId is required" });
         return;
       }
-      const state = markLastUsed(process.cwd(), {
+      const state = markLastUsed(metadataProjectRoot() ?? process.cwd(), {
         itemId,
         clientSession: body.clientSession?.trim() || undefined,
+        usedAt: body.usedAt?.trim() || undefined,
       });
       send(res, 200, {
         ok: true,
         itemId,
         lastUsedAt: state.items[itemId]?.lastUsedAt ?? null,
       });
+      this.notifyChange();
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.controls.switchableAgents) {

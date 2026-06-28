@@ -19,6 +19,7 @@ import {
   upsertTopologySession,
 } from "./runtime-core/topology-sessions.js";
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_OWNER_OPTION } from "./runtime-owner.js";
+import { loadLastUsedState } from "./last-used.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -147,6 +148,51 @@ describe("MetadataServer threads API", () => {
     const health = await fetch(`${base}/diagnostics`);
     const json = await health.json();
     expect(json.recentSlowRequests).toEqual([]);
+  });
+
+  it("marks usage through the project service and notifies clients", async () => {
+    server?.stop();
+    const onChange = vi.fn();
+    server = new MetadataServer({ onChange });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/usage/mark`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        itemId: "service-1",
+        clientSession: "aimux-client-1",
+        usedAt: "2026-06-28T04:00:00.000Z",
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; itemId: string; lastUsedAt: string | null };
+
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({ ok: true, itemId: "service-1", lastUsedAt: "2026-06-28T04:00:00.000Z" });
+    expect(loadLastUsedState(repoRoot).clients["aimux-client-1"]?.recentIds[0]).toBe("service-1");
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps out-of-order usage marks monotonic", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const markUsage = (itemId: string, usedAt: string) =>
+      fetch(`${base}/usage/mark`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ itemId, clientSession: "aimux-client-1", usedAt }),
+      });
+
+    await markUsage("agent-b", "2026-06-28T04:00:02.000Z");
+    await markUsage("agent-a", "2026-06-28T04:00:01.000Z");
+
+    const state = loadLastUsedState(repoRoot);
+    expect(state.projectRecentIds.slice(0, 2)).toEqual(["agent-b", "agent-a"]);
+    expect(state.clients["aimux-client-1"]?.recentIds.slice(0, 2)).toEqual(["agent-b", "agent-a"]);
   });
 
   it("exposes plugin startup diagnostics in health", async () => {
@@ -1227,6 +1273,67 @@ describe("MetadataServer threads API", () => {
 
       expect(res.status).toBe(404);
       expect(body).toEqual({ ok: false, error: "window not found" });
+    } finally {
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+    }
+  });
+
+  it("falls back to a live same-session notification target when the rendered window id is stale", async () => {
+    server?.stop();
+    const staleTarget = { sessionName: "aimux-test", windowId: "@stale", windowIndex: 7, windowName: "codex" } as any;
+    const liveTarget = { sessionName: "aimux-test", windowId: "@live", windowIndex: 8, windowName: "codex" } as any;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "agent-1", command: "codex", status: "running", tmuxWindowId: "@stale" }],
+          teammates: [],
+          services: [],
+        }),
+      },
+    });
+    TmuxRuntimeManager.prototype.isWindowAlive = (target) => target.windowId !== "@stale";
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target: staleTarget,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+        {
+          target: liveTarget,
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+          },
+        },
+      ] as any;
+    try {
+      await server.start();
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "agent-1", focus: false }),
+      });
+      const body = (await res.json()) as { ok: boolean; target?: { windowId?: string } };
+
+      expect(res.ok).toBe(true);
+      expect(body.ok).toBe(true);
+      expect(body.target?.windowId).toBe("@live");
     } finally {
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;

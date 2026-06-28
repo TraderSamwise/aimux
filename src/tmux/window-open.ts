@@ -7,6 +7,16 @@ export interface TmuxFocusResult {
   focusMode: TmuxFocusMode;
 }
 
+export interface TmuxFocusContext {
+  currentClientSession?: string;
+  clientTty?: string;
+}
+
+export interface TmuxServiceTarget {
+  id: string;
+  tmuxWindowId?: string;
+}
+
 export function resolveLiveClientTty(
   tmux: TmuxRuntimeManager,
   currentClientSession?: string,
@@ -73,32 +83,63 @@ export function openManagedSessionWindow(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
   entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
+  focusContext?: TmuxFocusContext,
 ): TmuxTarget | null {
+  const candidates = tmux
+    .listProjectManagedWindows(projectRoot)
+    .filter(
+      (candidate) =>
+        candidate.metadata.kind === "agent" &&
+        (typeof tmux.isWindowAlive !== "function" || tmux.isWindowAlive(candidate.target)),
+    );
   const match =
-    tmux
-      .listProjectManagedWindows(projectRoot)
-      .find(
-        (candidate) =>
-          candidate.metadata.kind === "agent" &&
-          ((entry.tmuxWindowId && candidate.target.windowId === entry.tmuxWindowId) ||
-            candidate.metadata.sessionId === entry.id ||
-            (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId)),
-      ) ?? null;
+    (entry.tmuxWindowId
+      ? candidates.find((candidate) => candidate.target.windowId === entry.tmuxWindowId)
+      : undefined) ??
+    candidates.find(
+      (candidate) =>
+        candidate.metadata.sessionId === entry.id ||
+        (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId),
+    ) ??
+    null;
   if (!match) return null;
-  selectLinkedOrOpenTarget(tmux, match.target);
+  if (focusContext) {
+    openTargetForClient(tmux, match.target, focusContext.currentClientSession, focusContext.clientTty);
+  } else {
+    selectLinkedOrOpenTarget(tmux, match.target);
+  }
   return match.target;
 }
 
 export function openManagedServiceWindow(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
-  serviceId: string,
+  service: string | TmuxServiceTarget,
+  focusContext?: TmuxFocusContext,
 ): TmuxTarget | null {
+  const serviceTarget = normalizeServiceTarget(service);
+  const candidates = tmux
+    .listProjectManagedWindows(projectRoot)
+    .filter(
+      (candidate) =>
+        candidate.metadata.kind === "service" &&
+        (typeof tmux.isWindowAlive !== "function" || tmux.isWindowAlive(candidate.target)),
+    );
   const match =
-    tmux
-      .listProjectManagedWindows(projectRoot)
-      .find((candidate) => candidate.metadata.kind === "service" && candidate.metadata.sessionId === serviceId) ?? null;
+    (serviceTarget.tmuxWindowId
+      ? candidates.find((candidate) => candidate.target.windowId === serviceTarget.tmuxWindowId)
+      : undefined) ??
+    candidates.find((candidate) => candidate.metadata.sessionId === serviceTarget.id) ??
+    null;
   if (!match) return null;
-  selectLinkedOrOpenTarget(tmux, match.target);
+  if (focusContext) {
+    openTargetForClient(tmux, match.target, focusContext.currentClientSession, focusContext.clientTty);
+  } else {
+    selectLinkedOrOpenTarget(tmux, match.target);
+  }
   return match.target;
+}
+
+function normalizeServiceTarget(service: string | TmuxServiceTarget): TmuxServiceTarget {
+  return typeof service === "string" ? { id: service } : service;
 }

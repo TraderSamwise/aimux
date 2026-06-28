@@ -184,15 +184,18 @@ export const dashboardActionMethods = {
   ): Promise<"opened" | "missing" | "error"> {
     return waitAndOpenLiveTmuxWindowForEntryImpl(this, entry, timeoutMs);
   },
-  openLiveTmuxWindowForService(this: any, serviceId: string): "opened" | "missing" | "error" {
-    return openLiveTmuxWindowForServiceImpl(this, serviceId);
+  openLiveTmuxWindowForService(
+    this: any,
+    service: string | { id: string; tmuxWindowId?: string },
+  ): "opened" | "missing" | "error" {
+    return openLiveTmuxWindowForServiceImpl(this, service);
   },
   async waitAndOpenLiveTmuxWindowForService(
     this: any,
-    serviceId: string,
+    service: string | { id: string; tmuxWindowId?: string },
     timeoutMs?: number,
   ): Promise<"opened" | "missing" | "error"> {
-    return waitAndOpenLiveTmuxWindowForServiceImpl(this, serviceId, timeoutMs);
+    return waitAndOpenLiveTmuxWindowForServiceImpl(this, service, timeoutMs);
   },
   noteLastUsedItem(this: any, itemId: string): void {
     noteLastUsedItemImpl(this, itemId);
