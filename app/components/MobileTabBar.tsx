@@ -1,7 +1,7 @@
 import React from "react";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { useRouter } from "expo-router";
+import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { Bell, BookOpen, FolderKanban, Network } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,7 +10,11 @@ import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { MAIN_TAB_ROUTES, type MainTabId } from "@/lib/main-tabs";
-import { buildViewHref } from "@/lib/view-location";
+import {
+  buildViewHref,
+  projectPathFromSearchOrLocation,
+  type SearchValue,
+} from "@/lib/view-location";
 import { selectedProjectPathAtom } from "@/stores/projects";
 
 const TABS = [
@@ -28,6 +32,9 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const bottomInset = resolveChromeBottomInset(insets.bottom);
   const keyboardVisible = useKeyboardVisible();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
+  const currentProjectPath =
+    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
 
   if (!isMobile || keyboardVisible) return null;
 
@@ -52,7 +59,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
                 canPreventDefault: true,
               });
               if (!active && !event.defaultPrevented) {
-                router.navigate(buildViewHref(tabRoute.href, { project: selectedProjectPath }));
+                router.replace(buildViewHref(tabRoute.href, { project: currentProjectPath }));
               }
             }}
             className="flex-1 items-center justify-center active:bg-accent/50"

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildViewHref,
+  buildViewPath,
   detailHrefForPath,
   mergeViewParams,
   parentViewHrefForPath,
@@ -19,6 +20,13 @@ describe("view location helpers", () => {
       pathname: "/topology",
       params: { project: "/p", mode: "map" },
     });
+  });
+
+  it("builds encoded web paths for imperative tab navigation", () => {
+    expect(buildViewPath("/notifications", { project: "/Users/sam/cs/aimux", lens: "" })).toBe(
+      "/notifications?project=%2FUsers%2Fsam%2Fcs%2Faimux",
+    );
+    expect(buildViewPath("/global-notifications", { project: null })).toBe("/global-notifications");
   });
 
   it("merges current search params with explicit overrides", () => {

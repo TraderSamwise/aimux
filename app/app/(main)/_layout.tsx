@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { Platform } from "react-native";
-import { Stack, useGlobalSearchParams } from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
@@ -11,7 +11,10 @@ import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser
 import { env } from "@/lib/env";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { evaluateAlertEvent } from "@/lib/notification-policy";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import {
+  getProjectServiceEndpoint,
+  isProjectHostOfflineError,
+} from "@/lib/project-connection-display";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
@@ -52,6 +55,17 @@ import { PROJECT_API_EVENT_NAMES } from "../../../src/project-api-contract";
 
 const POLL_INTERVAL_MS = 2000;
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
+const PROJECT_SCOPED_PATH_PREFIXES = [
+  "/",
+  "/agent",
+  "/service",
+  "/project",
+  "/coordination",
+  "/topology",
+  "/library",
+  "/notifications",
+  "/threads",
+];
 
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
@@ -70,6 +84,7 @@ export default function MainLayout() {
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
+  const pathname = usePathname();
   const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
@@ -96,6 +111,19 @@ export default function MainLayout() {
     store.set(selectedProjectPathAtom, urlProjectPath);
     store.set(selectedSessionIdAtom, null);
   }, [activeShare, selectedProjectPath, store, urlProjectPath]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!effectiveProjectPath || !isProjectScopedPath(pathname)) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("project") === effectiveProjectPath) return;
+    url.searchParams.set("project", effectiveProjectPath);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  });
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
@@ -213,7 +241,9 @@ export default function MainLayout() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
           store.set(desktopStateErrorFamily(effectiveProjectPath!), msg);
-          console.warn("desktop-state fetch failed:", err);
+          if (!isProjectHostOfflineError(msg)) {
+            console.warn("desktop-state fetch failed:", err);
+          }
         }
       }
       if (cancelled) return;
@@ -260,7 +290,9 @@ export default function MainLayout() {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
           store.set(notificationFeedErrorFamily(effectiveProjectPath!), msg);
-          console.warn("notification fetch failed:", err);
+          if (!isProjectHostOfflineError(msg)) {
+            console.warn("notification fetch failed:", err);
+          }
         }
       }
       if (cancelled) return;
@@ -350,14 +382,14 @@ export default function MainLayout() {
           },
           onError: (err) => {
             if (!cancelled) {
-              console.warn("notification heartbeat failed:", err);
+              console.warn("notification heartbeat failed:", getErrorMessage(err));
               scheduleReconnect();
             }
           },
         });
       } catch (err) {
         if (!cancelled) {
-          console.warn("notification heartbeat setup failed:", err);
+          console.warn("notification heartbeat setup failed:", getErrorMessage(err));
           scheduleReconnect();
         }
       }
@@ -420,4 +452,14 @@ function projectFromActiveShare(activeShare: ActiveSharedSession) {
     serviceAlive: true,
     serviceEndpoint: activeShare.serviceEndpoint,
   };
+}
+
+function isProjectScopedPath(pathname: string) {
+  return PROJECT_SCOPED_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || (prefix !== "/" && pathname.startsWith(`${prefix}/`)),
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

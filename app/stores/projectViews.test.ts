@@ -10,7 +10,9 @@ import {
 
 describe("project API view refresh registry", () => {
   it("classifies every shared project API view", () => {
-    expect(Object.keys(APP_PROJECT_API_VIEW_REGISTRY).sort()).toEqual([...PROJECT_API_VIEWS].sort());
+    expect(Object.keys(APP_PROJECT_API_VIEW_REGISTRY).sort()).toEqual(
+      [...PROJECT_API_VIEWS].sort(),
+    );
   });
 
   it("keeps refresh dependencies explicit", () => {

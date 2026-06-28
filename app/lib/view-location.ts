@@ -53,6 +53,17 @@ export function buildViewHref(pathname: string, params: AimuxViewParams = {}): H
   return { pathname, params: cleanParams } as Href;
 }
 
+export function buildViewPath(pathname: string, params: AimuxViewParams = {}): Href {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      query.set(key, value);
+    }
+  }
+  const search = query.toString();
+  return `${pathname}${search ? `?${search}` : ""}` as Href;
+}
+
 export function mergeViewParams(
   current: Record<string, SearchValue>,
   next: AimuxViewParams,

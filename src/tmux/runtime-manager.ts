@@ -109,6 +109,10 @@ export function isDashboardWindowName(name: string): boolean {
   return name === "dashboard" || name.startsWith("dashboard-");
 }
 
+function isNoSuchSessionError(error: unknown): boolean {
+  return error instanceof Error && /no such session/i.test(error.message);
+}
+
 export function isMetaDashboardWindowName(name: string): boolean {
   return name === "meta-dashboard" || name.startsWith("meta-dashboard-");
 }
@@ -461,48 +465,56 @@ export class TmuxRuntimeManager {
 
   ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
-    let exists = this.hasSession(session.sessionName);
-    if (!exists) {
-      const before = this.listSessionNames();
-      this.repairLegacyProjectSessionNames(projectRoot, before);
-      exists = this.hasSession(session.sessionName);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let exists = this.hasSession(session.sessionName);
+      if (!exists) {
+        const before = this.listSessionNames();
+        this.repairLegacyProjectSessionNames(projectRoot, before);
+        exists = this.hasSession(session.sessionName);
+      }
+      const currentRuntimeContract = exists
+        ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
+        : null;
+      if (!exists) {
+        const argv =
+          dashboardCommand && dashboardCommand.args.length >= 0
+            ? [
+                "new-session",
+                "-d",
+                "-s",
+                session.sessionName,
+                "-c",
+                dashboardCommand.cwd,
+                "-n",
+                "dashboard",
+                dashboardCommand.command,
+                ...dashboardCommand.args,
+              ]
+            : [
+                "new-session",
+                "-d",
+                "-s",
+                session.sessionName,
+                "-c",
+                projectRoot,
+                "-n",
+                "dashboard",
+                "sh",
+                "-lc",
+                "tail -f /dev/null",
+              ];
+        this.exec(argv, { cwd: projectRoot });
+      }
+      try {
+        if (!exists) this.setCurrentRuntimeContract(session.sessionName);
+        this.configureSession(session.sessionName, projectRoot);
+      } catch (error) {
+        if (attempt === 0 && isNoSuchSessionError(error)) continue;
+        throw error;
+      }
+      if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);
+      return session;
     }
-    const currentRuntimeContract = exists
-      ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
-      : null;
-    if (!exists) {
-      const argv =
-        dashboardCommand && dashboardCommand.args.length >= 0
-          ? [
-              "new-session",
-              "-d",
-              "-s",
-              session.sessionName,
-              "-c",
-              dashboardCommand.cwd,
-              "-n",
-              "dashboard",
-              dashboardCommand.command,
-              ...dashboardCommand.args,
-            ]
-          : [
-              "new-session",
-              "-d",
-              "-s",
-              session.sessionName,
-              "-c",
-              projectRoot,
-              "-n",
-              "dashboard",
-              "sh",
-              "-lc",
-              "printf ''",
-            ];
-      this.exec(argv, { cwd: projectRoot });
-      this.setCurrentRuntimeContract(session.sessionName);
-    }
-    this.configureSession(session.sessionName, projectRoot);
-    if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);
     return session;
   }
 
@@ -601,7 +613,19 @@ export class TmuxRuntimeManager {
             dashboardCommand.command,
             ...dashboardCommand.args,
           ]
-        : ["new-window", "-d", "-t", sessionName, "-c", projectRoot, "-n", dashboardName, "sh", "-lc", "printf ''"];
+        : [
+            "new-window",
+            "-d",
+            "-t",
+            sessionName,
+            "-c",
+            projectRoot,
+            "-n",
+            dashboardName,
+            "sh",
+            "-lc",
+            "tail -f /dev/null",
+          ];
     this.exec(argv, {
       cwd: projectRoot,
     });

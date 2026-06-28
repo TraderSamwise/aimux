@@ -418,7 +418,7 @@ export default function NotificationsScreen() {
         ) : null}
         <View className="rounded-full border border-border bg-card px-3 py-1.5">
           <Text className="text-xs font-medium text-foreground">
-            {unreadCount} notification unread
+            {unreadCount} {unreadCount === 1 ? "notification" : "notifications"} unread
             {lastUpdated ? ` · updated ${lastUpdated}` : ""}
           </Text>
         </View>
