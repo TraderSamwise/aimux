@@ -948,6 +948,22 @@ function focusControlTarget(
   return openTargetForClient(tmux, target, currentClientSession, clientTty);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForDashboardReady(
+  tmux: TmuxRuntimeManager,
+  target: TmuxTarget,
+  dashboardBuildStamp: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (tmux.getWindowOption(target, TMUX_DASHBOARD_READY_OPTION) === dashboardBuildStamp) return true;
+    await sleep(50);
+  }
+  return false;
+}
+
 function sendControlAction(
   res: ServerResponse,
   action: string,
@@ -2302,6 +2318,10 @@ export class MetadataServer {
         tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
+        if (!(await waitForDashboardReady(tmux, target, dashboardBuildStamp))) {
+          send(res, 503, { ok: false, error: "dashboard did not become ready" });
+          return;
+        }
         const focusResult = focusControlTarget(tmux, target, focusClientSession, clientTty, focus);
         sendControlAction(res, "open-dashboard", target, focusResult);
         return;
