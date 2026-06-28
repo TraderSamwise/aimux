@@ -1213,7 +1213,51 @@ describe("daemon routing (relay + proxy)", () => {
     expect(psCalls).toHaveLength(1);
   });
 
-  it("invalidates the cached project list after ensuring a project service", async () => {
+  it("drops cached retained project service liveness when the pid exits", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const retainedPid = 43_104;
+    livePids.add(retainedPid);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(retainedPid);
+    execFileSyncMock.mockReturnValue(
+      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
+        projectRoot,
+      )} --project-root ${projectRoot}`,
+    );
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: retainedPid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    const first = await daemon.routeRequest("GET", "/projects");
+    livePids.delete(retainedPid);
+    const second = await daemon.routeRequest("GET", "/projects");
+
+    expect((first.body as any).projects[0].serviceAlive).toBe(true);
+    expect((second.body as any).projects[0].serviceAlive).toBe(false);
+    expect((second.body as any).projects[0].service).toBeNull();
+  });
+
+  it("reflects registered project list changes on the next project list read", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const first = await daemon.routeRequest("GET", "/projects");
+    const nextRoot = join(tmpRoot, "repo-two");
+    mkdirSync(nextRoot, { recursive: true });
+    projectRoot = nextRoot;
+    const second = await daemon.routeRequest("GET", "/projects");
+
+    expect((first.body as any).projects[0].path).not.toBe(nextRoot);
+    expect((second.body as any).projects[0].path).toBe(nextRoot);
+    expect((second.body as any).projects[0].id).toBe("proj-repo-two");
+  });
+
+  it("reports ensured project services on the next project list read", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
 

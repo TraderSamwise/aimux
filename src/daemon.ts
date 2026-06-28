@@ -38,7 +38,6 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROJECT_SERVICE_LIVENESS_CACHE_MS = 30_000;
-const PROJECTS_ROUTE_CACHE_MS = 30_000;
 const PROXY_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
@@ -570,7 +569,6 @@ export class AimuxDaemon {
   private readonly children = new Map<string, ChildProcess>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
   private readonly projectServiceLivenessCache = new Map<string, { pid: number; alive: boolean; checkedAt: number }>();
-  private projectsRouteCache: { expiresAt: number; projects: ProjectsRouteProject[] } | null = null;
   // Consecutive failed health checks per project; a single transient stall
   // (event loop briefly busy) must not trigger a restart.
   private readonly projectHealthFailures = new Map<string, number>();
@@ -664,7 +662,6 @@ export class AimuxDaemon {
     }
     this.children.clear();
     this.projectServiceLivenessCache.clear();
-    this.invalidateProjectsRouteCache();
     this.state = {
       version: 1,
       updatedAt: new Date().toISOString(),
@@ -720,17 +717,9 @@ export class AimuxDaemon {
     return alive;
   }
 
-  private invalidateProjectsRouteCache(): void {
-    this.projectsRouteCache = null;
-  }
-
   private listProjectsForRoute(): ProjectsRouteProject[] {
-    const now = Date.now();
-    if (this.projectsRouteCache && now < this.projectsRouteCache.expiresAt) {
-      return this.projectsRouteCache.projects;
-    }
     const servicesById = this.state.projects;
-    const projects = listRegisteredDesktopProjects().map((project) => {
+    return listRegisteredDesktopProjects().map((project) => {
       const service = servicesById[project.id] ?? null;
       const serviceAlive = service ? this.isProjectServiceLive(service) : false;
       return {
@@ -740,11 +729,6 @@ export class AimuxDaemon {
         serviceEndpoint: loadMetadataEndpointByProjectId(project.id),
       };
     });
-    this.projectsRouteCache = {
-      expiresAt: now + PROJECTS_ROUTE_CACHE_MS,
-      projects,
-    };
-    return projects;
   }
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
@@ -772,7 +756,6 @@ export class AimuxDaemon {
     }
     this.children.set(projectId, child);
     this.projectServiceLivenessCache.delete(projectId);
-    this.invalidateProjectsRouteCache();
     const now = new Date().toISOString();
     const state: ProjectServiceState = {
       projectId,
@@ -800,7 +783,6 @@ export class AimuxDaemon {
         this.children.delete(projectId);
       }
       this.projectServiceLivenessCache.delete(projectId);
-      this.invalidateProjectsRouteCache();
       const current = this.state.projects[projectId];
       if (current?.pid === state.pid) {
         this.state.projects[projectId] = {
@@ -811,7 +793,6 @@ export class AimuxDaemon {
       }
     });
     this.refreshState();
-    this.invalidateProjectsRouteCache();
     return state;
   }
 
@@ -865,7 +846,6 @@ export class AimuxDaemon {
       const ready = await this.waitForProjectServiceReady(resolvedRoot, projectId, spawned);
       this.state.projects[projectId] = ready;
       this.refreshState();
-      this.invalidateProjectsRouteCache();
       return ready;
     } catch (error) {
       log.warn("spawned project service failed readiness check", "daemon", {
@@ -879,7 +859,6 @@ export class AimuxDaemon {
       if (current?.pid === spawned.pid) {
         delete this.state.projects[projectId];
         this.refreshState();
-        this.invalidateProjectsRouteCache();
       }
       throw error;
     }
@@ -913,7 +892,6 @@ export class AimuxDaemon {
         };
         this.state.projects[projectId] = next;
         this.refreshState();
-        this.invalidateProjectsRouteCache();
         return next;
       };
       const waitForExistingReady = async (): Promise<ProjectServiceState> => {
@@ -922,7 +900,6 @@ export class AimuxDaemon {
           this.projectHealthFailures.delete(projectId);
           this.state.projects[projectId] = ready;
           this.refreshState();
-          this.invalidateProjectsRouteCache();
           return ready;
         } catch (error) {
           log.warn("just-started project service failed readiness check", "daemon", {
@@ -1032,13 +1009,11 @@ export class AimuxDaemon {
       delete this.state.projects[projectId];
     }
     this.projectServiceLivenessCache.delete(projectId);
-    this.invalidateProjectsRouteCache();
     const child = this.children.get(projectId);
     if (child?.pid === existing.pid) {
       this.children.delete(projectId);
     }
     this.refreshState();
-    this.invalidateProjectsRouteCache();
     return this.spawnReadyProjectService(resolvedRoot, projectId);
   }
 
@@ -1125,7 +1100,6 @@ export class AimuxDaemon {
     delete this.state.projects[projectId];
     this.projectHealthFailures.delete(projectId);
     this.projectServiceLivenessCache.delete(projectId);
-    this.invalidateProjectsRouteCache();
     if (this.children.get(projectId)?.pid === existing.pid) {
       this.children.delete(projectId);
     }
