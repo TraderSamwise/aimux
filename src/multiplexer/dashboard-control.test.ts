@@ -2251,6 +2251,28 @@ describe("refreshRuntimeGuard", () => {
     expect(host.handleDashboardKey).not.toHaveBeenCalled();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
+
+  it("does not replay the library hotkey as local dashboard navigation after reconnect", async () => {
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Aimux is reconnecting", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("l"))).toBe(true);
+
+    host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+    host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.handleDashboardKey).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleDashboardSubscreenNavigationKey", () => {

@@ -388,7 +388,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     return [
       ["↑↓/jk", "items"],
       ["1-9", "entry"],
-      ["Enter/l", enterVerb],
+      ["Enter", enterVerb],
       ["Tab", "details"],
       ["u", "attention"],
       ["Esc/h", "back"],
@@ -407,7 +407,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     return [
       ["↑↓/jk", "worktrees"],
       ["1-9", "worktree"],
-      ["Enter/l", "step in"],
+      ["Enter", "step in"],
       ["Tab", "details"],
       ["u", "attention"],
       ["n", "agent"],
@@ -425,7 +425,7 @@ export function buildDashboardFooterHints(state: DashboardViewModel): FooterHint
     if (selectedSession) manage.push(["r", "name"]);
     return [
       ["↑↓/jk", "select"],
-      ["Enter/l", enterVerb],
+      ["Enter", enterVerb],
       ["Tab", "details"],
       ["u", "attention"],
       ["n", "agent"],
