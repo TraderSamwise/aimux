@@ -1,19 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, ScrollView, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { ApiError, getPlan, putPlan } from "@/lib/api";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { singleRouteParam } from "@/lib/route-params";
-import { selectedProjectAtom } from "@/stores/projects";
+import { useRouteProject } from "@/lib/use-route-project";
 
 export default function PlanEditorScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
-  const project = useAtomValue(selectedProjectAtom);
+  const { endpoint: serviceEndpoint } = useRouteProject();
   const { getToken } = useAuth();
   const router = useRouter();
 
@@ -23,7 +21,6 @@ export default function PlanEditorScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const serviceEndpoint = getProjectServiceEndpoint(project);
   const serviceEndpointHost = serviceEndpoint?.host;
   const serviceEndpointPort = serviceEndpoint?.port;
 

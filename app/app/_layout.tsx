@@ -44,6 +44,7 @@ export default function RootLayout() {
             <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
             <Stack>
               <Stack.Screen name="(main)" options={{ headerShown: false }} />
+              <Stack.Screen name="inbox" options={{ headerShown: false }} />
               <Stack.Screen name="auth" options={{ headerShown: false }} />
               <Stack.Screen
                 name="shares/invite/[ownerUserId]/[token]/accept"

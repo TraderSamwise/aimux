@@ -11,21 +11,11 @@ import { StatusDot, StatusPill } from "@/components/status-dot";
 import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
-import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
-import {
-  projectsAtom,
-  selectedProjectAtom,
-  selectedProjectEndpointAtom,
-  selectedSessionIdAtom,
-} from "@/stores/projects";
-import {
-  buildViewHref,
-  cleanSearchValue,
-  detailHrefForPath,
-  projectPathFromSearchOrLocation,
-} from "@/lib/view-location";
+import { selectedSessionIdAtom } from "@/stores/projects";
+import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
 type ProjectTopologyModel = ProjectTopologyResponse["topology"];
@@ -206,24 +196,14 @@ function RowsList({
 }
 
 export default function TopologyScreen() {
-  const projects = useAtomValue(projectsAtom);
-  const selectedProject = useAtomValue(selectedProjectAtom);
-  const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
+  const { project, projectPath, endpoint } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
     project?: string | string[];
   }>();
-  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
-  const project = urlProjectPath
-    ? projects.find((item) => item.path === urlProjectPath)
-    : selectedProject;
-  const endpoint =
-    project?.path === selectedProject?.path
-      ? selectedProjectEndpoint
-      : getProjectServiceEndpoint(project);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
+  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
@@ -295,11 +275,11 @@ export default function TopologyScreen() {
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, project?.path));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
+    router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
   }
 
   return (
@@ -351,9 +331,7 @@ export default function TopologyScreen() {
               options={VIEW_OPTIONS}
               value={mode}
               onChange={(nextMode) =>
-                router.replace(
-                  buildViewHref("/topology", { project: project.path, mode: nextMode }),
-                )
+                router.replace(buildViewHref("/topology", { project: projectPath, mode: nextMode }))
               }
               className="ml-3"
             />

@@ -608,7 +608,7 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
-  it("does not reload or mutate dashboards owned by another runtime owner", async () => {
+  it("reloads stale dashboards owned by another runtime owner", async () => {
     const ensureProjectService = vi.fn(async (projectRoot: string) => ({
       projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
       projectRoot,
@@ -616,10 +616,15 @@ describe("restartAimuxControlPlane", () => {
       startedAt: "after",
       updatedAt: "after",
     }));
-    const resolveDashboardTarget = vi.fn();
+    const resolveDashboardTarget = vi.fn(() => ({
+      dashboardSession: { sessionName: "aimux-alpha-111" },
+      dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+    }));
     const setSessionOption = vi.fn();
     const report = foreignDashboardCoherenceReport();
-    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce(report);
+    const after = okCoherenceReport();
+    after.expected.runtimeOwner = report.expected.runtimeOwner;
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce(after);
 
     const result = await restartAimuxControlPlane({
       now: () => new Date("2026-06-20T00:00:01.000Z"),
@@ -643,13 +648,47 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(resolveDashboardTarget).not.toHaveBeenCalled();
+    expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/alpha", expect.any(Object), {
+      forceReload: true,
+      openInHostSession: true,
+    });
     expect(setSessionOption).not.toHaveBeenCalledWith("aimux-alpha-111", expect.any(String), expect.any(String));
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
     expect(result.projects[0]?.runtime.status).toBe("skipped");
-    expect(result.projects[0]?.dashboard.status).toBe("skipped");
+    expect(result.projects[0]?.dashboard.status).toBe("reloaded");
     expect(result.verification.status).toBe("ok");
-    expect(result.summary).toMatchObject({ dashboardsReloaded: 0, failures: 0 });
+    expect(result.summary).toMatchObject({ dashboardsReloaded: 1, failures: 0 });
+  });
+
+  it("fails verification when a foreign-owned dashboard remains stale after restart", async () => {
+    const report = foreignDashboardCoherenceReport();
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce(report);
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(result.verification.status).toBe("failed");
+    expect(result.verification.error).toContain("/repo/alpha");
+    expect(result.summary.failures).toBe(1);
   });
 
   it("records and notifies restart repair diagnostics", async () => {
