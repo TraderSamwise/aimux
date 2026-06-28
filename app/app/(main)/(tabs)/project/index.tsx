@@ -211,14 +211,14 @@ export default function ProjectScreen() {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
-  const { project, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${project?.path ?? ""}|${endpointKey}` : null;
+  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
   const viewKeyRef = useRef(viewKey);
   const getTokenRef = useRef(getToken);
@@ -375,9 +375,7 @@ export default function ProjectScreen() {
             label={item.label}
             active={section === item.id}
             onPress={() =>
-              router.replace(
-                buildViewHref("/project", { project: project?.path, section: item.id }),
-              )
+              router.replace(buildViewHref("/project", { project: projectPath, section: item.id }))
             }
           />
         ))}

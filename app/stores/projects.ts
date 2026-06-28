@@ -83,7 +83,10 @@ export function reconcileProjectList(
   previous: readonly DaemonProject[],
   incoming: readonly DaemonProject[],
 ): DaemonProject[] {
-  const sorted = [...incoming].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...incoming].sort(
+    (a, b) =>
+      a.name.localeCompare(b.name) || a.path.localeCompare(b.path) || a.id.localeCompare(b.id),
+  );
   if (previous.length !== sorted.length) return sorted;
   for (let i = 0; i < sorted.length; i += 1) {
     if (!sameProjectSnapshot(previous[i], sorted[i])) return sorted;

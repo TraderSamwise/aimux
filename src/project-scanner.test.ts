@@ -19,8 +19,11 @@ vi.mock("node:os", async () => {
 
 vi.mock("./paths.js", () => ({
   getAimuxDirFor: (cwd: string) => join(cwd, ".aimux"),
+  getConfigPath: () => join(tmpHome, ".aimux", "config.json"),
+  getGlobalConfigPath: () => join(tmpHome, ".aimux", "config.json"),
   getProjectIdFor: (cwd: string) => registryProjects.find((project) => project.repoRoot === cwd)?.id ?? "unknown",
   getProjectStateDirById: (id: string) => join(tmpHome, ".aimux", "projects", id),
+  getReadOnlyProjectPathsFor: (cwd: string) => ({ localAimuxDir: join(cwd, ".aimux") }),
   listProjects: () => registryProjects,
 }));
 
@@ -319,5 +322,46 @@ describe("project-scanner", () => {
     expect(projects.map((project) => project.id)).not.toContain("missing-proj");
 
     rmSync(tempTestProject, { recursive: true, force: true });
+  });
+
+  it("does not hide tmp path siblings that only share the tmp prefix", async () => {
+    const tmpSiblingProject = join(`${tmpdir()}-aimux-sibling`, "aimux-real-project");
+    mkdirSync(join(tmpSiblingProject, ".aimux"), { recursive: true });
+    registryProjects = [
+      {
+        id: "tmp-sibling",
+        name: "tmp-sibling",
+        repoRoot: tmpSiblingProject,
+        lastSeen: "2026-03-28T00:00:00.000Z",
+      },
+    ];
+
+    const { listRegisteredDesktopProjects } = await import("./project-scanner.js");
+    const projects = listRegisteredDesktopProjects();
+
+    expect(projects.map((project) => project.path)).toEqual([tmpSiblingProject]);
+
+    rmSync(`${tmpdir()}-aimux-sibling`, { recursive: true, force: true });
+  });
+
+  it("builds registered dashboard session names from each project's config", async () => {
+    writeFileSync(
+      join(projectA, ".aimux", "config.json"),
+      JSON.stringify({ runtime: { tmux: { sessionPrefix: "alpha" } } }),
+    );
+    writeFileSync(
+      join(projectB, ".aimux", "config.json"),
+      JSON.stringify({ runtime: { tmux: { sessionPrefix: "beta" } } }),
+    );
+
+    const { listRegisteredDesktopProjects } = await import("./project-scanner.js");
+    const projects = listRegisteredDesktopProjects();
+
+    expect(projects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "proj-a", dashboardSessionName: "alpha-proj-a" }),
+        expect.objectContaining({ id: "proj-b", dashboardSessionName: "beta-proj-b" }),
+      ]),
+    );
   });
 });
