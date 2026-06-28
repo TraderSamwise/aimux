@@ -210,6 +210,46 @@ describe("dashboardInteractionMethods", () => {
     expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
   });
 
+  it("maps session-level digits to the rendered worktree entry order", () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardOverlayState: { kind: "none" },
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: undefined,
+        worktreeEntries: [
+          { kind: "session", id: "stale-cache-first" },
+          { kind: "session", id: "codex-2" },
+          { kind: "session", id: "codex-3" },
+          { kind: "session", id: "codex-visible" },
+        ],
+        sessionIndex: 0,
+      },
+      dashboardSessionsCache: [
+        { id: "codex-visible", command: "codex", status: "running" },
+        { id: "stale-cache-first", command: "codex", status: "running" },
+      ],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: dashboardInteractionMethods.handleDashboardQuickJumpDigit,
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      activateSelectedDashboardWorktreeEntry: vi.fn(),
+      clearDashboardQuickJump: dashboardInteractionMethods.clearDashboardQuickJump,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("4"));
+
+    expect(host.dashboardState.sessionIndex).toBe(3);
+    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "codex-visible", undefined);
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+  });
+
   it("uses digit keys for worktree focus at worktree level", () => {
     const host: any = {
       mode: "dashboard",
