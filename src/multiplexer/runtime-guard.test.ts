@@ -4,7 +4,7 @@ import { getProjectStateDirFor } from "../paths.js";
 import { getProjectServiceManifest } from "../project-service-manifest.js";
 import { AIMUX_TMUX_RUNTIME_CONTRACT_VERSION } from "../runtime-owner.js";
 import { buildDashboardRuntimeGuardOverlayOutput } from "../tui/screens/overlay-renderers.js";
-import { handleRuntimeGuardKey } from "./dashboard-control.js";
+import { handleActiveDashboardOverlayKey, handleRuntimeGuardKey } from "./dashboard-control.js";
 import {
   evaluateRuntimeGuard,
   probeRuntimeGuard,
@@ -260,6 +260,52 @@ describe("probeRuntimeGuard", () => {
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
+  it("reports disconnected when a local service accepts the socket but misses the health timeout", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockRejectedValue(
+      Object.assign(new Error("request timed out after 2500ms"), { code: "ETIMEDOUT" }),
+    );
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
+  });
+
+  it("reports disconnected when the local service socket is gone", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockRejectedValue(
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:45123"), {
+        code: "ECONNREFUSED",
+      }),
+    );
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
+  });
+
+  it("reports disconnected when the local service connect times out", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockRejectedValue(
+      Object.assign(new Error("connect ETIMEDOUT 127.0.0.1:45123"), {
+        code: "ETIMEDOUT",
+      }),
+    );
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
+  });
+
   it("reports runtime rebuild required from tmux marker", async () => {
     tmuxMock.isAvailable.mockReturnValue(true);
     tmuxMock.getSessionOption.mockImplementation((_sessionName: string, key: string) =>
@@ -306,6 +352,8 @@ describe("probeRuntimeGuard", () => {
     tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111", "aimux-repo-111-client-deadbeef"]);
     tmuxMock.getSessionOption.mockImplementation((sessionName: string, key: string) => {
       if (key === "@aimux-runtime-rebuild-required") return "0";
+      if (key === "@aimux-project-root") return "/repo";
+      if (key === "@aimux-host-session" && sessionName === "aimux-repo-111-client-deadbeef") return "aimux-repo-111";
       if (key === "@aimux-runtime-contract" && sessionName === "aimux-repo-111-client-deadbeef") return null;
       if (key === "@aimux-runtime-contract") return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
       return null;
@@ -323,6 +371,64 @@ describe("probeRuntimeGuard", () => {
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "runtime-rebuild-required" });
     expect(tmuxMock.getSessionOption).toHaveBeenCalledWith("aimux-repo-111-client-deadbeef", "@aimux-runtime-contract");
+  });
+
+  it("ignores fresh client sessions until they advertise the host and project root", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111", "aimux-repo-111-client-deadbeef"]);
+    tmuxMock.getSessionOption.mockImplementation((sessionName: string, key: string) => {
+      if (key === "@aimux-runtime-rebuild-required") return "0";
+      if (key === "@aimux-project-root" && sessionName === "aimux-repo-111") return "/repo";
+      if (key === "@aimux-runtime-contract" && sessionName === "aimux-repo-111-client-deadbeef") return null;
+      if (key === "@aimux-runtime-contract") return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
+      return null;
+    });
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+    expect(tmuxMock.getSessionOption).not.toHaveBeenCalledWith(
+      "aimux-repo-111-client-deadbeef",
+      "@aimux-runtime-contract",
+    );
+  });
+
+  it("ignores client sessions from another project root for runtime rebuild checks", async () => {
+    tmuxMock.isAvailable.mockReturnValue(true);
+    tmuxMock.listSessionNames.mockReturnValue(["aimux-repo-111", "aimux-repo-111-client-deadbeef"]);
+    tmuxMock.getSessionOption.mockImplementation((sessionName: string, key: string) => {
+      if (key === "@aimux-runtime-rebuild-required") return "0";
+      if (key === "@aimux-project-root" && sessionName === "aimux-repo-111") return "/repo";
+      if (key === "@aimux-host-session" && sessionName === "aimux-repo-111-client-deadbeef") return "aimux-repo-111";
+      if (key === "@aimux-project-root" && sessionName === "aimux-repo-111-client-deadbeef") return "/other";
+      if (key === "@aimux-runtime-contract" && sessionName === "aimux-repo-111-client-deadbeef") return null;
+      if (key === "@aimux-runtime-contract") return AIMUX_TMUX_RUNTIME_CONTRACT_VERSION;
+      return null;
+    });
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+    expect(tmuxMock.getSessionOption).not.toHaveBeenCalledWith(
+      "aimux-repo-111-client-deadbeef",
+      "@aimux-runtime-contract",
+    );
   });
 
   it("ignores malformed client-like sessions for runtime rebuild checks", async () => {
@@ -390,11 +496,24 @@ describe("buildDashboardRuntimeGuardOverlayOutput", () => {
 describe("handleRuntimeGuardKey", () => {
   function stubHost(state: RuntimeGuardState) {
     return {
+      mode: "dashboard",
       runtimeGuardState: state,
       dashboardBusyState: null,
       dashboardErrorState: null,
+      dashboardOverlayState: { kind: "none" },
+      dashboardState: {
+        screen: "dashboard",
+        level: "sessions",
+        sessionIndex: 0,
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        worktreeSessions: [{ id: "codex-1", status: "ready" }],
+        worktreeNavOrder: [undefined],
+      },
+      tmuxRuntimeManager: { listProjectManagedWindows: vi.fn() },
       footerFlash: "",
       footerFlashTicks: 0,
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [{ id: "codex-1", status: "ready" }]),
       renderCurrentDashboardView: vi.fn(),
     };
   }
@@ -428,10 +547,45 @@ describe("handleRuntimeGuardKey", () => {
     expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
-  it("swallows Escape while guarded because it can focus a session", () => {
+  it("lets Enter focus a live local tmux agent while guarded", () => {
     const host = stubHost({ kind: "disconnected" });
-    expect(handleRuntimeGuardKey(host, Buffer.from("\x1b"))).toBe(true);
+    expect(handleRuntimeGuardKey(host, Buffer.from("\r"))).toBe(false);
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("swallows lowercase library hotkey while guarded on the dashboard", () => {
+    const host = stubHost({ kind: "disconnected" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("l"))).toBe(true);
     expect(host.footerFlash).toContain("reconnecting");
+  });
+
+  it("keeps Enter blocked for offline sessions because they resume through the API", () => {
+    const host = stubHost({ kind: "disconnected" });
+    host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "offline" }];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "offline" }]);
+    expect(handleRuntimeGuardKey(host, Buffer.from("\r"))).toBe(true);
+    expect(host.footerFlash).toContain("reconnecting");
+  });
+
+  it("keeps Enter blocked for offline sessions on ungrouped dashboards", () => {
+    const host = stubHost({ kind: "disconnected" });
+    host.dashboardState.worktreeNavOrder = [];
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "offline" }]);
+    expect(handleRuntimeGuardKey(host, Buffer.from("\r"))).toBe(true);
+  });
+
+  it("keeps dashboard hotkeys blocked on subscreens while guarded", () => {
+    const host = stubHost({ kind: "disconnected" });
+    host.dashboardState.screen = "project";
+    expect(handleRuntimeGuardKey(host, Buffer.from("l"))).toBe(true);
+  });
+
+  it("lets Escape use dashboard-local back/focus navigation while guarded", () => {
+    const host = stubHost({ kind: "disconnected" });
+    expect(handleRuntimeGuardKey(host, Buffer.from("\x1b"))).toBe(false);
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
   });
 
   it("swallows R when guarded because repair is automatic", () => {
@@ -456,5 +610,25 @@ describe("handleRuntimeGuardKey", () => {
     const host = stubHost({ kind: "stale", reason: "service-mismatch" });
     host.dashboardOverlayState = { kind: "orchestration-input" };
     expect(handleRuntimeGuardKey(host, Buffer.from("hello"))).toBe(false);
+  });
+
+  it("lets busy overlays yield to live local tmux focus only", () => {
+    const host = stubHost({ kind: "runtime-rebuild-required" });
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(false);
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("n"))).toBe(true);
+
+    host.runtimeGuardRepairBusy = false;
+    host.dashboardBusyState = {
+      title: "Aimux is reconnecting",
+      lines: ["Aimux is reconnecting the project service."],
+      spinnerFrame: 0,
+      startedAt: Date.now(),
+    };
+
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("\r"))).toBe(false);
+    expect(handleActiveDashboardOverlayKey(host, Buffer.from("n"))).toBe(true);
   });
 });

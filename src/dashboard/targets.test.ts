@@ -149,4 +149,43 @@ describe("findLiveDashboardTarget", () => {
       dashboardBuildStamp,
     );
   });
+
+  it("does not reuse a dashboard before the process has stamped input readiness", () => {
+    const { dashboardBuildStamp } = getDashboardCommandSpec("/Users/sam/cs/glyde-frontend");
+    const dashboardTarget = {
+      sessionName: "aimux-glyde-frontend-abc123",
+      windowId: "@1",
+      windowIndex: 0,
+      windowName: "dashboard",
+    };
+    const tmux = {
+      getProjectSession: vi.fn(() => ({
+        projectRoot: "/Users/sam/cs/glyde-frontend",
+        projectId: "glyde",
+        sessionName: "aimux-glyde-frontend-abc123",
+      })),
+      getOpenSessionName: vi.fn(() => "aimux-glyde-frontend-abc123"),
+      isInsideTmux: vi.fn(() => false),
+      currentClientSession: vi.fn(() => null),
+      listSessionNames: vi.fn(() => ["aimux-glyde-frontend-abc123"]),
+      hasSession: vi.fn(() => true),
+      listWindows: vi.fn(() => [{ id: "@1", index: 0, name: "dashboard", active: true }]),
+      isWindowAlive: vi.fn(() => true),
+      getWindowOption: vi.fn((_target: unknown, key: string) => {
+        if (key === "@aimux-dashboard-build") return dashboardBuildStamp;
+        if (key === TMUX_DASHBOARD_OWNER_OPTION) return getRuntimeOwnerId();
+        if (key === "@aimux-dashboard-ready") return "";
+        return null;
+      }),
+      getSessionOption: vi.fn((_sessionName: string, key: string) =>
+        key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : "/Users/sam/cs/glyde-frontend",
+      ),
+      displayMessage: vi.fn(() => "bash"),
+      captureTarget: vi.fn(() => ""),
+      killWindow: vi.fn(),
+    } as unknown as TmuxRuntimeManager;
+
+    expect(findLiveDashboardTarget("/Users/sam/cs/glyde-frontend", tmux)).toBeNull();
+    expect(tmux.listWindows).toHaveBeenCalledWith(dashboardTarget.sessionName);
+  });
 });

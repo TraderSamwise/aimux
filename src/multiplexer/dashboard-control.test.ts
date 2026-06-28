@@ -1996,6 +1996,19 @@ describe("refreshRuntimeGuard", () => {
       runtimeGuardRepairFailedKey: undefined,
       runtimeGuardRepairBusy: false,
       dashboardBusyState: null,
+      dashboardErrorState: null,
+      dashboardState: {
+        screen: "dashboard",
+        level: "sessions",
+        sessionIndex: 0,
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        worktreeSessions: [{ id: "codex-1", status: "ready" }],
+        worktreeNavOrder: [undefined],
+      },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [{ id: "codex-1", status: "ready" }]),
+      tmuxRuntimeManager: { listProjectManagedWindows: vi.fn() },
+      handleDashboardKey: vi.fn(),
       renderCurrentDashboardView: vi.fn(),
     };
   }
@@ -2013,7 +2026,7 @@ describe("refreshRuntimeGuard", () => {
     expect(host.dashboardBusyState).toBeNull();
   });
 
-  it("still restarts Aimux when the service manifest is stale", async () => {
+  it("does not restart Aimux for a single stale service manifest probe", async () => {
     mocks.requestJson.mockResolvedValue({
       status: 200,
       json: {
@@ -2026,6 +2039,27 @@ describe("refreshRuntimeGuard", () => {
     const host = runtimeGuardHost();
 
     const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "ok" });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
+  });
+
+  it("still restarts Aimux when the service manifest is repeatedly stale", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: {
+        ok: true,
+        projectStateDir: getProjectStateDirFor("/repo/app"),
+        pid: 2,
+        serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
+      },
+    });
+    const host = runtimeGuardHost();
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
     await refreshRuntimeGuard(host as never);
 
     expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
@@ -2082,6 +2116,162 @@ describe("refreshRuntimeGuard", () => {
 
     expect(host.runtimeGuardState).toEqual({ kind: "ok" });
     expect(host.dashboardErrorState).toBeNull();
+  });
+
+  it("replays local tmux focus after reconnect restores a temporarily empty model", async () => {
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Aimux is reconnecting", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("\r"))).toBe(true);
+    expect(host.handleDashboardKey).not.toHaveBeenCalled();
+
+    host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+    host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.handleDashboardKey).toHaveBeenCalledOnce();
+    expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("replays local tmux focus when a busy repair settles into reconnecting with a live model", async () => {
+    mocks.requestJson.mockRejectedValue(new Error("request timed out after 250ms"));
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "ok" };
+    host.runtimeGuardDisconnectProbeCount = 1;
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("\r"))).toBe(true);
+    expect(host.handleDashboardKey).not.toHaveBeenCalled();
+
+    host.dashboardBusyState = null;
+    host.runtimeGuardRepairBusy = false;
+    host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+    host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "disconnected" });
+    expect(host.handleDashboardKey).toHaveBeenCalledOnce();
+    expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
+  it("retries queued local tmux focus after the busy overlay clears", async () => {
+    vi.useFakeTimers();
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    try {
+      const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+      expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("\r"))).toBe(true);
+      expect(host.handleDashboardKey).not.toHaveBeenCalled();
+
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+      host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+      host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+      host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(host.handleDashboardKey).toHaveBeenCalledOnce();
+      expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("only replays the first local navigation key from coalesced busy-overlay input", async () => {
+    vi.useFakeTimers();
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Repairing Aimux", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    try {
+      const { handleActiveDashboardOverlayKey } = await import("./dashboard-control.js");
+      expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("\rn"))).toBe(true);
+      expect(host.handleDashboardKey).not.toHaveBeenCalled();
+
+      host.dashboardBusyState = null;
+      host.runtimeGuardRepairBusy = false;
+      host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+      host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+      host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(host.handleDashboardKey).toHaveBeenCalledOnce();
+      expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not replay mutating keys swallowed by reconnect overlays", async () => {
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Aimux is reconnecting", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("n"))).toBe(true);
+
+    host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+    host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.handleDashboardKey).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("does not replay the library hotkey as local dashboard navigation after reconnect", async () => {
+    mocks.requestJson.mockResolvedValue(healthyServiceResponse(2, "/repo/app"));
+    const host = runtimeGuardHost() as any;
+    host.runtimeGuardState = { kind: "disconnected" };
+    host.runtimeGuardRepairBusy = true;
+    host.dashboardBusyState = { title: "Aimux is reconnecting", lines: [], spinnerFrame: 0, startedAt: Date.now() };
+    host.dashboardState.worktreeEntries = [];
+    host.dashboardState.worktreeSessions = [];
+    host.getDashboardSessions = vi.fn(() => []);
+
+    const { handleActiveDashboardOverlayKey, refreshRuntimeGuard } = await import("./dashboard-control.js");
+    expect(handleActiveDashboardOverlayKey(host as never, Buffer.from("l"))).toBe(true);
+
+    host.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-1" }];
+    host.dashboardState.worktreeSessions = [{ id: "codex-1", status: "ready" }];
+    host.getDashboardSessions = vi.fn(() => [{ id: "codex-1", status: "ready" }]);
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.handleDashboardKey).not.toHaveBeenCalled();
   });
 });
 

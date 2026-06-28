@@ -1719,6 +1719,7 @@ describe("runDashboard", () => {
       resolveRun: undefined,
       defaultCommand: undefined,
       defaultArgs: undefined,
+      dashboardInputEpoch: 0,
     };
 
     const runPromise = runDashboard(host);
@@ -1774,6 +1775,99 @@ describe("runDashboard", () => {
 
     expect(host.handleActiveDashboardOverlayKey).toHaveBeenCalledWith(Buffer.from("n"));
     expect(host.handleRuntimeGuardKey).not.toHaveBeenCalled();
+  });
+
+  it("continues processing keys that arrive with a tmux FocusIn report", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn((data: Buffer) => data.includes(Buffer.from("\x1b[I"))),
+      handleDashboardFocusIn: vi.fn(),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+    host.onStdinData(Buffer.concat([Buffer.from("\x1b[I"), Buffer.from("\r")]));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.handleDashboardFocusIn).toHaveBeenCalledOnce();
+    expect(host.handleActiveDashboardOverlayKey).toHaveBeenCalledWith(Buffer.from("\r"));
+    expect(host.handleDashboardKey).toHaveBeenCalledWith(Buffer.from("\r"));
+  });
+
+  it("does not treat a pure tmux FocusIn report as dashboard input", async () => {
+    const host: any = {
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn((data: Buffer) => data.includes(Buffer.from("\x1b[I"))),
+      handleDashboardFocusIn: vi.fn(),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+    host.onStdinData(Buffer.from("\x1b[I"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.handleDashboardFocusIn).toHaveBeenCalledOnce();
+    expect(host.handleActiveDashboardOverlayKey).not.toHaveBeenCalled();
+    expect(host.handleDashboardKey).not.toHaveBeenCalled();
+    expect(host.dashboardInputEpoch).toBe(0);
   });
 
   it("clears the startup busy state when repair completes without a fresh model change", async () => {
