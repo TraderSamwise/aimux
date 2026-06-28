@@ -657,9 +657,12 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
   if (host.dashboardBusyState) {
     const events = parseKeys(data);
     if (events.length > 0) {
-      const key = commandKey(events[0]);
+      const event = events[0];
+      const key = commandKey(event);
       if (isGuardedLocalDashboardNavigation(host, key)) return false;
-      if (isDashboardLocalNavigationKey(host, key)) queuePendingDashboardLocalNavigation(host, data, key);
+      if (isDashboardLocalNavigationKey(host, key)) {
+        queuePendingDashboardLocalNavigation(host, Buffer.from(event.raw), key);
+      }
     }
     return true;
   }

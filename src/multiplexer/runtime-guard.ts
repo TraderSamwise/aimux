@@ -38,8 +38,10 @@ function isProjectServiceConnectionError(error: unknown): boolean {
     code === "ECONNREFUSED" ||
     code === "ECONNRESET" ||
     code === "EPIPE" ||
+    (code === "ETIMEDOUT" && message.includes("connect")) ||
     message.includes("ECONNREFUSED") ||
     message.includes("ECONNRESET") ||
+    message.includes("connect ETIMEDOUT") ||
     message.includes("socket hang up")
   );
 }

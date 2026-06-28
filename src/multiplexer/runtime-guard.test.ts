@@ -291,6 +291,22 @@ describe("probeRuntimeGuard", () => {
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
   });
 
+  it("reports disconnected when the local service connect times out", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockRejectedValue(
+      Object.assign(new Error("connect ETIMEDOUT 127.0.0.1:45123"), {
+        code: "ETIMEDOUT",
+      }),
+    );
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });
+  });
+
   it("reports runtime rebuild required from tmux marker", async () => {
     tmuxMock.isAvailable.mockReturnValue(true);
     tmuxMock.getSessionOption.mockImplementation((_sessionName: string, key: string) =>
