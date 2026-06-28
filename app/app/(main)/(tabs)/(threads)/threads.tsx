@@ -28,6 +28,9 @@ export default function ThreadsScreen() {
   const [errorKey, setErrorKey] = useState<string | null>(null);
 
   const endpoint = getProjectServiceEndpoint(project);
+  const endpointRef = useRef(endpoint);
+  const endpointKeyRef = useRef<string | null>(null);
+  const refreshSeqRef = useRef(0);
   const endpointHost = endpoint?.host;
   const endpointPort = endpoint?.port;
   const endpointKey =
@@ -37,29 +40,39 @@ export default function ThreadsScreen() {
 
   useEffect(() => {
     getTokenRef.current = getToken;
-  }, [getToken]);
+    endpointRef.current = endpoint;
+    endpointKeyRef.current = endpointKey;
+    refreshSeqRef.current += 1;
+    return () => {
+      refreshSeqRef.current += 1;
+    };
+  }, [endpoint, endpointKey, getToken]);
 
   const refresh = useCallback(async () => {
-    if (!endpointHost || !endpointPort || !endpointKey) {
+    const seq = ++refreshSeqRef.current;
+    const currentEndpoint = endpointRef.current;
+    const currentEndpointKey = endpointKeyRef.current;
+    if (!currentEndpoint || !currentEndpointKey) {
       setThreads([]);
       setThreadsKey(null);
       setError(null);
       setErrorKey(null);
       return;
     }
-    const currentEndpoint = { host: endpointHost, port: endpointPort };
     try {
       const token = await getTokenRef.current();
       const data = await listThreads(currentEndpoint, undefined, { token });
+      if (seq !== refreshSeqRef.current) return;
       setThreads(Array.isArray(data) ? data : []);
-      setThreadsKey(endpointKey);
+      setThreadsKey(currentEndpointKey);
       setError(null);
       setErrorKey(null);
     } catch (err) {
+      if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
-      setErrorKey(endpointKey);
+      setErrorKey(currentEndpointKey);
     }
-  }, [endpointHost, endpointKey, endpointPort]);
+  }, []);
 
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
