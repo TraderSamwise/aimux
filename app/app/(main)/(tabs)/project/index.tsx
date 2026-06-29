@@ -211,7 +211,7 @@ export default function ProjectScreen() {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
@@ -343,8 +343,8 @@ export default function ProjectScreen() {
     <Page>
       <PageHeader
         eyebrow="Project"
-        title={project?.name ?? "No project selected"}
-        subtitle={project?.path}
+        title={project?.name ?? (projectLoading ? "Loading project..." : "No project selected")}
+        subtitle={project?.path ?? (projectLoading ? projectPath : undefined)}
         actions={
           <Button
             variant="outline"
@@ -381,7 +381,9 @@ export default function ProjectScreen() {
         ))}
       </View>
 
-      {!project ? (
+      {projectLoading ? (
+        <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
         <EmptyCard
