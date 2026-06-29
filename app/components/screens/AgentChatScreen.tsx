@@ -107,6 +107,11 @@ export default function ChatScreen() {
   const enableScrollAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardInset = useKeyboardInset();
   const chatKeyboardInset = Platform.OS === "ios" ? keyboardInset : 0;
+  const session = sessionId
+    ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
+    : null;
+  const canManageTeammates =
+    session !== null && session.status !== "offline" && session.status !== "exited";
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -134,6 +139,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (!serviceEndpoint || !sessionId || !heartbeatReady) return;
+    if (!session || session.status === "offline" || session.status === "exited") return;
     const endpoint = serviceEndpoint;
     const activeSessionId = sessionId;
     let cancelled = false;
@@ -174,7 +180,7 @@ export default function ChatScreen() {
     };
     // serviceEndpoint object identity changes during project-list reconciles.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpointKey, sessionId, token, ingestEvent, heartbeatReady]);
+  }, [endpointKey, sessionId, token, ingestEvent, heartbeatReady, session?.status]);
 
   const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
@@ -228,9 +234,6 @@ export default function ChatScreen() {
     terminalScrollRef.current?.scrollToEnd({ animated: false });
   }, [output, showTerminalSplit]);
 
-  const session = sessionId
-    ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
-    : null;
   const canShowTerminal = Boolean(output);
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -257,6 +260,12 @@ export default function ChatScreen() {
       }),
     [output, terminalDividerWidth],
   );
+  const restoreBlockedReason =
+    session &&
+    (session.status === "offline" || session.status === "exited") &&
+    session.restoreState === "blocked"
+      ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
+      : null;
   const composerSendText = getComposerSendText({
     draft,
     hasServiceEndpoint: Boolean(serviceEndpoint),
@@ -550,12 +559,14 @@ export default function ChatScreen() {
                 token={token}
                 groups={worktreeGroups}
               />
-              <TeammatePanel
-                key={`${session.id}:teammates`}
-                session={session}
-                endpoint={serviceEndpoint}
-                token={token}
-              />
+              {canManageTeammates ? (
+                <TeammatePanel
+                  key={`${session.id}:teammates`}
+                  session={session}
+                  endpoint={serviceEndpoint}
+                  token={token}
+                />
+              ) : null}
             </>
           ) : null}
           {sharePanelOpen ? (
@@ -702,6 +713,16 @@ export default function ChatScreen() {
                           serviceEndpoint={serviceEndpoint}
                         />
                       ))}
+                      {restoreBlockedReason ? (
+                        <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
+                          <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                            Resume unavailable
+                          </Text>
+                          <Text className="mt-1 text-sm text-card-foreground">
+                            {restoreBlockedReason}
+                          </Text>
+                        </View>
+                      ) : null}
                       {output && parsedMessages.length === 0 && !showSplit ? (
                         <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
                           <Text className="text-xs text-muted-foreground mb-1">Live output</Text>

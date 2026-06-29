@@ -14,7 +14,7 @@ import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
 import { cn } from "@/lib/utils";
 
 export default function ThreadsScreen() {
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -86,10 +86,14 @@ export default function ThreadsScreen() {
         subtitle={
           project
             ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
-            : "No project selected"
+            : projectLoading
+              ? `Loading ${projectPath}`
+              : "No project selected"
         }
       />
-      {!project ? (
+      {projectLoading ? (
+        <PageStateCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : !project ? (
         <PageStateCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
         <PageStateCard
