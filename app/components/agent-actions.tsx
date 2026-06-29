@@ -38,6 +38,10 @@ export function AgentActions({
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
   const canResume = canResumeSession(session);
+  const resumeBlocked =
+    (session.status === "offline" || session.status === "exited") &&
+    session.restoreState === "blocked";
+  const resumeBlockedReason = session.restoreBlockedReason ?? "resume is unavailable";
   const forkTool = agentToolForFork(session);
   const forkWorktreePath =
     session.worktreePath && session.worktreePath !== mainCheckoutPath
@@ -89,6 +93,15 @@ export function AgentActions({
             onPress={runAction(() => resumeAgent(endpoint, session.id, { token }))}
             disabled={!canAct}
             label={`Resume ${session.label || session.id}`}
+          />
+        ) : resumeBlocked ? (
+          <ActionButton
+            icon={Play}
+            iconSize={iconSize}
+            sizeClass={sizeClass}
+            onPress={() => undefined}
+            disabled
+            label={`Resume unavailable for ${session.label || session.id}: ${resumeBlockedReason}`}
           />
         ) : null}
         {forkTool ? (
