@@ -196,7 +196,7 @@ function RowsList({
 }
 
 export default function TopologyScreen() {
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
@@ -284,7 +284,9 @@ export default function TopologyScreen() {
 
   return (
     <Page contentClassName="px-4 py-5 md:px-8 md:py-7">
-      {!project ? (
+      {projectLoading ? (
+        <PageStateCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : !project ? (
         <PageStateCard
           title="No project selected"
           body="Pick a project from the sidebar to view topology."

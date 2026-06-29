@@ -25,7 +25,7 @@ type GraveyardState = {
 };
 
 export default function GraveyardScreen() {
-  const { project, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const { getToken } = useAuth();
   const [graveyardState, setGraveyardState] = useState<GraveyardState>({
     endpointKey: null,
@@ -160,10 +160,14 @@ export default function GraveyardScreen() {
         subtitle={
           project
             ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
-            : "No project selected"
+            : projectLoading
+              ? `Loading ${projectPath}`
+              : "No project selected"
         }
       />
-      {!project ? (
+      {projectLoading ? (
+        <PageStateCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : !project ? (
         <PageStateCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
         <PageStateCard

@@ -263,7 +263,7 @@ export default function NotificationsScreen() {
   const pathname = usePathname();
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const projectPathKey = projectPath ?? EMPTY_PROJECT_PATH;
   const feed = useAtomValue(notificationFeedFamily(projectPathKey));
   const feedError = useAtomValue(notificationFeedErrorFamily(projectPathKey));
@@ -471,7 +471,14 @@ export default function NotificationsScreen() {
         </Card>
       ) : null}
 
-      {!project ? (
+      {projectLoading ? (
+        <Card className="rounded-lg p-5">
+          <Text className="text-base font-semibold text-foreground">Loading project...</Text>
+          <Text className="mt-1 text-sm text-muted-foreground">
+            Fetching project state from the daemon.
+          </Text>
+        </Card>
+      ) : !project ? (
         <Card className="rounded-lg p-5">
           <Text className="text-base font-semibold text-foreground">No project selected</Text>
           <Text className="mt-1 text-sm text-muted-foreground">
