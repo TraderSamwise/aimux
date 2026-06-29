@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle, Bell, RotateCw } from "lucide-react-native";
@@ -9,9 +9,9 @@ import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { listNotifications, type NotificationRecord } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { buildViewHref } from "@/lib/view-location";
+import { buildViewHref, buildViewPath, detailHrefForPath } from "@/lib/view-location";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
-import { projectsAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 interface GlobalNotificationRow {
   projectName: string;
@@ -42,6 +42,7 @@ function sortNotificationRows(a: GlobalNotificationRow, b: GlobalNotificationRow
 
 export default function GlobalNotificationsScreen() {
   const router = useRouter();
+  const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const projects = useAtomValue(projectsAtom);
   const { getToken } = useAuth();
@@ -124,14 +125,23 @@ export default function GlobalNotificationsScreen() {
   }, [onlineProjectKey, refresh]);
 
   function openRow(row: GlobalNotificationRow) {
+    selectProject(row.projectPath);
     const sessionId = row.notification.sessionId;
     if (sessionId) {
       selectSession(sessionId);
-      router.navigate(
-        buildViewHref(`/notifications/agent/${encodeURIComponent(sessionId)}/chat`, {
-          project: row.projectPath,
-        }),
-      );
+      const webHref = buildViewPath(`/project/agent/${encodeURIComponent(sessionId)}/chat`, {
+        project: row.projectPath,
+      });
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.location.assign(String(webHref));
+        return;
+      }
+      router.navigate(detailHrefForPath("/project", "agent", sessionId, row.projectPath));
+      return;
+    }
+    const inboxHref = buildViewPath("/notifications", { project: row.projectPath });
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      window.location.assign(String(inboxHref));
       return;
     }
     router.navigate(buildViewHref("/notifications", { project: row.projectPath }));

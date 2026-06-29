@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { MessageSquare, RotateCw } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,9 +9,9 @@ import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { buildViewHref } from "@/lib/view-location";
+import { buildViewHref, buildViewPath } from "@/lib/view-location";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
-import { projectsAtom } from "@/stores/projects";
+import { projectsAtom, selectProjectAtom } from "@/stores/projects";
 
 interface GlobalThreadRow {
   projectName: string;
@@ -30,6 +30,7 @@ function sortThreadRows(a: GlobalThreadRow, b: GlobalThreadRow): number {
 
 export default function GlobalThreadsScreen() {
   const router = useRouter();
+  const selectProject = useSetAtom(selectProjectAtom);
   const projects = useAtomValue(projectsAtom);
   const { getToken } = useAuth();
   const [rows, setRows] = useState<GlobalThreadRow[]>([]);
@@ -154,14 +155,23 @@ export default function GlobalThreadsScreen() {
         rows.map((row) => (
           <Pressable
             key={`${row.projectPath}:${row.thread.thread.id}`}
-            onPress={() =>
+            onPress={() => {
+              selectProject(row.projectPath);
+              const webHref = buildViewPath("/threads", {
+                project: row.projectPath,
+                threadId: row.thread.thread.id,
+              });
+              if (Platform.OS === "web" && typeof window !== "undefined") {
+                window.location.assign(String(webHref));
+                return;
+              }
               router.navigate(
                 buildViewHref("/threads", {
                   project: row.projectPath,
                   threadId: row.thread.thread.id,
                 }),
-              )
-            }
+              );
+            }}
             className="mb-2"
           >
             <Card className="rounded-lg p-3 active:bg-accent/60">
