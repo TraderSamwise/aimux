@@ -9,7 +9,12 @@ import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { listNotifications, type NotificationRecord } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { buildViewHref, buildViewPath, detailHrefForPath } from "@/lib/view-location";
+import {
+  buildViewHref,
+  buildViewPath,
+  detailHrefForPath,
+  detailViewPathForPath,
+} from "@/lib/view-location";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
@@ -129,9 +134,7 @@ export default function GlobalNotificationsScreen() {
     const sessionId = row.notification.sessionId;
     if (sessionId) {
       selectSession(sessionId);
-      const webHref = buildViewPath(`/project/agent/${encodeURIComponent(sessionId)}/chat`, {
-        project: row.projectPath,
-      });
+      const webHref = detailViewPathForPath("/project", "agent", sessionId, row.projectPath);
       if (Platform.OS === "web" && typeof window !== "undefined") {
         window.location.assign(String(webHref));
         return;

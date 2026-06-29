@@ -97,6 +97,18 @@ export function detailHrefForPath(
   return buildViewHrefObject(detailPath, { ...routeParam, project: projectPath });
 }
 
+export function detailViewPathForPath(
+  pathname: string,
+  kind: DetailRouteKind,
+  id: string,
+  projectPath?: string | null,
+): Href {
+  const tabPrefix = detailTabPrefix(pathname);
+  const suffix =
+    kind === "agent" ? `agent/${encodeURIComponent(id)}/chat` : `service/${encodeURIComponent(id)}`;
+  return buildViewPath(`${tabPrefix}/${suffix}`, { project: projectPath });
+}
+
 function buildViewHrefObject(pathname: string, params: Record<string, string | null | undefined>) {
   const cleanParams = Object.fromEntries(
     Object.entries(params).filter((entry): entry is [string, string] => {
