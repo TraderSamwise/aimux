@@ -11,6 +11,8 @@
     "productionProfile": "production",
     "testflightChannel": "testflight",
     "productionChannel": "production",
+    "testflightEnvironment": "production",
+    "productionEnvironment": "production",
     "defaultBuildPlatform": "ios",
     "defaultUpdatePlatform": "ios",
     "autoSubmit": true
