@@ -360,26 +360,32 @@ export default function ProjectScreen() {
         }
       />
 
-      <View className="mb-5 flex-row flex-wrap">
-        <SummaryTile label="Agents" value={agentCount} />
-        <SummaryTile label="Services" value={visibleModel.summary.services} />
-        <SummaryTile label="Worktrees" value={visibleModel.summary.worktrees} />
-        <SummaryTile label="Tasks" value={taskCount} />
-        <SummaryTile label="Unread" value={visibleModel.summary.unreadNotifications} />
-      </View>
+      {!projectLoading ? (
+        <>
+          <View className="mb-5 flex-row flex-wrap">
+            <SummaryTile label="Agents" value={agentCount} />
+            <SummaryTile label="Services" value={visibleModel.summary.services} />
+            <SummaryTile label="Worktrees" value={visibleModel.summary.worktrees} />
+            <SummaryTile label="Tasks" value={taskCount} />
+            <SummaryTile label="Unread" value={visibleModel.summary.unreadNotifications} />
+          </View>
 
-      <View className="mb-4 flex-row flex-wrap">
-        {SECTIONS.map((item) => (
-          <SectionChip
-            key={item.id}
-            label={item.label}
-            active={section === item.id}
-            onPress={() =>
-              router.replace(buildViewHref("/project", { project: projectPath, section: item.id }))
-            }
-          />
-        ))}
-      </View>
+          <View className="mb-4 flex-row flex-wrap">
+            {SECTIONS.map((item) => (
+              <SectionChip
+                key={item.id}
+                label={item.label}
+                active={section === item.id}
+                onPress={() =>
+                  router.replace(
+                    buildViewHref("/project", { project: projectPath, section: item.id }),
+                  )
+                }
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
 
       {projectLoading ? (
         <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
