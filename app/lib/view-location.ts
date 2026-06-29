@@ -44,13 +44,7 @@ function projectPathFromBrowserLocation(): string | null {
 }
 
 export function buildViewHref(pathname: string, params: AimuxViewParams = {}): Href {
-  const cleanParams = Object.fromEntries(
-    Object.entries(params).filter((entry): entry is [string, string] => {
-      const value = entry[1];
-      return typeof value === "string" && value.trim().length > 0;
-    }),
-  );
-  return { pathname, params: cleanParams } as Href;
+  return buildViewPath(pathname, params);
 }
 
 export function buildViewPath(pathname: string, params: AimuxViewParams = {}): Href {
@@ -97,9 +91,32 @@ export function detailHrefForPath(
   projectPath?: string | null,
 ): Href {
   const tabPrefix = detailTabPrefix(pathname);
+  const detailPath =
+    kind === "agent" ? `${tabPrefix}/agent/[sessionId]/chat` : `${tabPrefix}/service/[serviceId]`;
+  const routeParam = kind === "agent" ? { sessionId: id } : { serviceId: id };
+  return buildViewHrefObject(detailPath, { ...routeParam, project: projectPath });
+}
+
+export function detailViewPathForPath(
+  pathname: string,
+  kind: DetailRouteKind,
+  id: string,
+  projectPath?: string | null,
+): Href {
+  const tabPrefix = detailTabPrefix(pathname);
   const suffix =
     kind === "agent" ? `agent/${encodeURIComponent(id)}/chat` : `service/${encodeURIComponent(id)}`;
-  return buildViewHref(`${tabPrefix}/${suffix}`, { project: projectPath });
+  return buildViewPath(`${tabPrefix}/${suffix}`, { project: projectPath });
+}
+
+function buildViewHrefObject(pathname: string, params: Record<string, string | null | undefined>) {
+  const cleanParams = Object.fromEntries(
+    Object.entries(params).filter((entry): entry is [string, string] => {
+      const value = entry[1];
+      return typeof value === "string" && value.trim().length > 0;
+    }),
+  );
+  return { pathname, params: cleanParams } as Href;
 }
 
 function detailTabPrefix(pathname: string): string {
