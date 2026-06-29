@@ -211,7 +211,7 @@ export default function ProjectScreen() {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
@@ -343,8 +343,8 @@ export default function ProjectScreen() {
     <Page>
       <PageHeader
         eyebrow="Project"
-        title={project?.name ?? "No project selected"}
-        subtitle={project?.path}
+        title={project?.name ?? (projectLoading ? "Loading project..." : "No project selected")}
+        subtitle={project?.path ?? (projectLoading ? projectPath : undefined)}
         actions={
           <Button
             variant="outline"
@@ -360,28 +360,36 @@ export default function ProjectScreen() {
         }
       />
 
-      <View className="mb-5 flex-row flex-wrap">
-        <SummaryTile label="Agents" value={agentCount} />
-        <SummaryTile label="Services" value={visibleModel.summary.services} />
-        <SummaryTile label="Worktrees" value={visibleModel.summary.worktrees} />
-        <SummaryTile label="Tasks" value={taskCount} />
-        <SummaryTile label="Unread" value={visibleModel.summary.unreadNotifications} />
-      </View>
+      {!projectLoading ? (
+        <>
+          <View className="mb-5 flex-row flex-wrap">
+            <SummaryTile label="Agents" value={agentCount} />
+            <SummaryTile label="Services" value={visibleModel.summary.services} />
+            <SummaryTile label="Worktrees" value={visibleModel.summary.worktrees} />
+            <SummaryTile label="Tasks" value={taskCount} />
+            <SummaryTile label="Unread" value={visibleModel.summary.unreadNotifications} />
+          </View>
 
-      <View className="mb-4 flex-row flex-wrap">
-        {SECTIONS.map((item) => (
-          <SectionChip
-            key={item.id}
-            label={item.label}
-            active={section === item.id}
-            onPress={() =>
-              router.replace(buildViewHref("/project", { project: projectPath, section: item.id }))
-            }
-          />
-        ))}
-      </View>
+          <View className="mb-4 flex-row flex-wrap">
+            {SECTIONS.map((item) => (
+              <SectionChip
+                key={item.id}
+                label={item.label}
+                active={section === item.id}
+                onPress={() =>
+                  router.replace(
+                    buildViewHref("/project", { project: projectPath, section: item.id }),
+                  )
+                }
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
 
-      {!project ? (
+      {projectLoading ? (
+        <EmptyCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : !project ? (
         <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
         <EmptyCard

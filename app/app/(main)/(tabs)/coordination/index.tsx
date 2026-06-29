@@ -113,7 +113,7 @@ function WorklistSection({
 export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const { project, projectPath, endpoint } = useRouteProject();
+  const { project, projectPath, endpoint, projectLoading } = useRouteProject();
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const { getToken } = useAuth();
@@ -205,7 +205,9 @@ export default function CoordinationScreen() {
         subtitle={
           project
             ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
-            : "No project selected"
+            : projectLoading
+              ? `Loading ${projectPath}`
+              : "No project selected"
         }
         actions={
           <Button
@@ -220,7 +222,9 @@ export default function CoordinationScreen() {
         }
       />
 
-      {!project ? (
+      {projectLoading ? (
+        <PageStateCard title="Loading project..." body="Fetching project state from the daemon." />
+      ) : !project ? (
         <PageStateCard title="No project selected" body="Pick a project from the sidebar." />
       ) : !endpoint ? (
         <PageStateCard
