@@ -257,6 +257,10 @@ export default function ChatScreen() {
       }),
     [output, terminalDividerWidth],
   );
+  const restoreBlockedReason =
+    session?.restoreState === "blocked"
+      ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
+      : null;
   const composerSendText = getComposerSendText({
     draft,
     hasServiceEndpoint: Boolean(serviceEndpoint),
@@ -702,6 +706,16 @@ export default function ChatScreen() {
                           serviceEndpoint={serviceEndpoint}
                         />
                       ))}
+                      {restoreBlockedReason ? (
+                        <View className="self-start max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 my-1">
+                          <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                            Resume unavailable
+                          </Text>
+                          <Text className="mt-1 text-sm text-card-foreground">
+                            {restoreBlockedReason}
+                          </Text>
+                        </View>
+                      ) : null}
                       {output && parsedMessages.length === 0 && !showSplit ? (
                         <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
                           <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
