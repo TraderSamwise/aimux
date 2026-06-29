@@ -3,6 +3,7 @@ import {
   buildViewHref,
   buildViewPath,
   detailHrefForPath,
+  detailViewPathForPath,
   mergeViewParams,
   parentViewHrefForPath,
   projectPathFromSearch,
@@ -16,10 +17,9 @@ describe("view location helpers", () => {
   });
 
   it("drops empty params when building hrefs", () => {
-    expect(buildViewHref("/topology", { project: "/p", mode: "map", lens: "" })).toEqual({
-      pathname: "/topology",
-      params: { project: "/p", mode: "map" },
-    });
+    expect(buildViewHref("/topology", { project: "/p", mode: "map", lens: "" })).toBe(
+      "/topology?project=%2Fp&mode=map",
+    );
   });
 
   it("builds encoded web paths for imperative tab navigation", () => {
@@ -47,27 +47,32 @@ describe("view location helpers", () => {
 
   it("builds stack-local detail hrefs for the current tab", () => {
     expect(detailHrefForPath("/topology", "agent", "claude-1", "/p")).toEqual({
-      pathname: "/topology/agent/claude-1/chat",
-      params: { project: "/p" },
+      pathname: "/topology/agent/[sessionId]/chat",
+      params: { sessionId: "claude-1", project: "/p" },
     });
     expect(detailHrefForPath("/notifications", "service", "svc/1", "/p")).toEqual({
-      pathname: "/notifications/service/svc%2F1",
-      params: { project: "/p" },
+      pathname: "/notifications/service/[serviceId]",
+      params: { serviceId: "svc/1", project: "/p" },
     });
     expect(detailHrefForPath("/", "agent", "claude-1", "/p")).toEqual({
-      pathname: "/agent/claude-1/chat",
-      params: { project: "/p" },
+      pathname: "/agent/[sessionId]/chat",
+      params: { sessionId: "claude-1", project: "/p" },
     });
   });
 
+  it("builds encoded detail web paths for hard navigation", () => {
+    expect(detailViewPathForPath("/project", "agent", "claude/1", "/p")).toBe(
+      "/project/agent/claude%2F1/chat?project=%2Fp",
+    );
+    expect(detailViewPathForPath("/notifications", "service", "svc/1", "/p")).toBe(
+      "/notifications/service/svc%2F1?project=%2Fp",
+    );
+  });
+
   it("builds parent hrefs for stack-local fallback back navigation", () => {
-    expect(parentViewHrefForPath("/topology/agent/claude-1/chat", "/p")).toEqual({
-      pathname: "/topology",
-      params: { project: "/p" },
-    });
-    expect(parentViewHrefForPath("/agent/claude-1/chat", "/p")).toEqual({
-      pathname: "/",
-      params: { project: "/p" },
-    });
+    expect(parentViewHrefForPath("/topology/agent/claude-1/chat", "/p")).toBe(
+      "/topology?project=%2Fp",
+    );
+    expect(parentViewHrefForPath("/agent/claude-1/chat", "/p")).toBe("/?project=%2Fp");
   });
 });
