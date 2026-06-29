@@ -261,7 +261,9 @@ export default function ChatScreen() {
     [output, terminalDividerWidth],
   );
   const restoreBlockedReason =
-    session?.restoreState === "blocked"
+    session &&
+    (session.status === "offline" || session.status === "exited") &&
+    session.restoreState === "blocked"
       ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
       : null;
   const composerSendText = getComposerSendText({

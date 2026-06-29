@@ -371,7 +371,9 @@ export default function NotificationsScreen() {
         subtitle={
           project
             ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
-            : "Select a project to view attention items"
+            : projectLoading
+              ? `Loading ${projectPath}`
+              : "Select a project to view attention items"
         }
         actions={
           <Button
