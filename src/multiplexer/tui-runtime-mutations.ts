@@ -20,6 +20,7 @@ type MutationQueue = {
 };
 
 const RETRY_DELAYS_MS = [250, 1_000, 3_000, 10_000];
+const NOTIFICATION_CONTEXT_TIMEOUT_MS = 3_000;
 
 function mergeContext(
   base: NotificationContextPatch | undefined,
@@ -61,20 +62,6 @@ function retryDelay(attempt: number): number {
   return RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
 }
 
-function requeueContext(
-  host: TuiRuntimeMutationHost,
-  queue: MutationQueue,
-  context: NotificationContextPatch,
-): boolean {
-  if (queue.disposed || host.tuiRuntimeMutationQueue !== queue) return false;
-  if (queue.context) {
-    queue.context = mergeContext(context, queue.context);
-    return false;
-  }
-  queue.context = context;
-  return true;
-}
-
 async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   const queue = getQueue(host);
   if (queue.inFlight) return;
@@ -86,18 +73,16 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   queue.seen.clear();
   const failedSeen: string[] = [];
   let failed = false;
-  let requeuedFailedContext = false;
   try {
     if (context) {
       try {
-        await mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, {
-          source: "tui",
-          focused: true,
-          ...context,
+        const body = { source: "tui", focused: true, ...context };
+        await mutateDashboardApi(host, PROJECT_API_ROUTES.runtime.notificationContext, body, {
+          timeoutMs: NOTIFICATION_CONTEXT_TIMEOUT_MS,
+          recoverOnFailure: false,
         });
       } catch {
-        requeuedFailedContext = requeueContext(host, queue, context);
-        failed = true;
+        // Focus telemetry is disposable; never let it drive repair or stale retries.
       }
     }
     for (const session of seen) {
@@ -121,7 +106,7 @@ async function flushQueue(host: TuiRuntimeMutationHost): Promise<void> {
   for (const session of failedSeen) queue.seen.add(session);
   queue.attempt += 1;
   debug(`TUI runtime mutation retry scheduled after failed attempt ${queue.attempt}`, "dashboard");
-  scheduleFlush(host, queue.context && !requeuedFailedContext ? 0 : retryDelay(queue.attempt - 1));
+  scheduleFlush(host, retryDelay(queue.attempt - 1));
 }
 
 export function queueTuiNotificationContext(host: TuiRuntimeMutationHost, patch: NotificationContextPatch): void {

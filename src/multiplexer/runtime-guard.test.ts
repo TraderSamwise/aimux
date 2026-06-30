@@ -197,6 +197,25 @@ describe("runtimeGuardOverlayCopy", () => {
     expect(titles.every((t) => t.length > 0)).toBe(true);
     expect(runtimeGuardOverlayCopy({ kind: "ok" }).title).toBe("");
   });
+
+  it("escalates long-running guard states to an explicit restart command", () => {
+    const copy = runtimeGuardOverlayCopy({ kind: "disconnected" }, { activeMs: 60_000 });
+
+    expect(copy.title).toBe("Aimux needs restart");
+    expect(copy.lines.join("\n")).toContain("aimux restart");
+    expect(copy.waiting).toBe(false);
+  });
+
+  it("escalates after a failed repair attempt even before the timeout", () => {
+    const copy = runtimeGuardOverlayCopy(
+      { kind: "stale", reason: "service-mismatch" },
+      { activeMs: 1_000, repairFailed: true },
+    );
+
+    expect(copy.title).toBe("Aimux needs restart");
+    expect(copy.lines.join("\n")).toContain("Automatic repair did not finish");
+    expect(copy.waiting).toBe(false);
+  });
 });
 
 describe("probeRuntimeGuard", () => {
@@ -490,6 +509,18 @@ describe("buildDashboardRuntimeGuardOverlayOutput", () => {
     expect(rebuild?.toLowerCase()).toContain("repairing");
     expect(rebuild).not.toContain("rebuild runtime");
     expect(rebuild).not.toContain("detach");
+  });
+
+  it("renders restart instructions instead of wait copy after guard escalation", () => {
+    const out = buildDashboardRuntimeGuardOverlayOutput(
+      { runtimeGuardState: { kind: "disconnected" }, runtimeGuardActiveMs: 60_000 },
+      120,
+      40,
+    );
+
+    expect(out?.toLowerCase()).toContain("aimux needs restart");
+    expect(out).toContain("aimux restart");
+    expect(out).not.toContain("Please wait");
   });
 });
 

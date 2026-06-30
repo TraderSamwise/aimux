@@ -300,6 +300,32 @@ describe("MetadataServer threads API", () => {
     expect(getState).toHaveBeenCalledTimes(2);
   });
 
+  it("serves expired desktop-state cache immediately and refreshes off the request path", async () => {
+    const getState = vi.fn(() => ({
+      sessions: [],
+      teammates: [],
+      services: [],
+      worktreeGroups: [],
+      mainCheckoutInfo: { name: "Main Checkout" },
+      seq: getState.mock.calls.length,
+    }));
+    server?.stop();
+    server = new MetadataServer({ desktop: { getState } });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const first = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(first.seq).toBe(1);
+    (server as any).desktopStateCache.ts = Date.now() - 11_000;
+
+    const stale = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) => response.json());
+    expect(stale.seq).toBe(1);
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    await vi.waitFor(() => expect(getState).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+  });
+
   it("refreshes desktop-state cache when alerts publish project updates", async () => {
     const getState = vi.fn(() => ({
       sessions: [],

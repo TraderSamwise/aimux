@@ -807,22 +807,24 @@ describe("worktrees dashboard mutation protocol", () => {
     ]);
   });
 
-  it("removes a worktree through the project service and settles after the rendered group disappears", async () => {
+  it("removes a worktree through the project service after the raw group disappears", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();
     const path = "/repo/.aimux/worktrees/demo";
+    const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       worktreeRemovalJob: null,
       pendingWorktreeRemovals: new Map([[path, Promise.resolve({ path, status: "removed" })]]),
       dashboardPendingActions: pending,
-      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, sessions: [], services: [] }],
+      dashboardRawWorktreeGroupsCache: [worktree],
+      dashboardWorktreeGroupsCache: [worktree],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
       refreshLocalDashboardModel: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
         expect(opts?.lifecycle?.requiresInputEpoch).not.toBe(true);
-        host.dashboardWorktreeGroupsCache = [];
+        applyRawWorktrees(host, pending, []);
         return true;
       }),
       renderDashboard: vi.fn(),
@@ -839,6 +841,56 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
     expect(host.reapplyDashboardPendingActions).toHaveBeenCalled();
     expect(pending.state.get(`worktree:${path}`)).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps waiting for worktree removal when an API refresh reports an unchanged snapshot", async () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    const path = "/repo/.aimux/worktrees/demo";
+    const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
+    const holder: { host?: any } = {};
+    let resolveSecondRefresh!: () => void;
+    const secondRefresh = new Promise<boolean>((resolve) => {
+      resolveSecondRefresh = () => {
+        applyRawWorktrees(holder.host, pending, []);
+        resolve(true);
+      };
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeRemovalJob: null,
+      dashboardPendingActions: pending,
+      dashboardRawWorktreeGroupsCache: [worktree],
+      dashboardWorktreeGroupsCache: [worktree],
+      dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
+      refreshLocalDashboardModel: vi.fn(),
+      refreshDashboardModelFromService: vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockImplementation(() => secondRefresh),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+    holder.host = host;
+    attachPendingReapply(host, pending);
+
+    beginWorktreeRemoval(host, path, "demo", 0);
+
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    expect(host.footerFlash).toBe("");
+    expect(host.worktreeRemovalJob).toEqual(expect.objectContaining({ path, name: "demo" }));
+
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledTimes(2));
+    resolveSecondRefresh();
+
+    await vi.waitFor(() => expect(host.footerFlash).toBe("Graveyarded: demo"));
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -878,7 +930,7 @@ describe("worktrees dashboard mutation protocol", () => {
 
     await vi.waitFor(() => expect(pending.state.get(`worktree:${path}`)).toBeNull());
     expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
-    expect(host.footerFlash).toBe("");
+    expect(host.footerFlash).toBe("Graveyarded: demo");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 

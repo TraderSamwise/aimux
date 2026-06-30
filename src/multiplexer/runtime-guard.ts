@@ -99,33 +99,61 @@ export function runtimeGuardKeyDisposition(key: string): "passthrough" | "swallo
   return "swallow";
 }
 
+export const RUNTIME_GUARD_ESCALATION_MS = 60_000;
+
+export interface RuntimeGuardOverlayCopy {
+  title: string;
+  lines: string[];
+  waiting: boolean;
+}
+
+function runtimeGuardEscalationCopy(state: RuntimeGuardState): RuntimeGuardOverlayCopy {
+  const reason =
+    state.kind === "disconnected" ? "The project service did not reconnect." : "Automatic repair did not finish.";
+  return {
+    title: "Aimux needs restart",
+    lines: [reason, "Run this in any terminal: aimux restart", "This preserves agent tmux windows."],
+    waiting: false,
+  };
+}
+
 /** Overlay title + body copy for a non-ok guard state. */
-export function runtimeGuardOverlayCopy(state: RuntimeGuardState): { title: string; lines: string[] } {
+export function runtimeGuardOverlayCopy(
+  state: RuntimeGuardState,
+  options: { activeMs?: number; repairFailed?: boolean } = {},
+): RuntimeGuardOverlayCopy {
+  if (state.kind !== "ok" && (options.repairFailed || (options.activeMs ?? 0) >= RUNTIME_GUARD_ESCALATION_MS)) {
+    return runtimeGuardEscalationCopy(state);
+  }
   if (state.kind === "stale" && state.reason === "self-drift") {
     return {
       title: "Aimux is updating",
       lines: ["Aimux is applying the current build.", "Actions resume automatically when repair completes."],
+      waiting: true,
     };
   }
   if (state.kind === "stale") {
     return {
       title: "Aimux is syncing",
       lines: ["Aimux is syncing the dashboard with the project service.", "Actions resume automatically."],
+      waiting: true,
     };
   }
   if (state.kind === "disconnected") {
     return {
       title: "Aimux is reconnecting",
       lines: ["Aimux is reconnecting the project service.", "Actions resume automatically."],
+      waiting: true,
     };
   }
   if (state.kind === "runtime-rebuild-required") {
     return {
       title: "Aimux is repairing tmux",
       lines: ["Aimux is repairing the managed tmux runtime.", "Actions resume automatically."],
+      waiting: true,
     };
   }
-  return { title: "", lines: [] };
+  return { title: "", lines: [], waiting: false };
 }
 
 function readRuntimeRebuildRequired(projectRoot: string): boolean {

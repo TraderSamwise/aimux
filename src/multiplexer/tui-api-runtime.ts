@@ -2,6 +2,7 @@ export type TuiApiConnectionState = "connected" | "degraded" | "reconnecting" | 
 
 export interface TuiApiRequestOptions {
   timeoutMs?: number;
+  recoverOnFailure?: boolean;
 }
 
 export interface TuiApiRuntimeOptions {
@@ -113,7 +114,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      if (this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error)) {
+      if (this.shouldRecoverFromRequestFailure(error, generation, opts)) {
         this.setConnectionState("degraded");
         this.options.onRequestFailure?.(error);
       }
@@ -148,7 +149,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      if (this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error)) {
+      if (this.shouldRecoverFromRequestFailure(error, generation, opts)) {
         this.setConnectionState("degraded");
         this.options.onRequestFailure?.(error);
       }
@@ -198,8 +199,8 @@ export class TuiApiRuntime {
           state.pending = false;
           state.stale = state.value !== undefined;
           state.pendingPromise = undefined;
-          if (this.lastSuccessfulRequestGeneration <= requestGeneration && this.shouldRecoverFromError(error)) {
-            this.setConnectionState(state.value === undefined ? "reconnecting" : "degraded");
+          if (this.shouldRecoverFromRequestFailure(error, requestGeneration, opts)) {
+            this.setConnectionState("degraded");
             this.options.onRequestFailure?.(error);
           }
         }
@@ -241,6 +242,11 @@ export class TuiApiRuntime {
 
   private shouldRecoverFromError(error: unknown): boolean {
     return this.options.shouldRecoverFromError?.(error) ?? isRecoverableTuiApiError(error);
+  }
+
+  private shouldRecoverFromRequestFailure(error: unknown, generation: number, opts: TuiApiRequestOptions): boolean {
+    if (opts.recoverOnFailure === false) return false;
+    return this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error);
   }
 }
 

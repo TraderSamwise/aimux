@@ -928,16 +928,8 @@ export const dashboardInteractionMethods = {
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       await refreshDashboardModelThroughApi(this, { force: true });
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      const refreshed =
-        this.getDashboardSessions?.().find((session: DashboardSession) => session.id === entry.id) ?? entry;
-      const result = await this.waitAndOpenLiveTmuxWindowForEntry(refreshed, 60_000);
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      if (result !== "opened") {
-        this.footerFlash = `Agent ${entry.label ?? entry.command ?? entry.id} is not available yet`;
-        this.footerFlashTicks = 3;
-      }
       this.renderDashboard();
-      return result;
+      return "opened";
     }
 
     const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);

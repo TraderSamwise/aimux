@@ -15,6 +15,7 @@ import { postToProjectService as postToProjectServiceTransport } from "./dashboa
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 import { postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
+import type { WorktreeGroup } from "../dashboard/index.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -37,6 +38,7 @@ function postWorktreeMutation(
 interface DashboardWorktreeMutationOptions {
   pendingPath: string | undefined;
   pendingAction: PendingWorktreeActionKind;
+  worktreeSeed?: WorktreeGroup;
   lifecycle?: DashboardLifecycleToken;
   request: () => Promise<void>;
   settle: (modelLifecycle: DashboardLifecycleToken) => Promise<boolean>;
@@ -66,7 +68,14 @@ function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): an
     ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path))
     : undefined;
   if (raw) return raw;
-  return host.dashboardWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path));
+  return host.dashboardWorktreeGroupsCache?.find((entry: any) => sameWorktreePath(entry.path, path));
+}
+
+function findRawWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
+  const groups = Array.isArray(host.dashboardRawWorktreeGroupsCache)
+    ? host.dashboardRawWorktreeGroupsCache
+    : host.dashboardWorktreeGroupsCache;
+  return groups?.find((entry: any) => sameWorktreePath(entry.path, path));
 }
 
 function canonicalWorktreePath(path: string | undefined): string | undefined {
@@ -82,27 +91,35 @@ function sameWorktreePath(left: string | undefined, right: string | undefined): 
   return canonicalWorktreePath(left) === canonicalWorktreePath(right);
 }
 
-async function waitForRenderedDashboardWorktreeState(
+async function waitForStableDashboardWorktreeAbsence(
   host: WorktreeHost,
   path: string,
-  predicate: (group: any | undefined) => boolean,
   timeoutMs = 10_000,
+  stableMs = 350,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForWorktreeSettlement(host, lifecycle))) return false;
-    const group = findRenderedWorktreeForSettlement(host, path);
-    if (predicate(group)) return true;
+    const refreshed = await refreshDashboardModelForWorktreeSettlement(host, lifecycle);
+    const group = findRawWorktreeForSettlement(host, path);
+    if (group) {
+      missingSince = null;
+    } else if (refreshed || missingSince !== null) {
+      missingSince ??= Date.now();
+      if (Date.now() - missingSince >= stableMs) return true;
+    }
     await sleep(100);
   }
   return false;
 }
 
 async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardWorktreeMutationOptions): Promise<void> {
-  const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host, { inputEpoch: true });
+  const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
-  host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction);
+  host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction, {
+    worktreeSeed: opts.worktreeSeed,
+  });
   host.reapplyDashboardPendingActions?.();
   renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
   try {
@@ -446,15 +463,16 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     finishWorktreeRemoval(host, 1);
     return;
   }
-  const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const uiLifecycle = captureDashboardLifecycle(host);
   void runDashboardWorktreeMutation(host, {
     pendingPath: path,
     pendingAction: "graveyarding",
+    worktreeSeed: host.dashboardWorktreeGroupsCache?.find((group: any) => sameWorktreePath(group.path, path)),
     lifecycle: uiLifecycle,
     request: async () => {
       await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
     },
-    settle: (lifecycle) => waitForRenderedDashboardWorktreeState(host, path, (group) => !group, 10_000, lifecycle),
+    settle: (lifecycle) => waitForStableDashboardWorktreeAbsence(host, path, 10_000, 350, lifecycle),
     onSuccess: () => {
       debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
       finishWorktreeRemoval(host, 0);

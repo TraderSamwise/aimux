@@ -470,6 +470,32 @@ describe("persistenceMethods", () => {
     ]);
   });
 
+  it("keeps existing worktree removal pending when fallback worktree listing fails", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const existingRemoval = Promise.resolve({ path: worktreePath, status: "removed" as const });
+    const host = {
+      mode: "project-service",
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      pendingWorktreeRemovals: new Map([[worktreePath, existingRemoval]]),
+      listDesktopWorktrees: vi.fn(() => {
+        throw new Error("worktree list unavailable");
+      }),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.removeDesktopWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "removed",
+    });
+
+    expect(host.listDesktopWorktrees).toHaveBeenCalledOnce();
+    expect(pending.getWorktreeAction(worktreePath)).toBe("removing");
+  });
+
   it("projects session and service pending actions into desktop-state snapshots", () => {
     const pending = new DashboardPendingActions(() => {});
     const session = {
@@ -774,6 +800,44 @@ describe("persistenceMethods", () => {
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingStartedAt");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");
+  });
+
+  it("does not turn synthetic pending rows into rendered rows after clearing pending actions", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const sessionSeed = { index: -1, id: "codex-1", command: "codex", status: "offline", active: false };
+    const serviceSeed = { id: "service-1", command: "shell", args: [], status: "offline", active: false };
+    const worktreeSeed = {
+      name: "demo",
+      branch: "demo",
+      path: "/repo/.aimux/worktrees/demo",
+      sessions: [],
+      services: [],
+    };
+    pending.setSessionAction(sessionSeed.id, "graveyarding", { sessionSeed });
+    pending.setServiceAction(serviceSeed.id, "removing", { serviceSeed });
+    pending.setWorktreeAction(worktreeSeed.path, "graveyarding", { worktreeSeed });
+    const host = {
+      dashboardPendingActions: pending,
+      dashboardRawSessionsCache: [],
+      dashboardRawTeammatesCache: [],
+      dashboardRawServicesCache: [],
+      dashboardRawWorktreeGroupsCache: [],
+      dashboardSessionsCache: pending.applyToSessions([]),
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: pending.applyToServices([]),
+      dashboardWorktreeGroupsCache: pending.applyToWorktrees([]),
+      dashboardUiStateStore: { orderWorktreeGroups: vi.fn((groups) => groups) },
+    };
+
+    pending.clearSessionAction(sessionSeed.id);
+    pending.clearServiceAction(serviceSeed.id);
+    pending.clearWorktreeAction(worktreeSeed.path);
+    persistenceMethods.reapplyDashboardPendingActions.call(host);
+
+    expect(host.dashboardSessionsCache).toEqual([]);
+    expect(host.dashboardTeammatesCache).toEqual([]);
+    expect(host.dashboardServicesCache).toEqual([]);
+    expect(host.dashboardWorktreeGroupsCache).toEqual([]);
   });
 
   it("keeps raw worktree lists free of pending removal state", () => {

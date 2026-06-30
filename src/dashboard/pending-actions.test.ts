@@ -55,7 +55,7 @@ describe("DashboardPendingActions", () => {
     }
   });
 
-  it("does not synthesize teammate session rows into normal session lists", () => {
+  it("synthesizes teammate session rows only into teammate lists", () => {
     const pending = new DashboardPendingActions(() => {});
     pending.setSessionAction("codex-reviewer", "starting", {
       sessionSeed: {
@@ -71,7 +71,14 @@ describe("DashboardPendingActions", () => {
     });
 
     expect(pending.applyToSessions([])).toEqual([]);
-    expect(pending.applyToSessions([], { includeTeammates: true })).toEqual([]);
+    expect(pending.applyToSessions([], { includeTeammates: true })).toEqual([
+      expect.objectContaining({
+        id: "codex-reviewer",
+        pendingAction: "starting",
+        optimistic: true,
+        team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+      }),
+    ]);
   });
 
   it("keeps stopping session rows visible while waiting for offline state", () => {
@@ -90,7 +97,15 @@ describe("DashboardPendingActions", () => {
 
     const sessions = pending.applyToSessions([]);
 
-    expect(sessions).toEqual([]);
+    expect(sessions).toEqual([
+      expect.objectContaining({
+        id: "claude-1",
+        status: "running",
+        pending: true,
+        pendingAction: "stopping",
+        optimistic: true,
+      }),
+    ]);
   });
 
   it("keeps migrating session rows visible while waiting for the new runtime", () => {
@@ -109,7 +124,15 @@ describe("DashboardPendingActions", () => {
 
     const sessions = pending.applyToSessions([]);
 
-    expect(sessions).toEqual([]);
+    expect(sessions).toEqual([
+      expect.objectContaining({
+        id: "claude-1",
+        status: "running",
+        pending: true,
+        pendingAction: "migrating",
+        optimistic: true,
+      }),
+    ]);
   });
 
   it("keeps stopping service rows visible while waiting for offline state", () => {
@@ -259,7 +282,7 @@ describe("DashboardPendingActions", () => {
     ]);
   });
 
-  it("projects existing worktree removals while synthesizing only missing creates", () => {
+  it("projects existing worktree removals while synthesizing missing lifecycle rows", () => {
     const pending = new DashboardPendingActions(() => {});
     const removingWorktree = {
       name: "old",
@@ -281,10 +304,26 @@ describe("DashboardPendingActions", () => {
       services: [],
     };
 
-    pending.setWorktreeAction(removingWorktree.path, "removing");
+    pending.setWorktreeAction(removingWorktree.path, "removing", { worktreeSeed: removingWorktree });
     pending.setWorktreeAction(creatingWorktree.path, "creating", { worktreeSeed: creatingWorktree });
 
     expect(pending.applyToWorktrees([removingWorktree])).toEqual([
+      expect.objectContaining({
+        path: removingWorktree.path,
+        pending: true,
+        pendingAction: "removing",
+        removing: true,
+        optimistic: true,
+      }),
+      expect.objectContaining({
+        path: creatingWorktree.path,
+        pending: true,
+        pendingAction: "creating",
+        optimistic: true,
+      }),
+    ]);
+
+    expect(pending.applyToWorktrees([])).toEqual([
       expect.objectContaining({
         path: removingWorktree.path,
         pending: true,
@@ -404,7 +443,13 @@ describe("DashboardPendingActions", () => {
 
     expect(pending.getSessionAction(sharedId)).toBe("starting");
     expect(pending.getServiceAction(sharedId)).toBe("stopping");
-    expect(pending.applyToSessions([])).toEqual([]);
+    expect(pending.applyToSessions([])).toEqual([
+      expect.objectContaining({
+        id: sharedId,
+        pendingAction: "starting",
+        optimistic: true,
+      }),
+    ]);
     expect(pending.applyToServices([])).toEqual([
       expect.objectContaining({
         id: sharedId,
