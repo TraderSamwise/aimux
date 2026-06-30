@@ -43,7 +43,7 @@ import {
   type DashboardErrorState,
 } from "../dashboard/feedback.js";
 import { MultiplexerRuntimeSync } from "./runtime-sync.js";
-import type { RuntimeGuardState } from "./runtime-guard.js";
+import { runtimeGuardEquals, type RuntimeGuardState } from "./runtime-guard.js";
 import { selectLinkedOrOpenTarget } from "../tmux/window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./dashboard-actions-methods.js";
 import { agentIoMethods, type AgentIoMethods } from "./agent-io-methods.js";
@@ -284,6 +284,7 @@ export class Multiplexer {
   private dashboardNextBackgroundRefreshAt = 0;
   private runtimeSync!: MultiplexerRuntimeSync;
   private _runtimeGuard: RuntimeGuardState = { kind: "ok" };
+  private runtimeGuardEnteredAtMs = 0;
   private runtimeGuardProbing = false;
   private runtimeGuardDisconnectProbeCount = 0;
 
@@ -658,7 +659,15 @@ export class Multiplexer {
   }
 
   private set runtimeGuardState(value: RuntimeGuardState) {
+    if (!runtimeGuardEquals(this._runtimeGuard, value)) {
+      this.runtimeGuardEnteredAtMs = value.kind === "ok" ? 0 : Date.now();
+    }
     this._runtimeGuard = value;
+  }
+
+  private get runtimeGuardActiveMs(): number {
+    if (this._runtimeGuard.kind === "ok" || this.runtimeGuardEnteredAtMs <= 0) return 0;
+    return Math.max(0, Date.now() - this.runtimeGuardEnteredAtMs);
   }
 
   private get footerFlash(): string | null {

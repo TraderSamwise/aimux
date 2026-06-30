@@ -11,10 +11,7 @@ import {
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
-import {
-  isAttachableDashboardSessionEntry,
-  isLiveDashboardServiceRuntimeEntry,
-} from "../dashboard/runtime-evidence.js";
+import { isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import type { LaunchOverride } from "../shell-args.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
@@ -166,7 +163,7 @@ async function waitForStableDashboardSessionAbsence(
   while (Date.now() < deadline) {
     const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
     if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
-    const session = getDashboardSessionEntry(host, sessionId);
+    const session = getRawDashboardSessionEntry(host, sessionId);
     if (session) {
       missingSince = null;
     } else if (refreshed || missingSince !== null) {
@@ -182,8 +179,17 @@ function getDashboardSessionEntry(host: DashboardOpsHost, sessionId: string): an
   return host.getDashboardSessions?.().find((candidate: any) => candidate.id === sessionId);
 }
 
+function getRawDashboardSessionEntry(host: DashboardOpsHost, sessionId: string): any | undefined {
+  const sessions = Array.isArray(host.dashboardRawSessionsCache)
+    ? host.dashboardRawSessionsCache
+    : host.getDashboardSessions?.();
+  return sessions?.find((candidate: any) => candidate.id === sessionId);
+}
+
 function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
-  return isAttachableDashboardSessionEntry(entry);
+  return Boolean(
+    entry && isAttachableDashboardSessionEntry(entry) && entry.status !== "offline" && entry.status !== "exited",
+  );
 }
 
 function renderDashboardDuringSettlement(host: DashboardOpsHost, lifecycle: DashboardLifecycleToken | undefined): void {
@@ -236,10 +242,11 @@ async function waitForDashboardSessionResumeSettle(
     await refreshDashboardModelForSettlement(host, modelLifecycle);
     const entry = getDashboardSessionEntry(host, sessionId);
     if (isLiveDashboardSessionEntry(entry)) {
-      if (entry?.status === "offline" || entry?.pendingAction === "starting") {
-        renderDashboardDuringSettlement(host, renderLifecycle);
-      }
+      renderDashboardDuringSettlement(host, renderLifecycle);
       return true;
+    }
+    if (isAttachableDashboardSessionEntry(entry) || hasLiveManagedAgentWindow(host, sessionId)) {
+      renderDashboardDuringSettlement(host, renderLifecycle);
     }
     if (hasDashboardModelServiceRefreshError(host) && !hasLiveManagedAgentWindow(host, sessionId)) return false;
     if (
@@ -249,11 +256,6 @@ async function waitForDashboardSessionResumeSettle(
       await refreshDashboardModelForSettlement(host, modelLifecycle);
       renderDashboardDuringSettlement(host, renderLifecycle);
       if (isDashboardSessionResumeSettled(host, sessionId)) return true;
-    }
-    if (hasLiveManagedAgentWindow(host, sessionId)) {
-      await refreshDashboardModelForSettlement(host, modelLifecycle);
-      renderDashboardDuringSettlement(host, renderLifecycle);
-      return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -273,7 +275,7 @@ async function waitForDashboardSessionStopSettle(
     const entry = getDashboardSessionEntry(host, sessionId);
     if (isDashboardSessionStopSettled(host, sessionId)) return true;
     if (hasDashboardModelServiceRefreshError(host)) return false;
-    if (entry.pendingAction === "stopping") {
+    if (entry?.pendingAction === "stopping") {
       renderDashboardDuringSettlement(host, renderLifecycle);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -282,11 +284,18 @@ async function waitForDashboardSessionStopSettle(
 }
 
 function isLiveDashboardServiceEntry(entry: any | undefined): boolean {
-  return isLiveDashboardServiceRuntimeEntry(entry);
+  return Boolean(entry && entry.status === "running");
 }
 
 function getDashboardServiceEntry(host: DashboardOpsHost, serviceId: string): any | undefined {
   return host.getDashboardServices?.().find((entry: any) => entry.id === serviceId);
+}
+
+function getRawDashboardServiceEntry(host: DashboardOpsHost, serviceId: string): any | undefined {
+  const services = Array.isArray(host.dashboardRawServicesCache)
+    ? host.dashboardRawServicesCache
+    : host.getDashboardServices?.();
+  return services?.find((entry: any) => entry.id === serviceId);
 }
 
 async function waitForRenderedDashboardServiceState(
@@ -343,7 +352,7 @@ async function waitForStableDashboardServiceAbsence(
   while (Date.now() < deadline) {
     const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
     if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
-    const service = getDashboardServiceEntry(host, serviceId);
+    const service = getRawDashboardServiceEntry(host, serviceId);
     if (service) {
       missingSince = null;
     } else if (refreshed || missingSince !== null) {
@@ -359,7 +368,7 @@ async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
 ): Promise<void> {
-  const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host, { inputEpoch: true });
+  const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
   const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
     sessionSeed: opts.sessionSeed,
@@ -402,7 +411,7 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
-  const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+  const lifecycle = captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
   const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
     serviceSeed: opts.serviceSeed,
@@ -751,7 +760,7 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
-    const lifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
+    const lifecycle = captureDashboardLifecycle(host);
     if (
       host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
       queuedAgentRestoresFor(host).has(session.id)

@@ -141,7 +141,7 @@ describe("TuiApiRuntime", () => {
     expect(failures).toHaveBeenCalledWith(error);
   });
 
-  it("recovers for schema validation failures that may indicate service skew", async () => {
+  it("keeps refresh failures degraded while scheduling recovery", async () => {
     const states: string[] = [];
     const failures = vi.fn();
     const error = new Error("invalid coordination payload");
@@ -160,8 +160,8 @@ describe("TuiApiRuntime", () => {
       error,
     });
 
-    expect(runtime.getConnectionState()).toBe("reconnecting");
-    expect(states).toEqual(["reconnecting"]);
+    expect(runtime.getConnectionState()).toBe("degraded");
+    expect(states).toEqual(["degraded"]);
     expect(failures).toHaveBeenCalledWith(error);
   });
 
@@ -307,6 +307,27 @@ describe("TuiApiRuntime", () => {
 
     expect(mutate).toHaveBeenCalledWith(host, "/agents/stop", { sessionId: "claude-1" }, undefined);
     expect(host.tuiApiConnectionState).toBe("degraded");
+  });
+
+  it("does not run recovery for best-effort mutation failures", async () => {
+    const failures = vi.fn();
+    const runtime = new TuiApiRuntime({
+      request: vi.fn(),
+      mutate: vi.fn(async () => {
+        throw new Error("telemetry timeout");
+      }),
+      onRequestFailure: failures,
+    });
+
+    await expect(
+      runtime.mutateJson("/notification-context", { source: "tui" }, (value) => value, {
+        timeoutMs: 3000,
+        recoverOnFailure: false,
+      }),
+    ).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(failures).not.toHaveBeenCalled();
   });
 
   it("coalesces API failures into one runtime guard recovery", async () => {

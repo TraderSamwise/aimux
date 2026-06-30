@@ -1089,13 +1089,18 @@ describe("focusSession", () => {
       expect(host.activeIndex).toBe(0);
       expect(host.sessionMRU).toEqual(["claude-1", "codex-2"]);
       expect(host.saveState).toHaveBeenCalledOnce();
-      expect(host.postToProjectService).toHaveBeenNthCalledWith(1, "/notification-context", {
-        source: "tui",
-        focused: true,
-        screen: "agent",
-        sessionId: "claude-1",
-        panelOpen: false,
-      });
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(
+        1,
+        "/notification-context",
+        {
+          source: "tui",
+          focused: true,
+          screen: "agent",
+          sessionId: "claude-1",
+          panelOpen: false,
+        },
+        { timeoutMs: 3000 },
+      );
       expect(host.postToProjectService).toHaveBeenNthCalledWith(2, "/mark-seen", { session: "claude-1" });
     } finally {
       vi.useRealTimers();
@@ -1137,13 +1142,18 @@ describe("focusSession", () => {
       expect(host.activeIndex).toBe(0);
       expect(host.sessionMRU).toEqual(["claude-1", "codex-2"]);
       expect(host.saveState).toHaveBeenCalledOnce();
-      expect(host.postToProjectService).toHaveBeenNthCalledWith(1, "/notification-context", {
-        source: "tui",
-        focused: true,
-        screen: "agent",
-        sessionId: "claude-1",
-        panelOpen: false,
-      });
+      expect(host.postToProjectService).toHaveBeenNthCalledWith(
+        1,
+        "/notification-context",
+        {
+          source: "tui",
+          focused: true,
+          screen: "agent",
+          sessionId: "claude-1",
+          panelOpen: false,
+        },
+        { timeoutMs: 3000 },
+      );
       expect(host.postToProjectService).toHaveBeenNthCalledWith(2, "/mark-seen", { session: "claude-1" });
     } finally {
       vi.useRealTimers();
