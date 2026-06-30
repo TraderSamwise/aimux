@@ -6,6 +6,7 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const envProductionPath = path.join(root, ".env.production");
 const envPath = path.join(root, ".env");
+const envLocalPath = path.join(root, ".env.local");
 const easJsonPath = path.join(root, "eas.json");
 const envTypesPath = path.join(root, "environment.d.ts");
 const envRuntimePath = path.join(root, "lib", "envRuntime.ts");
@@ -109,12 +110,19 @@ function readReleaseEnv(profile) {
   };
 }
 
+function readEnvFile(envFilePath) {
+  if (!fs.existsSync(envFilePath)) return {};
+  return parseEnvFile(fs.readFileSync(envFilePath, "utf8"));
+}
+
 if (!fs.existsSync(easJsonPath)) {
   console.error("Missing eas.json");
   process.exit(1);
 }
 
 const { envFilePath, values: releaseEnv } = readReleaseEnv(profile);
+const localEnv = readEnvFile(envLocalPath);
+const effectiveReleaseEnv = { ...releaseEnv, ...localEnv, ...process.env };
 const easJson = JSON.parse(fs.readFileSync(easJsonPath, "utf8"));
 const easEnv = easJson?.build?.[profile]?.env || {};
 const usedKeys = findUsedPublicEnvKeys();
@@ -145,6 +153,13 @@ for (const location of findDisallowedDirectEnvReads()) {
 for (const key of requiredReleaseEnvKeys) {
   if (!releaseEnv[key]) {
     errors.push(`${path.relative(root, envFilePath)} missing ${key}`);
+  }
+  if (!effectiveReleaseEnv[key]) {
+    const localHint =
+      Object.prototype.hasOwnProperty.call(localEnv, key) && !localEnv[key]
+        ? `; ${path.relative(root, envLocalPath)} clears it`
+        : "";
+    errors.push(`effective release env missing ${key}${localHint}`);
   }
 }
 

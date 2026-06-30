@@ -582,6 +582,9 @@ export function applyDashboardModel(
     return false;
   }
   host.dashboardModelSnapshotKey = snapshotKey;
+  host.dashboardRawSessionsCache = dashSessions;
+  host.dashboardRawTeammatesCache = dashTeammates;
+  host.dashboardRawServicesCache = dashServices;
   host.dashboardRawWorktreeGroupsCache = worktreeGroups;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
   host.dashboardTeammatesCache = host.dashboardPendingActions

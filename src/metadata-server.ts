@@ -1306,11 +1306,8 @@ export class MetadataServer {
       this.scheduleDesktopStateRefresh(DESKTOP_STATE_STALE_REFRESH_DELAY_MS);
       return this.desktopStateCache.state;
     }
-    if (
-      this.desktopStateCache &&
-      !this.desktopStateCacheDirty &&
-      now - this.desktopStateCache.ts < DESKTOP_STATE_CACHE_TTL_MS
-    ) {
+    if (this.desktopStateCache) {
+      if (now - this.desktopStateCache.ts >= DESKTOP_STATE_CACHE_TTL_MS) this.scheduleDesktopStateRefresh();
       return this.desktopStateCache.state;
     }
     return this.refreshDesktopStateCache();

@@ -207,7 +207,6 @@ class DashboardProjectEventAdapter {
 
   private async recover(signal: AbortSignal): Promise<void> {
     try {
-      await this.host.ensureDashboardControlPlane?.();
       if (!signal.aborted && this.host.mode === "dashboard") this.scheduleViewRefresh(PROJECT_API_VIEWS);
     } catch (error) {
       debug(

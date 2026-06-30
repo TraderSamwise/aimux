@@ -522,6 +522,7 @@ describe("dashboard live target activation", () => {
         sessionId: "codex-1",
         source: "tui",
       }),
+      { timeoutMs: 3000 },
     );
     expect(host.postToProjectService).toHaveBeenCalledWith("/mark-seen", { session: "codex-1" });
     expect(existsSync(join(getProjectStateDirFor(process.cwd()), "tmux-statusline", "top-@agent.txt"))).toBe(false);

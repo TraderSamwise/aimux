@@ -539,20 +539,9 @@ export const persistenceMethods = {
   },
 
   reapplyDashboardPendingActions(this: any): void {
-    this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(
-      this.dashboardSessionsCache.map(
-        ({
-          pending: _pending,
-          pendingAction: _pendingAction,
-          pendingStartedAt: _pendingStartedAt,
-          optimistic: _optimistic,
-          ...session
-        }: any) => session,
-      ),
-    );
-    this.dashboardTeammatesCache = this.dashboardPendingActions
-      .applyToSessions(
-        (this.dashboardTeammatesCache ?? []).map(
+    const rawSessions = Array.isArray(this.dashboardRawSessionsCache)
+      ? this.dashboardRawSessionsCache
+      : this.dashboardSessionsCache.map(
           ({
             pending: _pending,
             pendingAction: _pendingAction,
@@ -560,35 +549,49 @@ export const persistenceMethods = {
             optimistic: _optimistic,
             ...session
           }: any) => session,
-        ),
-        { includeTeammates: true },
-      )
+        );
+    const rawTeammates = Array.isArray(this.dashboardRawTeammatesCache)
+      ? this.dashboardRawTeammatesCache
+      : (this.dashboardTeammatesCache ?? []).map(
+          ({
+            pending: _pending,
+            pendingAction: _pendingAction,
+            pendingStartedAt: _pendingStartedAt,
+            optimistic: _optimistic,
+            ...session
+          }: any) => session,
+        );
+    const rawServices = Array.isArray(this.dashboardRawServicesCache)
+      ? this.dashboardRawServicesCache
+      : this.dashboardServicesCache.map(
+          ({
+            pending: _pending,
+            pendingAction: _pendingAction,
+            pendingStartedAt: _pendingStartedAt,
+            optimistic: _optimistic,
+            ...service
+          }: any) => service,
+        );
+    const rawWorktreeGroups = Array.isArray(this.dashboardRawWorktreeGroupsCache)
+      ? this.dashboardRawWorktreeGroupsCache
+      : this.dashboardWorktreeGroupsCache.map(
+          ({
+            pendingAction: _pendingAction,
+            pendingStartedAt: _pendingStartedAt,
+            optimistic: _optimistic,
+            pending: _pending,
+            removing: _removing,
+            ...wt
+          }: any) => wt,
+        );
+    this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(rawSessions);
+    this.dashboardTeammatesCache = this.dashboardPendingActions
+      .applyToSessions(rawTeammates, { includeTeammates: true })
       .filter((session: DashboardSession) => isTeammateSession(session));
-    this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
-      this.dashboardServicesCache.map(
-        ({
-          pending: _pending,
-          pendingAction: _pendingAction,
-          pendingStartedAt: _pendingStartedAt,
-          optimistic: _optimistic,
-          ...service
-        }: any) => service,
-      ),
-    );
+    this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(rawServices);
     this.dashboardWorktreeGroupsCache = this.dashboardUiStateStore.orderWorktreeGroups(
       composeDashboardWorktreeGroups(
-        this.dashboardPendingActions.applyToWorktrees(
-          this.dashboardWorktreeGroupsCache.map(
-            ({
-              pendingAction: _pendingAction,
-              pendingStartedAt: _pendingStartedAt,
-              optimistic: _optimistic,
-              pending: _pending,
-              removing: _removing,
-              ...wt
-            }: any) => wt,
-          ),
-        ),
+        this.dashboardPendingActions.applyToWorktrees(rawWorktreeGroups),
         this.dashboardSessionsCache,
         this.dashboardServicesCache,
       ),
@@ -936,7 +939,29 @@ export const persistenceMethods = {
       Promise<{ path: string; status: "removing" | "removed" }>
     >;
     const setRemovePending = () => {
+      const cachedWorktree = this.dashboardWorktreeGroupsCache?.find?.((group: any) => group.path === path);
+      let listedWorktree: any | undefined;
+      if (!cachedWorktree) {
+        try {
+          listedWorktree = this.listDesktopWorktrees?.().find?.((worktree: any) => worktree.path === path);
+        } catch {
+          listedWorktree = undefined;
+        }
+      }
       this.dashboardPendingActions.setWorktreeAction(path, "removing", {
+        worktreeSeed:
+          cachedWorktree ??
+          (listedWorktree
+            ? {
+                name: listedWorktree.name,
+                branch: listedWorktree.branch,
+                path,
+                createdAt: listedWorktree.createdAt,
+                status: "offline",
+                sessions: [],
+                services: [],
+              }
+            : undefined),
         timeoutMs: 180_000,
         onTimeout: () => {
           const name = path.split("/").pop() ?? path;

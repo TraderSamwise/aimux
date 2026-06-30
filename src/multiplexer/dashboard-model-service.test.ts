@@ -92,6 +92,10 @@ describe("refreshDashboardModelFromService", () => {
     await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(true);
 
     expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?force=1", { timeoutMs: 5000 });
+    expect(host.dashboardRawSessionsCache).toEqual([session]);
+    expect(host.dashboardRawTeammatesCache).toEqual([]);
+    expect(host.dashboardRawServicesCache).toEqual([]);
+    expect(host.dashboardRawWorktreeGroupsCache).toEqual([serviceGroup]);
     expect(host.dashboardSessionsCache).toEqual([session]);
     expect(host.dashboardWorktreeGroupsCache).toEqual([
       expect.objectContaining({ name: "Main Checkout", branch: "main", sessions: [session] }),
