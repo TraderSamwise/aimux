@@ -50,7 +50,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      false,
+      true,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
@@ -86,7 +86,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      false,
+      true,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
@@ -297,7 +297,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      false,
+      true,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
@@ -336,7 +336,7 @@ describe("dashboard project event refresh", () => {
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-        false,
+        true,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
@@ -380,7 +380,7 @@ describe("dashboard project event refresh", () => {
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-        false,
+        true,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
@@ -431,7 +431,7 @@ describe("dashboard project event refresh", () => {
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-        false,
+        true,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
@@ -495,7 +495,7 @@ describe("dashboard project event refresh", () => {
 
     expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      false,
+      true,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),

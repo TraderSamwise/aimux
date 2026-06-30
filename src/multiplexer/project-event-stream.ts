@@ -235,7 +235,7 @@ class DashboardProjectEventAdapter {
       ])
     ) {
       renderLifecycles.push(dashboardLifecycle);
-      work.push(refreshDashboardModelThroughApi(this.host, { force: false, lifecycle: dashboardLifecycle }));
+      work.push(refreshDashboardModelThroughApi(this.host, { force: true, lifecycle: dashboardLifecycle }));
     }
     if (
       this.host.isDashboardScreen?.("coordination") &&
