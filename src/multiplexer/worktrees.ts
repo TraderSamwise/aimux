@@ -68,14 +68,14 @@ function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): an
     ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path))
     : undefined;
   if (raw) return raw;
-  return host.dashboardWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path));
+  return host.dashboardWorktreeGroupsCache?.find((entry: any) => sameWorktreePath(entry.path, path));
 }
 
 function findRawWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const groups = Array.isArray(host.dashboardRawWorktreeGroupsCache)
     ? host.dashboardRawWorktreeGroupsCache
     : host.dashboardWorktreeGroupsCache;
-  return groups.find((entry: any) => sameWorktreePath(entry.path, path));
+  return groups?.find((entry: any) => sameWorktreePath(entry.path, path));
 }
 
 function canonicalWorktreePath(path: string | undefined): string | undefined {
@@ -101,11 +101,11 @@ async function waitForStableDashboardWorktreeAbsence(
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
-    if (!(await refreshDashboardModelForWorktreeSettlement(host, lifecycle))) return false;
+    const refreshed = await refreshDashboardModelForWorktreeSettlement(host, lifecycle);
     const group = findRawWorktreeForSettlement(host, path);
     if (group) {
       missingSince = null;
-    } else {
+    } else if (refreshed || missingSince !== null) {
       missingSince ??= Date.now();
       if (Date.now() - missingSince >= stableMs) return true;
     }
