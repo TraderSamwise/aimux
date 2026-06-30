@@ -849,6 +849,14 @@ describe("worktrees dashboard mutation protocol", () => {
     const pending = createPendingActionsStore();
     const path = "/repo/.aimux/worktrees/demo";
     const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
+    const holder: { host?: any } = {};
+    let resolveSecondRefresh!: () => void;
+    const secondRefresh = new Promise<boolean>((resolve) => {
+      resolveSecondRefresh = () => {
+        applyRawWorktrees(holder.host, pending, []);
+        resolve(true);
+      };
+    });
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -861,18 +869,23 @@ describe("worktrees dashboard mutation protocol", () => {
       refreshDashboardModelFromService: vi
         .fn()
         .mockResolvedValueOnce(false)
-        .mockImplementation(async () => {
-          applyRawWorktrees(host, pending, []);
-          return true;
-        }),
+        .mockImplementation(() => secondRefresh),
       renderDashboard: vi.fn(),
       footerFlash: "",
       footerFlashTicks: 0,
       showDashboardError: vi.fn(),
     };
+    holder.host = host;
     attachPendingReapply(host, pending);
 
     beginWorktreeRemoval(host, path, "demo", 0);
+
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    expect(host.footerFlash).toBe("");
+    expect(host.worktreeRemovalJob).toEqual(expect.objectContaining({ path, name: "demo" }));
+
+    await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledTimes(2));
+    resolveSecondRefresh();
 
     await vi.waitFor(() => expect(host.footerFlash).toBe("Graveyarded: demo"));
 
