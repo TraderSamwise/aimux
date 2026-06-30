@@ -940,7 +940,14 @@ export const persistenceMethods = {
     >;
     const setRemovePending = () => {
       const cachedWorktree = this.dashboardWorktreeGroupsCache?.find?.((group: any) => group.path === path);
-      const listedWorktree = this.listDesktopWorktrees?.().find?.((worktree: any) => worktree.path === path);
+      let listedWorktree: any | undefined;
+      if (!cachedWorktree) {
+        try {
+          listedWorktree = this.listDesktopWorktrees?.().find?.((worktree: any) => worktree.path === path);
+        } catch {
+          listedWorktree = undefined;
+        }
+      }
       this.dashboardPendingActions.setWorktreeAction(path, "removing", {
         worktreeSeed:
           cachedWorktree ??

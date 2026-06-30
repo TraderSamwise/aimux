@@ -470,6 +470,32 @@ describe("persistenceMethods", () => {
     ]);
   });
 
+  it("keeps existing worktree removal pending when fallback worktree listing fails", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const existingRemoval = Promise.resolve({ path: worktreePath, status: "removed" as const });
+    const host = {
+      mode: "project-service",
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      pendingWorktreeRemovals: new Map([[worktreePath, existingRemoval]]),
+      listDesktopWorktrees: vi.fn(() => {
+        throw new Error("worktree list unavailable");
+      }),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.removeDesktopWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "removed",
+    });
+
+    expect(host.listDesktopWorktrees).toHaveBeenCalledOnce();
+    expect(pending.getWorktreeAction(worktreePath)).toBe("removing");
+  });
+
   it("projects session and service pending actions into desktop-state snapshots", () => {
     const pending = new DashboardPendingActions(() => {});
     const session = {

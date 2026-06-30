@@ -704,6 +704,55 @@ describe("restartAimuxControlPlane", () => {
     });
   });
 
+  it("cleans stale duplicate dashboards from the resolved host session", async () => {
+    const killWindow = vi.fn();
+    const unlinkWindow = vi.fn(() => {
+      throw new Error("window only linked to one session");
+    });
+    const listWindows = vi.fn((sessionName: string) =>
+      sessionName === "resolved-host"
+        ? [
+            { id: "@1", index: 0, name: "dashboard", active: true },
+            { id: "@old", index: 1, name: "dashboard", active: false },
+          ]
+        : [],
+    );
+
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({
+        isAvailable: () => true,
+        getProjectSession: vi.fn(() => ({ sessionName: "derived-host" })),
+        listWindows,
+        unlinkWindow,
+        killWindow,
+      }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "resolved-host" },
+        dashboardTarget: { sessionName: "resolved-host", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(listWindows).toHaveBeenCalledWith("resolved-host");
+    expect(killWindow).toHaveBeenCalledWith({
+      sessionName: "resolved-host",
+      windowId: "@old",
+      windowIndex: 1,
+      windowName: "dashboard",
+    });
+  });
+
   it("fails verification when a foreign-owned dashboard remains stale after restart", async () => {
     const report = foreignDashboardCoherenceReport();
     const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce(report);
