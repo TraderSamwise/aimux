@@ -776,6 +776,44 @@ describe("persistenceMethods", () => {
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");
   });
 
+  it("does not turn synthetic pending rows into rendered rows after clearing pending actions", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const sessionSeed = { index: -1, id: "codex-1", command: "codex", status: "offline", active: false };
+    const serviceSeed = { id: "service-1", command: "shell", args: [], status: "offline", active: false };
+    const worktreeSeed = {
+      name: "demo",
+      branch: "demo",
+      path: "/repo/.aimux/worktrees/demo",
+      sessions: [],
+      services: [],
+    };
+    pending.setSessionAction(sessionSeed.id, "graveyarding", { sessionSeed });
+    pending.setServiceAction(serviceSeed.id, "removing", { serviceSeed });
+    pending.setWorktreeAction(worktreeSeed.path, "graveyarding", { worktreeSeed });
+    const host = {
+      dashboardPendingActions: pending,
+      dashboardRawSessionsCache: [],
+      dashboardRawTeammatesCache: [],
+      dashboardRawServicesCache: [],
+      dashboardRawWorktreeGroupsCache: [],
+      dashboardSessionsCache: pending.applyToSessions([]),
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: pending.applyToServices([]),
+      dashboardWorktreeGroupsCache: pending.applyToWorktrees([]),
+      dashboardUiStateStore: { orderWorktreeGroups: vi.fn((groups) => groups) },
+    };
+
+    pending.clearSessionAction(sessionSeed.id);
+    pending.clearServiceAction(serviceSeed.id);
+    pending.clearWorktreeAction(worktreeSeed.path);
+    persistenceMethods.reapplyDashboardPendingActions.call(host);
+
+    expect(host.dashboardSessionsCache).toEqual([]);
+    expect(host.dashboardTeammatesCache).toEqual([]);
+    expect(host.dashboardServicesCache).toEqual([]);
+    expect(host.dashboardWorktreeGroupsCache).toEqual([]);
+  });
+
   it("keeps raw worktree lists free of pending removal state", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";

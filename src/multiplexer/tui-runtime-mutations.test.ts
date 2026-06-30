@@ -35,13 +35,19 @@ describe("TUI runtime mutation queue", () => {
     await vi.runOnlyPendingTimersAsync();
 
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(3);
-    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(1, host, "/notification-context", {
-      source: "tui",
-      focused: true,
-      screen: "agent",
-      sessionId: "second",
-      panelOpen: false,
-    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(
+      1,
+      host,
+      "/notification-context",
+      {
+        source: "tui",
+        focused: true,
+        screen: "agent",
+        sessionId: "second",
+        panelOpen: false,
+      },
+      { timeoutMs: 3000, recoverOnFailure: false },
+    );
     expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(2, host, "/mark-seen", {
       session: "first",
     });
@@ -50,7 +56,7 @@ describe("TUI runtime mutation queue", () => {
     });
   });
 
-  it("retries failed idempotent mutations without overwriting newer context", async () => {
+  it("drops failed telemetry context without overwriting newer context", async () => {
     const host: any = {};
     apiMocks.mutateDashboardApi.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ ok: true });
 
@@ -60,12 +66,17 @@ describe("TUI runtime mutation queue", () => {
     await vi.advanceTimersByTimeAsync(250);
 
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(2);
-    expect(apiMocks.mutateDashboardApi).toHaveBeenLastCalledWith(host, "/notification-context", {
-      source: "tui",
-      focused: true,
-      screen: "coordination",
-      sessionId: "new",
-    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenLastCalledWith(
+      host,
+      "/notification-context",
+      {
+        source: "tui",
+        focused: true,
+        screen: "coordination",
+        sessionId: "new",
+      },
+      { timeoutMs: 3000, recoverOnFailure: false },
+    );
   });
 
   it("clears pending retries during teardown", async () => {
@@ -91,28 +102,32 @@ describe("TUI runtime mutation queue", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(3);
-    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(2, host, "/notification-context", {
-      source: "tui",
-      focused: true,
-      screen: "agent",
-      sessionId: "codex-2",
-    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(
+      2,
+      host,
+      "/notification-context",
+      {
+        source: "tui",
+        focused: true,
+        screen: "agent",
+        sessionId: "codex-2",
+      },
+      { timeoutMs: 3000, recoverOnFailure: false },
+    );
     expect(apiMocks.mutateDashboardApi).toHaveBeenNthCalledWith(3, host, "/mark-seen", {
       session: "codex-1",
     });
   });
 
-  it("backs off repeated notification context failures when no fresh context arrived", async () => {
+  it("drops failed notification context when no fresh context arrived", async () => {
     const host: any = {};
     apiMocks.mutateDashboardApi.mockRejectedValue(new Error("offline"));
 
     queueTuiNotificationContext(host, { screen: "agent", sessionId: "codex-1" });
     await vi.runOnlyPendingTimersAsync();
-    await vi.advanceTimersByTimeAsync(249);
-
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledTimes(1);
   });
 
   it("merges partial notification context patches before flushing", async () => {
@@ -123,13 +138,18 @@ describe("TUI runtime mutation queue", () => {
     await vi.runOnlyPendingTimersAsync();
 
     expect(apiMocks.mutateDashboardApi).toHaveBeenCalledOnce();
-    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledWith(host, "/notification-context", {
-      source: "tui",
-      focused: true,
-      screen: "agent",
-      sessionId: "codex-1",
-      panelOpen: false,
-    });
+    expect(apiMocks.mutateDashboardApi).toHaveBeenCalledWith(
+      host,
+      "/notification-context",
+      {
+        source: "tui",
+        focused: true,
+        screen: "agent",
+        sessionId: "codex-1",
+        panelOpen: false,
+      },
+      { timeoutMs: 3000, recoverOnFailure: false },
+    );
   });
 
   it("does not reschedule an in-flight failure after teardown", async () => {

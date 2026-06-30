@@ -807,22 +807,24 @@ describe("worktrees dashboard mutation protocol", () => {
     ]);
   });
 
-  it("removes a worktree through the project service and settles after the rendered group disappears", async () => {
+  it("removes a worktree through the project service after the raw group disappears", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();
     const path = "/repo/.aimux/worktrees/demo";
+    const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       worktreeRemovalJob: null,
       pendingWorktreeRemovals: new Map([[path, Promise.resolve({ path, status: "removed" })]]),
       dashboardPendingActions: pending,
-      dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, sessions: [], services: [] }],
+      dashboardRawWorktreeGroupsCache: [worktree],
+      dashboardWorktreeGroupsCache: [worktree],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
       refreshLocalDashboardModel: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
         expect(opts?.lifecycle?.requiresInputEpoch).not.toBe(true);
-        host.dashboardWorktreeGroupsCache = [];
+        applyRawWorktrees(host, pending, []);
         return true;
       }),
       renderDashboard: vi.fn(),
@@ -878,7 +880,7 @@ describe("worktrees dashboard mutation protocol", () => {
 
     await vi.waitFor(() => expect(pending.state.get(`worktree:${path}`)).toBeNull());
     expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
-    expect(host.footerFlash).toBe("");
+    expect(host.footerFlash).toBe("Graveyarded: demo");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 

@@ -50,7 +50,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      true,
+      false,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
@@ -86,7 +86,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      true,
+      false,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
@@ -297,7 +297,7 @@ describe("dashboard project event refresh", () => {
     await vi.runAllTimersAsync();
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      true,
+      false,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
@@ -305,7 +305,7 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
-  it("repairs the control plane and resyncs views when the SSE stream fails", async () => {
+  it("resyncs cached views without repairing when the SSE stream fails", async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async () => {
       throw new Error("socket closed");
@@ -334,9 +334,9 @@ describe("dashboard project event refresh", () => {
 
       expect(fetchMock).toHaveBeenCalledOnce();
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
-      expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+      expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-        true,
+        false,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
@@ -348,7 +348,7 @@ describe("dashboard project event refresh", () => {
     }
   });
 
-  it("repairs the control plane when the SSE stream wedges without keepalives", async () => {
+  it("resyncs cached views without repairing when the SSE stream wedges without keepalives", async () => {
     const originalFetch = globalThis.fetch;
     const stream = new ReadableStream<Uint8Array>();
     globalThis.fetch = vi.fn(async () => ({
@@ -378,9 +378,9 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(25);
 
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
-      expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+      expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-        true,
+        false,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
@@ -391,7 +391,7 @@ describe("dashboard project event refresh", () => {
     }
   });
 
-  it("repairs the control plane when the SSE reader reports ECONNRESET", async () => {
+  it("resyncs cached views without repairing when the SSE reader reports ECONNRESET", async () => {
     const originalFetch = globalThis.fetch;
     const socketReset = Object.assign(new Error("read ECONNRESET"), {
       code: "ECONNRESET",
@@ -429,9 +429,9 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(25);
 
       expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
-      expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+      expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-        true,
+        false,
         expect.objectContaining({
           lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
         }),
@@ -478,7 +478,7 @@ describe("dashboard project event refresh", () => {
     }
   });
 
-  it("repairs the control plane when endpoint resolution fails", async () => {
+  it("resyncs cached views without repairing when endpoint resolution fails", async () => {
     controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockRejectedValueOnce(new Error("metadata stale"));
     const host: any = {
       mode: "dashboard",
@@ -493,9 +493,9 @@ describe("dashboard project event refresh", () => {
     await vi.advanceTimersByTimeAsync(25);
     await vi.advanceTimersByTimeAsync(25);
 
-    expect(host.ensureDashboardControlPlane).toHaveBeenCalledOnce();
+    expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      true,
+      false,
       expect.objectContaining({
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),

@@ -373,6 +373,16 @@ function relinkDashboardToClientSessions(
   return errors;
 }
 
+function cleanupHostDashboardSession(
+  projectRoot: string,
+  tmux: RuntimeRestartTmux,
+  dashboardTarget: TmuxTarget,
+): string[] {
+  if (!tmux.isAvailable() || !tmux.getProjectSession || !tmux.listWindows || !tmux.unlinkWindow) return [];
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  return cleanupStaleDashboardLinks(tmux as TmuxRuntimeManager, hostSession, dashboardTarget);
+}
+
 function captureActiveNonDashboardWindows(projectRoot: string, tmux: RuntimeRestartTmux): TmuxTarget[] {
   if (!tmux.isAvailable() || !tmux.getProjectSession || !tmux.listSessionNames || !tmux.listWindows) return [];
   const hostSession = tmux.getProjectSession(projectRoot).sessionName;
@@ -744,7 +754,10 @@ async function restartAimuxControlPlaneUnlocked(
         try {
           const resolvedTarget = resolveDashboard(projectRoot, tmux, { forceReload: true, openInHostSession: true });
           resolved = resolvedTarget;
-          relinkErrors = relinkDashboardToClientSessions(projectRoot, tmux, resolvedTarget.dashboardTarget);
+          relinkErrors = [
+            ...cleanupHostDashboardSession(projectRoot, tmux, resolvedTarget.dashboardTarget),
+            ...relinkDashboardToClientSessions(projectRoot, tmux, resolvedTarget.dashboardTarget),
+          ];
         } finally {
           restoreActiveWindows(tmux, activeWindows);
         }

@@ -55,22 +55,24 @@ function visibleEntryKey(entry?: PendingActionEntry): string {
   });
 }
 
-function canSynthesizeMissingSession(
-  kind: PendingDashboardActionKind,
-): kind is Extract<PendingSessionActionKind, "creating" | "forking"> {
-  return kind === "creating" || kind === "forking";
+function canSynthesizeMissingSession(kind: PendingDashboardActionKind): kind is PendingSessionActionKind {
+  return (
+    kind === "creating" ||
+    kind === "forking" ||
+    kind === "migrating" ||
+    kind === "starting" ||
+    kind === "stopping" ||
+    kind === "graveyarding" ||
+    kind === "renaming"
+  );
 }
 
-function canSynthesizeMissingService(
-  kind: PendingDashboardActionKind,
-): kind is Extract<PendingServiceActionKind, "creating" | "starting" | "stopping"> {
-  return kind === "creating" || kind === "starting" || kind === "stopping";
+function canSynthesizeMissingService(kind: PendingDashboardActionKind): kind is PendingServiceActionKind {
+  return kind === "creating" || kind === "starting" || kind === "stopping" || kind === "removing";
 }
 
-function canSynthesizeMissingWorktree(
-  kind: PendingDashboardActionKind,
-): kind is Extract<PendingWorktreeActionKind, "creating"> {
-  return kind === "creating";
+function canSynthesizeMissingWorktree(kind: PendingDashboardActionKind): kind is PendingWorktreeActionKind {
+  return kind === "creating" || kind === "removing" || kind === "graveyarding";
 }
 
 export class DashboardPendingActions {
@@ -325,6 +327,7 @@ export class DashboardPendingActions {
       if (!canSynthesizeMissingWorktree(entry.kind)) continue;
       applied.push({
         ...entry.worktreeSeed,
+        removing: entry.kind === "removing" || entry.kind === "graveyarding",
         pending: true,
         pendingAction: entry.kind,
         pendingStartedAt: entry.startedAt,

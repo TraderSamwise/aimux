@@ -145,12 +145,11 @@ export function renderDashboardErrorOverlay(ctx: any): void {
 export function buildDashboardRuntimeGuardOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const guard = ctx.runtimeGuardState;
   if (!guard || guard.kind === "ok") return null;
-  const copy = runtimeGuardOverlayCopy(guard);
-  const body = [
-    ...copy.lines.map((line: string) => `  ${style(line, "muted")}`),
-    "",
-    `  ${style("Please wait", "muted")}`,
-  ];
+  const activeMs = typeof ctx.runtimeGuardActiveMs === "number" ? ctx.runtimeGuardActiveMs : undefined;
+  const repairFailed = typeof ctx.runtimeGuardRepairFailedKey === "string";
+  const copy = runtimeGuardOverlayCopy(guard, { activeMs, repairFailed });
+  const body = [...copy.lines.map((line: string) => `  ${style(line, "muted")}`)];
+  if (copy.waiting) body.push("", `  ${style("Please wait", "muted")}`);
   return renderOverlayBox({ title: copy.title, body, cols, rows, variant: "red" });
 }
 

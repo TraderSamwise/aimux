@@ -25,8 +25,8 @@ export function getAuthConfigurationError(): string | null {
   return null;
 }
 
-/** true when no Clerk key is configured and the app is using local daemon HTTP */
-export const LOCAL_MODE = env.AIMUX_CONNECTION_MODE === "local" && !env.CLERK_PUBLISHABLE_KEY;
+/** true when the app is using local daemon HTTP */
+export const LOCAL_MODE = env.AIMUX_CONNECTION_MODE === "local";
 
 const noop = async () => {};
 const noopToken = async () => null;

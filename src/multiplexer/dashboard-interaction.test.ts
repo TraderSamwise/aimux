@@ -717,7 +717,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
 
-  it("resumes, refreshes, then opens an offline dashboard agent", async () => {
+  it("resumes and refreshes an offline dashboard agent without opening it", async () => {
     const entry = {
       id: "codex-1",
       status: "offline",
@@ -742,10 +742,7 @@ describe("dashboardInteractionMethods", () => {
 
     expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
-    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(
-      { ...entry, status: "running", tmuxWindowId: "@agent" },
-      60000,
-    );
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).not.toHaveBeenCalled();
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
@@ -814,7 +811,7 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
-  it("refreshes from the service after an offline row open reports an error", async () => {
+  it("refreshes from the service after resuming an offline row", async () => {
     const entry = {
       id: "codex-1",
       status: "offline",
@@ -836,6 +833,7 @@ describe("dashboardInteractionMethods", () => {
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
