@@ -62,4 +62,25 @@ describe("describeSessionRestorability", () => {
       restoreBlockedReason: "missing exact resumable backend session id",
     });
   });
+
+  it("keeps persisted restore blockers ahead of backend ids", () => {
+    expect(
+      describeSessionRestorability(
+        {
+          id: "claude-crashed",
+          status: "offline",
+          command: "claude",
+          toolConfigKey: "claude",
+          backendSessionId: "backend-1",
+          restoreBlockedReason: "agent exited during startup",
+        },
+        {
+          claude: { resumeArgs: ["--resume", "{sessionId}"], resumeByBackendSessionId: true },
+        },
+      ),
+    ).toEqual({
+      restoreState: "blocked",
+      restoreBlockedReason: "agent exited during startup",
+    });
+  });
 });

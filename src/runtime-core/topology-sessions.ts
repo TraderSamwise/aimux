@@ -26,6 +26,7 @@ export type RuntimeTopologySessionState = {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  restoreBlockedReason?: string;
   graveyardReason?: string;
   tmuxTarget?: {
     sessionName: string;
@@ -123,6 +124,7 @@ function sessionToTopologySession(
     worktreePath: session.worktreePath,
     label: session.label,
     headline: session.headline,
+    restoreBlockedReason: session.lifecycle === "offline" ? session.restoreBlockedReason : undefined,
     graveyardReason: session.graveyardReason,
     team: session.team,
     createdAt: session.createdAt ?? now,
@@ -176,6 +178,7 @@ export function topologySessionToSessionState(
     worktreePath: session.worktreePath ?? node?.cwd,
     label: session.label ?? node?.label,
     headline: session.headline,
+    restoreBlockedReason: session.restoreBlockedReason,
     graveyardedAt: session.graveyardedAt,
     graveyardReason: session.graveyardReason,
     tmuxTarget:
@@ -261,6 +264,9 @@ export function upsertTopologySession(
     const rigId = ensureRig(topology, projectRoot, now);
     const node = upsertNode(topology, session, rigId, now);
     const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
+    if (status !== "offline") {
+      delete nextSession.restoreBlockedReason;
+    }
     if (status !== "graveyard") {
       delete nextSession.graveyardedAt;
       delete nextSession.graveyardReason;
@@ -288,6 +294,7 @@ export function moveTopologySessionToGraveyard(
       existing.status = "graveyard";
       existing.updatedAt = now;
       existing.graveyardedAt ??= now;
+      delete existing.restoreBlockedReason;
       if (input?.reason) existing.graveyardReason = input.reason;
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       moved = topologySessionToSessionState(existing, topology);
@@ -387,6 +394,7 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     session.updatedAt = now;
     delete session.graveyardedAt;
     delete session.graveyardReason;
+    delete session.restoreBlockedReason;
     topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;

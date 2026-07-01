@@ -95,6 +95,28 @@ describe("topology session lifecycle", () => {
     expect(topologySessionToSessionState(store.read().sessions[0]!, store.read()).status).toBe("offline");
   });
 
+  it("persists restore blockers only for offline sessions", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const session = {
+      id: "claude-crashed",
+      tool: "claude",
+      toolConfigKey: "claude",
+      command: "claude",
+      args: [],
+      lifecycle: "offline" as const,
+      backendSessionId: "backend-1",
+      restoreBlockedReason: "agent exited during startup",
+    };
+
+    upsertTopologySession(session, "offline", { store, projectRoot: repoRoot });
+    expect(topologySessionToSessionState(store.read().sessions[0]!, store.read()).restoreBlockedReason).toBe(
+      "agent exited during startup",
+    );
+
+    upsertTopologySession(session, "running", { store, projectRoot: repoRoot });
+    expect(topologySessionToSessionState(store.read().sessions[0]!, store.read()).restoreBlockedReason).toBeUndefined();
+  });
+
   it("does not mint graveyard sessions from caller-provided seeds", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     const moved = moveTopologySessionToGraveyard("missing-agent", { store });
