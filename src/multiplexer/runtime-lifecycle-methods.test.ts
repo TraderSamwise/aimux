@@ -322,6 +322,48 @@ describe("runtime lifecycle state persistence", () => {
     expect(saved).not.toHaveProperty("sessions");
   });
 
+  it("does not let stale in-memory offline rows clear persisted restore blockers", () => {
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "claude-crashed",
+          tool: "claude",
+          toolConfigKey: "claude",
+          command: "claude",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+          restoreBlockedReason: "agent exited during startup",
+        },
+      ],
+    });
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        offlineSessions: [
+          {
+            id: "claude-crashed",
+            tool: "claude",
+            toolConfigKey: "claude",
+            command: "claude",
+            args: [],
+            lifecycle: "offline",
+            backendSessionId: "backend-1",
+            worktreePath: repoRoot,
+          },
+        ],
+      }) as never,
+    );
+
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
+        id: "claude-crashed",
+        restoreBlockedReason: "agent exited during startup",
+      }),
+    ]);
+  });
+
   it("persists an empty session list after the last local agent row is removed", () => {
     writeFileSync(
       getStatePath(),

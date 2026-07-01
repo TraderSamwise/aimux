@@ -273,8 +273,19 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         tmuxTarget: mux.sessionTmuxTargets.get(s.id) as never,
       }));
     const liveKeys = new Set(liveSessions.map(sessionStateKey));
+    const topologySessions = listTopologySessionStates({
+      statuses: ["running", "idle", "offline"],
+    }) as SessionState[];
+    const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
     const offlineSessions = mux.offlineSessions
       .map((session) => sanitizeOfflineSessionState(session))
+      .map((session) => {
+        const existing = topologyByKey.get(sessionStateKey(session));
+        if (!session.restoreBlockedReason && existing?.restoreBlockedReason) {
+          return { ...session, restoreBlockedReason: existing.restoreBlockedReason };
+        }
+        return session;
+      })
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
     const removedServiceIds = mux.removedServiceIds ?? new Set<string>();
@@ -287,9 +298,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
     const myIds = new Set(mySessions.map((s) => s.id));
     const unpreservedExitedIds = mux.unpreservedExitedSessionIds ?? new Set<string>();
-    const topologySessions = listTopologySessionStates({
-      statuses: ["running", "idle", "offline"],
-    }) as SessionState[];
     const otherSessions = topologySessions.flatMap((s) => {
       if (unpreservedExitedIds.has(s.id)) return [];
       if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];

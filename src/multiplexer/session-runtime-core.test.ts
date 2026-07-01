@@ -454,23 +454,23 @@ describe("session runtime prompt submission", () => {
     }
   });
 
-  it("keeps runtime backend ids ahead of stale metadata when preserving exited sessions", async () => {
+  it("blocks restore for quick unexpected exits even when a backend id exists", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
       const runtime = {
-        id: "claude-current-exit",
+        id: "claude-current-crash",
         command: "claude",
         startTime: Date.now(),
-        backendSessionId: "backend-current-exit",
+        backendSessionId: "backend-current-crash",
       };
       const host: any = {
         sessions: [runtime],
         offlineSessions: [],
         stoppingSessionIds: new Set(),
-        sessionOriginalArgs: new Map([["claude-current-exit", []]]),
-        sessionToolKeys: new Map([["claude-current-exit", "claude"]]),
-        sessionWorktreePaths: new Map([["claude-current-exit", repoRoot]]),
+        sessionOriginalArgs: new Map([["claude-current-crash", []]]),
+        sessionToolKeys: new Map([["claude-current-crash", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-current-crash", repoRoot]]),
         sessionTmuxTargets: new Map(),
         startedInDashboard: true,
         getSessionLabel: vi.fn(() => undefined),
@@ -484,8 +484,9 @@ describe("session runtime prompt submission", () => {
       handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
 
       expect(host.offlineSessions[0]).toMatchObject({
-        id: "claude-current-exit",
-        backendSessionId: "backend-current-exit",
+        id: "claude-current-crash",
+        backendSessionId: "backend-current-crash",
+        restoreBlockedReason: "agent exited during startup",
       });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });

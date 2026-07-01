@@ -90,6 +90,7 @@ export interface SessionState {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  restoreBlockedReason?: string;
   graveyardReason?: string;
   tmuxTarget?: TmuxTarget;
 }
