@@ -406,6 +406,49 @@ describe("runtime lifecycle state persistence", () => {
     ]);
   });
 
+  it("does not copy restore blockers across different backend ids", () => {
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "claude-crashed",
+          tool: "claude",
+          toolConfigKey: "claude",
+          command: "claude",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-old",
+          worktreePath: repoRoot,
+          restoreBlockedReason: "agent exited during startup",
+        },
+      ],
+    });
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        offlineSessions: [
+          {
+            id: "claude-crashed",
+            tool: "claude",
+            toolConfigKey: "claude",
+            command: "claude",
+            args: [],
+            lifecycle: "offline",
+            backendSessionId: "backend-new",
+            worktreePath: repoRoot,
+          },
+        ],
+      }) as never,
+    );
+
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
+        id: "claude-crashed",
+        backendSessionId: "backend-new",
+        restoreBlockedReason: undefined,
+      }),
+    ]);
+  });
+
   it("persists an empty session list after the last local agent row is removed", () => {
     writeFileSync(
       getStatePath(),
