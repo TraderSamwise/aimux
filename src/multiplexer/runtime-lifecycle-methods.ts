@@ -281,7 +281,9 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     const offlineSessions = mux.offlineSessions
       .map((session) => sanitizeOfflineSessionState(session))
       .map((session) => {
-        const existing = topologyByKey.get(sessionStateKey(session)) ?? topologyById.get(session.id);
+        const existing =
+          topologyByKey.get(sessionStateKey(session)) ??
+          (!session.backendSessionId ? topologyById.get(session.id) : undefined);
         if (!existing) return session;
         return {
           ...session,
