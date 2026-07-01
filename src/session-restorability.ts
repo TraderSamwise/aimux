@@ -41,6 +41,12 @@ export function describeSessionRestorability(
       restoreBlockedReason: session.restoreBlockedReason ?? "not restorable",
     };
   }
+  if (session.restoreBlockedReason) {
+    return {
+      restoreState: "blocked",
+      restoreBlockedReason: session.restoreBlockedReason,
+    };
+  }
   if (session.status && session.status !== "offline") return undefined;
   const toolKey = session.toolConfigKey ?? session.tool ?? session.command;
   const toolCfg = toolKey ? tools[toolKey] : undefined;

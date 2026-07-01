@@ -86,6 +86,7 @@ export interface RuntimeTopologySession {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  restoreBlockedReason?: string;
   graveyardReason?: string;
   team?: unknown;
   createdAt: string;
@@ -380,6 +381,7 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         worktreePath: asOptionalString(row.worktreePath),
         label: asOptionalString(row.label),
         headline: asOptionalString(row.headline),
+        restoreBlockedReason: asOptionalString(row.restoreBlockedReason),
         graveyardReason: asOptionalString(row.graveyardReason),
         team: row.team,
         createdAt: asString(row.createdAt, `sessions[${index}].createdAt`),
