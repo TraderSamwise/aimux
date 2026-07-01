@@ -277,14 +277,17 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       statuses: ["running", "idle", "offline"],
     }) as SessionState[];
     const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
+    const topologyById = new Map(topologySessions.map((session) => [session.id, session]));
     const offlineSessions = mux.offlineSessions
       .map((session) => sanitizeOfflineSessionState(session))
       .map((session) => {
-        const existing = topologyByKey.get(sessionStateKey(session));
-        if (!session.restoreBlockedReason && existing?.restoreBlockedReason) {
-          return { ...session, restoreBlockedReason: existing.restoreBlockedReason };
-        }
-        return session;
+        const existing = topologyByKey.get(sessionStateKey(session)) ?? topologyById.get(session.id);
+        if (!existing) return session;
+        return {
+          ...session,
+          backendSessionId: session.backendSessionId ?? existing.backendSessionId,
+          restoreBlockedReason: session.restoreBlockedReason ?? existing.restoreBlockedReason,
+        };
       })
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);

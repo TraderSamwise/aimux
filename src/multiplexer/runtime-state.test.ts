@@ -1262,6 +1262,46 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions[0].backendSessionId).toBeUndefined();
   });
 
+  it("reports offline session changes when only restore blocker state changes", () => {
+    const host: any = {
+      sessions: [],
+      offlineSessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+        },
+      ],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+    seedTopologySessions([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "backend-1",
+        worktreePath: repoRoot,
+        restoreBlockedReason: "agent exited during startup",
+      },
+    ]);
+
+    const changed = loadOfflineTopologySessions(host);
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions[0].restoreBlockedReason).toBe("agent exited during startup");
+  });
+
   it("loads valid live sessions without backend ids as offline when their tmux window is gone", () => {
     const host: any = {
       sessions: [],
