@@ -384,6 +384,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
   const graveyardAfterStop = host.graveyardAfterStopSessionIds?.has?.(runtime.id) ?? false;
   const backendSessionId = runtime.backendSessionId;
+  const quickUnexpectedExit = !explicitStop && !graveyardAfterStop && uptime < 10_000;
   const shouldPreserveOffline = !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000);
   if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
     host.offlineSessions.push({
@@ -399,6 +400,11 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       worktreePath: host.sessionWorktreePaths.get(runtime.id),
       label: host.getSessionLabel(runtime.id),
       headline: host.deriveHeadline(runtime.id),
+      restoreBlockedReason: quickUnexpectedExit
+        ? errorHint
+          ? `agent exited during startup${errorHint}`
+          : "agent exited during startup"
+        : undefined,
     });
   } else if (!shouldPreserveOffline) {
     host.unpreservedExitedSessionIds ??= new Set<string>();

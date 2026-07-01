@@ -302,24 +302,25 @@ export function loadOfflineTopologySessions(
       return true;
     })
     .map(offlineSessionState);
-  const previousKey = host.offlineSessions
-    .map(
-      (session: any) =>
-        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}:${JSON.stringify(session.team ?? null)}`,
-    )
-    .join("|");
-  const nextKey = nextOfflineSessions
-    .map(
-      (session: any) =>
-        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}:${JSON.stringify(session.team ?? null)}`,
-    )
-    .join("|");
+  const previousKey = host.offlineSessions.map(offlineSessionChangeKey).join("|");
+  const nextKey = nextOfflineSessions.map(offlineSessionChangeKey).join("|");
   host.offlineSessions = nextOfflineSessions;
 
   if (host.offlineSessions.length > 0) {
     host.debug?.(`loaded ${host.offlineSessions.length} offline session(s) from runtime topology`, "session");
   }
   return previousKey !== nextKey;
+}
+
+function offlineSessionChangeKey(session: any): string {
+  return [
+    session.id,
+    session.label ?? "",
+    session.worktreePath ?? "",
+    session.backendSessionId ?? "",
+    session.restoreBlockedReason ?? "",
+    JSON.stringify(session.team ?? null),
+  ].join(":");
 }
 
 export function loadOfflineServices(host: RuntimeStateHost, state = host.constructor.loadState()): boolean {
