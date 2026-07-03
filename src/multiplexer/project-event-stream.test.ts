@@ -150,6 +150,21 @@ describe("dashboard project event refresh", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
+  it("does not render when event refreshes settle without applying data", async () => {
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    scheduleProjectViewRefresh(host, ["desktop-state"]);
+    await vi.runAllTimersAsync();
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
+  });
+
   it("coalesces bursts and cancels pending refreshes on stop", async () => {
     const host: any = {
       mode: "dashboard",
@@ -478,7 +493,7 @@ describe("dashboard project event refresh", () => {
     }
   });
 
-  it("resyncs cached views without repairing when endpoint resolution fails", async () => {
+  it("backs off without resyncing cached views when endpoint resolution fails", async () => {
     controlMocks.resolveCurrentProjectServiceEndpointForDashboard.mockRejectedValueOnce(new Error("metadata stale"));
     const host: any = {
       mode: "dashboard",
@@ -494,13 +509,8 @@ describe("dashboard project event refresh", () => {
     await vi.advanceTimersByTimeAsync(25);
 
     expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
-    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
-      true,
-      expect.objectContaining({
-        lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
-      }),
-    );
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).not.toHaveBeenCalled();
 
     stopDashboardProjectEventStream(host);
   });

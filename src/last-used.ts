@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
 import { join } from "node:path";
 import { parseRecencyTimestamp } from "./recency.js";
-import { writeJsonAtomic } from "./atomic-write.js";
+import { atomicWriteFast } from "./atomic-write.js";
 
 const LAST_USED_VERSION = 1;
 const MAX_RECENT_IDS = 64;
@@ -113,9 +113,8 @@ export function compareLastUsed(
 }
 
 function persistLastUsedState(projectRoot: string, state: LastUsedState): void {
-  const dir = getProjectStateDirFor(projectRoot);
-  mkdirSync(dir, { recursive: true });
-  writeJsonAtomic(getLastUsedPath(projectRoot), state);
+  // Recency is a recoverable hint on hot TUI paths; avoid fsync latency.
+  atomicWriteFast(getLastUsedPath(projectRoot), `${JSON.stringify(state, null, 2)}\n`);
 }
 
 function normalizeLastUsedState(state: Partial<LastUsedState>): LastUsedState {

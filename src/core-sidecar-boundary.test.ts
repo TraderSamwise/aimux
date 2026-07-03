@@ -64,4 +64,12 @@ describe("core sidecar module boundary", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("keeps multiplexer clients out of daemon-starting core command wrappers", () => {
+    const offenders = listSourceFiles("multiplexer").filter((path) =>
+      source(`./${path}`).includes("core-command-client.js"),
+    );
+
+    expect(offenders).toEqual([]);
+  });
 });

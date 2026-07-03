@@ -10,6 +10,22 @@ let previousAimuxHome: string | undefined;
 let aimuxHome = "";
 let projectRoot = "";
 
+function seededLastUsedState(entries: Array<readonly [string, { lastUsedAt: string }]>, clientSession = "client-1") {
+  const recentIds = entries.map(([itemId]) => itemId).reverse();
+  return {
+    version: 1,
+    items: Object.fromEntries(entries),
+    clients: {
+      [clientSession]: {
+        recentIds,
+        items: Object.fromEntries(entries),
+        updatedAt: entries.at(-1)?.[1].lastUsedAt ?? "",
+      },
+    },
+    projectRecentIds: recentIds,
+  };
+}
+
 describe("last-used recency", () => {
   beforeEach(() => {
     previousAimuxHome = process.env.AIMUX_HOME;
@@ -80,13 +96,19 @@ describe("last-used recency", () => {
   });
 
   it("prunes per-client item timestamps to the recent id limit", () => {
-    for (let index = 0; index < 70; index += 1) {
-      markLastUsed(projectRoot, {
-        itemId: `agent-${index}`,
-        clientSession: "client-1",
-        usedAt: new Date(Date.UTC(2026, 5, 28, 4, 0, index)).toISOString(),
-      });
-    }
+    const path = getLastUsedPath(projectRoot);
+    mkdirSync(join(path, ".."), { recursive: true });
+    const seededEntries = Array.from({ length: 69 }, (_, index) => {
+      const itemId = `agent-${index}`;
+      return [itemId, { lastUsedAt: new Date(Date.UTC(2026, 5, 28, 4, 0, index)).toISOString() }] as const;
+    });
+    writeFileSync(path, JSON.stringify(seededLastUsedState(seededEntries)));
+
+    markLastUsed(projectRoot, {
+      itemId: "agent-69",
+      clientSession: "client-1",
+      usedAt: "2026-06-28T04:01:09.000Z",
+    });
 
     const client = loadLastUsedState(projectRoot).clients["client-1"];
     expect(client?.recentIds).toHaveLength(64);

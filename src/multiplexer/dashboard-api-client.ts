@@ -65,6 +65,7 @@ export async function refreshDashboardModelThroughApi(
   try {
     const refreshOptions = options.lifecycle ? { lifecycle: options.lifecycle } : undefined;
     const result = await host.refreshDashboardModelFromService(options.force === true, refreshOptions);
+    if (!isDashboardApiLifecycleCurrent(host, options)) return false;
     if (host.dashboardModelServiceRefreshError) return false;
     return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
   } catch {
