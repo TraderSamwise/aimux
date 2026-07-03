@@ -1548,9 +1548,13 @@ daemonCmd
         ensureDaemon: false,
         timeoutMs: 1000,
       });
+      const serviceAliveById = new Map(result.projects.map((project) => [project.id, project.serviceAlive]));
       payload = {
         daemon: result.daemon,
-        projects: result.projects,
+        projects: Object.values(state.projects).map((project) => ({
+          ...project,
+          serviceAlive: serviceAliveById.get(project.projectId) ?? false,
+        })),
         relay: result.relay,
       };
     } catch {
