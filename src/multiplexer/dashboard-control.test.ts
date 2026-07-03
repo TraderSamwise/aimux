@@ -81,6 +81,16 @@ function projectServiceState(projectRoot = process.cwd(), pid = 2) {
   };
 }
 
+function coreCommandOk(command: string, result: unknown) {
+  return {
+    ok: true,
+    id: "test",
+    command,
+    issuedAt: "2026-06-21T00:00:00.000Z",
+    result,
+  };
+}
+
 function expectCoreProjectEnsure(projectRoot = process.cwd()): void {
   expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
 }
@@ -111,24 +121,12 @@ function resetDashboardControlMocks(): void {
   });
   mocks.requestCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
     if (command === CORE_COMMAND_NAMES.projectStop) {
-      return {
-        ok: true,
-        id: "test",
-        command,
-        issuedAt: "2026-06-21T00:00:00.000Z",
-        result: { project: projectServiceState(payload?.projectRoot) },
-      };
+      return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
     }
     if (command === CORE_COMMAND_NAMES.projectEnsure) {
-      return {
-        ok: true,
-        id: "test",
-        command,
-        issuedAt: "2026-06-21T00:00:00.000Z",
-        result: { project: projectServiceState(payload?.projectRoot) },
-      };
+      return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
     }
-    return { ok: true, id: "test", command, issuedAt: "2026-06-21T00:00:00.000Z", result: {} };
+    return coreCommandOk(command, {});
   });
 }
 
@@ -468,37 +466,19 @@ describe("postToProjectService", () => {
     let ensureCalls = 0;
     mocks.requestCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
       if (command === CORE_COMMAND_NAMES.projectStop) {
-        return {
-          ok: true,
-          id: "test",
-          command,
-          issuedAt: "2026-06-21T00:00:00.000Z",
-          result: { project: projectServiceState(payload?.projectRoot) },
-        };
+        return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
       }
       if (command !== CORE_COMMAND_NAMES.projectEnsure) {
-        return { ok: true, id: "test", command, issuedAt: "2026-06-21T00:00:00.000Z", result: {} };
+        return coreCommandOk(command, {});
       }
       ensureCalls += 1;
       if (ensureCalls === 1) {
         return new Promise((resolve) => {
           finishEnsure = () =>
-            resolve({
-              ok: true,
-              id: "test",
-              command,
-              issuedAt: "2026-06-21T00:00:00.000Z",
-              result: { project: projectServiceState(payload?.projectRoot, 2) },
-            });
+            resolve(coreCommandOk(command, { project: projectServiceState(payload?.projectRoot, 2) }));
         });
       }
-      return {
-        ok: true,
-        id: "test",
-        command,
-        issuedAt: "2026-06-21T00:00:00.000Z",
-        result: { project: projectServiceState(payload?.projectRoot, 3) },
-      };
+      return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot, 3) });
     });
     const { ensureDashboardControlPlane } = await import("./dashboard-control.js");
     const host = { dashboardServiceRecovery: null };
