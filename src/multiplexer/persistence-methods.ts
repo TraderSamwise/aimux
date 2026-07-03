@@ -11,7 +11,7 @@ import {
 } from "../dashboard/operation-failures.js";
 import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
-import { loadDaemonInfo } from "../daemon.js";
+import { loadDaemonInfo } from "../daemon-state.js";
 import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
 import { writeJsonAtomic, writeTextAtomicFast } from "../atomic-write.js";
