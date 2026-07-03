@@ -194,8 +194,7 @@ describe("refreshLibrary", () => {
 
     handleLibraryKey(host, Buffer.from("\r"));
 
-    expect(host.footerFlash).toBe(entry.path);
-    expect(host.footerFlashTicks).toBe(5);
+    expect(host.libraryPathFlash).toBe(entry.path);
     expect(renderLibraryScreen).toHaveBeenCalledOnce();
   });
 });
