@@ -66,14 +66,6 @@ import {
   renderDesktopNotifierDoctorReport,
   sendDesktopNotificationAndWait,
 } from "./desktop-notifier.js";
-import {
-  parseClaudeHookPayload,
-  permissionRequestHookOutput,
-  summarizeClaudeNotification,
-  summarizeClaudePermissionRequest,
-  summarizeClaudeStop,
-} from "./claude-hooks.js";
-import { parseCodexHookPayload } from "./codex-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { registerExposeCommand } from "./popup-expose.js";
@@ -86,8 +78,6 @@ import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/serv
 import { configureLogging, debug, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { writeTextAtomic } from "./atomic-write.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
-import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
-import { recordTopologyBackendSessionId } from "./runtime-core/backend-session-ids.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
@@ -441,33 +431,6 @@ function exitAfterOpen(): never {
   process.exit(0);
 }
 
-/** Shared by the claude + codex permission hooks: register a permission interaction
- * and long-poll for a decision, returning the hook stdout ({} defers to the native prompt). */
-async function resolvePermissionRequestOutput(
-  projectRoot: string,
-  sessionId: string,
-  payload: { tool_name?: string; tool_input?: Record<string, unknown>; cwd?: string },
-): Promise<Record<string, unknown>> {
-  try {
-    const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
-    // The hook runs in the agent's working dir, which is the worktree (or the
-    // project root if no worktree). Carry it so clients can show project/worktree.
-    const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
-    const result = await postHookProjectServiceJsonOrSafetyFallback(
-      projectRoot,
-      "/agents/interaction/request",
-      { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
-      () => ({}),
-    );
-    if (result?.request?.status === "resolved") {
-      return permissionRequestHookOutput(result.request.response?.decision);
-    }
-  } catch {
-    /* fall through to the native prompt */
-  }
-  return {};
-}
-
 async function postLiveProjectServiceJson(projectRoot: string, path: string, body: unknown): Promise<any> {
   await ensureDaemonProjectReady(projectRoot);
   const endpoint = await resolveProjectServiceEndpoint(projectRoot);
@@ -485,54 +448,6 @@ async function postLiveProjectServiceJson(projectRoot: string, path: string, bod
   return json;
 }
 
-async function postHookProjectServiceJsonOrSafetyFallback(
-  projectRoot: string,
-  path: string,
-  body: unknown,
-  fallback: () => any,
-): Promise<any> {
-  let endpoint;
-  try {
-    endpoint = await resolveProjectServiceEndpoint(projectRoot);
-  } catch {
-    return fallback();
-  }
-  if (!endpoint) {
-    return fallback();
-  }
-  let status: number;
-  let json: any;
-  try {
-    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-    }));
-  } catch {
-    return fallback();
-  }
-  if (status === 404 || status === 405 || status === 501) {
-    return fallback();
-  }
-  if (status < 200 || status >= 300 || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${status}`);
-  }
-  return json;
-}
-
-async function clearHookNotificationsViaService(projectRoot: string, sessionId: string): Promise<void> {
-  try {
-    await postLiveProjectServiceJson(projectRoot, "/notifications/clear", { sessionId });
-  } catch (error) {
-    debug(
-      `failed to clear notifications via project service for ${sessionId}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      "session",
-    );
-  }
-}
-
 async function getLiveProjectServiceJson(projectRoot: string, path: string): Promise<any> {
   await ensureDaemonProjectReady(projectRoot);
   const endpoint = await resolveProjectServiceEndpoint(projectRoot);
@@ -547,43 +462,6 @@ async function getLiveProjectServiceJson(projectRoot: string, path: string): Pro
     throw new Error(json?.error || `request failed: ${status}`);
   }
   return json;
-}
-
-async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSessionId?: string): Promise<string> {
-  if (!payloadSessionId) return explicitSessionId;
-  const match = listTopologySessionStates().find((session) => session.backendSessionId === payloadSessionId);
-  return match?.id ?? explicitSessionId;
-}
-
-function recordBackendSessionIdInTopology(
-  projectRoot: string,
-  sessionId: string,
-  backendSessionId: string,
-): { ok: true; sessionId: string; backendSessionId: string } {
-  return {
-    ok: true,
-    ...recordTopologyBackendSessionId({ projectRoot, sessionId, backendSessionId }),
-  };
-}
-
-async function recordBackendSessionIdForHook(
-  projectRoot: string,
-  sessionId: string,
-  backendSessionId: string,
-): Promise<{ ok: boolean; sessionId: string; backendSessionId?: string; error?: string }> {
-  try {
-    const result = await postHookProjectServiceJsonOrSafetyFallback(
-      projectRoot,
-      "/agents/record-backend-session",
-      { sessionId, backendSessionId },
-      () => recordBackendSessionIdInTopology(projectRoot, sessionId, backendSessionId),
-    );
-    return { ok: true, sessionId: result.sessionId ?? sessionId, backendSessionId: result.backendSessionId };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug(`backend session id capture failed for ${sessionId}: ${message}`, "session");
-    return { ok: false, sessionId, backendSessionId, error: message };
-  }
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -606,14 +484,6 @@ async function getProjectServiceEndpoint(projectRoot = resolveProjectRoot(proces
     throw new Error("no live project service metadata endpoint");
   }
   return endpoint;
-}
-
-async function readAllStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVersionDrift?: boolean }): Promise<void> {
@@ -3504,184 +3374,6 @@ program
       console.log(`Queued notification "${title}".`);
     },
   );
-
-program
-  .command("claude-hook <action>")
-  .description("Internal Claude hook adapter modeled after cmux")
-  .requiredOption("--session <sessionId>", "Aimux session id")
-  .requiredOption("--project <path>", "Project path")
-  .option("--json", "Emit JSON output")
-  .action(async (action: string, opts: { session: string; project: string; json?: boolean }) => {
-    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
-    await initPaths(projectRoot);
-    const rawInput = await readAllStdin();
-    const payload = parseClaudeHookPayload(rawInput);
-    const sessionId = await resolveClaudeHookSessionId(opts.session, payload.session_id);
-    const result: Record<string, unknown> = { ok: true, action, sessionId };
-    if (payload.session_id) {
-      result.backendSessionId = payload.session_id;
-      // Prefer the live runtime so in-memory state updates immediately; fall
-      // back to a strict topology latch only when the live service is absent.
-      const recorded = await recordBackendSessionIdForHook(projectRoot, sessionId, payload.session_id);
-      if (!recorded.ok) result.backendSessionRecordError = recorded.error;
-    }
-
-    const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
-        metadataTracker.setActivity(sessionId, activity, projectRoot),
-      );
-    const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
-        metadataTracker.setAttention(sessionId, attention, projectRoot),
-      );
-    const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrSafetyFallback(
-        projectRoot,
-        "/event",
-        { session: sessionId, event: { kind, message, tone } },
-        () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
-      );
-    const clearSessionNotifications = async () => clearHookNotificationsViaService(projectRoot, sessionId);
-    const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
-    if (transcriptPath) {
-      const context: SessionContextMetadata = { transcriptPath };
-      await postHookProjectServiceJsonOrSafetyFallback(
-        projectRoot,
-        "/set-context",
-        { session: sessionId, context },
-        () => {
-          updateSessionMetadata(
-            sessionId,
-            (current) => ({
-              ...current,
-              context: {
-                ...(current.context ?? {}),
-                ...context,
-              },
-            }),
-            projectRoot,
-          );
-          return { ok: true };
-        },
-      );
-      result.transcriptPath = transcriptPath;
-    }
-
-    switch (action) {
-      case "session-start":
-      case "active":
-        break;
-      case "prompt-submit":
-      case "pre-tool-use":
-        await clearSessionNotifications();
-        await setActivity("running");
-        await setAttention("normal");
-        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
-          metadataTracker.markSeen(sessionId, projectRoot),
-        );
-        break;
-      case "notification":
-      case "notify": {
-        const summary = summarizeClaudeNotification(payload);
-        await emitEvent("needs_input", summary.body, "warn");
-        break;
-      }
-      case "stop":
-      case "idle": {
-        const summary = summarizeClaudeStop(payload);
-        await emitEvent("task_done", summary.body, "success");
-        break;
-      }
-      case "permission-request": {
-        console.log(JSON.stringify(await resolvePermissionRequestOutput(projectRoot, sessionId, payload)));
-        return;
-      }
-      case "session-end":
-        break;
-      default:
-        throw new Error(`Unsupported claude hook action: ${action}`);
-    }
-
-    if (opts.json) {
-      console.log(JSON.stringify(result));
-      return;
-    }
-    console.log("OK");
-  });
-
-program
-  .command("codex-hook <action>")
-  .description("Internal Codex hook adapter (mirrors claude-hook)")
-  .requiredOption("--session <sessionId>", "Aimux session id")
-  .requiredOption("--project <path>", "Project path")
-  .option("--json", "Emit JSON output")
-  .action(async (action: string, opts: { session: string; project: string; json?: boolean }) => {
-    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
-    await initPaths(projectRoot);
-    const rawInput = await readAllStdin();
-    const payload = parseCodexHookPayload(rawInput);
-    const sessionId = opts.session.trim();
-
-    const result: Record<string, unknown> = { ok: true, action, sessionId };
-    const setActivity = async (activity: AgentActivityState) =>
-      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
-        metadataTracker.setActivity(sessionId, activity, projectRoot),
-      );
-    const setAttention = async (attention: AgentAttentionState) =>
-      postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
-        metadataTracker.setAttention(sessionId, attention, projectRoot),
-      );
-    const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postHookProjectServiceJsonOrSafetyFallback(
-        projectRoot,
-        "/event",
-        { session: sessionId, event: { kind, message, tone } },
-        () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
-      );
-    const clearSessionNotifications = async () => clearHookNotificationsViaService(projectRoot, sessionId);
-
-    const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
-    if (backendSessionId) {
-      result.backendSessionId = backendSessionId;
-      const recorded = await recordBackendSessionIdForHook(projectRoot, sessionId, backendSessionId);
-      if (!recorded.ok) result.backendSessionRecordError = recorded.error;
-    }
-
-    switch (action) {
-      case "session-start":
-        break;
-      case "prompt-submit":
-        await clearSessionNotifications();
-        await setActivity("running");
-        await setAttention("normal");
-        await postHookProjectServiceJsonOrSafetyFallback(projectRoot, "/mark-seen", { session: sessionId }, () =>
-          metadataTracker.markSeen(sessionId, projectRoot),
-        );
-        break;
-      case "stop":
-        await emitEvent("task_done", payload.message?.trim() || "Codex completed its turn.", "success");
-        break;
-      case "permission-request": {
-        // Read-only telemetry — never block. Codex's native TUI prompt stays the
-        // primary decision surface; we post a non-actionable Feed notice (which
-        // also flags attention). Falls through to `console.log({})` → native prompt.
-        const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
-        // Best-effort: a telemetry transport failure must never break the hook —
-        // it always falls through to `console.log({})` and the native prompt.
-        await postHookProjectServiceJsonOrSafetyFallback(
-          projectRoot,
-          "/agents/interaction/notify",
-          { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
-          () => ({}),
-        ).catch(() => undefined);
-        break;
-      }
-      default:
-        throw new Error(`Unsupported codex hook action: ${action}`);
-    }
-
-    console.log(JSON.stringify(opts.json ? result : {}));
-  });
 
 program
   .command("list-notifications")

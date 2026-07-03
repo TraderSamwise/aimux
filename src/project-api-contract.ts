@@ -18,6 +18,10 @@ export const PROJECT_API_ROUTES = {
     read: "/notifications/read",
     clear: "/notifications/clear",
   },
+  hooks: {
+    claude: "/hooks/claude",
+    codex: "/hooks/codex",
+  },
   agents: {
     list: "/agents",
     output: "/agents/output",

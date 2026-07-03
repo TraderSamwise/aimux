@@ -124,6 +124,14 @@ import { listTopologySessionStates, type RuntimeTopologySessionState } from "./r
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
+import {
+  permissionRequestHookOutput,
+  summarizeClaudeNotification,
+  summarizeClaudePermissionRequest,
+  summarizeClaudeStop,
+  type ClaudeHookPayload,
+} from "./claude-hooks.js";
+import type { CodexHookPayload } from "./codex-hooks.js";
 
 const LIBRARY_DOC_ALLOWLIST = [
   { path: "AGENTS.md", kind: "instructions", title: "AGENTS.md" },
@@ -1529,6 +1537,195 @@ export class MetadataServer {
     return request;
   }
 
+  private resolveHookSessionId(explicitSessionId: string, backendSessionId?: string): string {
+    const backend = backendSessionId?.trim();
+    if (!backend) return explicitSessionId;
+    const match = listTopologySessionStates().find((session) => session.backendSessionId === backend);
+    return match?.id ?? explicitSessionId;
+  }
+
+  private async recordHookBackendSessionId(sessionId: string, backendSessionId?: string): Promise<void> {
+    const backend = backendSessionId?.trim();
+    if (!backend || !this.options.lifecycle?.recordBackendSessionId) return;
+    try {
+      await this.options.lifecycle.recordBackendSessionId({ sessionId, backendSessionId: backend });
+    } catch (error) {
+      log.warn("hook backend session id capture failed", "api", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private clearHookNotifications(sessionId: string): void {
+    clearNotifications({ sessionId, projectRoot: this.currentProjectRoot() });
+  }
+
+  private setHookTranscriptPath(sessionId: string, payload: { transcript_path?: string }): void {
+    const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
+    if (!transcriptPath) return;
+    const context: SessionContextMetadata = { transcriptPath };
+    updateSessionMetadata(
+      sessionId,
+      (current) => ({
+        ...current,
+        context: {
+          ...(current.context ?? {}),
+          ...context,
+        },
+      }),
+      this.currentProjectRoot(),
+    );
+  }
+
+  private markHookSessionRunning(sessionId: string): void {
+    this.clearHookNotifications(sessionId);
+    this.tracker.setActivity(sessionId, "running");
+    this.tracker.setAttention(sessionId, "normal");
+    markSessionViewed(sessionId, this.currentProjectRoot());
+  }
+
+  private emitHookEvent(sessionId: string, event: AgentEvent): void {
+    this.tracker.emit(sessionId, event);
+    if (event.kind === "needs_input") {
+      this.emitAlert({
+        kind: "needs_input",
+        sessionId,
+        title: `${sessionId} needs input`,
+        message: event.message || "Agent is waiting for input.",
+        dedupeKey: `needs_input:${sessionId}`,
+        cooldownMs: 15_000,
+      });
+    }
+  }
+
+  private async resolveHookPermissionRequest(
+    sessionId: string,
+    payload: { tool_name?: string; tool_input?: Record<string, unknown>; cwd?: string },
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<Record<string, unknown> | null> {
+    if (this.interactionWatchers <= 0) return {};
+    const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+    const cwd = (typeof payload.cwd === "string" && payload.cwd.trim()) || this.currentProjectRoot();
+    const request = this.beginInteraction({
+      sessionId,
+      type: "permission",
+      payload: { toolName, input, cwd },
+      summary,
+    });
+    const controller = new AbortController();
+    let closed = false;
+    const onClose = () => {
+      closed = true;
+      controller.abort();
+    };
+    req.on("close", onClose);
+    req.on("aborted", onClose);
+    res.on("close", onClose);
+    const settled = await this.interactions.wait(request.id, { timeoutMs: 115_000, signal: controller.signal });
+    req.off("close", onClose);
+    req.off("aborted", onClose);
+    res.off("close", onClose);
+    if (settled.status !== "resolved" && this.interactions.listPending(sessionId).length === 0) {
+      this.tracker.setAttention(sessionId, "normal");
+      this.notifyChange();
+    }
+    if (closed) return null;
+    return settled.status === "resolved" ? permissionRequestHookOutput(settled.response?.decision) : {};
+  }
+
+  private notifyCodexHookPermissionTelemetry(sessionId: string, payload: CodexHookPayload): void {
+    const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+    const cwd = (typeof payload.cwd === "string" && payload.cwd.trim()) || this.currentProjectRoot();
+    this.tracker.setAttention(sessionId, "needs_response");
+    this.emitAlert({
+      kind: "interaction_request",
+      sessionId,
+      title: `${sessionId} requests permission`,
+      message: summary,
+      interaction: {
+        id: this.interactionDedupeKey({ sessionId, type: "permission", payload: { toolName, input, cwd }, summary }),
+        type: "permission",
+        summary,
+        telemetry: true,
+        toolName,
+        toolInputJSON: input ? JSON.stringify(input) : undefined,
+      },
+      dedupeKey: this.interactionDedupeKey({
+        sessionId,
+        type: "permission",
+        payload: { toolName, input, cwd },
+        summary,
+      }),
+      cooldownMs: 60_000,
+    });
+  }
+
+  private async handleClaudeHook(
+    action: string,
+    explicitSessionId: string,
+    payload: ClaudeHookPayload,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<Record<string, unknown> | null> {
+    const sessionId = this.resolveHookSessionId(explicitSessionId, payload.session_id);
+    await this.recordHookBackendSessionId(sessionId, payload.session_id);
+    this.setHookTranscriptPath(sessionId, payload);
+    switch (action) {
+      case "session-start":
+      case "active":
+      case "session-end":
+        break;
+      case "prompt-submit":
+      case "pre-tool-use":
+        this.markHookSessionRunning(sessionId);
+        break;
+      case "notification":
+      case "notify": {
+        const summary = summarizeClaudeNotification(payload);
+        this.emitHookEvent(sessionId, { kind: "needs_input", message: summary.body, tone: "warn" });
+        break;
+      }
+      case "stop":
+      case "idle": {
+        const summary = summarizeClaudeStop(payload);
+        this.emitHookEvent(sessionId, { kind: "task_done", message: summary.body, tone: "success" });
+        break;
+      }
+      case "permission-request":
+        return this.resolveHookPermissionRequest(sessionId, payload, req, res);
+      default:
+        throw new Error(`Unsupported claude hook action: ${action}`);
+    }
+    this.notifyChange();
+    return {};
+  }
+
+  private async handleCodexHook(action: string, sessionId: string, payload: CodexHookPayload): Promise<void> {
+    await this.recordHookBackendSessionId(sessionId, payload.session_id);
+    switch (action) {
+      case "session-start":
+        break;
+      case "prompt-submit":
+        this.markHookSessionRunning(sessionId);
+        break;
+      case "stop":
+        this.emitHookEvent(sessionId, {
+          kind: "task_done",
+          message: payload.message?.trim() || "Codex completed its turn.",
+          tone: "success",
+        });
+        break;
+      case "permission-request":
+        this.notifyCodexHookPermissionTelemetry(sessionId, payload);
+        break;
+      default:
+        throw new Error(`Unsupported codex hook action: ${action}`);
+    }
+    this.notifyChange();
+  }
+
   private resolveSessionAlertDisplayContext(
     sessionId: string | undefined,
     worktreePath: string | undefined,
@@ -2775,6 +2972,33 @@ export class MetadataServer {
         }));
         this.notifyChange();
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.hooks.claude) {
+        const action = url.searchParams.get("action")?.trim() ?? "";
+        const sessionId = url.searchParams.get("sessionId")?.trim() ?? "";
+        if (!action || !sessionId) {
+          send(res, 400, { ok: false, error: "action and sessionId are required" });
+          return;
+        }
+        const body = (await readJson(req).catch(() => ({}))) as ClaudeHookPayload;
+        const output = await this.handleClaudeHook(action, sessionId, body, req, res);
+        if (output === null) return;
+        send(res, 200, output);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.hooks.codex) {
+        const action = url.searchParams.get("action")?.trim() ?? "";
+        const sessionId = url.searchParams.get("sessionId")?.trim() ?? "";
+        if (!action || !sessionId) {
+          send(res, 400, { ok: false, error: "action and sessionId are required" });
+          return;
+        }
+        const body = (await readJson(req).catch(() => ({}))) as CodexHookPayload;
+        await this.handleCodexHook(action, sessionId, body);
+        send(res, 200, {});
         return;
       }
 

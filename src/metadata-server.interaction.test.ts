@@ -248,4 +248,75 @@ describe("interaction endpoints", () => {
     });
     expect(badResponse.status).toBe(400);
   });
+
+  it("resolves Claude permission hooks through the project service", async () => {
+    const stop = await openWatcher(base);
+    const waiting = postJson(`${base}/hooks/claude?action=permission-request&sessionId=claude-1`, {
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+      cwd: "/tmp/worktree",
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const pending = await (await fetch(`${base}/agents/interaction/pending?sessionId=claude-1`)).json();
+    expect(pending.requests).toHaveLength(1);
+
+    await postJson(`${base}/agents/interaction/respond`, {
+      id: pending.requests[0].id,
+      response: { decision: "allow_once" },
+    });
+    const settled = await waiting;
+    expect(settled.status).toBe(200);
+    expect(settled.json).toEqual({
+      hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } },
+    });
+    stop();
+  });
+
+  it("records backend session ids from hook payloads without a CLI adapter", async () => {
+    const recorded: Array<{ sessionId: string; backendSessionId: string }> = [];
+    server.stop();
+    server = new MetadataServer({
+      desktop: { getState: () => ({ sessions: [] }) },
+      lifecycle: {
+        recordBackendSessionId: (input) => {
+          recorded.push(input);
+          return input;
+        },
+      },
+    });
+    await server.start();
+    const addr = server.getAddress();
+    if (!addr) throw new Error("server has no address");
+    base = `http://127.0.0.1:${addr.port}`;
+
+    const response = await postJson(`${base}/hooks/codex?action=prompt-submit&sessionId=codex-1`, {
+      session_id: "codex-backend-1",
+    });
+    expect(response.status).toBe(200);
+    expect(response.json).toEqual({});
+    expect(recorded).toEqual([{ sessionId: "codex-1", backendSessionId: "codex-backend-1" }]);
+  });
+
+  it("does not fail hook handling when backend session recording fails", async () => {
+    server.stop();
+    server = new MetadataServer({
+      desktop: { getState: () => ({ sessions: [] }) },
+      lifecycle: {
+        recordBackendSessionId: () => {
+          throw new Error("write failed");
+        },
+      },
+    });
+    await server.start();
+    const addr = server.getAddress();
+    if (!addr) throw new Error("server has no address");
+    base = `http://127.0.0.1:${addr.port}`;
+
+    const response = await postJson(`${base}/hooks/claude?action=session-start&sessionId=claude-1`, {
+      session_id: "claude-backend-1",
+    });
+    expect(response.status).toBe(200);
+    expect(response.json).toEqual({});
+  });
 });

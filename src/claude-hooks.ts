@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { buildAimuxCliShellCommand } from "./cli-launcher.js";
+import { join } from "node:path";
+import { getProjectStateDirFor } from "./paths.js";
+import { buildProjectHookCommand } from "./project-hook-command.js";
 
 export interface ClaudeHookPayload {
   session_id?: string;
@@ -11,10 +13,6 @@ export interface ClaudeHookPayload {
   object?: Record<string, unknown>;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export function getAimuxCliEntryPath(): string {
@@ -59,13 +57,13 @@ export function extractClaudeBackendSessionIdFromArgs(args: string[]): string | 
 }
 
 function buildClaudeHookCommand(action: string, sessionId: string, projectRoot: string): string {
-  return [
-    buildAimuxCliShellCommand(["claude-hook", action]),
-    "--session",
-    shellQuote(sessionId),
-    "--project",
-    shellQuote(projectRoot),
-  ].join(" ");
+  return buildProjectHookCommand({
+    tool: "claude",
+    action,
+    sessionIdFallback: sessionId,
+    endpointFileFallback: join(getProjectStateDirFor(projectRoot), "metadata-api.txt"),
+    timeoutSeconds: action === "permission-request" ? 120 : 5,
+  });
 }
 
 export function buildClaudeHookSettings(opts: { sessionId: string; projectRoot: string }): string {

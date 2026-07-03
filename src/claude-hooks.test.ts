@@ -28,7 +28,13 @@ describe("claude-hooks", () => {
     expect(settings.hooks.PreToolUse[0].hooks[0].async).toBe(true);
     expect(settings.hooks.SessionEnd[0].hooks[0].timeout).toBeLessThanOrEqual(1);
     expect(settings.hooks.PermissionRequest[0].hooks[0].timeout).toBe(120);
-    expect(settings.hooks.PermissionRequest[0].hooks[0].command).toContain("permission-request");
+    const permissionCommand = settings.hooks.PermissionRequest[0].hooks[0].command;
+    expect(permissionCommand).toContain("permission-request");
+    expect(permissionCommand).toContain("/hooks/claude");
+    expect(permissionCommand).toContain("AIMUX_METADATA_ENDPOINT_FILE");
+    expect(permissionCommand).toContain("curl");
+    expect(permissionCommand).not.toContain("claude-hook");
+    expect(permissionCommand).not.toContain("bin/aimux");
   });
 
   it("maps registry decisions to PermissionRequest hook output", () => {
@@ -46,9 +52,11 @@ describe("claude-hooks", () => {
   });
 
   it("summarizes a permission request payload", () => {
-    expect(
-      summarizeClaudePermissionRequest({ tool_name: "Bash", tool_input: { command: "rm -rf build" } }),
-    ).toEqual({ toolName: "Bash", input: { command: "rm -rf build" }, summary: "Bash: rm -rf build" });
+    expect(summarizeClaudePermissionRequest({ tool_name: "Bash", tool_input: { command: "rm -rf build" } })).toEqual({
+      toolName: "Bash",
+      input: { command: "rm -rf build" },
+      summary: "Bash: rm -rf build",
+    });
     expect(summarizeClaudePermissionRequest({ tool_name: "Read", tool_input: { file_path: "/a/b.ts" } }).summary).toBe(
       "Read: /a/b.ts",
     );
