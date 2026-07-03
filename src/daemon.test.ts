@@ -18,6 +18,7 @@ const STALE_SERVICE_TIMESTAMP = new Date(0).toISOString();
 const coreActorMock = vi.hoisted(() => ({
   starts: vi.fn(),
   stops: vi.fn(),
+  failStartFor: new Set<string>(),
   instances: [] as Array<{ projectRoot: string; running: boolean }>,
 }));
 
@@ -71,8 +72,11 @@ vi.mock("./core-project-actor.js", () => ({
     }
 
     async start() {
-      this.running = true;
       coreActorMock.starts(this.projectRoot);
+      if (coreActorMock.failStartFor.has(this.projectRoot)) {
+        throw new Error("actor start failed");
+      }
+      this.running = true;
       return this.getState();
     }
 
@@ -181,6 +185,7 @@ describe("daemon supervision", () => {
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
     coreActorMock.stops.mockReset();
+    coreActorMock.failStartFor.clear();
     coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
@@ -335,6 +340,51 @@ describe("daemon supervision", () => {
     expect(replacement.pid).not.toBe(stalePid);
     expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
     expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGKILL");
+  });
+
+  it("kills a wedged legacy project service before starting the core actor", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const stalePid = 41_002;
+    livePids.add(stalePid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: stalePid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+    vi.mocked(process.kill).mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      const numericPid = Number(pid);
+      if (!livePids.has(numericPid)) throw new Error(`pid ${numericPid} is not alive`);
+      if (signal === "SIGKILL") {
+        livePids.delete(numericPid);
+        childrenByPid.get(numericPid)?.emit("exit", 0, signal);
+      }
+      return true;
+    }) as typeof process.kill);
+
+    const replacement = await (daemon as any).ensureProject(projectRoot);
+
+    expect(replacement.pid).toBe(process.pid);
+    expect(process.kill).toHaveBeenCalledWith(stalePid, "SIGTERM");
+    expect(process.kill).toHaveBeenCalledWith(stalePid, "SIGKILL");
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not keep a failed project actor after startup fails", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    coreActorMock.failStartFor.add(projectRoot);
+
+    await expect((daemon as any).ensureProject(projectRoot)).rejects.toThrow("actor start failed");
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+
+    coreActorMock.failStartFor.delete(projectRoot);
+    const state = await (daemon as any).ensureProject(projectRoot);
+
+    expect(state.pid).toBe(process.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(2);
   });
 
   it("respawns a dead project service on the next ensure call", async () => {

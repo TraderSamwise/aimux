@@ -171,6 +171,7 @@ async function restartStaleControlPlane(projectRoot: string): Promise<void> {
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
+  projectStateDir?: string;
 }> {
   const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
     timeoutMs: 1000,
@@ -178,7 +179,7 @@ async function fetchProjectServiceHealth(endpoint: { host: string; port: number 
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `health request failed: ${status}`);
   }
-  return json as { serviceInfo?: ProjectServiceManifest; pid?: number };
+  return json as { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string };
 }
 
 async function waitForVerifiedProjectService(
@@ -186,9 +187,10 @@ async function waitForVerifiedProjectService(
   opts?: { timeoutMs?: number },
 ): Promise<{
   endpoint: { host: string; port: number; pid: number };
-  health: { serviceInfo?: ProjectServiceManifest; pid?: number };
+  health: { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string };
 }> {
   const expected = getProjectServiceManifest();
+  const expectedProjectStateDir = getProjectStateDirFor(projectRoot);
   const timeoutMs = opts?.timeoutMs ?? 8000;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
@@ -210,6 +212,27 @@ async function waitForVerifiedProjectService(
             projectRoot,
             endpoint,
             healthPid: health.pid,
+          });
+          if (!respawnAttempted) {
+            respawnAttempted = true;
+            await stopProjectService(projectRoot);
+            removeMetadataEndpoint(projectRoot);
+            await ensureProjectService(projectRoot);
+          } else {
+            removeMetadataEndpoint(projectRoot);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          continue;
+        }
+        if (health.projectStateDir !== expectedProjectStateDir) {
+          lastError = `project service projectStateDir mismatch: expected ${expectedProjectStateDir} actual ${
+            health.projectStateDir ?? "unknown"
+          }`;
+          log.warn("project service projectStateDir mismatch", "runtime", {
+            projectRoot,
+            endpoint,
+            expectedProjectStateDir,
+            actualProjectStateDir: health.projectStateDir ?? null,
           });
           if (!respawnAttempted) {
             respawnAttempted = true;
@@ -1210,7 +1233,8 @@ hostCmd
     const project = await projectServiceStatus(projectRoot);
     const endpoint = await resolveProjectServiceEndpoint(projectRoot);
     const expectedServiceManifest = getProjectServiceManifest();
-    let liveServiceHealth: { serviceInfo?: ProjectServiceManifest; pid?: number } | null = null;
+    let liveServiceHealth: { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string } | null =
+      null;
     if (endpoint) {
       try {
         liveServiceHealth = await fetchProjectServiceHealth(endpoint);

@@ -3,6 +3,7 @@ import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { loadDaemonInfo, loadDaemonState, type AimuxDaemonInfo, type ProjectServiceState } from "./daemon.js";
 import { requestJson } from "./http-client.js";
 import { loadMetadataEndpoint, type MetadataApiEndpoint } from "./metadata-store.js";
+import { getProjectStateDirFor } from "./paths.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import {
   AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
@@ -186,6 +187,7 @@ function findProjectDaemonState(
 }
 
 async function readProjectServiceHealth(input: {
+  projectRoot: string;
   endpoint: MetadataApiEndpoint | null;
   requestJsonImpl: typeof requestJson;
   expected: ProjectServiceManifest;
@@ -214,6 +216,19 @@ async function readProjectServiceHealth(input: {
         json?.serviceInfo && typeof json.serviceInfo === "object"
           ? (json.serviceInfo as Partial<ProjectServiceManifest>)
           : null;
+      const expectedProjectStateDir = getProjectStateDirFor(input.projectRoot);
+      const projectStateDir = typeof json?.projectStateDir === "string" ? json.projectStateDir : null;
+      if (projectStateDir !== expectedProjectStateDir) {
+        return {
+          status: "mismatch",
+          daemonState: null,
+          endpoint: input.endpoint,
+          pid: typeof json?.pid === "number" ? json.pid : input.endpoint.pid,
+          process: null,
+          serviceInfo,
+          error: `projectStateDir mismatch: expected ${expectedProjectStateDir} actual ${projectStateDir ?? "unknown"}`,
+        };
+      }
       return {
         status: manifestsMatch(input.expected, serviceInfo) ? "ok" : "mismatch",
         daemonState: null,
@@ -507,6 +522,7 @@ export async function buildRuntimeCoherenceReport(
       getDashboardCommandSpec(knownProject.projectRoot).dashboardBuildStamp;
     const endpoint = (options.loadMetadataEndpoint ?? loadMetadataEndpoint)(knownProject.projectRoot);
     const service = await readProjectServiceHealth({
+      projectRoot: knownProject.projectRoot,
       endpoint,
       requestJsonImpl: options.requestJson ?? requestJson,
       expected: expectedService,

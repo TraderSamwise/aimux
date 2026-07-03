@@ -3,6 +3,7 @@ import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./run
 import type { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { ProjectServiceManifest } from "./project-service-manifest.js";
 import type { MetadataApiEndpoint } from "./metadata-store.js";
+import { getProjectStateDirFor } from "./paths.js";
 import {
   AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
   TMUX_DASHBOARD_OWNER_OPTION,
@@ -15,6 +16,14 @@ const expectedManifest: ProjectServiceManifest = {
   capabilities: { parsedAgentOutput: true },
   buildStamp: "service-new",
 };
+
+function serviceHealth(
+  projectRoot: string,
+  pid: number,
+  serviceInfo: Partial<ProjectServiceManifest> = expectedManifest,
+) {
+  return { ok: true, pid, projectStateDir: getProjectStateDirFor(projectRoot), serviceInfo };
+}
 
 function createTmux(overrides: Partial<TmuxRuntimeManager> = {}): TmuxRuntimeManager {
   const tmux = {
@@ -60,10 +69,10 @@ describe("runtime coherence report", () => {
       if (url.includes("43211")) {
         return {
           status: 200,
-          json: { ok: true, pid: 1001, serviceInfo: { ...expectedManifest, buildStamp: "service-old" } },
+          json: serviceHealth("/repo/alpha", 1001, { ...expectedManifest, buildStamp: "service-old" }),
         };
       }
-      return { status: 200, json: { ok: true, pid: 1002, serviceInfo: expectedManifest } };
+      return { status: 200, json: serviceHealth("/repo/beta", 1002) };
     });
     const endpointFor = (projectRoot?: string): MetadataApiEndpoint | null =>
       projectRoot === "/repo/alpha"
@@ -104,7 +113,7 @@ describe("runtime coherence report", () => {
   it("ignores tmux-only projects owned by another Aimux install", async () => {
     const requestJson = vi.fn(async () => ({
       status: 200,
-      json: { ok: true, pid: 1001, serviceInfo: expectedManifest },
+      json: serviceHealth("/repo/alpha", 1001),
     }));
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
@@ -160,7 +169,7 @@ describe("runtime coherence report", () => {
   it("keeps ownerless tmux-only projects in the versions report", async () => {
     const requestJson = vi.fn(async () => ({
       status: 200,
-      json: { ok: true, pid: 1001, serviceInfo: expectedManifest },
+      json: serviceHealth("/repo/legacy", 1001),
     }));
     const report = await buildRuntimeCoherenceReport({
       tmux: createTmux({
@@ -226,13 +235,49 @@ describe("runtime coherence report", () => {
     expect(renderRuntimeCoherenceReport(report)).toContain("service: unreachable");
   });
 
+  it("rejects service health for the wrong project state directory", async () => {
+    const report = await buildRuntimeCoherenceReport({
+      tmux: createTmux({
+        listSessionNames: vi.fn(() => []),
+      } as Partial<TmuxRuntimeManager>),
+      loadDaemonInfo: () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" }),
+      loadDaemonState: () => ({
+        projects: {
+          alpha: {
+            projectId: "alpha",
+            projectRoot: "/repo/alpha",
+            pid: 1001,
+            startedAt: "then",
+            updatedAt: "now",
+          },
+        },
+      }),
+      loadMetadataEndpoint: () => ({
+        host: "127.0.0.1",
+        port: 43211,
+        pid: 1001,
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      }),
+      requestJson: vi.fn(async () => ({
+        status: 200,
+        json: serviceHealth("/repo/beta", 1001),
+      })),
+      getDashboardBuildStamp: () => "dashboard-new",
+      getProjectServiceManifest: () => expectedManifest,
+      getRuntimeOwnerId: () => "owner-new",
+    });
+
+    expect(report.projects[0]?.service.status).toBe("mismatch");
+    expect(report.projects[0]?.service.error).toContain("projectStateDir mismatch");
+  });
+
   it("retries a slow health probe before marking a service unreachable", async () => {
     const requestJson = vi
       .fn()
       .mockRejectedValueOnce(new Error("request timed out after 1000ms"))
       .mockResolvedValueOnce({
         status: 200,
-        json: { ok: true, pid: 1001, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/alpha", 1001),
       });
 
     const report = await buildRuntimeCoherenceReport({
@@ -299,7 +344,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -343,7 +388,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -393,7 +438,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -450,7 +495,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -504,7 +549,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -562,7 +607,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -598,7 +643,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       getDashboardBuildStamp: () => "dashboard-new",
       getProjectServiceManifest: () => expectedManifest,
@@ -640,7 +685,7 @@ describe("runtime coherence report", () => {
       }),
       requestJson: vi.fn(async () => ({
         status: 200,
-        json: { ok: true, pid: 1002, serviceInfo: expectedManifest },
+        json: serviceHealth("/repo/beta", 1002),
       })),
       readProcessArgs: vi.fn((pid: number) =>
         pid === 9001
