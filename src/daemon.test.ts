@@ -631,7 +631,7 @@ describe("daemon supervision", () => {
     );
     livePids.add(30001);
 
-    const { loadDaemonState } = await import("./daemon.js");
+    const { loadDaemonState } = await import("./daemon-state.js");
     const state = loadDaemonState();
 
     expect(Object.keys(state.projects)).toEqual(["proj-live", "proj-dead"]);
@@ -707,7 +707,7 @@ describe("daemon supervision", () => {
     try {
       process.env.AIMUX_DAEMON_HOST = "localhost";
       process.env.AIMUX_DAEMON_PORT = "44191";
-      const { getDaemonHost, getDaemonPort } = await import("./daemon.js");
+      const { getDaemonHost, getDaemonPort } = await import("./daemon-state.js");
 
       expect(getDaemonHost()).toBe("localhost");
       expect(getDaemonPort()).toBe(44191);
@@ -729,7 +729,7 @@ describe("daemon supervision", () => {
     const previousHost = process.env.AIMUX_DAEMON_HOST;
     try {
       process.env.AIMUX_DAEMON_HOST = "0.0.0.0";
-      const { getDaemonHost } = await import("./daemon.js");
+      const { getDaemonHost } = await import("./daemon-state.js");
 
       expect(() => getDaemonHost()).toThrow(/must be loopback/);
     } finally {
@@ -749,7 +749,7 @@ describe("daemon supervision", () => {
         status: 200,
         json: daemonHealth(50_001, 44191),
       });
-      const { ensureDaemonRunning } = await import("./daemon.js");
+      const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
 
       const info = await ensureDaemonRunning();
 
@@ -778,7 +778,7 @@ describe("daemon supervision", () => {
       vi.mocked(requestJson)
         .mockResolvedValueOnce({ status: 200, json: daemonHealth(222, 44191) })
         .mockResolvedValueOnce({ status: 200, json: daemonHealth(222, 44191) });
-      const { ensureDaemonRunning } = await import("./daemon.js");
+      const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
 
       const info = await ensureDaemonRunning();
 
@@ -813,7 +813,7 @@ describe("daemon supervision", () => {
         );
         return child;
       });
-      const { ensureDaemonRunning } = await import("./daemon.js");
+      const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
 
       const info = await ensureDaemonRunning({ adoptExisting: false });
 
@@ -849,7 +849,7 @@ describe("daemon supervision", () => {
         );
         return child;
       });
-      const { ensureDaemonRunning } = await import("./daemon.js");
+      const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
 
       const info = await ensureDaemonRunning({ adoptExisting: false });
 
@@ -884,7 +884,7 @@ describe("daemon supervision", () => {
         );
         return child;
       });
-      const { ensureDaemonRunning } = await import("./daemon.js");
+      const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
 
       const info = await ensureDaemonRunning({ adoptExisting: false });
 
@@ -905,7 +905,7 @@ describe("daemon supervision", () => {
       process.env.AIMUX_DAEMON_PORT = "44191";
       livePids.add(50_001);
       vi.mocked(requestJson).mockResolvedValueOnce({ status: 200, json: staleDaemonHealth(50_001, 44191) });
-      const { ensureDaemonRunning } = await import("./daemon.js");
+      const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
 
       await expect(ensureDaemonRunning()).rejects.toThrow("different local build");
 
@@ -922,7 +922,7 @@ describe("daemon supervision", () => {
 
   it("does not signal unverified project service pids while stopping the daemon", async () => {
     execFileSyncMock.mockReturnValue("node unrelated-process.js");
-    const { stopDaemon } = await import("./daemon.js");
+    const { stopDaemon } = await import("./daemon-supervisor.js");
     mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
     livePids.add(50_001);
     livePids.add(50_002);
@@ -955,7 +955,7 @@ describe("daemon supervision", () => {
   });
 
   it("accepts legacy project service pids only when cwd matches the project", async () => {
-    const { stopDaemon } = await import("./daemon.js");
+    const { stopDaemon } = await import("./daemon-supervisor.js");
     mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
     livePids.add(50_001);
     livePids.add(50_002);
@@ -991,7 +991,7 @@ describe("daemon supervision", () => {
   });
 
   it("does not signal project service pids whose project root only prefix-matches", async () => {
-    const { stopDaemon } = await import("./daemon.js");
+    const { stopDaemon } = await import("./daemon-supervisor.js");
     mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
     livePids.add(50_001);
     livePids.add(50_002);
