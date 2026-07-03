@@ -330,17 +330,6 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   return exitCode;
 }
 
-export async function runProjectService(host: SessionLaunchHost): Promise<number> {
-  await startProjectServiceHost(host);
-
-  const exitCode = await new Promise<number>((resolve) => {
-    host.resolveRun = resolve;
-  });
-
-  host.teardown();
-  return exitCode;
-}
-
 export async function startProjectServiceHost(host: SessionLaunchHost): Promise<void> {
   const projectRoot = projectRootFor(host);
   initProject();
