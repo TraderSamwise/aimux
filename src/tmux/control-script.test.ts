@@ -2864,6 +2864,7 @@ describe("tmux-control.sh", () => {
     const curlLog = readCurlLog(envRoot);
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
     expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux"))).toBe(true);
+    expect(log.some((entry) => entry.includes("run-shell -b"))).toBe(true);
     expect(log.some((entry) => entry.includes("scripts/tmux-control.sh window"))).toBe(true);
     expect(log.some((entry) => entry.includes("--window-id @codex"))).toBe(true);
     expect(log.some((entry) => entry.includes("display-popup"))).toBe(false);

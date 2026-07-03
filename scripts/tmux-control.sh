@@ -600,7 +600,8 @@ for idx, item in enumerate(items[:len(keys)]):
     ]:
         if value:
             command.extend([flag, value])
-    args += [label, keys[idx], " ".join(shlex.quote(part) for part in command)]
+    shell_command = " ".join(shlex.quote(part) for part in command)
+    args += [label, keys[idx], f"run-shell -b {shlex.quote(shell_command)}"]
 
 if len(args) <= 3:
     raise SystemExit(1)
