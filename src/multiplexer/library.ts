@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { commandKey, parseKeys } from "../key-parser.js";
 import type { LibraryEntry } from "../library.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
@@ -80,43 +79,6 @@ export function renderLibrary(host: LibraryHost): void {
   renderLibraryScreen(host);
 }
 
-function openEntryInEditor(host: LibraryHost, path: string): void {
-  const editor = process.env.VISUAL || process.env.EDITOR || "vim";
-  const shell = process.env.SHELL || "/bin/zsh";
-  const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-
-  host.terminalHost.exitRawMode();
-  host.terminalHost.exitAlternateScreen();
-
-  let result: ReturnType<typeof spawnSync>;
-  try {
-    result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
-  } finally {
-    host.terminalHost.enterRawMode();
-    host.terminalHost.enterAlternateScreen(true);
-  }
-
-  if (result.error) {
-    host.dashboardErrorState = {
-      title: `Failed to open editor "${editor}"`,
-      lines: [result.error.message],
-    };
-  }
-
-  startDashboardLifecycleTask(
-    host,
-    { screen: "library" },
-    (lifecycle) => refreshLibrary(host, { force: true, lifecycle }),
-    {
-      onSuccess: () => renderLibrary(host),
-    },
-  );
-  if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
-  if (host.dashboardErrorState) {
-    host.renderDashboardErrorOverlay();
-  }
-}
-
 export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
@@ -177,8 +139,12 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     }
     return;
   }
-  if (key === "e" || key === "enter" || key === "return") {
+  if (key === "enter" || key === "return") {
     const selected = entries[host.libraryIndex];
-    if (selected) openEntryInEditor(host, selected.path);
+    if (selected) {
+      host.footerFlash = selected.path;
+      host.footerFlashTicks = 5;
+      renderLibrary(host);
+    }
   }
 }

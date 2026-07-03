@@ -727,7 +727,7 @@ export function renderLibraryScreen(ctx: any): void {
       content: listLines,
       footerLines: [
         footerHints(
-          "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+          "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [Enter] show path  [r] refresh  [Esc] dashboard  [q] quit",
         ),
       ],
       focusLine,
