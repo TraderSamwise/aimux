@@ -30,7 +30,7 @@ import {
 } from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 import { commandArgValueMatches } from "./process-args.js";
-import { getAimuxCliLaunchCommand } from "./cli-launcher.js";
+import { getAimuxDaemonLaunchCommand } from "./cli-launcher.js";
 import { CoreProjectActor } from "./core-project-actor.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
@@ -505,7 +505,7 @@ export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = 
     const stdio = loggingChildStdio(getDaemonStdioLogPath());
     let child: ChildProcess;
     try {
-      const launch = getAimuxCliLaunchCommand(["daemon", "run"]);
+      const launch = getAimuxDaemonLaunchCommand();
       child = spawn(launch.command, launch.args, {
         detached: true,
         env: loggingChildEnv(),

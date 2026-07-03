@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { getAimuxCliLaunchCommand } from "../cli-launcher.js";
+import { getAimuxDashboardLaunchCommand } from "../cli-launcher.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
 function shellQuote(value: string): string {
@@ -66,7 +66,7 @@ export function getDashboardCommandSpec(
   env: NodeJS.ProcessEnv = process.env,
 ): DashboardCommandSpec {
   const scriptPath = resolveDashboardScriptPath();
-  const launch = getAimuxCliLaunchCommand(["--tmux-dashboard-internal"], { env, currentArgvEntry: scriptPath });
+  const launch = getAimuxDashboardLaunchCommand({ env, currentArgvEntry: scriptPath });
   const aimuxCommand = [launch.command, ...launch.args].map(shellQuote).join(" ");
   const dashboardEnv = dashboardEnvForLaunch(env, launch.source);
   const unsetKeys = launch.source === "current-entry" ? STABLE_SHIM_ENV_KEYS : [];

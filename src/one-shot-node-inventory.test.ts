@@ -21,12 +21,20 @@ const runtimeNodeLaunchPatterns = [
 
 const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);
 
-const allowedCliLaunchCommandUsage = new Set([
-  "src/cli-launcher.ts",
-  "src/daemon.ts",
-  "src/dashboard/command-spec.ts",
-  "src/runtime-coherence.ts",
-]);
+const launchContractUsage = [
+  {
+    name: "getAimuxDaemonLaunchCommand",
+    allowedFiles: new Set(["src/cli-launcher.ts", "src/daemon.ts", "src/cli-launcher.test.ts"]),
+  },
+  {
+    name: "getAimuxDashboardLaunchCommand",
+    allowedFiles: new Set(["src/cli-launcher.ts", "src/dashboard/command-spec.ts", "src/cli-launcher.test.ts"]),
+  },
+  {
+    name: "getAimuxCurrentCliIdentity",
+    allowedFiles: new Set(["src/cli-launcher.ts", "src/runtime-coherence.ts", "src/cli-launcher.test.ts"]),
+  },
+] as const;
 
 function listSourceFiles(root: string): string[] {
   const absoluteRoot = join(process.cwd(), root);
@@ -65,8 +73,13 @@ describe("one-shot Node runtime inventory", () => {
         const key = `${file}:${entry.id}`;
         if (!allowedRuntimePatternMatches.has(key)) violations.push(key);
       }
-      if (text.includes("getAimuxCliLaunchCommand") && !allowedCliLaunchCommandUsage.has(file)) {
-        violations.push(`${file}:getAimuxCliLaunchCommand`);
+      if (text.includes("getAimuxCliLaunchCommand")) {
+        violations.push(`${file}:generic-cli-launch-command`);
+      }
+      for (const contract of launchContractUsage) {
+        if (text.includes(contract.name) && !contract.allowedFiles.has(file)) {
+          violations.push(`${file}:${contract.name}`);
+        }
       }
     }
 

@@ -2,9 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildAimuxCliShellCommand, getAimuxCliLaunchCommand } from "./cli-launcher.js";
+import {
+  getAimuxCurrentCliIdentity,
+  getAimuxDaemonLaunchCommand,
+  getAimuxDashboardLaunchCommand,
+} from "./cli-launcher.js";
 
-describe("getAimuxCliLaunchCommand", () => {
+describe("aimux launch contracts", () => {
   let dir: string;
   let shim: string;
   let nativeEntry: string;
@@ -22,7 +26,7 @@ describe("getAimuxCliLaunchCommand", () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it("uses the stable shim when the current entry is a native install", () => {
-    const launch = getAimuxCliLaunchCommand(["daemon", "run"], {
+    const launch = getAimuxDaemonLaunchCommand({
       env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
       currentArgvEntry: nativeEntry,
     });
@@ -34,19 +38,37 @@ describe("getAimuxCliLaunchCommand", () => {
   });
 
   it("keeps source runs on the current entry when not inside a native install", () => {
-    const launch = getAimuxCliLaunchCommand(["daemon", "run"], {
+    const launch = getAimuxDaemonLaunchCommand({
       env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
       currentArgvEntry: join(dir, "checkout", "dist", "main.js"),
     });
     expect(launch.command).toBe(process.execPath);
     expect(launch.args[0]).toMatch(/main\.(js|ts)$/);
-    expect(launch.args.at(-1)).toBe("run");
+    expect(launch.args.slice(1)).toEqual(["daemon", "run"]);
     expect(launch.source).toBe("current-entry");
   });
 
-  it("builds a quoted shell command from the selected launcher", () => {
-    const command = buildAimuxCliShellCommand(["daemon", "run"]);
-    expect(command).toContain("daemon");
-    expect(command).toContain("run");
+  it("uses a dedicated dashboard launch contract", () => {
+    const launch = getAimuxDashboardLaunchCommand({
+      env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
+      currentArgvEntry: nativeEntry,
+    });
+    expect(launch).toMatchObject({
+      command: shim,
+      args: ["--tmux-dashboard-internal"],
+      source: "stable-shim",
+    });
+  });
+
+  it("exposes current CLI identity without launch arguments for diagnostics", () => {
+    const launch = getAimuxCurrentCliIdentity({
+      env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
+      currentArgvEntry: nativeEntry,
+    });
+    expect(launch).toMatchObject({
+      command: shim,
+      args: [],
+      source: "stable-shim",
+    });
   });
 });
