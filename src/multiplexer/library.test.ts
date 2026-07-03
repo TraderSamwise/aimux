@@ -181,4 +181,21 @@ describe("refreshLibrary", () => {
 
     await vi.waitFor(() => expect(renderLibraryScreen).toHaveBeenCalled());
   });
+
+  it("shows the selected entry path instead of spawning an editor", () => {
+    vi.clearAllMocks();
+    const entry = libraryEntry("plan:selected");
+    const host: any = {
+      libraryEntries: [entry],
+      libraryLoaded: true,
+      libraryIndex: 0,
+      handleDashboardSubscreenNavigationKey: vi.fn(() => false),
+    };
+
+    handleLibraryKey(host, Buffer.from("\r"));
+
+    expect(host.footerFlash).toBe(entry.path);
+    expect(host.footerFlashTicks).toBe(5);
+    expect(renderLibraryScreen).toHaveBeenCalledOnce();
+  });
 });
