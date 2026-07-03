@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { join, basename, resolve, dirname, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -23,7 +24,19 @@ import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
 let _repoRoot: string | null = null;
 let _projectId: string | null = null;
 
+interface ProjectPathContext {
+  repoRoot: string;
+  projectId: string;
+}
+
+const projectPathContext = new AsyncLocalStorage<ProjectPathContext>();
+
+function currentProjectPathContext(): ProjectPathContext | undefined {
+  return projectPathContext.getStore();
+}
+
 function assertInitialized(): void {
+  if (currentProjectPathContext()) return;
   if (!_repoRoot || !_projectId) {
     throw new Error("paths not initialized — call initPaths() first");
   }
@@ -87,25 +100,40 @@ export async function initPaths(cwd?: string): Promise<void> {
   const dir = cwd ?? process.cwd();
   _repoRoot = resolveRepoRoot(dir);
   _projectId = computeProjectId(_repoRoot);
+  ensureProjectPaths();
+}
 
-  // Ensure global project dir exists
+export function ensureProjectPaths(cwd?: string): void {
+  if (cwd) {
+    return withProjectPaths(cwd, () => ensureProjectPaths());
+  }
+  assertInitialized();
   const projectDir = getProjectStateDir();
   if (!existsSync(projectDir)) {
     mkdirSync(projectDir, { recursive: true });
   }
-  writeFileSync(join(projectDir, "project-root.txt"), `${_repoRoot}\n`);
+  writeFileSync(join(projectDir, "project-root.txt"), `${getRepoRoot()}\n`);
 
   ensureLocalSharedDirs();
 
   registerProject();
 }
 
+export function withProjectPaths<T>(cwd: string, fn: () => T): T {
+  const repoRoot = resolveRepoRoot(cwd);
+  return projectPathContext.run({ repoRoot, projectId: computeProjectId(repoRoot) }, fn);
+}
+
 export function getRepoRoot(): string {
+  const context = currentProjectPathContext();
+  if (context) return context.repoRoot;
   assertInitialized();
   return _repoRoot!;
 }
 
 export function getProjectId(): string {
+  const context = currentProjectPathContext();
+  if (context) return context.projectId;
   assertInitialized();
   return _projectId!;
 }
@@ -202,6 +230,8 @@ export function getDaemonStdioLogPath(): string {
 }
 
 export function getProjectStateDir(): string {
+  const context = currentProjectPathContext();
+  if (context) return join(getGlobalAimuxDir(), "projects", context.projectId);
   assertInitialized();
   return join(getGlobalAimuxDir(), "projects", _projectId!);
 }
@@ -214,10 +244,6 @@ export function getProjectLogPath(): string {
   return join(getProjectLogsDir(), "aimux.jsonl");
 }
 
-export function getProjectServiceStdioLogPath(): string {
-  return join(getProjectLogsDir(), "project-service-stdio.log");
-}
-
 export function getProjectLogsDirFor(cwd: string): string {
   return join(getProjectStateDirFor(cwd), "logs");
 }
@@ -228,10 +254,6 @@ export function getProjectLogPathFor(cwd: string): string {
 
 export function getProjectRepairLogPathFor(cwd: string): string {
   return join(getProjectLogsDirFor(cwd), "repairs.jsonl");
-}
-
-export function getProjectServiceStdioLogPathFor(cwd: string): string {
-  return join(getProjectLogsDirFor(cwd), "project-service-stdio.log");
 }
 
 export function getStatePath(): string {
@@ -300,6 +322,8 @@ export function getDashboardClientUiStatePath(clientKey: string): string {
 // ── In-repo paths ({repoRoot}/.aimux/...) ──────────────────────────
 
 export function getLocalAimuxDir(): string {
+  const context = currentProjectPathContext();
+  if (context) return join(context.repoRoot, ".aimux");
   assertInitialized();
   return join(_repoRoot!, ".aimux");
 }
@@ -422,13 +446,15 @@ function saveRegistry(registry: ProjectsRegistry): void {
 
 function registerProject(): void {
   assertInitialized();
-  if (isEphemeralTempProjectRoot(_repoRoot!)) return;
+  const repoRoot = getRepoRoot();
+  const projectId = getProjectId();
+  if (isEphemeralTempProjectRoot(repoRoot)) return;
   const registry = loadRegistry();
-  const idx = registry.projects.findIndex((p) => p.id === _projectId);
+  const idx = registry.projects.findIndex((p) => p.id === projectId);
   const entry: ProjectEntry = {
-    id: _projectId!,
-    name: basename(_repoRoot!),
-    repoRoot: _repoRoot!,
+    id: projectId,
+    name: basename(repoRoot),
+    repoRoot,
     lastSeen: new Date().toISOString(),
   };
   if (idx >= 0) {

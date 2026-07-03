@@ -1121,9 +1121,11 @@ export function refreshLocalDashboardModel(host: DashboardModelHost): void {
 
 export async function startProjectServices(host: DashboardModelHost): Promise<void> {
   if (host.metadataServer) return;
+  const projectRoot = projectRootFor(host);
   host.projectServiceStartupMetadataSettling = true;
   host.projectServiceUiRefreshPending = false;
   host.metadataServer = new MetadataServer({
+    projectRoot,
     events: { bus: host.eventBus },
     diagnostics: {
       pluginStatuses: () => host.pluginRuntime?.getPluginStatuses() ?? [],
@@ -1333,7 +1335,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       host.loopWatcher = new LoopWatcher({
         config: loadConfig().loop,
         loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
-        loadMetadata: () => loadMetadataState(projectRootFor(host)),
+        loadMetadata: () => loadMetadataState(projectRoot),
         hasPendingInteraction: (sessionId: string) =>
           (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
         sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
@@ -1353,7 +1355,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
   // gated on `endpoint` like the plugin runtime and loop watcher above.
   try {
     host.transcriptReconciler = new TranscriptReconciler({
-      loadMetadata: () => loadMetadataState(projectRootFor(host)),
+      loadMetadata: () => loadMetadataState(projectRoot),
       loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
       hasPendingInteraction: (sessionId: string) =>
         (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
@@ -1386,9 +1388,9 @@ export async function stopProjectServices(host: DashboardModelHost): Promise<voi
   const ownedMetadataServer = host.metadataServer;
   ownedMetadataServer?.stop();
   host.metadataServer = null;
-  const endpoint = loadMetadataEndpoint();
+  const endpoint = loadMetadataEndpoint(projectRootFor(host));
   if (ownedMetadataServer && endpoint?.pid === process.pid) {
-    removeMetadataEndpoint();
+    removeMetadataEndpoint(projectRootFor(host));
   }
   host.loopWatcher?.stop?.();
   host.loopWatcher = null;

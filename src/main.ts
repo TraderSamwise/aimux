@@ -171,6 +171,7 @@ async function restartStaleControlPlane(projectRoot: string): Promise<void> {
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
+  projectStateDir?: string;
 }> {
   const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
     timeoutMs: 1000,
@@ -178,7 +179,7 @@ async function fetchProjectServiceHealth(endpoint: { host: string; port: number 
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `health request failed: ${status}`);
   }
-  return json as { serviceInfo?: ProjectServiceManifest; pid?: number };
+  return json as { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string };
 }
 
 async function waitForVerifiedProjectService(
@@ -186,9 +187,10 @@ async function waitForVerifiedProjectService(
   opts?: { timeoutMs?: number },
 ): Promise<{
   endpoint: { host: string; port: number; pid: number };
-  health: { serviceInfo?: ProjectServiceManifest; pid?: number };
+  health: { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string };
 }> {
   const expected = getProjectServiceManifest();
+  const expectedProjectStateDir = getProjectStateDirFor(projectRoot);
   const timeoutMs = opts?.timeoutMs ?? 8000;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
@@ -210,6 +212,27 @@ async function waitForVerifiedProjectService(
             projectRoot,
             endpoint,
             healthPid: health.pid,
+          });
+          if (!respawnAttempted) {
+            respawnAttempted = true;
+            await stopProjectService(projectRoot);
+            removeMetadataEndpoint(projectRoot);
+            await ensureProjectService(projectRoot);
+          } else {
+            removeMetadataEndpoint(projectRoot);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          continue;
+        }
+        if (health.projectStateDir !== expectedProjectStateDir) {
+          lastError = `project service projectStateDir mismatch: expected ${expectedProjectStateDir} actual ${
+            health.projectStateDir ?? "unknown"
+          }`;
+          log.warn("project service projectStateDir mismatch", "runtime", {
+            projectRoot,
+            endpoint,
+            expectedProjectStateDir,
+            actualProjectStateDir: health.projectStateDir ?? null,
           });
           if (!respawnAttempted) {
             respawnAttempted = true;
@@ -767,9 +790,8 @@ function commandPath(command: Command): string[] {
   return names;
 }
 
-function loggingProcessKind(command: Command): "cli" | "daemon" | "project-service" {
+function loggingProcessKind(command: Command): "cli" | "daemon" {
   const names = commandPath(command);
-  if (names.at(-1) === "__project-service-internal") return "project-service";
   if (names.at(-2) === "daemon" && names.at(-1) === "run") return "daemon";
   return "cli";
 }
@@ -1211,7 +1233,8 @@ hostCmd
     const project = await projectServiceStatus(projectRoot);
     const endpoint = await resolveProjectServiceEndpoint(projectRoot);
     const expectedServiceManifest = getProjectServiceManifest();
-    let liveServiceHealth: { serviceInfo?: ProjectServiceManifest; pid?: number } | null = null;
+    let liveServiceHealth: { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string } | null =
+      null;
     if (endpoint) {
       try {
         liveServiceHealth = await fetchProjectServiceHealth(endpoint);
@@ -1597,64 +1620,6 @@ daemonCmd
       return;
     }
     console.log(`Ensured project service for ${projectRoot} (pid ${project.pid})`);
-  });
-
-program
-  .command("__project-service-internal")
-  .description("Internal daemon-managed project service entrypoint")
-  .option("--project-id <id>", "Internal project id")
-  .option("--project-root <path>", "Internal project root")
-  .action(async (opts: { projectId?: string; projectRoot?: string }) => {
-    void opts.projectId;
-    const projectRoot = resolveProjectRoot(opts.projectRoot ? pathResolve(opts.projectRoot) : process.cwd());
-    if (projectRoot !== process.cwd()) {
-      process.chdir(projectRoot);
-    }
-    await initPaths(projectRoot);
-    initProject();
-
-    const mux = new Multiplexer({ contextWatcherEnabled: false });
-    let cleanedUp = false;
-    const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-    const cleanupAll = async () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      await mux.cleanup();
-    };
-
-    const shutdown = () => {
-      void cleanupAll().finally(() => process.exit(0));
-    };
-    process.on("exit", ensureTerminalRestored);
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
-    process.on("uncaughtException", (err) => {
-      log.error("project service uncaught exception", "runtime", {
-        error: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
-      });
-      console.error(err);
-      void cleanupAll().finally(() => process.exit(1));
-    });
-    process.on("unhandledRejection", (reason) => {
-      log.error("project service unhandled rejection", "runtime", {
-        error: reason instanceof Error ? reason.message : String(reason),
-        stack: reason instanceof Error ? reason.stack : undefined,
-      });
-      console.error(reason);
-      void cleanupAll().finally(() => process.exit(1));
-    });
-
-    try {
-      const exitCode = await mux.runProjectService();
-      await cleanupAll();
-      process.exit(exitCode);
-    } catch (err: unknown) {
-      await cleanupAll();
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`aimux project service: ${msg}`);
-      process.exit(1);
-    }
   });
 
 const projectsCmd = program.command("projects").description("Inspect known aimux projects");
