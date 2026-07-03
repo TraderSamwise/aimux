@@ -31,7 +31,7 @@ const CODEX_HOOK_EVENTS: ReadonlyArray<{ event: string; action: string; timeoutM
   { event: "SessionStart", action: "session-start", timeoutMs: 5000 },
   { event: "UserPromptSubmit", action: "prompt-submit", timeoutMs: 5000 },
   { event: "Stop", action: "stop", timeoutMs: 5000 },
-  { event: "PermissionRequest", action: "permission-request", timeoutMs: 120000 },
+  { event: "PermissionRequest", action: "permission-request", timeoutMs: 5000 },
 ];
 
 const AIMUX_CODEX_HOOK_MARKERS = ["/hooks/codex", "codex-hook"];
@@ -51,7 +51,7 @@ export function buildCodexHookCommand(action: string): string {
   return buildProjectHookCommand({
     tool: "codex",
     action,
-    timeoutSeconds: action === "permission-request" ? 120 : 5,
+    timeoutSeconds: 5,
   });
 }
 
