@@ -10,6 +10,22 @@ let previousAimuxHome: string | undefined;
 let aimuxHome = "";
 let projectRoot = "";
 
+function seededLastUsedState(entries: Array<readonly [string, { lastUsedAt: string }]>, clientSession = "client-1") {
+  const recentIds = entries.map(([itemId]) => itemId).reverse();
+  return {
+    version: 1,
+    items: Object.fromEntries(entries),
+    clients: {
+      [clientSession]: {
+        recentIds,
+        items: Object.fromEntries(entries),
+        updatedAt: entries.at(-1)?.[1].lastUsedAt ?? "",
+      },
+    },
+    projectRecentIds: recentIds,
+  };
+}
+
 describe("last-used recency", () => {
   beforeEach(() => {
     previousAimuxHome = process.env.AIMUX_HOME;
@@ -86,21 +102,7 @@ describe("last-used recency", () => {
       const itemId = `agent-${index}`;
       return [itemId, { lastUsedAt: new Date(Date.UTC(2026, 5, 28, 4, 0, index)).toISOString() }] as const;
     });
-    writeFileSync(
-      path,
-      JSON.stringify({
-        version: 1,
-        items: Object.fromEntries(seededEntries),
-        clients: {
-          "client-1": {
-            recentIds: seededEntries.map(([itemId]) => itemId).reverse(),
-            items: Object.fromEntries(seededEntries),
-            updatedAt: "2026-06-28T04:01:08.000Z",
-          },
-        },
-        projectRecentIds: seededEntries.map(([itemId]) => itemId).reverse(),
-      }),
-    );
+    writeFileSync(path, JSON.stringify(seededLastUsedState(seededEntries)));
 
     markLastUsed(projectRoot, {
       itemId: "agent-69",
