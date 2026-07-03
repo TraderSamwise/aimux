@@ -5,6 +5,8 @@ import { removeMetadataEndpoint } from "./metadata-store.js";
 import { Multiplexer } from "./multiplexer/index.js";
 import { ensureProjectPaths, getProjectIdFor, withProjectPaths } from "./paths.js";
 
+const CORE_PROJECT_ACTOR_KILL_TIMEOUT_MS = 1500;
+
 export interface CoreProjectActorState {
   projectId: string;
   projectRoot: string;
@@ -90,7 +92,39 @@ export class CoreProjectActor {
   }
 
   async kill(): Promise<void> {
-    await this.stop();
+    if (!this.mux && !this.started) return;
+    const mux = this.mux;
+    this.mux = null;
+    this.started = false;
+    await withProjectPaths(this.state.projectRoot, async () => {
+      if (mux) {
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        try {
+          const result = await Promise.race([
+            mux.cleanup().then(() => "cleaned" as const),
+            new Promise<"timed-out">((resolve) => {
+              timeout = setTimeout(() => resolve("timed-out"), CORE_PROJECT_ACTOR_KILL_TIMEOUT_MS);
+            }),
+          ]);
+          if (result === "timed-out") {
+            log.warn("core project actor force cleanup timed out", "daemon", {
+              projectId: this.state.projectId,
+              projectRoot: this.state.projectRoot,
+              timeoutMs: CORE_PROJECT_ACTOR_KILL_TIMEOUT_MS,
+            });
+          }
+        } catch (error) {
+          log.warn("core project actor force cleanup failed", "daemon", {
+            projectId: this.state.projectId,
+            projectRoot: this.state.projectRoot,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+      removeMetadataEndpoint(this.state.projectRoot);
+    });
     log.warn("force-stopped core project actor", "daemon", {
       projectId: this.state.projectId,
       projectRoot: this.state.projectRoot,
