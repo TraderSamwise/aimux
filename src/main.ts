@@ -887,6 +887,17 @@ async function ensureCoreProjectServiceForCliWithRepair(projectRoot: string): Pr
   }
 }
 
+async function stopCoreProjectServiceForCliWithRepair(projectRoot: string): Promise<void> {
+  try {
+    await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+  } catch (error) {
+    if (!isRepairableCoreProjectStartupError(error)) {
+      throw error;
+    }
+    await restartStaleControlPlane(projectRoot);
+  }
+}
+
 function relayLastError(relay: CoreRelaySnapshot): string | null {
   return "lastError" in relay ? relay.lastError : null;
 }
@@ -1339,7 +1350,7 @@ hostCmd
   .action(async (opts: { open?: boolean; serve?: boolean }) => {
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
-    await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+    await stopCoreProjectServiceForCliWithRepair(projectRoot);
     await ensureCoreProjectServiceForCliWithRepair(projectRoot);
     if (opts.serve) {
       console.log(`Restarted project service for ${projectRoot}`);
