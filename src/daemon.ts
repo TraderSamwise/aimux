@@ -20,6 +20,13 @@ import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import {
+  CORE_API_ROUTES,
+  CORE_COMMAND_NAMES,
+  isCoreCommandName,
+  type CoreCommandEnvelope,
+  type CoreCommandResponse,
+} from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { getAimuxCliLaunchCommand } from "./cli-launcher.js";
@@ -1107,6 +1114,48 @@ export class AimuxDaemon {
     return existing;
   }
 
+  private routeCoreCommand(body: unknown): { status: number; body: CoreCommandResponse } {
+    const envelope = body as CoreCommandEnvelope | undefined;
+    const id =
+      typeof envelope?.id === "string" && envelope.id.trim()
+        ? envelope.id.trim()
+        : `core-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const command = envelope?.command;
+    if (!isCoreCommandName(command)) {
+      return {
+        status: 400,
+        body: {
+          ok: false,
+          id,
+          command: typeof command === "string" ? command : undefined,
+          error: "unknown core command",
+        },
+      };
+    }
+    const issuedAt = new Date().toISOString();
+    if (command === CORE_COMMAND_NAMES.ping) {
+      return { status: 200, body: { ok: true, id, command, issuedAt, result: { pong: true } } };
+    }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        id,
+        command,
+        issuedAt,
+        result: {
+          daemon: {
+            pid: process.pid,
+            port: getDaemonPort(),
+            serviceInfo: getProjectServiceManifest(),
+          },
+          projects: this.listProjectsForRoute(),
+          updatedAt: this.state.updatedAt,
+        },
+      },
+    };
+  }
+
   async routeRequest(
     method: string,
     path: string,
@@ -1133,6 +1182,10 @@ export class AimuxDaemon {
           serviceInfo: getProjectServiceManifest(),
         },
       };
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.commands) {
+      return this.routeCoreCommand(body);
     }
 
     if (method === "GET" && pathname === "/relay/status") {
