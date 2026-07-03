@@ -38,7 +38,7 @@ describe("requestCoreCommand", () => {
   it("can skip daemon startup for read-only diagnostics", async () => {
     const { requestCoreCommand } = await import("./core-command-client.js");
 
-    await requestCoreCommand(CORE_COMMAND_NAMES.ping, undefined, { ensureDaemon: false });
+    await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus, undefined, { ensureDaemon: false });
 
     expect(daemonMocks.ensureDaemonRunning).not.toHaveBeenCalled();
   });

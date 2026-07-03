@@ -1677,7 +1677,10 @@ program
       let relayError: string | null = null;
       if (loadDaemonInfo()) {
         try {
-          const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
+          const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable, undefined, {
+            ensureDaemon: false,
+            timeoutMs: 1000,
+          });
           const relay = result.relay as { status?: string; lastError?: string | null };
           relayStatus = relay.status ?? "unknown";
           relayError = relay.lastError ?? null;
@@ -1709,7 +1712,7 @@ program
     // ignore failures since the daemon may not be up).
     if (loadDaemonInfo()) {
       try {
-        await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable);
+        await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
       } catch {
         // daemon offline or refused; the file removal below still kills
         // future startup, so this isn't fatal.
@@ -1763,7 +1766,10 @@ remoteCmd
     let relay: unknown = { status: "off" };
     if (loadDaemonInfo()) {
       try {
-        const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus);
+        const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus, undefined, {
+          ensureDaemon: false,
+          timeoutMs: 1000,
+        });
         relay = result.relay;
       } catch {
         // Daemon is not reachable — fall back to credential state.
@@ -1802,7 +1808,7 @@ remoteCmd
   .description("Disable remote access and disconnect from the relay")
   .action(async () => {
     if (loadDaemonInfo()) {
-      await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable);
+      await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
       console.log("✓ Remote access disabled. Daemon disconnected from relay.");
       return;
     }
