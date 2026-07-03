@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { buildGraveyardViewModel } from "../../multiplexer/graveyard-view-model.js";
 import { keycap, statusDot } from "../render/theme.js";
 import { stripAnsi } from "../render/text.js";
-import { renderGraveyardDetails, renderGraveyardScreen, renderProjectScreen } from "./subscreen-renderers.js";
+import {
+  renderGraveyardDetails,
+  renderGraveyardScreen,
+  renderLibraryScreen,
+  renderProjectScreen,
+} from "./subscreen-renderers.js";
 
 const ago = (days: number): string => new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
@@ -124,5 +129,40 @@ describe("renderProjectScreen", () => {
     expect(plain).toContain("Loading project...");
     expect(plain).not.toContain("agents 0");
     expect(plain).not.toContain("No recent activity.");
+  });
+});
+
+describe("renderLibraryScreen", () => {
+  it("renders the selected entry path when requested", () => {
+    let out = "";
+    const path = "/repo/.aimux/plans/codex-1.md";
+    const ctx = {
+      getViewportSize: () => ({ cols: 120, rows: 40 }),
+      dashboardState: { detailsSidebarVisible: true },
+      libraryEntries: [
+        {
+          id: "plan:codex-1",
+          kind: "plan",
+          title: "Codex plan",
+          path,
+          updatedAt: "2026-06-20T00:00:00.000Z",
+          sessionId: "codex-1",
+          preview: "# Plan",
+        },
+      ],
+      libraryIndex: 0,
+      libraryPathFlash: path,
+      centerInWidth: (s: string) => s,
+      wrapKeyValue: (k: string, v: string) => [`${k ? `${k}: ` : ""}${v ?? ""}`],
+      truncatePlain: (s: string, n: number) => (s ?? "").slice(0, n),
+      writeFrame: (f: string) => {
+        out = f;
+      },
+    };
+
+    renderLibraryScreen(ctx as never);
+
+    const plain = stripAnsi(out);
+    expect(plain).toContain(`Path: ${path}`);
   });
 });

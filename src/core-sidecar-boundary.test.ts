@@ -72,4 +72,16 @@ describe("core sidecar module boundary", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("keeps routine multiplexer client screens out of child process launches", () => {
+    const allowed = new Set(["multiplexer/dashboard-interaction.ts", "multiplexer/persistence-methods.ts"]);
+    const childProcessImport =
+      /(?:from\s+["'](?:node:)?child_process["']|import\(\s*["'](?:node:)?child_process["']\s*\)|require\(\s*["'](?:node:)?child_process["']\s*\))/;
+    const offenders = listSourceFiles("multiplexer").filter((path) => {
+      if (allowed.has(path)) return false;
+      return childProcessImport.test(source(`./${path}`));
+    });
+
+    expect(offenders).toEqual([]);
+  });
 });

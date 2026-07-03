@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { commandKey, parseKeys } from "../key-parser.js";
 import type { LibraryEntry } from "../library.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
@@ -31,6 +30,9 @@ function applyLibraryEntries(host: LibraryHost, entries: LibraryEntry[]): void {
   if (host.libraryIndex >= host.libraryEntries.length) {
     host.libraryIndex = Math.max(0, host.libraryEntries.length - 1);
   }
+  if (host.libraryPathFlash && host.libraryPathFlash !== host.libraryEntries[host.libraryIndex]?.path) {
+    host.libraryPathFlash = undefined;
+  }
 }
 
 function ensureLibraryEntries(host: LibraryHost): void {
@@ -43,6 +45,10 @@ function validateLibraryPayload(value: unknown): LibraryEntry[] {
     throw new Error("invalid library payload");
   }
   return res.entries;
+}
+
+function clearLibraryPathFlash(host: LibraryHost): void {
+  host.libraryPathFlash = undefined;
 }
 
 export async function refreshLibrary(
@@ -80,43 +86,6 @@ export function renderLibrary(host: LibraryHost): void {
   renderLibraryScreen(host);
 }
 
-function openEntryInEditor(host: LibraryHost, path: string): void {
-  const editor = process.env.VISUAL || process.env.EDITOR || "vim";
-  const shell = process.env.SHELL || "/bin/zsh";
-  const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-
-  host.terminalHost.exitRawMode();
-  host.terminalHost.exitAlternateScreen();
-
-  let result: ReturnType<typeof spawnSync>;
-  try {
-    result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
-  } finally {
-    host.terminalHost.enterRawMode();
-    host.terminalHost.enterAlternateScreen(true);
-  }
-
-  if (result.error) {
-    host.dashboardErrorState = {
-      title: `Failed to open editor "${editor}"`,
-      lines: [result.error.message],
-    };
-  }
-
-  startDashboardLifecycleTask(
-    host,
-    { screen: "library" },
-    (lifecycle) => refreshLibrary(host, { force: true, lifecycle }),
-    {
-      onSuccess: () => renderLibrary(host),
-    },
-  );
-  if (!host.isDashboardScreen || host.isDashboardScreen("library")) renderLibrary(host);
-  if (host.dashboardErrorState) {
-    host.renderDashboardErrorOverlay();
-  }
-}
-
 export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
   const events = parseKeys(data);
   if (events.length === 0) return;
@@ -144,6 +113,7 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
     return;
   }
   if (key === "r") {
+    clearLibraryPathFlash(host);
     startDashboardLifecycleTask(
       host,
       { screen: "library" },
@@ -157,6 +127,7 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
   const entries = host.libraryEntries ?? [];
   if (key === "down" || key === "j") {
     if (entries.length > 1) {
+      clearLibraryPathFlash(host);
       host.libraryIndex = (host.libraryIndex + 1) % entries.length;
       renderLibrary(host);
     }
@@ -164,6 +135,7 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
   }
   if (key === "up" || key === "k") {
     if (entries.length > 1) {
+      clearLibraryPathFlash(host);
       host.libraryIndex = (host.libraryIndex - 1 + entries.length) % entries.length;
       renderLibrary(host);
     }
@@ -172,13 +144,17 @@ export function handleLibraryKey(host: LibraryHost, data: Buffer): void {
   if (key >= "1" && key <= "9") {
     const idx = parseInt(key, 10) - 1;
     if (idx < entries.length) {
+      clearLibraryPathFlash(host);
       host.libraryIndex = idx;
       renderLibrary(host);
     }
     return;
   }
-  if (key === "e" || key === "enter" || key === "return") {
+  if (key === "enter" || key === "return") {
     const selected = entries[host.libraryIndex];
-    if (selected) openEntryInEditor(host, selected.path);
+    if (selected) {
+      host.libraryPathFlash = selected.path;
+      renderLibrary(host);
+    }
   }
 }
