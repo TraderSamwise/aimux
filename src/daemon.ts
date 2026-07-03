@@ -11,7 +11,7 @@ import {
   getProjectIdFor,
 } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
-import { loadMetadataEndpointByProjectId } from "./metadata-store.js";
+import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
@@ -821,6 +821,7 @@ export class AimuxDaemon {
       await this.terminateLegacyProjectService(existing);
     }
     delete this.state.projects[projectId];
+    removeMetadataEndpoint(existing.projectRoot);
     this.refreshState();
     return existing;
   }

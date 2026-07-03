@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -281,6 +281,33 @@ describe("daemon supervision", () => {
     expect(body.ok).toBe(true);
     expect(body.result.project?.projectRoot).toBe(projectRoot);
     expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("clears stale metadata endpoints when core stops a legacy project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const legacyPid = 42_000;
+    livePids.add(legacyPid);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(legacyPid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: legacyPid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectStop,
+      payload: { projectRoot },
+    });
+
+    expect(response.status).toBe(200);
+    expect(existsSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"))).toBe(
+      false,
+    );
   });
 
   it("replaces a live project service when its health manifest is stale", async () => {
