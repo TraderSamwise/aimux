@@ -72,7 +72,6 @@ import {
   resumeSessions as resumeSessionsImpl,
   run as runImpl,
   runDashboard as runDashboardImpl,
-  runProjectService as runProjectServiceImpl,
   startProjectServiceHost as startProjectServiceHostImpl,
 } from "./session-launch.js";
 
@@ -437,10 +436,6 @@ export class Multiplexer {
 
   async runDashboard(): Promise<number> {
     return runDashboardImpl(this);
-  }
-
-  async runProjectService(): Promise<number> {
-    return runProjectServiceImpl(this);
   }
 
   async startProjectServiceHost(): Promise<void> {
