@@ -50,7 +50,7 @@ import {
   stopProjectService,
 } from "./daemon.js";
 import { requestCoreCommand } from "./core-command-client.js";
-import { CORE_COMMAND_NAMES, type CoreStatusProject } from "./core-command-contract.js";
+import { CORE_COMMAND_NAMES, type CoreProjectServiceState, type CoreStatusProject } from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
@@ -854,6 +854,12 @@ function coreProjectServicePid(project: CoreStatusProject | null): number | null
     : null;
 }
 
+async function ensureCoreProjectServiceForCli(projectRoot: string): Promise<CoreProjectServiceState> {
+  const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+  await waitForVerifiedProjectService(projectRoot);
+  return response.result.project;
+}
+
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
@@ -1228,8 +1234,17 @@ program
       process.chdir(projectRoot);
     }
     await initPaths(projectRoot);
-    const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
-    console.log(`aimux serve: daemon managing ${projectRoot} (service pid ${response.result.project.pid})`);
+    let project: CoreProjectServiceState;
+    try {
+      project = await ensureCoreProjectServiceForCli(projectRoot);
+    } catch (error) {
+      if (!(error instanceof Error) && !isAimuxBuildDriftError(error)) {
+        throw error;
+      }
+      await restartStaleControlPlane(projectRoot);
+      project = await ensureCoreProjectServiceForCli(projectRoot);
+    }
+    console.log(`aimux serve: daemon managing ${projectRoot} (service pid ${project.pid})`);
   });
 
 hostCmd
