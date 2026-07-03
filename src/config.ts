@@ -53,13 +53,6 @@ export interface RuntimeConfig {
   tmux: TmuxRuntimeConfig;
 }
 
-export interface ExposeConfig {
-  /** Initial Exposé scope outside the meta dashboard; meta dashboard still starts at global. */
-  initialScope: "worktree" | "project" | "global";
-  /** When true, non-selected tiles are dimmed (preview receded to gray, border dimmed); off keeps every tile in full color. */
-  dimInactive: boolean;
-}
-
 export interface LoopConfig {
   /** How often the daemon scans for in-loop agents that stopped early. */
   scanIntervalMs: number;
@@ -115,7 +108,6 @@ export interface AimuxConfig {
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   loop: LoopConfig;
-  expose: ExposeConfig;
   tools: Record<string, ToolConfig>;
 }
 
@@ -207,10 +199,6 @@ const DEFAULT_CONFIG: AimuxConfig = {
     scanIntervalMs: 15000,
     nudgeCooldownMs: 60000,
     autoNudgeWithoutOverseer: false,
-  },
-  expose: {
-    initialScope: "worktree",
-    dimInactive: false,
   },
   tools: {
     claude: {

@@ -67,9 +67,6 @@ import {
   sendDesktopNotificationAndWait,
 } from "./desktop-notifier.js";
 import { requestJson } from "./http-client.js";
-import { runTmuxSwitcher } from "./tmux/switcher.js";
-import { registerExposeCommand } from "./popup-expose.js";
-import { runTmuxMetaDashboard } from "./tmux/meta-dashboard.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
@@ -2926,85 +2923,6 @@ program
       process.exit(1);
     }
   });
-
-program
-  .command("switcher")
-  .description("Internal tmux popup switcher")
-  .requiredOption("--project-root <path>", "Project root")
-  .requiredOption("--project-state-dir <path>", "Project state dir")
-  .option("--current-client-session <name>", "Current client session")
-  .option("--client-tty <tty>", "Client tty")
-  .option("--current-window <name>", "Current window name")
-  .option("--current-window-id <id>", "Current window id")
-  .option("--current-path <path>", "Current path")
-  .option("--pane-id <id>", "Current pane id")
-  .action(
-    async (opts: {
-      projectRoot: string;
-      projectStateDir: string;
-      currentClientSession?: string;
-      clientTty?: string;
-      currentWindow?: string;
-      currentWindowId?: string;
-      currentPath?: string;
-      paneId?: string;
-    }) => {
-      const code = await runTmuxSwitcher({
-        projectRoot: pathResolve(opts.projectRoot),
-        projectStateDir: pathResolve(opts.projectStateDir),
-        currentClientSession: opts.currentClientSession,
-        clientTty: opts.clientTty,
-        currentWindow: opts.currentWindow,
-        currentWindowId: opts.currentWindowId,
-        currentPath: opts.currentPath,
-        paneId: opts.paneId,
-      });
-      process.exit(code);
-    },
-  );
-
-// Defined in popup-expose.ts so bin/aimux can run exposé through that lightweight entry
-// (no full-CLI load); registered here too so `aimux expose` works via the main program.
-registerExposeCommand(program);
-
-program
-  .command("meta-dashboard")
-  .description("Internal cross-project meta dashboard window")
-  .requiredOption("--project-root <path>", "Project root")
-  .requiredOption("--project-state-dir <path>", "Project state dir")
-  .option("--current-client-session <name>", "Current client session")
-  .option("--client-tty <tty>", "Client tty")
-  .option("--current-window <name>", "Current window name")
-  .option("--current-window-id <id>", "Current window id")
-  .option("--current-path <path>", "Current path")
-  .option("--pane-id <id>", "Current pane id")
-  .option("--aimux-home <path>", "AIMUX_HOME to scope the project registry")
-  .action(
-    async (opts: {
-      projectRoot: string;
-      projectStateDir: string;
-      currentClientSession?: string;
-      clientTty?: string;
-      currentWindow?: string;
-      currentWindowId?: string;
-      currentPath?: string;
-      paneId?: string;
-      aimuxHome?: string;
-    }) => {
-      const code = await runTmuxMetaDashboard({
-        projectRoot: pathResolve(opts.projectRoot),
-        projectStateDir: pathResolve(opts.projectStateDir),
-        currentClientSession: opts.currentClientSession,
-        clientTty: opts.clientTty,
-        currentWindow: opts.currentWindow,
-        currentWindowId: opts.currentWindowId,
-        currentPath: opts.currentPath,
-        paneId: opts.paneId,
-        aimuxHome: opts.aimuxHome,
-      });
-      process.exit(code);
-    },
-  );
 
 program
   .command("kill <sessionId>")

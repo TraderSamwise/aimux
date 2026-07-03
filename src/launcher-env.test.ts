@@ -39,11 +39,8 @@ describe("launcher environment targeting", () => {
 });
 
 describe("cliEntryFor", () => {
-  it("routes the expose subcommand to the lightweight popup entry", () => {
-    expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("expose");
-  });
-
-  it("routes everything else (and the bare invocation) to the full CLI", () => {
+  it("routes every invocation to the full CLI", () => {
+    expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "spawn"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "--help"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux"])).toBe("main");
