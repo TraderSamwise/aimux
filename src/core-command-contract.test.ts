@@ -36,6 +36,7 @@ describe("core command route", () => {
     expect(body.command).toBe(CORE_COMMAND_NAMES.status);
     expect((body.result as CoreStatusResult).daemon.pid).toBe(process.pid);
     expect(Array.isArray((body.result as CoreStatusResult).projects)).toBe(true);
+    expect(body.result).toHaveProperty("relay");
     for (const project of (body.result as CoreStatusResult).projects) {
       expect(project).toHaveProperty("id");
       expect(project).toHaveProperty("name");
@@ -58,6 +59,22 @@ describe("core command route", () => {
       id: "bad",
       command: "core.missing",
       error: "unknown core command",
+    });
+  });
+
+  it("rejects project commands without a projectRoot", async () => {
+    const daemon = new AimuxDaemon();
+    const result = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "bad-project",
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: {},
+    });
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({
+      ok: false,
+      id: "bad-project",
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      error: "projectRoot is required",
     });
   });
 });
