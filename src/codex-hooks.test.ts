@@ -16,14 +16,21 @@ import {
 const MANAGED_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"];
 
 describe("buildCodexHookCommand", () => {
-  it("is self-gating on AIMUX_SESSION_ID and falls back to empty JSON", () => {
+  it("posts through the project service endpoint without legacy CLI adapters", () => {
     const cmd = buildCodexHookCommand("permission-request");
-    expect(cmd).toContain('[ -n "$AIMUX_SESSION_ID" ]');
-    expect(cmd).toContain("codex-hook");
+    expect(cmd).toContain("AIMUX_SESSION_ID");
+    expect(cmd).toContain("AIMUX_METADATA_ENDPOINT_FILE");
+    expect(cmd).toContain("/hooks/codex");
+    expect(cmd).toContain("curl");
+    expect(cmd).toContain("x-aimux-session-id");
+    expect(cmd).not.toContain("--url-query");
+    expect(cmd).toContain("aimux hook $1");
+    expect(cmd).toContain("post failed");
     expect(cmd).toContain("permission-request");
-    expect(cmd).toContain('--session "$AIMUX_SESSION_ID"');
-    expect(cmd).toContain('--project "$AIMUX_PROJECT_ROOT"');
-    expect(cmd.endsWith("|| echo '{}'")).toBe(true);
+    expect(cmd).not.toContain("codex-hook");
+    expect(cmd).not.toContain("--project");
+    expect(cmd).not.toContain("bin/aimux");
+    expect(cmd.endsWith("'")).toBe(true);
   });
 });
 
@@ -35,7 +42,8 @@ describe("codexLaunchHookArgs", () => {
 
 describe("isAimuxOwnedCodexHookCommand", () => {
   it("matches only aimux commands, not cmux or foreign ones", () => {
-    expect(isAimuxOwnedCodexHookCommand("node /x/main.js codex-hook stop")).toBe(true);
+    expect(isAimuxOwnedCodexHookCommand("curl http://127.0.0.1:1/hooks/codex?action=stop")).toBe(true);
+    expect(isAimuxOwnedCodexHookCommand("aimux codex-hook stop --project /tmp/repo")).toBe(true);
     expect(isAimuxOwnedCodexHookCommand("cmux hooks codex stop")).toBe(false);
     expect(isAimuxOwnedCodexHookCommand("my-own-thing.sh")).toBe(false);
     expect(isAimuxOwnedCodexHookCommand(undefined)).toBe(false);
@@ -53,9 +61,9 @@ describe("mergeCodexHooks", () => {
     }
   });
 
-  it("gives PermissionRequest a long timeout and lifecycle events a short one", () => {
+  it("keeps Codex hook posts short-lived", () => {
     const merged = mergeCodexHooks({});
-    expect(merged.hooks!.PermissionRequest[0].hooks![0].timeout).toBe(120000);
+    expect(merged.hooks!.PermissionRequest[0].hooks![0].timeout).toBe(5000);
     expect(merged.hooks!.Stop[0].hooks![0].timeout).toBe(5000);
   });
 
@@ -74,6 +82,17 @@ describe("mergeCodexHooks", () => {
     const once = mergeCodexHooks({});
     const twice = mergeCodexHooks(once);
     expect(twice).toEqual(once);
+  });
+
+  it("removes legacy aimux-owned codex-hook commands while adding the service hook", () => {
+    const existing: CodexHooksFile = {
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "aimux codex-hook stop --project /tmp/repo" }] }] },
+    };
+    const merged = mergeCodexHooks(existing);
+    const stop = merged.hooks!.Stop;
+    expect(stop).toHaveLength(1);
+    expect(stop[0].hooks![0].command).toContain("/hooks/codex");
+    expect(stop[0].hooks![0].command).not.toContain("codex-hook");
   });
 
   it("preserves unrelated top-level keys", () => {
