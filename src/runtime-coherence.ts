@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
-import { loadDaemonInfo, loadDaemonState, type AimuxDaemonInfo, type ProjectServiceState } from "./daemon.js";
+import { loadDaemonInfo, loadDaemonState, type AimuxDaemonInfo, type ProjectServiceState } from "./daemon-state.js";
 import { requestJson } from "./http-client.js";
 import { loadMetadataEndpoint, type MetadataApiEndpoint } from "./metadata-store.js";
 import { getProjectStateDirFor } from "./paths.js";

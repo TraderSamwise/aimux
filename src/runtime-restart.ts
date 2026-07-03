@@ -1,14 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
-import {
-  ensureDaemonRunning,
-  ensureProjectService,
-  stopDaemon,
-  stopProjectService,
-  type AimuxDaemonInfo,
-  type ProjectServiceState,
-} from "./daemon.js";
+import { ensureDaemonRunning, ensureProjectService, stopDaemon, stopProjectService } from "./daemon-supervisor.js";
+import { type AimuxDaemonInfo, type ProjectServiceState } from "./daemon-state.js";
 import { resolveDashboardTarget } from "./dashboard/targets.js";
 import {
   buildRuntimeCoherenceReport,

@@ -24,7 +24,7 @@ const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-he
 const launchContractUsage = [
   {
     name: "getAimuxDaemonLaunchCommand",
-    allowedFiles: new Set(["src/cli-launcher.ts", "src/daemon.ts", "src/cli-launcher.test.ts"]),
+    allowedFiles: new Set(["src/cli-launcher.ts", "src/daemon-supervisor.ts", "src/cli-launcher.test.ts"]),
   },
   {
     name: "getAimuxDashboardLaunchCommand",

@@ -1,4 +1,4 @@
-import { requestDaemonJson } from "./daemon.js";
+import { requestDaemonJson } from "./daemon-supervisor.js";
 import { externalNotificationsDisabled } from "./external-notifications.js";
 import type { AlertEvent } from "./project-events.js";
 
