@@ -681,6 +681,16 @@ function isLocalControlPlaneTransientStartupError(error: unknown): boolean {
   );
 }
 
+function isRepairableCoreProjectStartupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    error instanceof ProjectServiceVersionError ||
+    isAimuxBuildDriftError(error) ||
+    isLocalControlPlaneTransientStartupError(error) ||
+    message.includes("project service did not become ready")
+  );
+}
+
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -858,6 +868,18 @@ async function ensureCoreProjectServiceForCli(projectRoot: string): Promise<Core
   const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
   await waitForVerifiedProjectService(projectRoot);
   return response.result.project;
+}
+
+async function ensureCoreProjectServiceForCliWithRepair(projectRoot: string): Promise<CoreProjectServiceState> {
+  try {
+    return await ensureCoreProjectServiceForCli(projectRoot);
+  } catch (error) {
+    if (!isRepairableCoreProjectStartupError(error)) {
+      throw error;
+    }
+    await restartStaleControlPlane(projectRoot);
+    return await ensureCoreProjectServiceForCli(projectRoot);
+  }
 }
 
 program
@@ -1234,16 +1256,7 @@ program
       process.chdir(projectRoot);
     }
     await initPaths(projectRoot);
-    let project: CoreProjectServiceState;
-    try {
-      project = await ensureCoreProjectServiceForCli(projectRoot);
-    } catch (error) {
-      if (!(error instanceof Error) && !isAimuxBuildDriftError(error)) {
-        throw error;
-      }
-      await restartStaleControlPlane(projectRoot);
-      project = await ensureCoreProjectServiceForCli(projectRoot);
-    }
+    const project = await ensureCoreProjectServiceForCliWithRepair(projectRoot);
     console.log(`aimux serve: daemon managing ${projectRoot} (service pid ${project.pid})`);
   });
 
@@ -1318,7 +1331,7 @@ hostCmd
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
     await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
-    await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+    await ensureCoreProjectServiceForCliWithRepair(projectRoot);
     if (opts.serve) {
       console.log(`Restarted project service for ${projectRoot}`);
       return;
