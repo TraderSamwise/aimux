@@ -609,6 +609,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       reloadDashboards: false,
       verifyDashboards: false,
       abortSignal: repairAbortController.signal,
+      abortDrainMs: 5_000,
     });
     repairTimeout = setTimeout(() => {
       fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
