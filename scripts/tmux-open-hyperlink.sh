@@ -3,27 +3,27 @@ set -eu
 
 resolve_pr_url() {
   [ -n "${AIMUX_PROJECT_STATE_DIR-}" ] || return 1
-  [ -n "${AIMUX_PROJECT_STATE_DIR-}" ] || return 1
   [ -n "${AIMUX_CURRENT_WINDOW_ID-}" ] || return 1
-  node - <<'NODE'
-const fs = require("fs");
-const path = require("path");
-const stateDir = process.env.AIMUX_PROJECT_STATE_DIR;
-const windowId = process.env.AIMUX_CURRENT_WINDOW_ID;
-try {
-  const file = path.join(stateDir, "statusline.json");
-  const data = JSON.parse(fs.readFileSync(file, "utf8"));
-  for (const session of data.sessions || []) {
-    if (session.tmuxWindowId !== windowId) continue;
-    const pr = data.metadata?.[session.id]?.context?.pr;
-    if (pr?.url) {
-      process.stdout.write(pr.url);
-      process.exit(0);
-    }
-  }
-} catch {}
-process.exit(1);
-NODE
+  python3 - <<'PY'
+import json, os, pathlib
+
+state_dir = os.environ.get("AIMUX_PROJECT_STATE_DIR", "")
+window_id = os.environ.get("AIMUX_CURRENT_WINDOW_ID", "")
+try:
+    data = json.loads((pathlib.Path(state_dir) / "statusline.json").read_text())
+    for session in data.get("sessions") or []:
+        if session.get("tmuxWindowId") != window_id:
+            continue
+        metadata = (data.get("metadata") or {}).get(session.get("id")) or {}
+        pr = (metadata.get("context") or {}).get("pr") or {}
+        url = pr.get("url")
+        if url:
+            print(url, end="")
+            raise SystemExit(0)
+except Exception:
+    pass
+raise SystemExit(1)
+PY
 }
 
 extract_from_text() {

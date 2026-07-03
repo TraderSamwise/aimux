@@ -126,6 +126,9 @@ export interface RestartAimuxControlPlaneOptions {
   verificationTimeoutMs?: number;
   verificationIntervalMs?: number;
   repairNotifier?: RepairNotifier | null;
+  reloadDashboards?: boolean;
+  verifyDashboards?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -134,6 +137,14 @@ function uniqueSorted(values: string[]): string[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function restartAbortError(): Error {
+  return new Error("aimux restart aborted");
+}
+
+function throwIfRestartAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw restartAbortError();
 }
 
 function runtimeRestartLockPath(): string {
@@ -282,9 +293,13 @@ function selectProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string
   return uniqueSorted(roots);
 }
 
-function projectNeedsCurrentRuntimeRepair(project: RuntimeCoherenceReport["projects"][number]): boolean {
+function projectNeedsCurrentRuntimeRepair(
+  project: RuntimeCoherenceReport["projects"][number],
+  options: { verifyDashboards: boolean },
+): boolean {
   if (project.runtime.rebuildRequired) return true;
   if (project.service.status !== "ok") return true;
+  if (!options.verifyDashboards) return false;
   return project.dashboards.some((dashboard) => dashboard.status !== "ok");
 }
 
@@ -583,6 +598,7 @@ async function verifyPostRestartCoherence(input: {
   coherence: BuildRuntimeCoherenceReportOptions | undefined;
   ensureProjectService?: typeof ensureProjectService;
   projectRoots: Set<string>;
+  verifyDashboards: boolean;
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
   intervalMs: number;
@@ -601,7 +617,7 @@ async function verifyPostRestartCoherence(input: {
       const failedProjects = after.projects
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
-          return projectNeedsCurrentRuntimeRepair(project);
+          return projectNeedsCurrentRuntimeRepair(project, { verifyDashboards: input.verifyDashboards });
         })
         .map((project) => project.projectRoot);
       const unhealthyProjects = [...missingProjects, ...failedProjects];
@@ -642,6 +658,7 @@ async function verifyPostRestartCoherence(input: {
 export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
+  throwIfRestartAborted(options.abortSignal);
   const lockPath = tryAcquireRuntimeRestartLock(options.isPidAlive ?? defaultIsPidAlive);
   if (!lockPath) {
     throw new Error("aimux restart is already running");
@@ -658,8 +675,13 @@ async function restartAimuxControlPlaneUnlocked(
 ): Promise<RuntimeRestartResult> {
   const now = options.now ?? (() => new Date());
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
+  throwIfRestartAborted(options.abortSignal);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
-  const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
+  const reloadDashboards = options.reloadDashboards ?? true;
+  const verifyDashboards = options.verifyDashboards ?? reloadDashboards;
+  const dashboardProjectRoots = reloadDashboards
+    ? selectDashboardProjectRoots(before, options.projectRoot)
+    : new Set<string>();
   const verificationProjectRoots = options.projectRoot ? new Set([options.projectRoot]) : new Set(projectRoots);
   const runtimeRepairProjectRoots = selectRuntimeRepairProjectRoots(before);
   const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
@@ -675,6 +697,7 @@ async function restartAimuxControlPlaneUnlocked(
   });
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
+  throwIfRestartAborted(options.abortSignal);
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -712,6 +735,7 @@ async function restartAimuxControlPlaneUnlocked(
     killPid,
   });
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
+  throwIfRestartAborted(options.abortSignal);
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const stopService =
     options.stopProjectService ?? (options.ensureProjectService ? async () => null : stopProjectService);
@@ -723,6 +747,7 @@ async function restartAimuxControlPlaneUnlocked(
   const projects: RuntimeRestartProjectResult[] = [];
 
   for (const projectRoot of projectRoots) {
+    throwIfRestartAborted(options.abortSignal);
     const result = emptyProjectResult(projectRoot);
     result.runtimeRebuildRequired = runtimeRepairProjectRoots.has(projectRoot);
     result.runtime = repairRuntimeContract({
@@ -794,6 +819,7 @@ async function restartAimuxControlPlaneUnlocked(
       coherence: options.coherence,
       ensureProjectService: ensureService,
       projectRoots: verificationProjectRoots,
+      verifyDashboards,
       sleep,
       timeoutMs: options.verificationTimeoutMs ?? POST_RESTART_VERIFICATION_TIMEOUT_MS,
       intervalMs: options.verificationIntervalMs ?? 250,
