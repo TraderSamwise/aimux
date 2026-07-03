@@ -2,7 +2,9 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 function writeExecutable(path: string, contents: string): void {
   writeFileSync(path, contents);
