@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CORE_COMMAND_NAMES } from "../core-command-contract.js";
 import { getProjectServiceManifest } from "../project-service-manifest.js";
 import { getProjectStateDirFor } from "../paths.js";
 import { loadLastUsedState } from "../last-used.js";
@@ -14,9 +15,7 @@ const mocks = vi.hoisted(() => ({
   loadMetadataEndpoint: vi.fn(),
   removeMetadataEndpoint: vi.fn(),
   updateSessionMetadata: vi.fn(),
-  ensureDaemonRunning: vi.fn(),
-  ensureProjectService: vi.fn(),
-  stopProjectService: vi.fn(),
+  requestCoreCommand: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
 }));
 
@@ -72,15 +71,36 @@ function successfulRepairResult(projectRoot = "/repo/app"): RuntimeRestartResult
   };
 }
 
+function projectServiceState(projectRoot = process.cwd(), pid = 2) {
+  return {
+    projectId: "repo",
+    projectRoot,
+    pid,
+    startedAt: "2026-06-21T00:00:00.000Z",
+    updatedAt: "2026-06-21T00:00:00.000Z",
+  };
+}
+
+function expectCoreProjectEnsure(projectRoot = process.cwd()): void {
+  expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+}
+
+function expectCoreProjectStop(projectRoot = process.cwd()): void {
+  expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+}
+
+function expectNoCoreProjectLifecycleCommand(): void {
+  expect(mocks.requestCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, expect.anything());
+  expect(mocks.requestCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, expect.anything());
+}
+
 function resetDashboardControlMocks(): void {
   vi.resetModules();
   mocks.requestJson.mockReset();
   mocks.loadMetadataEndpoint.mockReset();
   mocks.removeMetadataEndpoint.mockReset();
   mocks.updateSessionMetadata.mockReset();
-  mocks.ensureDaemonRunning.mockReset();
-  mocks.ensureProjectService.mockReset();
-  mocks.stopProjectService.mockReset();
+  mocks.requestCoreCommand.mockReset();
   mocks.restartAimuxControlPlane.mockReset();
   mocks.restartAimuxControlPlane.mockReturnValue(new Promise(() => {}));
   mocks.loadMetadataEndpoint.mockReturnValue({
@@ -89,9 +109,27 @@ function resetDashboardControlMocks(): void {
     pid: 2,
     updatedAt: "2026-06-21T00:00:00.000Z",
   });
-  mocks.ensureDaemonRunning.mockResolvedValue({ pid: 1, port: 43190 });
-  mocks.ensureProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
-  mocks.stopProjectService.mockResolvedValue({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
+  mocks.requestCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
+    if (command === CORE_COMMAND_NAMES.projectStop) {
+      return {
+        ok: true,
+        id: "test",
+        command,
+        issuedAt: "2026-06-21T00:00:00.000Z",
+        result: { project: projectServiceState(payload?.projectRoot) },
+      };
+    }
+    if (command === CORE_COMMAND_NAMES.projectEnsure) {
+      return {
+        ok: true,
+        id: "test",
+        command,
+        issuedAt: "2026-06-21T00:00:00.000Z",
+        result: { project: projectServiceState(payload?.projectRoot) },
+      };
+    }
+    return { ok: true, id: "test", command, issuedAt: "2026-06-21T00:00:00.000Z", result: {} };
+  });
 }
 
 vi.mock("../http-client.js", () => ({
@@ -106,10 +144,8 @@ vi.mock("../metadata-store.js", () => ({
   updateSessionMetadata: mocks.updateSessionMetadata,
 }));
 
-vi.mock("../daemon.js", () => ({
-  ensureDaemonRunning: mocks.ensureDaemonRunning,
-  ensureProjectService: mocks.ensureProjectService,
-  stopProjectService: mocks.stopProjectService,
+vi.mock("../core-command-client.js", () => ({
+  requestCoreCommand: mocks.requestCoreCommand,
 }));
 
 vi.mock("../runtime-restart.js", () => ({
@@ -152,8 +188,8 @@ describe("postToProjectService", () => {
 
     expect(result).toEqual({ ok: true });
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(4);
   });
 
@@ -173,8 +209,8 @@ describe("postToProjectService", () => {
 
     expect(result).toEqual({ ok: true });
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(projectRoot);
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(projectRoot);
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(projectRoot);
+    expectCoreProjectStop(projectRoot);
+    expectCoreProjectEnsure(projectRoot);
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalledWith(process.cwd());
   });
 
@@ -188,7 +224,7 @@ describe("postToProjectService", () => {
       postToProjectService({ dashboardServiceRecovery: null }, "/agents/spawn", { sessionId: "claude-1" }),
     ).rejects.toThrow("already exists");
 
-    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expectNoCoreProjectLifecycleCommand();
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
@@ -210,8 +246,7 @@ describe("postToProjectService", () => {
     });
 
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
-    expect(mocks.stopProjectService).not.toHaveBeenCalled();
-    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expectNoCoreProjectLifecycleCommand();
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
     expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
     expect(mocks.requestJson.mock.calls[1][0]).toContain("/desktop-state");
@@ -231,9 +266,8 @@ describe("postToProjectService", () => {
       value: 3,
     });
 
-    expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
-    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expectNoCoreProjectLifecycleCommand();
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 
@@ -248,9 +282,8 @@ describe("postToProjectService", () => {
       value: 8,
     });
 
-    expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
-    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expectNoCoreProjectLifecycleCommand();
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
     expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
     expect(mocks.requestJson.mock.calls[1][0]).toContain("/desktop-state");
@@ -265,9 +298,8 @@ describe("postToProjectService", () => {
       postToProjectService({ dashboardServiceRecovery: null }, "/agents/resume", { sessionId: "claude-1" }),
     ).rejects.toThrow("request timed out after 250ms");
 
-    expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
-    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expectNoCoreProjectLifecycleCommand();
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 
@@ -285,9 +317,8 @@ describe("postToProjectService", () => {
       ),
     ).rejects.toThrow("project service endpoint could not be verified");
 
-    expect(mocks.stopProjectService).not.toHaveBeenCalled();
     expect(mocks.removeMetadataEndpoint).not.toHaveBeenCalled();
-    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expectNoCoreProjectLifecycleCommand();
     expect(mocks.requestJson.mock.calls.every((call) => !String(call[0]).includes("/agents/resume"))).toBe(true);
   });
 
@@ -311,8 +342,8 @@ describe("postToProjectService", () => {
     ).resolves.toEqual({ ok: true, resumed: true });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
     expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
     expect(mocks.requestJson.mock.calls[2][0]).toContain("/agents/resume");
@@ -338,8 +369,8 @@ describe("postToProjectService", () => {
     ).resolves.toEqual({ ok: true, value: 7 });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
   });
 
@@ -364,8 +395,8 @@ describe("postToProjectService", () => {
     });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(3);
     expect(mocks.requestJson.mock.calls[0][0]).toContain("/health");
     expect(mocks.requestJson.mock.calls[2][0]).toContain("/desktop-state");
@@ -386,8 +417,8 @@ describe("postToProjectService", () => {
     });
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(4);
   });
 
@@ -404,8 +435,8 @@ describe("postToProjectService", () => {
       value: 6,
     });
 
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(4);
   });
 
@@ -413,7 +444,7 @@ describe("postToProjectService", () => {
     vi.useFakeTimers();
     try {
       mocks.loadMetadataEndpoint.mockReturnValue(null);
-      mocks.ensureDaemonRunning.mockImplementation(() => new Promise(() => {}));
+      mocks.requestCoreCommand.mockImplementation(() => new Promise(() => {}));
       const { postToProjectService } = await import("./dashboard-control.js");
 
       const request = postToProjectService(
@@ -435,14 +466,39 @@ describe("postToProjectService", () => {
   it("escalates a later restart request after an in-flight ensure completes", async () => {
     let finishEnsure: (() => void) | undefined;
     let ensureCalls = 0;
-    mocks.ensureProjectService.mockImplementation(() => {
+    mocks.requestCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
+      if (command === CORE_COMMAND_NAMES.projectStop) {
+        return {
+          ok: true,
+          id: "test",
+          command,
+          issuedAt: "2026-06-21T00:00:00.000Z",
+          result: { project: projectServiceState(payload?.projectRoot) },
+        };
+      }
+      if (command !== CORE_COMMAND_NAMES.projectEnsure) {
+        return { ok: true, id: "test", command, issuedAt: "2026-06-21T00:00:00.000Z", result: {} };
+      }
       ensureCalls += 1;
       if (ensureCalls === 1) {
         return new Promise((resolve) => {
-          finishEnsure = () => resolve({ projectId: "repo", projectRoot: process.cwd(), pid: 2 });
+          finishEnsure = () =>
+            resolve({
+              ok: true,
+              id: "test",
+              command,
+              issuedAt: "2026-06-21T00:00:00.000Z",
+              result: { project: projectServiceState(payload?.projectRoot, 2) },
+            });
         });
       }
-      return Promise.resolve({ projectId: "repo", projectRoot: process.cwd(), pid: 3 });
+      return {
+        ok: true,
+        id: "test",
+        command,
+        issuedAt: "2026-06-21T00:00:00.000Z",
+        result: { project: projectServiceState(payload?.projectRoot, 3) },
+      };
     });
     const { ensureDashboardControlPlane } = await import("./dashboard-control.js");
     const host = { dashboardServiceRecovery: null };
@@ -454,8 +510,10 @@ describe("postToProjectService", () => {
     finishEnsure?.();
     await Promise.all([first, second]);
 
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledTimes(2);
+    expectCoreProjectStop();
+    expect(
+      mocks.requestCoreCommand.mock.calls.filter((call) => call[0] === CORE_COMMAND_NAMES.projectEnsure),
+    ).toHaveLength(2);
   });
 
   it("validates metadata endpoints before dashboard streams use them", async () => {
@@ -493,8 +551,8 @@ describe("postToProjectService", () => {
     );
 
     expect(mocks.removeMetadataEndpoint).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.stopProjectService).toHaveBeenCalledWith(process.cwd());
-    expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
+    expectCoreProjectStop();
+    expectCoreProjectEnsure();
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
 });
