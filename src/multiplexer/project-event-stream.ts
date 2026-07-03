@@ -151,13 +151,11 @@ class DashboardProjectEventAdapter {
           `dashboard project event endpoint resolution failed: ${error instanceof Error ? error.message : String(error)}`,
           "dashboard",
         );
-        await this.recover(signal);
         await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
         continue;
       }
       if (signal.aborted || this.host.mode !== "dashboard") return;
       if (!endpoint) {
-        await this.recover(signal);
         await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
         continue;
       }
@@ -280,7 +278,8 @@ class DashboardProjectEventAdapter {
         );
       }
     }
-    if (tasks.length > 0 && results.every((result) => result.status === "rejected")) return;
+    const appliedRefresh = results.some((result) => result.status === "fulfilled" && result.value !== false);
+    if (tasks.length > 0 && !appliedRefresh) return;
     if (generation !== this.generation) return;
     if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(this.host, token))) return;
     this.host.renderCurrentDashboardView?.();

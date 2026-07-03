@@ -8,7 +8,7 @@ import { isHttpTimeoutError, requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataEndpoint, removeMetadataEndpoint } from "../metadata-store.js";
 import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
-import { requestCoreCommand } from "../core-command-client.js";
+import { sendCoreCommand } from "../core-command-transport.js";
 import { CORE_COMMAND_NAMES } from "../core-command-contract.js";
 import { resolveDashboardTarget } from "../dashboard/targets.js";
 import { getGlobalAimuxDir, getProjectStateDirFor } from "../paths.js";
@@ -1517,10 +1517,10 @@ export async function ensureDashboardControlPlane(
   const recovery = (async () => {
     const projectRoot = dashboardProjectRoot(host);
     if (opts.restartProjectService) {
-      await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+      await sendCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
       removeMetadataEndpoint(projectRoot);
     }
-    await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+    await sendCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
   })();
   host.dashboardServiceRecovery = recovery;
   try {
