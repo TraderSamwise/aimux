@@ -11,9 +11,11 @@ import {
 export async function requestCoreCommand<TCommand extends CoreCommandName>(
   command: TCommand,
   payload?: CoreCommandPayloadByName[TCommand],
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; ensureDaemon?: boolean } = {},
 ): Promise<CoreCommandOk<TCommand>> {
-  await ensureDaemonRunning();
+  if (options.ensureDaemon !== false) {
+    await ensureDaemonRunning();
+  }
   const envelope: CoreCommandEnvelope<TCommand> = {
     command,
     payload,

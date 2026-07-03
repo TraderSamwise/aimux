@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestJson } from "./http-client.js";
 import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -18,6 +19,7 @@ const STALE_SERVICE_TIMESTAMP = new Date(0).toISOString();
 const coreActorMock = vi.hoisted(() => ({
   starts: vi.fn(),
   stops: vi.fn(),
+  kills: vi.fn(),
   failStartFor: new Set<string>(),
   instances: [] as Array<{ projectRoot: string; running: boolean }>,
 }));
@@ -83,6 +85,11 @@ vi.mock("./core-project-actor.js", () => ({
     async stop() {
       this.running = false;
       coreActorMock.stops(this.projectRoot);
+    }
+
+    async kill() {
+      this.running = false;
+      coreActorMock.kills(this.projectRoot);
     }
   },
 }));
@@ -185,6 +192,7 @@ describe("daemon supervision", () => {
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
     coreActorMock.stops.mockReset();
+    coreActorMock.kills.mockReset();
     coreActorMock.failStartFor.clear();
     coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
@@ -240,6 +248,96 @@ describe("daemon supervision", () => {
     expect(first.pid).toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("ensures project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "ensure-project",
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectEnsure>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project.projectRoot).toBe(projectRoot);
+    expect(body.result.project.pid).toBe(process.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("stops project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "stop-project",
+      command: CORE_COMMAND_NAMES.projectStop,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectStop>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project?.projectRoot).toBe(projectRoot);
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.kills).not.toHaveBeenCalled();
+  });
+
+  it("kills project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "kill-project",
+      command: CORE_COMMAND_NAMES.projectKill,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectKill>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project?.projectRoot).toBe(projectRoot);
+    expect(coreActorMock.kills).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.stops).not.toHaveBeenCalled();
+  });
+
+  it("clears stale metadata endpoints when core stops a legacy project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const legacyPid = 42_000;
+    livePids.add(legacyPid);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeMetadataEndpointFor(legacyPid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: legacyPid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectStop,
+      payload: { projectRoot },
+    });
+
+    expect(response.status).toBe(200);
+    expect(existsSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"))).toBe(
+      false,
+    );
   });
 
   it("replaces a live project service when its health manifest is stale", async () => {
@@ -961,6 +1059,7 @@ describe("daemon routing (relay + proxy)", () => {
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
     coreActorMock.stops.mockReset();
+    coreActorMock.kills.mockReset();
     coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
     vi.mocked(requestJson).mockReset();
