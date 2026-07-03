@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AlertEvent } from "./project-events.js";
 
-vi.mock("./daemon-supervisor.js", () => ({
+vi.mock("./daemon-client.js", () => ({
   requestDaemonJson: vi.fn(() => Promise.resolve({ ok: true })),
 }));
 
-import { requestDaemonJson } from "./daemon-supervisor.js";
+import { requestDaemonJson } from "./daemon-client.js";
 import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
 
 const request = vi.mocked(requestDaemonJson);

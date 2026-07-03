@@ -1,4 +1,5 @@
-import { ensureDaemonRunning, requestDaemonJson } from "./daemon-supervisor.js";
+import { requestDaemonJson } from "./daemon-client.js";
+import { ensureDaemonRunning } from "./daemon-supervisor.js";
 import {
   CORE_API_ROUTES,
   type CoreCommandEnvelope,
