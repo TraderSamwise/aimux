@@ -698,7 +698,7 @@ describe("runtime coherence report", () => {
           args: "/Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop --project /repo/alpha",
         },
       ]),
-      getAimuxCliLaunchCommand: vi.fn(() => ({
+      getAimuxCurrentCliIdentity: vi.fn(() => ({
         command: "/opt/aimux/bin/aimux",
         args: [],
         source: "stable-shim",

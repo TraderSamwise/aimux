@@ -15,7 +15,7 @@ import {
 import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { AIMUX_VERSION } from "./version.js";
-import { getAimuxCliLaunchCommand, type AimuxCliLaunchCommand } from "./cli-launcher.js";
+import { getAimuxCurrentCliIdentity, type AimuxCliLaunchCommand } from "./cli-launcher.js";
 
 export type RuntimeCoherenceStatus = "ok" | "missing" | "mismatch" | "unreachable";
 export type RuntimeCoherenceProjectStatus = "ok" | "needs-restart";
@@ -128,7 +128,7 @@ export interface BuildRuntimeCoherenceReportOptions {
   requestJson?: typeof requestJson;
   readProcessArgs?: (pid: number) => string | null;
   listProcessArgs?: () => Array<{ pid: number; args: string }>;
-  getAimuxCliLaunchCommand?: typeof getAimuxCliLaunchCommand;
+  getAimuxCurrentCliIdentity?: typeof getAimuxCurrentCliIdentity;
   getDashboardBuildStamp?: (projectRoot: string) => string;
   getProjectServiceManifest?: () => ProjectServiceManifest;
   getRuntimeOwnerId?: () => string;
@@ -502,7 +502,7 @@ export async function buildRuntimeCoherenceReport(
   const daemonState = (options.loadDaemonState ?? loadDaemonState)();
   const expectedService = (options.getProjectServiceManifest ?? getProjectServiceManifest)();
   const expectedRuntimeOwner = (options.getRuntimeOwnerId ?? getRuntimeOwnerId)();
-  const cliLaunch = (options.getAimuxCliLaunchCommand ?? getAimuxCliLaunchCommand)();
+  const cliLaunch = (options.getAimuxCurrentCliIdentity ?? getAimuxCurrentCliIdentity)();
   const readProcessArgs = options.readProcessArgs ?? defaultReadProcessArgs;
   const listProcessArgs = options.listProcessArgs ?? defaultListProcessArgs;
   const tmuxAvailable = tmux.isAvailable();
