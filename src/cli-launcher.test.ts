@@ -44,7 +44,7 @@ describe("aimux launch contracts", () => {
     });
     expect(launch.command).toBe(process.execPath);
     expect(launch.args[0]).toMatch(/main\.(js|ts)$/);
-    expect(launch.args.at(-1)).toBe("run");
+    expect(launch.args.slice(1)).toEqual(["daemon", "run"]);
     expect(launch.source).toBe("current-entry");
   });
 
