@@ -312,6 +312,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
           host.renderCurrentDashboardView();
           return;
         }
+        startProjectEventStreamOnce();
         host.showDashboardError?.("Aimux repair failed", [
           host.dashboardModelServiceRefreshError instanceof Error
             ? host.dashboardModelServiceRefreshError.message
@@ -322,6 +323,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       .catch((error: unknown) => {
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
         if (!isRepairLifecycleCurrent()) return;
+        startProjectEventStreamOnce();
         host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
       });
   } else {
