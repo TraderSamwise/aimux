@@ -7,6 +7,7 @@ import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 import { getAimuxDaemonLaunchCommand } from "./cli-launcher.js";
+import { requestDaemonJson } from "./daemon-client.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -252,23 +253,6 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<St
   });
   clearDaemonInfo();
   return { ...info, stoppedProjectServices };
-}
-
-export async function requestDaemonJson(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<any> {
-  const info = loadDaemonInfo();
-  if (!info) {
-    throw new Error("aimux daemon is not running");
-  }
-  const { status, json } = await requestJson(`${getDaemonBaseUrl(info.port)}${path}`, {
-    method: init?.method,
-    headers: init?.headers as Record<string, string> | undefined,
-    body: init?.body,
-    timeoutMs: init?.timeoutMs,
-  });
-  if (status < 200 || status >= 300 || json?.ok === false) {
-    throw new Error(json?.error || `daemon request failed: ${status}`);
-  }
-  return json;
 }
 
 export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = {}): Promise<AimuxDaemonInfo> {

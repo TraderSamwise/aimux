@@ -8,6 +8,9 @@ const daemonMocks = vi.hoisted(() => ({
 
 vi.mock("./daemon-supervisor.js", () => ({
   ensureDaemonRunning: daemonMocks.ensureDaemonRunning,
+}));
+
+vi.mock("./daemon-client.js", () => ({
   requestDaemonJson: daemonMocks.requestDaemonJson,
 }));
 
