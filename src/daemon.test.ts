@@ -15,6 +15,12 @@ let childrenByPid = new Map<number, EventEmitter>();
 const spawnMock = vi.fn();
 const execFileSyncMock = vi.fn();
 const STALE_SERVICE_TIMESTAMP = new Date(0).toISOString();
+const coreActorMock = vi.hoisted(() => ({
+  starts: vi.fn(),
+  stops: vi.fn(),
+  failStartFor: new Set<string>(),
+  instances: [] as Array<{ projectRoot: string; running: boolean }>,
+}));
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -31,13 +37,54 @@ vi.mock("./paths.js", () => ({
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
-  getProjectServiceStdioLogPathFor: (cwd: string) =>
-    join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`, "logs", "project-service-stdio.log"),
 }));
 
 vi.mock("./project-scanner.js", () => ({
   listDesktopProjects: () => listMockDesktopProjects(),
   listRegisteredDesktopProjects: () => listMockDesktopProjects(),
+}));
+
+vi.mock("./core-project-actor.js", () => ({
+  CoreProjectActor: class {
+    private running = false;
+    private readonly projectRoot: string;
+    private readonly projectId: string;
+    private readonly startedAt = new Date().toISOString();
+
+    constructor(projectRoot: string) {
+      this.projectRoot = projectRoot;
+      this.projectId = `proj-${basename(projectRoot)}`;
+      coreActorMock.instances.push(this as unknown as { projectRoot: string; running: boolean });
+    }
+
+    getState() {
+      return {
+        projectId: this.projectId,
+        projectRoot: this.projectRoot,
+        pid: process.pid,
+        startedAt: this.startedAt,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    isRunning() {
+      return this.running;
+    }
+
+    async start() {
+      coreActorMock.starts(this.projectRoot);
+      if (coreActorMock.failStartFor.has(this.projectRoot)) {
+        throw new Error("actor start failed");
+      }
+      this.running = true;
+      return this.getState();
+    }
+
+    async stop() {
+      this.running = false;
+      coreActorMock.stops(this.projectRoot);
+    }
+  },
 }));
 
 function listMockDesktopProjects() {
@@ -136,6 +183,10 @@ describe("daemon supervision", () => {
     childrenByPid = new Map<number, EventEmitter>();
     resetLoggingForTests();
     spawnMock.mockReset();
+    coreActorMock.starts.mockReset();
+    coreActorMock.stops.mockReset();
+    coreActorMock.failStartFor.clear();
+    coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
@@ -186,7 +237,9 @@ describe("daemon supervision", () => {
     const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(first.pid).toBe(second.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(first.pid).toBe(process.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("replaces a live project service when its health manifest is stale", async () => {
@@ -206,10 +259,9 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
-    expect(livePids.has(first.pid)).toBe(false);
-    expect(livePids.has(second.pid)).toBe(true);
+    expect(second.pid).toBe(first.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("replaces a live project service when health omits the manifest", async () => {
@@ -226,8 +278,9 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(second.pid).toBe(first.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("replaces a live project service when endpoint pid points elsewhere", async () => {
@@ -241,9 +294,9 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(requestJson)).toHaveBeenCalledTimes(2);
+    expect(second.pid).toBe(first.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
   });
 
   it("replaces a live project service when health pid points elsewhere", async () => {
@@ -261,8 +314,9 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(second.pid).toBe(first.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("drops an unverified stale service pid without signaling it during replacement", async () => {
@@ -288,6 +342,51 @@ describe("daemon supervision", () => {
     expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGKILL");
   });
 
+  it("kills a wedged legacy project service before starting the core actor", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const stalePid = 41_002;
+    livePids.add(stalePid);
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: stalePid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+    vi.mocked(process.kill).mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      const numericPid = Number(pid);
+      if (!livePids.has(numericPid)) throw new Error(`pid ${numericPid} is not alive`);
+      if (signal === "SIGKILL") {
+        livePids.delete(numericPid);
+        childrenByPid.get(numericPid)?.emit("exit", 0, signal);
+      }
+      return true;
+    }) as typeof process.kill);
+
+    const replacement = await (daemon as any).ensureProject(projectRoot);
+
+    expect(replacement.pid).toBe(process.pid);
+    expect(process.kill).toHaveBeenCalledWith(stalePid, "SIGTERM");
+    expect(process.kill).toHaveBeenCalledWith(stalePid, "SIGKILL");
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not keep a failed project actor after startup fails", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    coreActorMock.failStartFor.add(projectRoot);
+
+    await expect((daemon as any).ensureProject(projectRoot)).rejects.toThrow("actor start failed");
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+
+    coreActorMock.failStartFor.delete(projectRoot);
+    const state = await (daemon as any).ensureProject(projectRoot);
+
+    expect(state.pid).toBe(process.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(2);
+  });
+
   it("respawns a dead project service on the next ensure call", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
@@ -297,8 +396,9 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(second.pid).toBe(first.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("keeps a just-started live project service when its metadata endpoint is missing", async () => {
@@ -310,8 +410,8 @@ describe("daemon supervision", () => {
     const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(second.pid).toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-    expect(livePids.has(first.pid)).toBe(true);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("waits for a just-started project service to publish its metadata endpoint", async () => {
@@ -323,11 +423,11 @@ describe("daemon supervision", () => {
       force: true,
     });
 
-    setTimeout(() => writeMetadataEndpointFor(first.pid), 25);
     const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(second.pid).toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("waits for a repeatedly-unhealthy project service to exit before spawning a replacement", async () => {
@@ -361,16 +461,16 @@ describe("daemon supervision", () => {
     // Transient misses below the threshold are tolerated: the same service stays.
     expect((await (daemon as any).ensureProject(projectRoot)).pid).toBe(first.pid);
     expect((await (daemon as any).ensureProject(projectRoot)).pid).toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
 
-    // The threshold-crossing third failure replaces it, waiting for the old exit.
     const replacementPromise = (daemon as any).ensureProject(projectRoot);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
 
     const replacement = await replacementPromise;
-    expect(replacement.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(replacement.pid).toBe(first.pid);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("serializes concurrent unhealthy project ensures into one replacement spawn", async () => {
@@ -401,8 +501,9 @@ describe("daemon supervision", () => {
     ]);
 
     expect(second.pid).toBe(third.pid);
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(second.pid).toBe(first.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("keeps dead services in daemon state so repair can rediscover the project", async () => {
@@ -482,7 +583,7 @@ describe("daemon supervision", () => {
     expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
   });
 
-  it("inherits logging env and captures project service stdio when logging is enabled", async () => {
+  it("starts in-process project actors when logging is enabled", async () => {
     configureLogging({
       enabled: true,
       level: "debug",
@@ -496,28 +597,10 @@ describe("daemon supervision", () => {
 
     const daemon = new AimuxDaemon();
     const project = await (daemon as any).ensureProject(projectRoot);
-    const args = spawnMock.mock.calls[0]?.[1] as string[];
-    const options = spawnMock.mock.calls[0]?.[2] as {
-      env?: Record<string, string | undefined>;
-      stdio?: unknown;
-    };
 
-    expect(project.pid).toBe(20_000);
-    expect(args).toEqual([
-      expect.any(String),
-      "__project-service-internal",
-      "--project-id",
-      `proj-${basename(projectRoot)}`,
-      "--project-root",
-      projectRoot,
-    ]);
-    expect(options.env).toMatchObject({
-      AIMUX_LOG: "1",
-      AIMUX_LOG_LEVEL: "debug",
-      AIMUX_LOG_CATEGORIES: "daemon,session",
-    });
-    expect(Array.isArray(options.stdio)).toBe(true);
-    childrenByPid.get(project.pid)?.emit("exit", 0, null);
+    expect(project.pid).toBe(process.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("reads daemon host and port from environment overrides", async () => {
@@ -875,6 +958,11 @@ describe("daemon routing (relay + proxy)", () => {
     livePids = new Set();
     childrenByPid = new Map();
     nextPid = 30_000;
+    spawnMock.mockReset();
+    coreActorMock.starts.mockReset();
+    coreActorMock.stops.mockReset();
+    coreActorMock.instances.length = 0;
+    execFileSyncMock.mockReset();
     vi.mocked(requestJson).mockReset();
     mockHealthyRequests();
 
@@ -1157,7 +1245,7 @@ describe("daemon routing (relay + proxy)", () => {
     expect(project.service).toBeNull();
   });
 
-  it("reports verified retained project records as live services", async () => {
+  it("does not report retained legacy project records as live services", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     const retainedPid = 43_102;
@@ -1181,11 +1269,11 @@ describe("daemon routing (relay + proxy)", () => {
 
     expect(res.status).toBe(200);
     const [project] = (res.body as any).projects;
-    expect(project.serviceAlive).toBe(true);
-    expect(project.service).toMatchObject({ pid: retainedPid });
+    expect(project.serviceAlive).toBe(false);
+    expect(project.service).toBeNull();
   });
 
-  it("caches retained project service verification for project list polling", async () => {
+  it("does not verify retained legacy project records during project list polling", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     const retainedPid = 43_103;
@@ -1210,10 +1298,10 @@ describe("daemon routing (relay + proxy)", () => {
     await daemon.routeRequest("GET", "/projects");
 
     const psCalls = execFileSyncMock.mock.calls.filter(([cmd]) => cmd === "ps");
-    expect(psCalls).toHaveLength(1);
+    expect(psCalls).toHaveLength(0);
   });
 
-  it("drops cached retained project service liveness when the pid exits", async () => {
+  it("keeps retained legacy project records non-live when the pid exits", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     const retainedPid = 43_104;
@@ -1237,7 +1325,8 @@ describe("daemon routing (relay + proxy)", () => {
     livePids.delete(retainedPid);
     const second = await daemon.routeRequest("GET", "/projects");
 
-    expect((first.body as any).projects[0].serviceAlive).toBe(true);
+    expect((first.body as any).projects[0].serviceAlive).toBe(false);
+    expect((first.body as any).projects[0].service).toBeNull();
     expect((second.body as any).projects[0].serviceAlive).toBe(false);
     expect((second.body as any).projects[0].service).toBeNull();
   });
@@ -1269,7 +1358,7 @@ describe("daemon routing (relay + proxy)", () => {
 
     const after = await daemon.routeRequest("GET", "/projects");
     expect((after.body as any).projects[0].serviceAlive).toBe(true);
-    expect((after.body as any).projects[0].service).toMatchObject({ pid: 30_000 });
+    expect((after.body as any).projects[0].service).toMatchObject({ pid: process.pid });
   });
 
   it("allows browser preflight requests to daemon routes", async () => {

@@ -23,8 +23,8 @@ import {
   resumeSessions,
   restoreSessions,
   runDashboard,
-  runProjectService,
   summarizeLaunchArgs,
+  startProjectServiceHost,
 } from "./session-launch.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 
@@ -1587,9 +1587,8 @@ describe("resumeSessions", () => {
   });
 });
 
-describe("runProjectService", () => {
+describe("startProjectServiceHost", () => {
   it("adopts live topology before exposing the project service", async () => {
-    const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
       tmuxRuntimeManager: {
@@ -1598,7 +1597,7 @@ describe("runProjectService", () => {
       syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
-      startStatusRefresh: vi.fn(() => resolveRun(0)),
+      startStatusRefresh: vi.fn(),
       startGraveyardCleanup: vi.fn(),
       cleanupGraveyard: vi.fn(() => Promise.resolve({ dryRun: false, plan: {}, results: [] })),
       refreshDesktopStateSnapshot: vi.fn(),
@@ -1607,10 +1606,7 @@ describe("runProjectService", () => {
       resolveRun: undefined,
     };
 
-    const runPromise = runProjectService(host);
-    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
-    host.resolveRun(0);
-    await expect(runPromise).resolves.toBe(0);
+    await startProjectServiceHost(host);
 
     expect(host.mode).toBe("project-service");
     expect(host.tmuxRuntimeManager.repairLegacyProjectSessionNames).toHaveBeenCalledWith(process.cwd());
@@ -1674,10 +1670,7 @@ describe("runProjectService", () => {
         resolveRun: undefined,
       };
 
-      const runPromise = runProjectService(host);
-      await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
-      host.resolveRun(0);
-      await expect(runPromise).resolves.toBe(0);
+      await startProjectServiceHost(host);
 
       expect(host.syncSessionsFromTopology).toHaveBeenCalledTimes(2);
       const { listTopologySessionStates } = await import("../runtime-core/topology-sessions.js");

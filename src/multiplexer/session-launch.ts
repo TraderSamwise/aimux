@@ -30,6 +30,10 @@ import { TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
 
 type SessionLaunchHost = any;
 
+function projectRootFor(host: SessionLaunchHost): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
+}
+
 function listLaunchableTopologySessions(toolFilter?: string): any[] {
   const sessions = listTopologySessionStates({ statuses: ["offline"] });
   return toolFilter ? sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter) : sessions;
@@ -180,7 +184,7 @@ function markDashboardReadyForInput(host: SessionLaunchHost): void {
   const paneId = process.env.TMUX_PANE?.trim();
   if (!paneId || !host.tmuxRuntimeManager?.setWindowOption) return;
   try {
-    const { dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
+    const { dashboardBuildStamp } = getDashboardCommandSpec(projectRootFor(host));
     host.tmuxRuntimeManager.setWindowOption(paneId, TMUX_DASHBOARD_READY_OPTION, dashboardBuildStamp);
   } catch {}
 }
@@ -326,10 +330,11 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   return exitCode;
 }
 
-export async function runProjectService(host: SessionLaunchHost): Promise<number> {
+export async function startProjectServiceHost(host: SessionLaunchHost): Promise<void> {
+  const projectRoot = projectRootFor(host);
   initProject();
   host.mode = "project-service";
-  host.tmuxRuntimeManager?.repairLegacyProjectSessionNames?.(process.cwd());
+  host.tmuxRuntimeManager?.repairLegacyProjectSessionNames?.(projectRoot);
   reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
   host.refreshDesktopStateSnapshot();
@@ -360,13 +365,6 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
       });
   }
   host.writeStatuslineFile();
-
-  const exitCode = await new Promise<number>((resolve) => {
-    host.resolveRun = resolve;
-  });
-
-  host.teardown();
-  return exitCode;
 }
 
 export async function resumeSessions(host: SessionLaunchHost, toolFilter?: string): Promise<number> {
@@ -560,11 +558,13 @@ export function createSession(
     finalArgs = [...finalArgs, ...expandedFlag];
   }
 
-  let projectRoot = process.cwd();
+  const root = projectRootFor(host);
+  const launchCwd = worktreePath ?? root;
+  let projectRoot = root;
   try {
-    projectRoot = findMainRepo(worktreePath ?? process.cwd());
+    projectRoot = findMainRepo(launchCwd);
   } catch {
-    projectRoot = process.cwd();
+    projectRoot = root;
   }
   clearSessionTranscriptPath(sessionId);
   clearSessionTranscriptPath(sessionId, projectRoot);
@@ -632,7 +632,7 @@ export function createSession(
     host.sessionBootstrap.finalizePreamble(command, preamble);
   }
   debug(
-    `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"}, cwd=${worktreePath ?? process.cwd()}, args=${finalArgs.length})`,
+    `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"}, cwd=${launchCwd}, args=${finalArgs.length})`,
     "session",
   );
   debug(`spawn args: ${JSON.stringify(summarizeLaunchArgs(finalArgs))}`, "session");
@@ -642,7 +642,7 @@ export function createSession(
   const target = host.tmuxRuntimeManager.createWindow(
     tmuxSession.sessionName,
     host.getSessionLabel(sessionId) ?? command,
-    worktreePath ?? process.cwd(),
+    launchCwd,
     launchCommand,
     finalArgs,
     { detached: detachedInTmux },
@@ -688,7 +688,8 @@ export async function migrateAgent(
   }
 
   const sourceWorktree = host.sessionWorktreePaths.get(sessionId);
-  const sourceCwd = sourceWorktree ?? process.cwd();
+  const root = projectRootFor(host);
+  const sourceCwd = sourceWorktree ?? root;
   const toolConfigKey = host.sessionToolKeys.get(sessionId) ?? session.command;
   const config = loadConfig();
   const toolCfg = config.tools[toolConfigKey];
@@ -723,7 +724,7 @@ export async function migrateAgent(
 
   debug(`migrating session ${sessionId} from ${sourceCwd} to ${targetWorktreePath}`, "session");
 
-  const effectiveTarget = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
+  const effectiveTarget = targetWorktreePath === root ? undefined : targetWorktreePath;
   const waitForExit = (timeoutMs = 8000) =>
     new Promise<void>((resolve, reject) => {
       if (session.exited) {

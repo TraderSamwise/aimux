@@ -9,10 +9,9 @@ import {
   getDaemonStdioLogPath,
   getGlobalAimuxDir,
   getProjectIdFor,
-  getProjectServiceStdioLogPathFor,
 } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
-import { loadMetadataEndpoint, loadMetadataEndpointByProjectId } from "./metadata-store.js";
+import { loadMetadataEndpointByProjectId } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
@@ -31,21 +30,15 @@ import {
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 import { commandArgValueMatches } from "./process-args.js";
 import { getAimuxCliLaunchCommand } from "./cli-launcher.js";
+import { CoreProjectActor } from "./core-project-actor.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_PROBE_TIMEOUT_MS = 2_500;
-const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
-const PROJECT_SERVICE_READY_POLL_MS = 100;
-const PROJECT_SERVICE_HEALTH_TIMEOUT_MS = 2_500;
-// A busy event loop can miss a health ping; only restart after this many
-// consecutive failures so transient stalls don't churn the service.
-const PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD = 3;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
-const PROJECT_SERVICE_LIVENESS_CACHE_MS = 30_000;
 const PROXY_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
@@ -574,12 +567,8 @@ export class AimuxDaemon {
   private server: Server | null = null;
   private relayClient: RelayClient | null = null;
   private readonly pushThrottle = new MobilePushThrottle();
-  private readonly children = new Map<string, ChildProcess>();
+  private readonly projectActors = new Map<string, CoreProjectActor>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
-  private readonly projectServiceLivenessCache = new Map<string, { pid: number; alive: boolean; checkedAt: number }>();
-  // Consecutive failed health checks per project; a single transient stall
-  // (event loop briefly busy) must not trigger a restart.
-  private readonly projectHealthFailures = new Map<string, number>();
   private state: DaemonState = loadDaemonState();
 
   async start(): Promise<void> {
@@ -650,26 +639,17 @@ export class AimuxDaemon {
   }
 
   stop(): void {
-    log.info("daemon stopping child services", "daemon", { projectCount: Object.keys(this.state.projects).length });
+    log.info("daemon stopping project actors", "daemon", { projectCount: Object.keys(this.state.projects).length });
     this.relayClient?.disconnect();
     this.relayClient = null;
-    for (const entry of Object.values(this.state.projects)) {
-      const child = this.children.get(entry.projectId);
-      const trackedChild = child?.pid === entry.pid;
-      if (!trackedChild && !isAimuxProjectServiceProcess(entry.pid, entry)) {
-        log.warn("skipping unverified project service pid during daemon shutdown", "daemon", {
-          projectId: entry.projectId,
-          projectRoot: entry.projectRoot,
-          pid: entry.pid,
+    for (const actor of this.projectActors.values()) {
+      void actor.stop().catch((error: unknown) => {
+        log.warn("project actor stop failed during daemon shutdown", "daemon", {
+          error: error instanceof Error ? error.message : String(error),
         });
-        continue;
-      }
-      try {
-        process.kill(entry.pid, "SIGTERM");
-      } catch {}
+      });
     }
-    this.children.clear();
-    this.projectServiceLivenessCache.clear();
+    this.projectActors.clear();
     this.state = {
       version: 1,
       updatedAt: new Date().toISOString(),
@@ -682,14 +662,15 @@ export class AimuxDaemon {
   }
 
   private refreshState(): void {
-    const nextProjects: Record<string, ProjectServiceState> = {};
+    const nextProjects: Record<string, ProjectServiceState> = { ...this.state.projects };
+    for (const [projectId, actor] of this.projectActors.entries()) {
+      if (actor.isRunning()) {
+        nextProjects[projectId] = actor.getState();
+      }
+    }
     for (const [projectId, entry] of Object.entries(this.state.projects)) {
-      nextProjects[projectId] = isPidAlive(entry.pid)
-        ? {
-            ...entry,
-            updatedAt: new Date().toISOString(),
-          }
-        : entry;
+      if (this.projectActors.has(projectId)) continue;
+      nextProjects[projectId] = entry;
     }
     this.state = {
       version: 1,
@@ -706,23 +687,8 @@ export class AimuxDaemon {
   }
 
   private isProjectServiceLive(entry: ProjectServiceState): boolean {
-    const child = this.children.get(entry.projectId);
-    if (child?.pid === entry.pid) return isPidAlive(entry.pid);
-    const cached = this.projectServiceLivenessCache.get(entry.projectId);
-    if (cached?.pid === entry.pid && Date.now() - cached.checkedAt < PROJECT_SERVICE_LIVENESS_CACHE_MS) {
-      if (cached.alive && !isPidAlive(entry.pid)) {
-        this.projectServiceLivenessCache.delete(entry.projectId);
-        return false;
-      }
-      return cached.alive;
-    }
-    const alive = isAimuxProjectServiceProcess(entry.pid, entry);
-    this.projectServiceLivenessCache.set(entry.projectId, {
-      pid: entry.pid,
-      alive,
-      checkedAt: Date.now(),
-    });
-    return alive;
+    const actor = this.projectActors.get(entry.projectId);
+    return entry.pid === process.pid && Boolean(actor?.isRunning());
   }
 
   private listProjectsForRoute(): ProjectsRouteProject[] {
@@ -737,139 +703,6 @@ export class AimuxDaemon {
         serviceEndpoint: loadMetadataEndpointByProjectId(project.id),
       };
     });
-  }
-
-  private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
-    // A fresh service instance starts with a clean health-failure slate, so a
-    // new pid never inherits the previous instance's accumulated failure debt.
-    this.projectHealthFailures.delete(projectId);
-    const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
-    let child: ChildProcess;
-    try {
-      const launch = getAimuxCliLaunchCommand([
-        "__project-service-internal",
-        "--project-id",
-        projectId,
-        "--project-root",
-        projectRoot,
-      ]);
-      child = spawn(launch.command, launch.args, {
-        cwd: projectRoot,
-        env: loggingChildEnv(),
-        stdio: stdio.stdio,
-      });
-    } catch (error) {
-      stdio.close();
-      throw error;
-    }
-    this.children.set(projectId, child);
-    this.projectServiceLivenessCache.delete(projectId);
-    const now = new Date().toISOString();
-    const state: ProjectServiceState = {
-      projectId,
-      projectRoot,
-      pid: child.pid!,
-      startedAt: now,
-      updatedAt: now,
-    };
-    this.state.projects[projectId] = state;
-    log.info("spawned project service", "daemon", {
-      projectId,
-      projectRoot,
-      pid: state.pid,
-    });
-    child.on("exit", (code, signal) => {
-      stdio.close();
-      log.warn("project service exited", "daemon", {
-        projectId,
-        projectRoot,
-        pid: state.pid,
-        code,
-        signal,
-      });
-      if (this.children.get(projectId) === child) {
-        this.children.delete(projectId);
-      }
-      this.projectServiceLivenessCache.delete(projectId);
-      const current = this.state.projects[projectId];
-      if (current?.pid === state.pid) {
-        this.state.projects[projectId] = {
-          ...current,
-          updatedAt: new Date().toISOString(),
-        };
-        this.refreshState();
-      }
-    });
-    this.refreshState();
-    return state;
-  }
-
-  private async waitForProjectServiceReady(
-    resolvedRoot: string,
-    projectId: string,
-    state: ProjectServiceState,
-  ): Promise<ProjectServiceState> {
-    const deadline = Date.now() + PROJECT_SERVICE_STARTUP_GRACE_MS;
-    let lastError = "metadata endpoint was not written";
-    while (Date.now() < deadline) {
-      if (!isPidAlive(state.pid)) {
-        throw new Error(`project service exited before it became ready: pid ${state.pid}`);
-      }
-      const endpoint = loadMetadataEndpoint(resolvedRoot);
-      if (!endpoint) {
-        await sleep(PROJECT_SERVICE_READY_POLL_MS);
-        continue;
-      }
-      if (endpoint.pid !== state.pid) {
-        lastError = `metadata endpoint pid ${endpoint.pid} did not match spawned pid ${state.pid}`;
-        await sleep(PROJECT_SERVICE_READY_POLL_MS);
-        continue;
-      }
-      try {
-        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
-          timeoutMs: PROJECT_SERVICE_HEALTH_TIMEOUT_MS,
-        });
-        if (status >= 200 && status < 300 && json?.ok !== false && json?.pid === state.pid) {
-          if (manifestsMatch(getProjectServiceManifest(), json?.serviceInfo)) {
-            return {
-              ...state,
-              updatedAt: new Date().toISOString(),
-            };
-          }
-          lastError = "health manifest did not match current build";
-        } else {
-          lastError = json?.error || `health request failed: ${status}`;
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      }
-      await sleep(PROJECT_SERVICE_READY_POLL_MS);
-    }
-    throw new Error(`project service did not become ready: ${lastError}`);
-  }
-
-  private async spawnReadyProjectService(resolvedRoot: string, projectId: string): Promise<ProjectServiceState> {
-    const spawned = this.spawnProjectService(resolvedRoot, projectId);
-    try {
-      const ready = await this.waitForProjectServiceReady(resolvedRoot, projectId, spawned);
-      this.state.projects[projectId] = ready;
-      this.refreshState();
-      return ready;
-    } catch (error) {
-      log.warn("spawned project service failed readiness check", "daemon", {
-        projectId,
-        projectRoot: resolvedRoot,
-        pid: spawned.pid,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      await this.terminateProjectService(projectId, spawned);
-      const current = this.state.projects[projectId];
-      if (current?.pid === spawned.pid) {
-        delete this.state.projects[projectId];
-        this.refreshState();
-      }
-      throw error;
-    }
   }
 
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
@@ -889,179 +722,72 @@ export class AimuxDaemon {
 
   private async ensureProjectUnlocked(resolvedRoot: string, projectId: string): Promise<ProjectServiceState> {
     const existing = this.state.projects[projectId];
-    if (existing && isPidAlive(existing.pid)) {
-      const startedAtMs = Date.parse(existing.startedAt);
-      const withinStartupGrace =
-        Number.isFinite(startedAtMs) && Date.now() - startedAtMs < PROJECT_SERVICE_STARTUP_GRACE_MS;
-      const refreshExisting = (): ProjectServiceState => {
-        const next = {
-          ...existing,
-          updatedAt: new Date().toISOString(),
-        };
-        this.state.projects[projectId] = next;
-        this.refreshState();
-        return next;
-      };
-      const waitForExistingReady = async (): Promise<ProjectServiceState> => {
-        try {
-          const ready = await this.waitForProjectServiceReady(resolvedRoot, projectId, existing);
-          this.projectHealthFailures.delete(projectId);
-          this.state.projects[projectId] = ready;
-          this.refreshState();
-          return ready;
-        } catch (error) {
-          log.warn("just-started project service failed readiness check", "daemon", {
-            projectId,
-            projectRoot: resolvedRoot,
-            pid: existing.pid,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
-        }
-      };
-      const endpoint = loadMetadataEndpoint(resolvedRoot);
-      if (!endpoint) {
-        if (withinStartupGrace) {
-          return waitForExistingReady();
-        }
-        log.warn("project service missing metadata endpoint after startup grace", "daemon", {
-          projectId,
-          projectRoot: resolvedRoot,
-          pid: existing.pid,
-        });
-        return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
-      }
-      try {
-        if (endpoint.pid !== existing.pid) {
-          if (withinStartupGrace) return waitForExistingReady();
-          log.warn("project service metadata endpoint pid mismatch", "daemon", {
-            projectId,
-            projectRoot: resolvedRoot,
-            pid: existing.pid,
-            endpointPid: endpoint.pid,
-          });
-          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
-        }
-        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
-          timeoutMs: PROJECT_SERVICE_HEALTH_TIMEOUT_MS,
-        });
-        if (status < 200 || status >= 300 || json?.ok === false) {
-          throw new Error(json?.error || `health request failed: ${status}`);
-        }
-        if (json?.pid !== existing.pid) {
-          if (withinStartupGrace) return waitForExistingReady();
-          log.warn("project service health pid mismatch", "daemon", {
-            projectId,
-            projectRoot: resolvedRoot,
-            pid: existing.pid,
-            healthPid: json?.pid,
-          });
-          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
-        }
-        const expectedManifest = getProjectServiceManifest();
-        if (!manifestsMatch(expectedManifest, json?.serviceInfo)) {
-          log.warn("project service manifest mismatch", "daemon", {
-            projectId,
-            projectRoot: resolvedRoot,
-            pid: existing.pid,
-            expected: expectedManifest,
-            actual: json.serviceInfo,
-          });
-          return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
-        }
-      } catch (error) {
-        if (withinStartupGrace) {
-          return waitForExistingReady();
-        }
-        const failures = (this.projectHealthFailures.get(projectId) ?? 0) + 1;
-        this.projectHealthFailures.set(projectId, failures);
-        log.warn("project service health check failed", "daemon", {
-          projectId,
-          projectRoot: resolvedRoot,
-          pid: existing.pid,
-          error: error instanceof Error ? error.message : String(error),
-          consecutiveFailures: failures,
-          threshold: PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD,
-        });
-        // Tolerate transient stalls; only restart after sustained failures.
-        if (failures < PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD) {
-          return refreshExisting();
-        }
-        // The counter is reset by spawnProjectService once a replacement
-        // actually starts; if termination fails we keep the debt and retry.
-        return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
-      }
-      this.projectHealthFailures.delete(projectId);
-      return refreshExisting();
+    const actor = this.projectActors.get(projectId);
+    if (actor?.isRunning()) {
+      const state = actor.getState();
+      this.state.projects[projectId] = state;
+      this.refreshState();
+      return state;
     }
-    return this.spawnReadyProjectService(resolvedRoot, projectId);
-  }
 
-  private async replaceProjectServiceAfterExit(
-    resolvedRoot: string,
-    projectId: string,
-    existing: ProjectServiceState,
-    refreshExisting: () => ProjectServiceState,
-  ): Promise<ProjectServiceState> {
-    const stopped = await this.terminateProjectService(projectId, existing);
-    if (!stopped) {
-      log.warn("project service did not exit before replacement deadline", "daemon", {
-        projectId,
-        projectRoot: resolvedRoot,
-        pid: existing.pid,
+    if (existing?.pid && existing.pid !== process.pid && isPidAlive(existing.pid)) {
+      await this.terminateLegacyProjectService(existing);
+    }
+
+    const nextActor = actor ?? new CoreProjectActor(resolvedRoot);
+    let state: ProjectServiceState;
+    try {
+      state = await nextActor.start();
+    } catch (error) {
+      if (this.projectActors.get(projectId) === nextActor) {
+        this.projectActors.delete(projectId);
+      }
+      await nextActor.stop().catch((stopError: unknown) => {
+        log.warn("failed to clean up project actor after start failure", "daemon", {
+          projectId,
+          projectRoot: resolvedRoot,
+          error: stopError instanceof Error ? stopError.message : String(stopError),
+        });
       });
-      return refreshExisting();
+      throw error;
     }
-    const current = this.state.projects[projectId];
-    if (current?.pid === existing.pid) {
-      delete this.state.projects[projectId];
-    }
-    this.projectServiceLivenessCache.delete(projectId);
-    const child = this.children.get(projectId);
-    if (child?.pid === existing.pid) {
-      this.children.delete(projectId);
-    }
+    this.projectActors.set(projectId, nextActor);
+    this.state.projects[projectId] = state;
     this.refreshState();
-    return this.spawnReadyProjectService(resolvedRoot, projectId);
+    return state;
   }
 
-  private async terminateProjectService(projectId: string, existing: ProjectServiceState): Promise<boolean> {
-    const child = this.children.get(projectId);
-    const trackedChild = child?.pid === existing.pid;
-    if (!trackedChild && !isAimuxProjectServiceProcess(existing.pid, existing)) {
-      log.warn("skipping unverified project service pid during replacement", "daemon", {
-        projectId,
+  private async terminateLegacyProjectService(existing: ProjectServiceState): Promise<void> {
+    if (!isAimuxProjectServiceProcess(existing.pid, existing)) {
+      log.warn("skipping unverified legacy project service pid", "daemon", {
+        projectId: existing.projectId,
         projectRoot: existing.projectRoot,
         pid: existing.pid,
       });
-      return true;
+      return;
     }
-    log.info("terminating project service", "daemon", {
-      projectId,
+    log.info("terminating legacy project service", "daemon", {
+      projectId: existing.projectId,
       projectRoot: existing.projectRoot,
       pid: existing.pid,
     });
     try {
       process.kill(existing.pid, "SIGTERM");
-    } catch {
-      return true;
-    }
-    if (await this.waitForProjectServiceExit(existing.pid, child, PROJECT_SERVICE_TERM_GRACE_MS)) {
-      return true;
-    }
+    } catch {}
+    if (await this.waitForProjectServiceExit(existing.pid, PROJECT_SERVICE_TERM_GRACE_MS)) return;
+    log.warn("legacy project service did not stop after SIGTERM; killing", "daemon", {
+      projectId: existing.projectId,
+      projectRoot: existing.projectRoot,
+      pid: existing.pid,
+    });
     try {
       process.kill(existing.pid, "SIGKILL");
-    } catch {
-      return true;
-    }
-    return this.waitForProjectServiceExit(existing.pid, child, PROJECT_SERVICE_KILL_GRACE_MS);
+    } catch {}
+    if (await this.waitForProjectServiceExit(existing.pid, PROJECT_SERVICE_KILL_GRACE_MS)) return;
+    throw new Error(`legacy project service ${existing.pid} did not exit`);
   }
 
-  private async waitForProjectServiceExit(
-    pid: number,
-    child: ChildProcess | undefined,
-    timeoutMs: number,
-  ): Promise<boolean> {
+  private async waitForProjectServiceExit(pid: number, timeoutMs: number): Promise<boolean> {
     if (!isPidAlive(pid)) return true;
     return new Promise<boolean>((resolve) => {
       let settled = false;
@@ -1074,11 +800,6 @@ export class AimuxDaemon {
         resolve(value);
       };
 
-      const onExit = () => finish(true);
-      if (child) {
-        child.once("exit", onExit);
-        cleanups.push(() => child.off("exit", onExit));
-      }
       const interval = setInterval(() => {
         if (!isPidAlive(pid)) finish(true);
       }, PROJECT_SERVICE_EXIT_POLL_MS);
@@ -1088,29 +809,18 @@ export class AimuxDaemon {
     });
   }
 
-  private stopProject(projectRoot: string): ProjectServiceState | null {
+  private async stopProject(projectRoot: string): Promise<ProjectServiceState | null> {
     const projectId = getProjectIdFor(pathResolve(projectRoot));
     const existing = this.state.projects[projectId];
     if (!existing) return null;
-    const child = this.children.get(projectId);
-    const trackedChild = child?.pid === existing.pid;
-    if (trackedChild || isAimuxProjectServiceProcess(existing.pid, existing)) {
-      try {
-        process.kill(existing.pid, "SIGTERM");
-      } catch {}
-    } else {
-      log.warn("skipping unverified project service pid during project stop", "daemon", {
-        projectId,
-        projectRoot: existing.projectRoot,
-        pid: existing.pid,
-      });
+    const actor = this.projectActors.get(projectId);
+    if (actor) {
+      await actor.stop();
+      this.projectActors.delete(projectId);
+    } else if (existing.pid !== process.pid && isPidAlive(existing.pid)) {
+      await this.terminateLegacyProjectService(existing);
     }
     delete this.state.projects[projectId];
-    this.projectHealthFailures.delete(projectId);
-    this.projectServiceLivenessCache.delete(projectId);
-    if (this.children.get(projectId)?.pid === existing.pid) {
-      this.children.delete(projectId);
-    }
     this.refreshState();
     return existing;
   }
@@ -1241,7 +951,7 @@ export class AimuxDaemon {
       if (!b?.projectRoot) {
         return { status: 400, body: { ok: false, error: "projectRoot is required" } };
       }
-      const project = this.stopProject(b.projectRoot);
+      const project = await this.stopProject(b.projectRoot);
       return { status: 200, body: { ok: true, project } };
     }
 

@@ -1610,12 +1610,12 @@ describe("MetadataServer threads API", () => {
       key === TMUX_DASHBOARD_OWNER_OPTION
         ? getRuntimeOwnerId()
         : key === TMUX_DASHBOARD_READY_OPTION
-          ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+          ? getDashboardCommandSpec(repoRoot).dashboardBuildStamp
           : key === "@aimux-dashboard-build"
-            ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+            ? getDashboardCommandSpec(repoRoot).dashboardBuildStamp
             : "";
     TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
-      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
+      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? repoRoot : "";
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";
     TmuxRuntimeManager.prototype.captureTarget = () => "";
     TmuxRuntimeManager.prototype.ensureProjectSession = vi.fn();
@@ -1709,12 +1709,12 @@ describe("MetadataServer threads API", () => {
       key === TMUX_DASHBOARD_OWNER_OPTION
         ? getRuntimeOwnerId()
         : key === TMUX_DASHBOARD_READY_OPTION
-          ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+          ? getDashboardCommandSpec(repoRoot).dashboardBuildStamp
           : key === "@aimux-dashboard-build"
-            ? getDashboardCommandSpec(process.cwd()).dashboardBuildStamp
+            ? getDashboardCommandSpec(repoRoot).dashboardBuildStamp
             : "";
     TmuxRuntimeManager.prototype.getSessionOption = (_sessionName, key) =>
-      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? process.cwd() : "";
+      key === TMUX_RUNTIME_OWNER_OPTION ? getRuntimeOwnerId() : key === "@aimux-project-root" ? repoRoot : "";
     TmuxRuntimeManager.prototype.displayMessage = () => "bash";
     TmuxRuntimeManager.prototype.captureTarget = () => "";
     TmuxRuntimeManager.prototype.findClientByTty = (tty) =>
