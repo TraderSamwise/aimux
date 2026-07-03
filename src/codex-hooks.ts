@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildAimuxCliShellCommand } from "./cli-launcher.js";
+import { buildProjectHookCommand } from "./project-hook-command.js";
 
 export interface CodexHookPayload {
   session_id?: string;
@@ -31,10 +31,10 @@ const CODEX_HOOK_EVENTS: ReadonlyArray<{ event: string; action: string; timeoutM
   { event: "SessionStart", action: "session-start", timeoutMs: 5000 },
   { event: "UserPromptSubmit", action: "prompt-submit", timeoutMs: 5000 },
   { event: "Stop", action: "stop", timeoutMs: 5000 },
-  { event: "PermissionRequest", action: "permission-request", timeoutMs: 120000 },
+  { event: "PermissionRequest", action: "permission-request", timeoutMs: 5000 },
 ];
 
-const AIMUX_CODEX_HOOK_MARKER = "codex-hook";
+const AIMUX_CODEX_HOOK_MARKERS = ["/hooks/codex", "codex-hook"];
 
 export function getCodexHome(codexHome?: string): string {
   return codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
@@ -48,12 +48,15 @@ export function codexHooksPath(codexHome?: string): string {
  * identity comes from AIMUX_SESSION_ID at runtime; the guard no-ops for
  * non-aimux Codex sessions. */
 export function buildCodexHookCommand(action: string): string {
-  const cli = buildAimuxCliShellCommand(["codex-hook", action]);
-  return `[ -n "$AIMUX_SESSION_ID" ] && ${cli} --session "$AIMUX_SESSION_ID" --project "$AIMUX_PROJECT_ROOT" || echo '{}'`;
+  return buildProjectHookCommand({
+    tool: "codex",
+    action,
+    timeoutSeconds: 5,
+  });
 }
 
 export function isAimuxOwnedCodexHookCommand(command: unknown): boolean {
-  return typeof command === "string" && command.includes(AIMUX_CODEX_HOOK_MARKER);
+  return typeof command === "string" && AIMUX_CODEX_HOOK_MARKERS.some((marker) => command.includes(marker));
 }
 
 /** Per-launch flags that enable + trust hooks without any config.toml mutation.

@@ -45,8 +45,8 @@ describe("getAimuxCliLaunchCommand", () => {
   });
 
   it("builds a quoted shell command from the selected launcher", () => {
-    const command = buildAimuxCliShellCommand(["codex-hook", "stop"]);
-    expect(command).toContain("codex-hook");
-    expect(command).toContain("stop");
+    const command = buildAimuxCliShellCommand(["daemon", "run"]);
+    expect(command).toContain("daemon");
+    expect(command).toContain("run");
   });
 });

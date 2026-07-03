@@ -11,14 +11,12 @@ const runtimeNodeSpawnInventory = [
   { id: "tmux-meta-dashboard", path: "scripts/tmux-control.sh", pattern: /meta-dashboard/ },
   { id: "tmux-dashboard-reload", path: "scripts/tmux-control.sh", pattern: /dashboard-reload/ },
   { id: "tmux-hyperlink-node", path: "scripts/tmux-open-hyperlink.sh", pattern: /node - <<'NODE'/ },
-  { id: "claude-hook", path: "src/claude-hooks.ts", pattern: /claude-hook/ },
-  { id: "codex-hook", path: "src/codex-hooks.ts", pattern: /codex-hook/ },
   { id: "dashboard-repair", path: "src/multiplexer/dashboard-control.ts", pattern: /"restart", "--project"/ },
 ] as const;
 
 describe("one-shot Node runtime inventory", () => {
   it("keeps every remaining violation explicit for the Core cutover", () => {
-    expect(runtimeNodeSpawnInventory).toHaveLength(11);
+    expect(runtimeNodeSpawnInventory).toHaveLength(9);
     for (const entry of runtimeNodeSpawnInventory) {
       const text = readFileSync(join(process.cwd(), entry.path), "utf8");
       expect(text, entry.id).toMatch(entry.pattern);
