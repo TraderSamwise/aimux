@@ -825,7 +825,7 @@ export class AimuxDaemon {
     return existing;
   }
 
-  private routeCoreCommand(body: unknown): { status: number; body: CoreCommandResponse } {
+  private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
     const envelope = body as CoreCommandEnvelope | undefined;
     const id =
       typeof envelope?.id === "string" && envelope.id.trim()
@@ -844,6 +844,7 @@ export class AimuxDaemon {
       };
     }
     const issuedAt = new Date().toISOString();
+    const payload = envelope?.payload as { projectRoot?: unknown } | undefined;
     switch (command) {
       case CORE_COMMAND_NAMES.ping:
         return { status: 200, body: { ok: true, id, command, issuedAt, result: { pong: true } } };
@@ -862,9 +863,64 @@ export class AimuxDaemon {
                 serviceInfo: getProjectServiceManifest(),
               },
               projects: this.listProjectsForRoute(),
+              relay: this.getRelayStatus(),
               updatedAt: this.state.updatedAt,
             },
           },
+        };
+      case CORE_COMMAND_NAMES.projectsList:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { projects: this.listProjectsForRoute() } },
+        };
+      case CORE_COMMAND_NAMES.projectEnsure:
+        if (typeof payload?.projectRoot !== "string" || !payload.projectRoot.trim()) {
+          return {
+            status: 400,
+            body: { ok: false, id, command, error: "projectRoot is required" },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: { project: await this.ensureProject(payload.projectRoot) },
+          },
+        };
+      case CORE_COMMAND_NAMES.projectStop:
+        if (typeof payload?.projectRoot !== "string" || !payload.projectRoot.trim()) {
+          return {
+            status: 400,
+            body: { ok: false, id, command, error: "projectRoot is required" },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: { project: await this.stopProject(payload.projectRoot) },
+          },
+        };
+      case CORE_COMMAND_NAMES.relayStatus:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { relay: this.getRelayStatus() } },
+        };
+      case CORE_COMMAND_NAMES.relayEnable:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { relay: this.enableRelay() } },
+        };
+      case CORE_COMMAND_NAMES.relayDisable:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { relay: this.disableRelay() } },
         };
       default:
         return assertNeverCoreCommand(command);

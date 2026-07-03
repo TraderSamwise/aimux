@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestJson } from "./http-client.js";
 import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -240,6 +241,46 @@ describe("daemon supervision", () => {
     expect(first.pid).toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("ensures project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "ensure-project",
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectEnsure>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project.projectRoot).toBe(projectRoot);
+    expect(body.result.project.pid).toBe(process.pid);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("stops project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "stop-project",
+      command: CORE_COMMAND_NAMES.projectStop,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectStop>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project?.projectRoot).toBe(projectRoot);
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
   });
 
   it("replaces a live project service when its health manifest is stale", async () => {

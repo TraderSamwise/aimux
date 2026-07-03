@@ -38,7 +38,6 @@ import {
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
-import { listDesktopProjects } from "./project-scanner.js";
 import {
   AimuxDaemon,
   ensureDaemonRunning,
@@ -46,12 +45,11 @@ import {
   getDaemonHost,
   getDaemonPort,
   loadDaemonInfo,
-  loadDaemonState,
-  projectServiceStatus,
-  requestDaemonJson,
   stopDaemon,
   stopProjectService,
 } from "./daemon.js";
+import { requestCoreCommand } from "./core-command-client.js";
+import { CORE_COMMAND_NAMES, type CoreStatusProject } from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
@@ -843,6 +841,18 @@ function readLastLogLines(path: string, lines: number): string {
   return allLines.slice(-lines).join("\n");
 }
 
+function findCoreProject(projects: CoreStatusProject[], projectRoot: string): CoreStatusProject | null {
+  const resolvedRoot = pathResolve(projectRoot);
+  return projects.find((project) => pathResolve(project.path) === resolvedRoot) ?? null;
+}
+
+function coreProjectServicePid(project: CoreStatusProject | null): number | null {
+  const service = project?.service;
+  return service && typeof service === "object" && typeof (service as { pid?: unknown }).pid === "number"
+    ? (service as { pid: number }).pid
+    : null;
+}
+
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
@@ -1217,9 +1227,8 @@ program
       process.chdir(projectRoot);
     }
     await initPaths(projectRoot);
-    await ensureDaemonProjectReady(projectRoot);
-    const status = await projectServiceStatus(projectRoot);
-    console.log(`aimux serve: daemon managing ${projectRoot}${status ? ` (service pid ${status.pid})` : ""}`);
+    const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+    console.log(`aimux serve: daemon managing ${projectRoot} (service pid ${response.result.project.pid})`);
   });
 
 hostCmd
@@ -1228,45 +1237,32 @@ hostCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
     await initPaths();
-    await ensureDaemonRunning();
     const projectRoot = resolveProjectRoot(process.cwd());
-    const project = await projectServiceStatus(projectRoot);
-    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
-    const expectedServiceManifest = getProjectServiceManifest();
-    let liveServiceHealth: { serviceInfo?: ProjectServiceManifest; pid?: number; projectStateDir?: string } | null =
-      null;
-    if (endpoint) {
-      try {
-        liveServiceHealth = await fetchProjectServiceHealth(endpoint);
-      } catch {}
-    }
-    const tmux = new TmuxRuntimeManager();
-    const session = tmux.getProjectSession(projectRoot);
+    const response = await requestCoreCommand(CORE_COMMAND_NAMES.status);
+    const project = findCoreProject(response.result.projects, projectRoot);
     const payload = {
       projectRoot,
-      sessionName: session.sessionName,
-      daemon: loadDaemonInfo(),
-      projectService: project,
-      metadataEndpoint: endpoint,
-      expectedServiceManifest,
-      liveServiceHealth,
+      sessionName: project?.dashboardSessionName ?? null,
+      daemon: response.result.daemon,
+      projectService: project?.service ?? null,
+      serviceAlive: project?.serviceAlive ?? false,
+      metadataEndpoint: project?.serviceEndpoint ?? null,
+      expectedServiceManifest: response.result.daemon.serviceInfo,
     };
     if (opts.json) {
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
     if (!project) {
-      console.log(`No live control service for ${session.sessionName}`);
+      console.log(`No known control service for ${projectRoot}`);
       return;
     }
-    console.log(`Service pid=${project.pid}`);
-    console.log(`Started: ${project.startedAt}`);
-    console.log(`Metadata: ${endpoint ? `http://${endpoint.host}:${endpoint.port}` : "not running"}`);
-    console.log(`Expected manifest: ${JSON.stringify(expectedServiceManifest)}`);
-    if (liveServiceHealth?.serviceInfo) {
-      console.log(`Live manifest: ${JSON.stringify(liveServiceHealth.serviceInfo)}`);
-    }
-    console.log(`Tmux session: ${session.sessionName}`);
+    console.log(`Service: ${project.serviceAlive ? "live" : "idle"}`);
+    const pid = coreProjectServicePid(project);
+    if (pid !== null) console.log(`Service pid=${pid}`);
+    console.log(`Metadata: ${project.serviceEndpoint ? JSON.stringify(project.serviceEndpoint) : "not running"}`);
+    console.log(`Expected manifest: ${JSON.stringify(response.result.daemon.serviceInfo)}`);
+    console.log(`Tmux session: ${project.dashboardSessionName}`);
   });
 
 hostCmd
@@ -1275,13 +1271,12 @@ hostCmd
   .action(async () => {
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
-    const result = await stopProjectService(projectRoot);
-    if (!result) {
+    const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+    if (!response.result.project) {
       console.log("No live project service to stop.");
       return;
     }
-    removeMetadataEndpoint();
-    console.log(`Stopped project service pid ${result.pid}`);
+    console.log(`Stopped project service pid ${response.result.project.pid}`);
   });
 
 hostCmd
@@ -1290,13 +1285,12 @@ hostCmd
   .action(async () => {
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
-    const result = await stopProjectService(projectRoot);
-    if (!result) {
+    const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+    if (!response.result.project) {
       console.log("No live project service to kill.");
       return;
     }
-    removeMetadataEndpoint();
-    console.log(`Killed project service pid ${result.pid}`);
+    console.log(`Killed project service pid ${response.result.project.pid}`);
   });
 
 hostCmd
@@ -1307,9 +1301,8 @@ hostCmd
   .action(async (opts: { open?: boolean; serve?: boolean }) => {
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
-    await stopProjectService(projectRoot);
-    removeMetadataEndpoint();
-    await ensureDaemonProjectReady(projectRoot);
+    await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+    await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
     if (opts.serve) {
       console.log(`Restarted project service for ${projectRoot}`);
       return;
@@ -1490,12 +1483,12 @@ daemonCmd
   .description("Ensure the global aimux daemon is running")
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
-    const info = await ensureDaemonRunning();
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.status);
     if (opts.json) {
-      console.log(JSON.stringify({ daemon: info }, null, 2));
+      console.log(JSON.stringify({ daemon: result.daemon }, null, 2));
       return;
     }
-    console.log(`aimux daemon: pid ${info.pid} on http://127.0.0.1:${info.port}`);
+    console.log(`aimux daemon: pid ${result.daemon.pid} on http://127.0.0.1:${result.daemon.port}`);
   });
 
 daemonCmd
@@ -1542,47 +1535,21 @@ daemonCmd
   .description("Show daemon status")
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
-    const info = loadDaemonInfo();
-    const state = loadDaemonState();
-    let relay: unknown = { status: "off" };
-    const serviceAliveById = new Map<string, boolean>();
-    if (info) {
-      try {
-        const result = await requestDaemonJson("/relay/status");
-        relay = result.relay;
-      } catch {
-        // Relay status unavailable — leave as off.
-      }
-      try {
-        const result = await requestDaemonJson("/projects");
-        for (const project of (result.projects ?? []) as Array<{ id?: string; serviceAlive?: boolean }>) {
-          if (project.id) serviceAliveById.set(project.id, Boolean(project.serviceAlive));
-        }
-      } catch {
-        // Project liveness unavailable — retained records remain non-live diagnostics.
-      }
-    }
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.status);
     const payload = {
-      daemon: info,
-      projects: Object.values(state.projects).map((project) => ({
-        ...project,
-        serviceAlive: serviceAliveById.get(project.projectId) ?? false,
-      })),
-      relay,
+      daemon: result.daemon,
+      projects: result.projects,
+      relay: result.relay,
     };
     if (opts.json) {
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
-    if (!info) {
-      console.log("aimux daemon is not running.");
-      return;
-    }
-    console.log(`Daemon pid=${info.pid} port=${info.port}`);
-    const liveProjectServices = Array.from(serviceAliveById.values()).filter(Boolean).length;
-    console.log(`Known projects: ${Object.keys(state.projects).length}`);
+    console.log(`Daemon pid=${result.daemon.pid} port=${result.daemon.port}`);
+    const liveProjectServices = result.projects.filter((project) => project.serviceAlive).length;
+    console.log(`Known projects: ${result.projects.length}`);
     console.log(`Live project services: ${liveProjectServices}`);
-    const r = relay as { status?: string; relayUrl?: string };
+    const r = result.relay as { status?: string; relayUrl?: string };
     if (r.status && r.status !== "off") {
       console.log(`Relay: ${r.status}${r.relayUrl ? ` (${r.relayUrl})` : ""}`);
     } else {
@@ -1595,13 +1562,12 @@ daemonCmd
   .description("List projects through the daemon")
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
-    await ensureDaemonRunning();
-    const result = await requestDaemonJson("/projects");
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectsList);
     if (opts.json) {
       console.log(JSON.stringify({ projects: result.projects }, null, 2));
       return;
     }
-    for (const project of result.projects as Array<any>) {
+    for (const project of result.projects) {
       const badge = project.serviceAlive ? "service" : "idle";
       console.log(`${project.name}  ${badge}  ${project.path}`);
     }
@@ -1614,12 +1580,12 @@ daemonCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project: string; json?: boolean }) => {
     const projectRoot = resolveProjectRoot(pathResolve(opts.project));
-    const project = await ensureProjectService(projectRoot);
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
     if (opts.json) {
-      console.log(JSON.stringify({ project }, null, 2));
+      console.log(JSON.stringify({ project: result.project }, null, 2));
       return;
     }
-    console.log(`Ensured project service for ${projectRoot} (pid ${project.pid})`);
+    console.log(`Ensured project service for ${projectRoot} (pid ${result.project.pid})`);
   });
 
 const projectsCmd = program.command("projects").description("Inspect known aimux projects");
@@ -1629,11 +1595,8 @@ projectsCmd
   .description("List known aimux projects")
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
-    await ensureDaemonRunning();
-    const result = await requestDaemonJson("/projects");
-    const projects = result.projects as Array<
-      ReturnType<typeof listDesktopProjects>[number] & { serviceAlive?: boolean }
-    >;
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectsList);
+    const projects = result.projects;
     if (opts.json) {
       console.log(JSON.stringify({ projects }, null, 2));
       return;
@@ -1689,7 +1652,7 @@ program
       let relayError: string | null = null;
       if (loadDaemonInfo()) {
         try {
-          const result = await requestDaemonJson("/relay/enable", { method: "POST" });
+          const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
           const relay = result.relay as { status?: string; lastError?: string | null };
           relayStatus = relay.status ?? "unknown";
           relayError = relay.lastError ?? null;
@@ -1721,7 +1684,7 @@ program
     // ignore failures since the daemon may not be up).
     if (loadDaemonInfo()) {
       try {
-        await requestDaemonJson("/relay/disable", { method: "POST" });
+        await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable);
       } catch {
         // daemon offline or refused; the file removal below still kills
         // future startup, so this isn't fatal.
@@ -1775,7 +1738,7 @@ remoteCmd
     let relay: unknown = { status: "off" };
     if (loadDaemonInfo()) {
       try {
-        const result = await requestDaemonJson("/relay/status");
+        const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus);
         relay = result.relay;
       } catch {
         // Daemon is not reachable — fall back to credential state.
@@ -1804,8 +1767,7 @@ remoteCmd
       console.error("Not logged in. Run `aimux login` first.");
       process.exit(1);
     }
-    await ensureDaemonRunning();
-    const result = await requestDaemonJson("/relay/enable", { method: "POST" });
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
     const r = result.relay as { status?: string };
     console.log(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
   });
@@ -1815,7 +1777,7 @@ remoteCmd
   .description("Disable remote access and disconnect from the relay")
   .action(async () => {
     if (loadDaemonInfo()) {
-      await requestDaemonJson("/relay/disable", { method: "POST" });
+      await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable);
       console.log("✓ Remote access disabled. Daemon disconnected from relay.");
       return;
     }
