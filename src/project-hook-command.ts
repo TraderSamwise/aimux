@@ -13,7 +13,7 @@ export function buildProjectHookCommand(opts: {
   const endpointFallback = opts.endpointFileFallback ? shellQuote(opts.endpointFileFallback) : "''";
   const timeoutSeconds = Math.max(1, Math.floor(opts.timeoutSeconds ?? 5));
   const route = `/hooks/${opts.tool}`;
-  const actionQuery = shellQuote(`action=${opts.action}`);
+  const action = encodeURIComponent(opts.action);
   const script = [
     "payload=$(cat)",
     `fail() { printf '%s\\n' "aimux hook $1" >&2; printf '{}\\n'; exit 0; }`,
@@ -26,8 +26,8 @@ export function buildProjectHookCommand(opts: {
     `if ! command -v curl >/dev/null 2>&1; then fail 'missing curl'; fi`,
     'IFS= read -r endpoint < "$endpoint_file" || endpoint=""',
     `if [ -z "$endpoint" ]; then fail 'empty endpoint'; fi`,
-    `url="$endpoint${route}"`,
-    `printf "%s" "$payload" | curl --silent --show-error --fail --max-time ${timeoutSeconds} -H 'content-type: application/json' --data-binary @- --url-query ${actionQuery} --url-query "sessionId=$session" "$url" || fail 'post failed'`,
+    `url="$endpoint${route}?action=${action}"`,
+    `printf "%s" "$payload" | curl --silent --show-error --fail --max-time ${timeoutSeconds} -H 'content-type: application/json' -H "x-aimux-session-id: $session" --data-binary @- "$url" || fail 'post failed'`,
   ].join("; ");
   return `sh -lc ${shellQuote(script)}`;
 }

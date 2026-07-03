@@ -2976,7 +2976,11 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.hooks.claude) {
         const action = url.searchParams.get("action")?.trim() ?? "";
-        const sessionId = url.searchParams.get("sessionId")?.trim() ?? "";
+        const sessionHeader = req.headers["x-aimux-session-id"];
+        const sessionId =
+          (Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader)?.trim() ??
+          url.searchParams.get("sessionId")?.trim() ??
+          "";
         if (!action || !sessionId) {
           send(res, 400, { ok: false, error: "action and sessionId are required" });
           return;
@@ -2990,7 +2994,11 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.hooks.codex) {
         const action = url.searchParams.get("action")?.trim() ?? "";
-        const sessionId = url.searchParams.get("sessionId")?.trim() ?? "";
+        const sessionHeader = req.headers["x-aimux-session-id"];
+        const sessionId =
+          (Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader)?.trim() ??
+          url.searchParams.get("sessionId")?.trim() ??
+          "";
         if (!action || !sessionId) {
           send(res, 400, { ok: false, error: "action and sessionId are required" });
           return;
