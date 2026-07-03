@@ -16,7 +16,7 @@ const runtimeNodeLaunchPatterns = [
   { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*node\s+-\s*<</ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
-  { id: "project-restart-cli", pattern: /"restart",\s*"--project"/ },
+  { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
 ] as const;
 
 const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);

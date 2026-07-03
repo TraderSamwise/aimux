@@ -1300,6 +1300,7 @@ describe("startRuntimeGuardRepair", () => {
         reloadDashboards: false,
         verifyDashboards: false,
         abortSignal: expect.any(AbortSignal),
+        abortDrainMs: 5000,
       }),
     );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
@@ -2038,6 +2039,7 @@ describe("refreshRuntimeGuard", () => {
         reloadDashboards: false,
         verifyDashboards: false,
         abortSignal: expect.any(AbortSignal),
+        abortDrainMs: 5000,
       }),
     );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
