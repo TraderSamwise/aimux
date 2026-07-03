@@ -64,6 +64,10 @@ import {
 const DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MIN_GRAVEYARD_CLEANUP_INTERVAL_MS = 60_000;
 
+function projectRootFor(host: any): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
+}
+
 function normalizeGraveyardCleanupIntervalMs(value: unknown): number {
   const intervalMs = Number(value);
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) return DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS;
@@ -283,7 +287,8 @@ export const persistenceMethods = {
   },
 
   repairManagedTmuxTargets(this: any): void {
-    const managedWindows = this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+    const projectRoot = projectRootFor(this);
+    const managedWindows = this.tmuxRuntimeManager.listProjectManagedWindows(projectRoot);
     const liveTargets = new Map<string, any>();
     for (const { target, metadata } of managedWindows) {
       if (metadata.kind !== "agent") continue;
@@ -301,7 +306,7 @@ export const persistenceMethods = {
 
   refreshProjectStatusline(this: any, _input?: { sessionId?: string; force?: boolean }): { ok: true } {
     if (_input?.force) {
-      invalidateTmuxStatuslineArtifacts(process.cwd());
+      invalidateTmuxStatuslineArtifacts(projectRootFor(this));
       this.lastStatuslineSnapshotKey = null;
     }
     this.invalidateDesktopStateSnapshot();
@@ -327,13 +332,14 @@ export const persistenceMethods = {
   },
 
   writePrecomputedTmuxStatuslineFiles(this: any, data: ReturnType<any["buildStatuslineSnapshot"]>): void {
-    const dashboardTop = renderTmuxStatuslineFromData(data, process.cwd(), "top", {
+    const projectRoot = projectRootFor(this);
+    const dashboardTop = renderTmuxStatuslineFromData(data, projectRoot, "top", {
       currentWindow: "dashboard",
-      currentPath: process.cwd(),
+      currentPath: projectRoot,
     });
-    const dashboardBottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+    const dashboardBottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", {
       currentWindow: "dashboard",
-      currentPath: process.cwd(),
+      currentPath: projectRoot,
     });
     this.writeStatuslineTextFile("top-dashboard.txt", dashboardTop);
     this.writeStatuslineTextFile("bottom-dashboard.txt", dashboardBottom);
@@ -343,10 +349,10 @@ export const persistenceMethods = {
       const renderOptions = {
         currentWindow: entry.windowName,
         currentWindowId: entry.tmuxWindowId,
-        currentPath: entry.worktreePath ?? process.cwd(),
+        currentPath: entry.worktreePath ?? projectRoot,
       };
-      const top = renderTmuxStatuslineFromData(data, process.cwd(), "top", renderOptions);
-      const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", renderOptions);
+      const top = renderTmuxStatuslineFromData(data, projectRoot, "top", renderOptions);
+      const bottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", renderOptions);
       this.writeStatuslineTextFile(`top-${entry.tmuxWindowId}.txt`, top);
       this.writeStatuslineTextFile(`bottom-${entry.tmuxWindowId}.txt`, bottom);
     }
@@ -356,8 +362,9 @@ export const persistenceMethods = {
     if (this.mode !== "dashboard") return;
     const clientSession = this.tmuxRuntimeManager.currentClientSession();
     if (!clientSession) return;
-    const localData = loadStatusline(process.cwd()) ?? {
-      project: basename(process.cwd()),
+    const projectRoot = projectRootFor(this);
+    const localData = loadStatusline(projectRoot) ?? {
+      project: basename(projectRoot),
       sessions: [],
       metadata: {},
       tasks: exchangeTaskCounts(),
@@ -366,10 +373,10 @@ export const persistenceMethods = {
       updatedAt: new Date().toISOString(),
     };
     const data = { ...localData, dashboardScreen: this.dashboardState.screen };
-    const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+    const bottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", {
       currentSession: clientSession,
       currentWindow: this.tmuxRuntimeManager.displayMessage("#{window_name}") ?? "dashboard",
-      currentPath: process.cwd(),
+      currentPath: projectRoot,
     });
     this.writeStatuslineTextFile(`bottom-dashboard-${clientSession}.txt`, bottom);
   },
@@ -429,8 +436,9 @@ export const persistenceMethods = {
     const orderedServices = orderStatuslineItemsByWorktree(desktopState.services, (services, worktreePath) =>
       this.dashboardUiStateStore.orderServicesForWorktree(services, worktreePath),
     );
+    const projectRoot = projectRootFor(this);
     return {
-      project: basename(process.cwd()),
+      project: basename(projectRoot),
       dashboardScreen: this.dashboardState.screen,
       sessions: [
         ...orderedSessions.map((session: any) => ({
@@ -1276,7 +1284,7 @@ async function removeGitWorktreeCheckout(mainRepo: string, path: string): Promis
 }
 
 function detachWorktreeServices(host: any, path: string): void {
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
     if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
     markLifecycleUsed(host, metadata.sessionId);
     try {
@@ -1290,7 +1298,7 @@ function detachWorktreeServices(host: any, path: string): void {
 }
 
 function stopWorktreeServicesForGraveyard(host: any, path: string): void {
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
     if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
     markLifecycleUsed(host, metadata.sessionId);
     try {
@@ -1351,7 +1359,7 @@ function markLifecycleUsed(host: any, itemId: string): void {
       return;
     }
     if (host.mode === "dashboard" || host.mode === "project-service") {
-      markLastUsed(process.cwd(), {
+      markLastUsed(projectRootFor(host), {
         itemId,
         clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
       });

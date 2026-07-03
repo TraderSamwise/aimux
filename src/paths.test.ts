@@ -9,7 +9,6 @@ import {
   getGlobalAimuxDir,
   getProjectIdFor,
   getProjectLogPathFor,
-  getProjectServiceStdioLogPathFor,
   initPaths,
   listProjects,
 } from "./paths.js";
@@ -39,9 +38,6 @@ describe("path project identity", () => {
       expect(norm(getDaemonStdioLogPath())).toMatch(/\.aimux\/daemon\/logs\/daemon-stdio\.log$/);
       expect(norm(getProjectLogPathFor(repoRoot))).toMatch(
         /\.aimux\/projects\/aimux-log-paths-.*\/logs\/aimux\.jsonl$/,
-      );
-      expect(norm(getProjectServiceStdioLogPathFor(repoRoot))).toMatch(
-        /\.aimux\/projects\/aimux-log-paths-.*\/logs\/project-service-stdio\.log$/,
       );
     } finally {
       if (previous === undefined) {

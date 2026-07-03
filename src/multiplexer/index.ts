@@ -73,6 +73,7 @@ import {
   run as runImpl,
   runDashboard as runDashboardImpl,
   runProjectService as runProjectServiceImpl,
+  startProjectServiceHost as startProjectServiceHostImpl,
 } from "./session-launch.js";
 
 export type MuxMode = "dashboard" | "project-service";
@@ -289,8 +290,9 @@ export class Multiplexer {
   private runtimeGuardProbing = false;
   private runtimeGuardDisconnectProbeCount = 0;
 
-  constructor(options: { contextWatcherEnabled?: boolean } = {}) {
+  constructor(options: { contextWatcherEnabled?: boolean; projectRoot?: string } = {}) {
     this.projectRoot = (() => {
+      if (options.projectRoot?.trim()) return options.projectRoot.trim();
       try {
         return findMainRepo(process.cwd());
       } catch {
@@ -305,7 +307,7 @@ export class Multiplexer {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
     this.runtimeSync = new MultiplexerRuntimeSync({
-      cwd: process.cwd(),
+      cwd: this.projectRoot,
       getMode: () => this.mode,
       syncSessionsFromTopology: () => this.syncSessionsFromTopology(),
       loadOfflineTopologySessions: () => this.loadOfflineTopologySessions(),
@@ -441,6 +443,10 @@ export class Multiplexer {
     return runProjectServiceImpl(this);
   }
 
+  async startProjectServiceHost(): Promise<void> {
+    return startProjectServiceHostImpl(this);
+  }
+
   /**
    * Resume previous sessions using each tool's native resume mechanism.
    * Reads runtime topology and spawns sessions with resumeArgs instead of normal args.
@@ -549,7 +555,7 @@ export class Multiplexer {
     }
     const targetSessionId = requestedTargetSessionId ?? `${toolCfg.command}-${Math.random().toString(36).slice(2, 8)}`;
     const targetWorktree =
-      targetWorktreePath === process.cwd()
+      targetWorktreePath === this.projectRoot
         ? undefined
         : (targetWorktreePath ?? this.sessionWorktreePaths.get(sourceSessionId));
     const thread = createThread({

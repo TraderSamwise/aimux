@@ -2,7 +2,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
-import { getStatePath } from "../paths.js";
+import { getRepoRoot, getStatePath } from "../paths.js";
 import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
@@ -93,6 +93,7 @@ function dedupeSessionStates(sessions: SessionState[]): SessionState[] {
 }
 
 type RuntimeLifecycleHost = {
+  projectRoot?: string;
   writtenInstructionFiles: Set<string>;
   sessions: SessionRuntime[];
   sessionToolKeys: Map<string, string>;
@@ -117,6 +118,10 @@ type RuntimeLifecycleHost = {
     getProjectSession(projectRoot: string): { sessionName: string };
   };
 };
+
+function projectRootFor(host: { projectRoot?: string }): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : getRepoRoot();
+}
 
 export type RuntimeLifecycleMethods = {
   writeInstructionFiles(this: Multiplexer): void;
@@ -161,7 +166,7 @@ export function loadStateStatic(): SavedState | null {
     const state = JSON.parse(raw) as Record<string, unknown>;
     return {
       savedAt: typeof state.savedAt === "string" ? state.savedAt : new Date().toISOString(),
-      cwd: typeof state.cwd === "string" ? state.cwd : process.cwd(),
+      cwd: typeof state.cwd === "string" ? state.cwd : getRepoRoot(),
       services: Array.isArray(state.services) ? (state.services as ServiceState[]) : undefined,
     };
   } catch {
@@ -173,6 +178,7 @@ export function loadStateStatic(): SavedState | null {
 export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   writeInstructionFiles(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
+    const projectRoot = projectRootFor(mux);
     const config = loadConfig();
     const configuredInstructionFiles = new Set(
       Object.values(config.tools)
@@ -183,7 +189,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     for (const instructionFile of LEGACY_DEFAULT_INSTRUCTION_FILES) {
       if (!configuredInstructionFiles.has(instructionFile)) {
         try {
-          cleanupManagedInstructionFile(join(process.cwd(), instructionFile));
+          cleanupManagedInstructionFile(join(projectRoot, instructionFile));
         } catch {}
       }
     }
@@ -254,6 +260,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   saveState(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
+    const projectRoot = projectRootFor(mux);
     const liveSessions = mux.sessions
       .filter((s: SessionRuntime) => !("stoppingSessionIds" in mux) || !(mux as any).stoppingSessionIds?.has?.(s.id))
       .filter((s: SessionRuntime) => this.isSessionRuntimeLive(s))
@@ -333,7 +340,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
 
     const state: SavedState = {
       savedAt: new Date().toISOString(),
-      cwd: process.cwd(),
+      cwd: projectRoot,
       services: mergedServices,
     };
 
@@ -398,7 +405,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     if (insideTmux && currentSession && mux.tmuxRuntimeManager.isManagedSessionName(currentSession)) {
       mux.tmuxRuntimeManager.leaveManagedSession({
         insideTmux: true,
-        sessionName: mux.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+        sessionName: mux.tmuxRuntimeManager.getProjectSession(projectRootFor(mux)).sessionName,
       });
       return;
     }
