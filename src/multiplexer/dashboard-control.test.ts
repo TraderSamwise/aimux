@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   loadMetadataEndpoint: vi.fn(),
   removeMetadataEndpoint: vi.fn(),
   updateSessionMetadata: vi.fn(),
-  requestCoreCommand: vi.fn(),
+  sendCoreCommand: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
 }));
 
@@ -92,16 +92,16 @@ function coreCommandOk(command: string, result: unknown) {
 }
 
 function expectCoreProjectEnsure(projectRoot = process.cwd()): void {
-  expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+  expect(mocks.sendCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
 }
 
 function expectCoreProjectStop(projectRoot = process.cwd()): void {
-  expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+  expect(mocks.sendCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, { projectRoot });
 }
 
 function expectNoCoreProjectLifecycleCommand(): void {
-  expect(mocks.requestCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, expect.anything());
-  expect(mocks.requestCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, expect.anything());
+  expect(mocks.sendCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, expect.anything());
+  expect(mocks.sendCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, expect.anything());
 }
 
 function resetDashboardControlMocks(): void {
@@ -110,7 +110,7 @@ function resetDashboardControlMocks(): void {
   mocks.loadMetadataEndpoint.mockReset();
   mocks.removeMetadataEndpoint.mockReset();
   mocks.updateSessionMetadata.mockReset();
-  mocks.requestCoreCommand.mockReset();
+  mocks.sendCoreCommand.mockReset();
   mocks.restartAimuxControlPlane.mockReset();
   mocks.restartAimuxControlPlane.mockReturnValue(new Promise(() => {}));
   mocks.loadMetadataEndpoint.mockReturnValue({
@@ -119,7 +119,7 @@ function resetDashboardControlMocks(): void {
     pid: 2,
     updatedAt: "2026-06-21T00:00:00.000Z",
   });
-  mocks.requestCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
+  mocks.sendCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
     if (command === CORE_COMMAND_NAMES.projectStop) {
       return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
     }
@@ -142,8 +142,8 @@ vi.mock("../metadata-store.js", () => ({
   updateSessionMetadata: mocks.updateSessionMetadata,
 }));
 
-vi.mock("../core-command-client.js", () => ({
-  requestCoreCommand: mocks.requestCoreCommand,
+vi.mock("../core-command-transport.js", () => ({
+  sendCoreCommand: mocks.sendCoreCommand,
 }));
 
 vi.mock("../runtime-restart.js", () => ({
@@ -442,7 +442,7 @@ describe("postToProjectService", () => {
     vi.useFakeTimers();
     try {
       mocks.loadMetadataEndpoint.mockReturnValue(null);
-      mocks.requestCoreCommand.mockImplementation(() => new Promise(() => {}));
+      mocks.sendCoreCommand.mockImplementation(() => new Promise(() => {}));
       const { postToProjectService } = await import("./dashboard-control.js");
 
       const request = postToProjectService(
@@ -464,7 +464,7 @@ describe("postToProjectService", () => {
   it("escalates a later restart request after an in-flight ensure completes", async () => {
     let finishEnsure: (() => void) | undefined;
     let ensureCalls = 0;
-    mocks.requestCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
+    mocks.sendCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
       if (command === CORE_COMMAND_NAMES.projectStop) {
         return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
       }
@@ -492,7 +492,7 @@ describe("postToProjectService", () => {
 
     expectCoreProjectStop();
     expect(
-      mocks.requestCoreCommand.mock.calls.filter((call) => call[0] === CORE_COMMAND_NAMES.projectEnsure),
+      mocks.sendCoreCommand.mock.calls.filter((call) => call[0] === CORE_COMMAND_NAMES.projectEnsure),
     ).toHaveLength(2);
   });
 

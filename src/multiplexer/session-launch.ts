@@ -278,6 +278,12 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.writeDashboardClientStatuslineFile?.();
   const startupModelLifecycle = captureDashboardLifecycle(host);
   const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupModelLifecycle });
+  let projectEventStreamStarted = false;
+  const startProjectEventStreamOnce = () => {
+    if (projectEventStreamStarted) return;
+    projectEventStreamStarted = true;
+    startDashboardProjectEventStream(host);
+  };
   if (!primed) {
     const startupBusyState = {
       title: "Connecting Aimux",
@@ -302,6 +308,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
         if (!isRepairLifecycleCurrent()) return;
         if (refreshed || !host.dashboardModelServiceRefreshError) {
+          startProjectEventStreamOnce();
           host.renderCurrentDashboardView();
           return;
         }
@@ -317,9 +324,10 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
         if (!isRepairLifecycleCurrent()) return;
         host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
       });
+  } else {
+    startProjectEventStreamOnce();
   }
   host.terminalHost.enterAlternateScreen(true);
-  startDashboardProjectEventStream(host);
   host.startStatusRefresh();
   host.renderCurrentDashboardView();
 

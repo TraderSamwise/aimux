@@ -80,13 +80,33 @@ describe("last-used recency", () => {
   });
 
   it("prunes per-client item timestamps to the recent id limit", () => {
-    for (let index = 0; index < 70; index += 1) {
-      markLastUsed(projectRoot, {
-        itemId: `agent-${index}`,
-        clientSession: "client-1",
-        usedAt: new Date(Date.UTC(2026, 5, 28, 4, 0, index)).toISOString(),
-      });
-    }
+    const path = getLastUsedPath(projectRoot);
+    mkdirSync(join(path, ".."), { recursive: true });
+    const seededEntries = Array.from({ length: 69 }, (_, index) => {
+      const itemId = `agent-${index}`;
+      return [itemId, { lastUsedAt: new Date(Date.UTC(2026, 5, 28, 4, 0, index)).toISOString() }] as const;
+    });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        items: Object.fromEntries(seededEntries),
+        clients: {
+          "client-1": {
+            recentIds: seededEntries.map(([itemId]) => itemId).reverse(),
+            items: Object.fromEntries(seededEntries),
+            updatedAt: "2026-06-28T04:01:08.000Z",
+          },
+        },
+        projectRecentIds: seededEntries.map(([itemId]) => itemId).reverse(),
+      }),
+    );
+
+    markLastUsed(projectRoot, {
+      itemId: "agent-69",
+      clientSession: "client-1",
+      usedAt: "2026-06-28T04:01:09.000Z",
+    });
 
     const client = loadLastUsedState(projectRoot).clients["client-1"];
     expect(client?.recentIds).toHaveLength(64);
