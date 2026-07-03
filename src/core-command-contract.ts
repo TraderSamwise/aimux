@@ -19,13 +19,23 @@ export interface CorePingResult {
   pong: true;
 }
 
+export interface CoreStatusProject {
+  id: string;
+  name: string;
+  path: string;
+  dashboardSessionName: string;
+  service: unknown | null;
+  serviceAlive: boolean;
+  serviceEndpoint: unknown;
+}
+
 export interface CoreStatusResult {
   daemon: {
     pid: number;
     port: number;
     serviceInfo: unknown;
   };
-  projects: unknown[];
+  projects: CoreStatusProject[];
   updatedAt: string;
 }
 
@@ -60,4 +70,8 @@ export type CoreCommandResponse<TCommand extends CoreCommandName = CoreCommandNa
 
 export function isCoreCommandName(value: unknown): value is CoreCommandName {
   return typeof value === "string" && Object.values(CORE_COMMAND_NAMES).includes(value as CoreCommandName);
+}
+
+export function assertNeverCoreCommand(command: never): never {
+  throw new Error(`unhandled core command: ${command}`);
 }

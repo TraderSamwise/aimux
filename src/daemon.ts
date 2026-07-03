@@ -23,6 +23,7 @@ import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import {
   CORE_API_ROUTES,
   CORE_COMMAND_NAMES,
+  assertNeverCoreCommand,
   isCoreCommandName,
   type CoreCommandEnvelope,
   type CoreCommandResponse,
@@ -1133,27 +1134,31 @@ export class AimuxDaemon {
       };
     }
     const issuedAt = new Date().toISOString();
-    if (command === CORE_COMMAND_NAMES.ping) {
-      return { status: 200, body: { ok: true, id, command, issuedAt, result: { pong: true } } };
-    }
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        id,
-        command,
-        issuedAt,
-        result: {
-          daemon: {
-            pid: process.pid,
-            port: getDaemonPort(),
-            serviceInfo: getProjectServiceManifest(),
+    switch (command) {
+      case CORE_COMMAND_NAMES.ping:
+        return { status: 200, body: { ok: true, id, command, issuedAt, result: { pong: true } } };
+      case CORE_COMMAND_NAMES.status:
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: {
+              daemon: {
+                pid: process.pid,
+                port: getDaemonPort(),
+                serviceInfo: getProjectServiceManifest(),
+              },
+              projects: this.listProjectsForRoute(),
+              updatedAt: this.state.updatedAt,
+            },
           },
-          projects: this.listProjectsForRoute(),
-          updatedAt: this.state.updatedAt,
-        },
-      },
-    };
+        };
+      default:
+        return assertNeverCoreCommand(command);
+    }
   }
 
   async routeRequest(
