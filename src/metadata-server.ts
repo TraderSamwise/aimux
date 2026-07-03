@@ -2234,6 +2234,7 @@ export class MetadataServer {
       const currentWindow = url.searchParams.get("currentWindow")?.trim() || undefined;
       const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
       const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
+      const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
       const items = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -2243,6 +2244,7 @@ export class MetadataServer {
           currentPath,
         },
         new TmuxRuntimeManager(),
+        { scope },
       ).map((item) => ({
         ...serializeFastControlItem(item),
         label: item.lastUsedAt ? `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}` : item.label,

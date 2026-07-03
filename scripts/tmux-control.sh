@@ -362,7 +362,11 @@ reload_local_dashboard() {
     reload_client_tty="${live_client_tty-${client_tty-}}"
     reload_client_session="${live_client_session-${current_client_session-}}"
     metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
-    [ -n "$metadata_api" ] || exit 1
+    [ -n "$metadata_api" ] || {
+      debug_log_line "dashboard reload api unavailable: missing metadata-api.txt"
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
+      exit 1
+    }
     reload_body=$(python3 - "$reload_client_tty" "$reload_client_session" "$current_window_id" <<'PY'
 import json
 import sys
@@ -378,7 +382,11 @@ if current_window_id:
 print(json.dumps(body))
 PY
 )
-    curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$reload_body" "$metadata_api/control/open-dashboard"
+    curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$reload_body" "$metadata_api/control/open-dashboard" || {
+      debug_log_line "dashboard reload api failed endpoint=$metadata_api"
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
+      exit 1
+    }
   ) >/dev/null 2>&1 &
   return 0
 }
@@ -485,21 +493,21 @@ report_control_failure() {
     *) action_label="$action" ;;
   esac
   debug_log_line "control failure action=$action reason=$failure_reason"
-  show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label — $failure_reason"
+  show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label - $failure_reason"
 }
 
 show_local_switcher() {
-  show_metadata_menu "worktree" "aimux"
+  show_metadata_menu "worktree" "aimux" || return 1
   exit 0
 }
 
 show_local_expose() {
-  show_metadata_menu "global" "aimux expose"
+  show_metadata_menu "all" "aimux project" || return 1
   exit 0
 }
 
 show_local_meta() {
-  show_metadata_menu "global" "aimux projects"
+  show_metadata_menu "all" "aimux project" || return 1
   exit 0
 }
 
@@ -513,23 +521,44 @@ show_metadata_menu() {
   [ -n "$menu_session" ] || menu_session="$current_client_session"
   menu_client_tty="${live_client_tty-}"
   [ -n "$menu_client_tty" ] || menu_client_tty="$client_tty"
-  host_session=$(resolve_host_session_name) || return 1
-  python3 - "$menu_scope" "$menu_title" "$host_session" "$project_root" "$current_path" "$current_window_id" "$script_dir/tmux-control.sh" "$project_state_dir" "$menu_session" "$menu_client_tty" "$current_window" "$pane_id" <<'PY'
+  python3 - "$menu_scope" "$menu_title" "$project_root" "$current_path" "$current_window_id" "$script_dir/tmux-control.sh" "$project_state_dir" "$menu_session" "$menu_client_tty" "$current_window" "$pane_id" <<'PY'
 import json
 import os
 import shlex
 import subprocess
 import sys
+import urllib.parse
 
-scope, title, host_session, project_root, current_path, current_window_id, script, state_dir, menu_session, client_tty, current_window, pane_id = sys.argv[1:13]
+scope, title, project_root, current_path, current_window_id, script, state_dir, menu_session, client_tty, current_window, pane_id = sys.argv[1:12]
 
-def run(*args):
-    return subprocess.check_output(["tmux", *args], text=True, stderr=subprocess.DEVNULL)
+def read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except Exception:
+        return ""
 
-def same_or_child(path, parent):
-    path = (path or "").rstrip("/")
-    parent = (parent or "").rstrip("/")
-    return bool(path and parent and (path == parent or path.startswith(parent + "/")))
+def fetch_items():
+    endpoint = read_text(os.path.join(state_dir, "metadata-api.txt"))
+    if not endpoint:
+        raise SystemExit(1)
+    params = {
+        "scope": scope,
+        "currentClientSession": menu_session,
+        "currentWindow": current_window,
+        "currentWindowId": current_window_id,
+        "currentPath": current_path,
+    }
+    query = urllib.parse.urlencode({key: value for key, value in params.items() if value})
+    url = endpoint.rstrip("/") + "/control/switchable-agents"
+    if query:
+        url += "?" + query
+    raw = subprocess.check_output(["curl", "-fsS", "--max-time", "4", url], text=True, stderr=subprocess.DEVNULL)
+    payload = json.loads(raw)
+    items = payload.get("items")
+    if not payload.get("ok") or not isinstance(items, list):
+        raise SystemExit(1)
+    return items
 
 def safe_label(value, limit=64):
     cleaned = " ".join(str(value or "").split())
@@ -537,42 +566,7 @@ def safe_label(value, limit=64):
         return cleaned[: limit - 3] + "..."
     return cleaned
 
-def list_windows():
-    if scope == "global":
-        raw = run("list-windows", "-a", "-F", "#{session_name}|#{window_index}|#{window_id}|#{window_name}|#{pane_dead}")
-    else:
-        raw = run("list-windows", "-t", host_session, "-F", "#{session_name}|#{window_index}|#{window_id}|#{window_name}|#{pane_dead}")
-    rows = []
-    for line in raw.splitlines():
-        try:
-            session, index, window_id, name, pane_dead = line.split("|", 4)
-        except ValueError:
-            continue
-        if pane_dead == "1":
-            continue
-        try:
-            meta = json.loads(run("show-window-options", "-v", "-t", window_id, "@aimux-meta").strip())
-        except Exception:
-            continue
-        worktree = meta.get("worktreePath") or project_root
-        if scope == "worktree" and current_path and not (same_or_child(current_path, worktree) or same_or_child(worktree, current_path)):
-            continue
-        rows.append({
-            "session": session,
-            "index": int(index),
-            "windowId": window_id,
-            "name": name,
-            "kind": meta.get("kind") or "agent",
-            "command": meta.get("command") or name,
-            "role": meta.get("role") or "",
-            "status": meta.get("statusText") or "",
-            "worktree": worktree,
-            "current": window_id == current_window_id,
-        })
-    return rows
-
-items = list_windows()
-items.sort(key=lambda item: (item["worktree"], 0 if item["kind"] == "agent" else 1, item["index"]))
+items = fetch_items()
 if not items:
     raise SystemExit(1)
 
@@ -581,11 +575,17 @@ if client_tty:
     args += ["-c", client_tty]
 args += ["-T", title]
 keys = list("123456789abcdefghijklmnopqrstuvwxyz")
-for idx, item in enumerate(items[:36]):
-    basename = os.path.basename(item["worktree"].rstrip("/")) or item["worktree"]
-    status = f" {item['status']}" if item["status"] else ""
-    marker = "* " if item["current"] else ""
-    label = safe_label(f"{marker}{basename} - {item['command']} {item['role']}{status}")
+for idx, item in enumerate(items[:len(keys)]):
+    target = item.get("target") if isinstance(item.get("target"), dict) else {}
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    window_id = target.get("windowId") or target.get("id")
+    if not window_id:
+        continue
+    worktree = metadata.get("worktreePath") or project_root
+    basename = os.path.basename(str(worktree).rstrip("/")) or str(worktree)
+    label_text = item.get("label") or metadata.get("label") or metadata.get("command") or target.get("windowName") or window_id
+    marker = "* " if window_id == current_window_id else ""
+    label = safe_label(f"{marker}{basename} - {label_text}")
     command = ["sh", script, "window"]
     for flag, value in [
         ("--project-state-dir", state_dir),
@@ -596,12 +596,14 @@ for idx, item in enumerate(items[:36]):
         ("--current-window-id", current_window_id),
         ("--current-path", current_path),
         ("--pane-id", pane_id),
-        ("--window-id", item["windowId"]),
+        ("--window-id", window_id),
     ]:
         if value:
             command.extend([flag, value])
     args += [label, keys[idx], " ".join(shlex.quote(part) for part in command)]
 
+if len(args) <= 3:
+    raise SystemExit(1)
 subprocess.run(["tmux", *args], check=True)
 PY
 }
