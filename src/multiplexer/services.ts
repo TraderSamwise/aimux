@@ -20,6 +20,10 @@ export function generateServiceId(): string {
   return `service-${randomUUID().slice(0, 8)}`;
 }
 
+function projectRootFor(host: ServiceHost): string {
+  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
+}
+
 export function getServiceLaunchCommandLine(metadata: { command?: string; args?: string[] }): string {
   return metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
 }
@@ -75,7 +79,7 @@ function markServiceUsed(host: ServiceHost, serviceId: string): void {
       return;
     }
     if (host.mode === "dashboard" || host.mode === "project-service") {
-      markLastUsed(process.cwd(), {
+      markLastUsed(projectRootFor(host), {
         itemId: serviceId,
         clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
       });
@@ -106,7 +110,7 @@ function commitServiceState(host: ServiceHost, options: { upsert?: ServiceState[
   writeJsonAtomic(statePath, {
     ...state,
     savedAt: new Date().toISOString(),
-    cwd: process.cwd(),
+    cwd: projectRootFor(host),
     services: [...byId.values()],
   });
   host.invalidateDesktopStateSnapshot();
@@ -171,15 +175,16 @@ export function createService(
   opts?: { serviceId?: string },
 ): { serviceId: string } {
   const serviceId = opts?.serviceId ?? generateServiceId();
-  const cwd = worktreePath ?? process.cwd();
+  const root = projectRootFor(host);
+  const cwd = worktreePath ?? root;
   const shell = process.env.SHELL || "zsh";
   const trimmed = commandLine.trim();
   const launchScript = buildServiceLaunchScript(trimmed, shell);
-  let projectRoot = process.cwd();
+  let projectRoot = root;
   try {
     projectRoot = findMainRepo(cwd);
   } catch {
-    projectRoot = process.cwd();
+    projectRoot = root;
   }
   const wrapped = trimmed
     ? wrapCommandWithShellIntegration({
@@ -270,7 +275,8 @@ export function createService(
 }
 
 export function stopService(host: ServiceHost, serviceId: string): { serviceId: string; status: "stopped" } {
-  const tmuxSession = host.tmuxRuntimeManager.getProjectSession(process.cwd());
+  const projectRoot = projectRootFor(host);
+  const tmuxSession = host.tmuxRuntimeManager.getProjectSession(projectRoot);
   const match = host.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
     sessionId: serviceId,
   });
@@ -296,7 +302,7 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
     }),
     "stopped",
   );
-  suppressNextShellReports(process.cwd(), serviceId, 1);
+  suppressNextShellReports(projectRoot, serviceId, 1);
   host.tmuxRuntimeManager.sendKey(match.target, "C-c");
   commitServiceState(host);
   return { serviceId, status: "stopped" };
@@ -306,7 +312,7 @@ export function removeOfflineService(host: ServiceHost, serviceId: string): { se
   host.removedServiceIds?.add?.(serviceId);
   const offlineService = host.offlineServices.find((service: ServiceState) => service.id === serviceId);
   const existing = host.tmuxRuntimeManager.findManagedWindow(
-    host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+    host.tmuxRuntimeManager.getProjectSession(projectRootFor(host)).sessionName,
     {
       sessionId: serviceId,
     },
@@ -330,8 +336,9 @@ export function resumeOfflineService(
   host: ServiceHost,
   service: ServiceState,
 ): { serviceId: string; status: "running" } {
+  const root = projectRootFor(host);
   const existing = host.tmuxRuntimeManager.findManagedWindow(
-    host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+    host.tmuxRuntimeManager.getProjectSession(root).sessionName,
     {
       sessionId: service.id,
     },
@@ -349,7 +356,7 @@ export function resumeOfflineService(
       } catch {}
     }
   }
-  const cwd = service.worktreePath ?? process.cwd();
+  const cwd = service.worktreePath ?? root;
   const resumeCwd = service.cwd ?? cwd;
   const shell = process.env.SHELL || "zsh";
   const launchCommandLine = service.launchCommandLine?.trim() ?? "";
@@ -371,7 +378,7 @@ export function resumeOfflineService(
   if (target) {
     try {
       if (launchCommandLine) {
-        suppressNextShellReports(process.cwd(), service.id, 2);
+        suppressNextShellReports(root, service.id, 2);
         host.tmuxRuntimeManager.sendText(target, launchCommandLine);
         host.tmuxRuntimeManager.sendEnter(target);
       }
@@ -384,11 +391,11 @@ export function resumeOfflineService(
   }
   if (!target) {
     const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
-    let projectRoot = process.cwd();
+    let projectRoot = root;
     try {
       projectRoot = findMainRepo(cwd);
     } catch {
-      projectRoot = process.cwd();
+      projectRoot = root;
     }
     const wrapped = launchCommandLine
       ? wrapCommandWithShellIntegration({
@@ -460,7 +467,7 @@ export function resumeOfflineServiceById(
     return resumeOfflineService(host, service);
   }
   const existing = host.tmuxRuntimeManager.findManagedWindow(
-    host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+    host.tmuxRuntimeManager.getProjectSession(projectRootFor(host)).sessionName,
     {
       sessionId: serviceId,
     },
