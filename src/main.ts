@@ -38,17 +38,7 @@ import {
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
-import {
-  AimuxDaemon,
-  ensureDaemonRunning,
-  ensureProjectService,
-  getDaemonHost,
-  getDaemonPort,
-  loadDaemonInfo,
-  loadDaemonState,
-  stopDaemon,
-  stopProjectService,
-} from "./daemon.js";
+import { AimuxDaemon, getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState, stopDaemon } from "./daemon.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import {
   CORE_COMMAND_NAMES,
@@ -206,9 +196,7 @@ async function waitForVerifiedProjectService(
           });
           if (!respawnAttempted) {
             respawnAttempted = true;
-            await stopProjectService(projectRoot);
-            removeMetadataEndpoint(projectRoot);
-            await ensureProjectService(projectRoot);
+            await restartCoreProjectServiceForReadiness(projectRoot);
           } else {
             removeMetadataEndpoint(projectRoot);
           }
@@ -227,9 +215,7 @@ async function waitForVerifiedProjectService(
           });
           if (!respawnAttempted) {
             respawnAttempted = true;
-            await stopProjectService(projectRoot);
-            removeMetadataEndpoint(projectRoot);
-            await ensureProjectService(projectRoot);
+            await restartCoreProjectServiceForReadiness(projectRoot);
           } else {
             removeMetadataEndpoint(projectRoot);
           }
@@ -268,7 +254,7 @@ async function waitForVerifiedProjectService(
             error: lastError,
           });
           removeMetadataEndpoint(projectRoot);
-          await ensureProjectService(projectRoot);
+          await ensureCoreProjectServiceForReadiness(projectRoot);
         }
       }
     } else {
@@ -278,9 +264,7 @@ async function waitForVerifiedProjectService(
       } else if (!respawnAttempted && Date.now() - missingEndpointSince >= 1000) {
         respawnAttempted = true;
         log.warn("respawning project service after missing endpoint", "runtime", { projectRoot });
-        await stopProjectService(projectRoot);
-        removeMetadataEndpoint(projectRoot);
-        await ensureProjectService(projectRoot);
+        await restartCoreProjectServiceForReadiness(projectRoot);
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -474,7 +458,7 @@ async function getProjectServiceEndpoint(projectRoot = resolveProjectRoot(proces
 }> {
   let endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
-    await ensureProjectService(projectRoot);
+    await ensureCoreProjectServiceForCli(projectRoot);
     endpoint = await resolveProjectServiceEndpoint(projectRoot);
   }
   if (!endpoint) {
@@ -484,53 +468,11 @@ async function getProjectServiceEndpoint(projectRoot = resolveProjectRoot(proces
 }
 
 async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVersionDrift?: boolean }): Promise<void> {
-  try {
-    await ensureDaemonRunning();
-  } catch (error) {
-    if (opts?.repairVersionDrift === false || !isAimuxBuildDriftError(error)) {
-      throw error;
-    }
-    await restartStaleControlPlane(projectRoot);
+  if (opts?.repairVersionDrift === false) {
+    await ensureCoreProjectServiceForCli(projectRoot);
+    return;
   }
-  await ensureProjectServiceForDashboardStartup(projectRoot, opts);
-  try {
-    await waitForVerifiedProjectService(projectRoot);
-  } catch (error) {
-    if (opts?.repairVersionDrift === false) {
-      throw error;
-    }
-    if (!(error instanceof ProjectServiceVersionError) && !(error instanceof Error)) {
-      throw error;
-    }
-    await restartStaleControlPlane(projectRoot);
-    try {
-      await waitForVerifiedProjectService(projectRoot, { timeoutMs: 15_000 });
-    } catch {
-      await ensureProjectService(projectRoot);
-      await waitForVerifiedProjectService(projectRoot, { timeoutMs: 15_000 });
-    }
-  }
-}
-
-async function ensureProjectServiceForDashboardStartup(
-  projectRoot: string,
-  opts?: { repairVersionDrift?: boolean },
-): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await ensureProjectService(projectRoot);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (opts?.repairVersionDrift === false || !isLocalControlPlaneTransientStartupError(error)) {
-        throw error;
-      }
-      removeMetadataEndpoint(projectRoot);
-      await delay(150 * (attempt + 1));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  await ensureCoreProjectServiceForCliWithRepair(projectRoot);
 }
 
 async function ensureDaemonProjectSpawned(projectRoot: string): Promise<void> {
@@ -561,10 +503,6 @@ function isRepairableCoreProjectStartupError(error: unknown): boolean {
     isLocalControlPlaneTransientStartupError(error) ||
     message.includes("project service did not become ready")
   );
-}
-
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: string): string[] {
@@ -608,7 +546,8 @@ async function stopProjectRuntime(
   if (tmux.isAvailable()) {
     persistProjectRuntimeSnapshotsBeforeTmuxStop(projectRoot, tmux);
   }
-  const projectService = await stopProjectService(projectRoot);
+  const projectServiceResponse = await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+  const projectService = projectServiceResponse.result.project;
   if (projectService?.pid) {
     await waitForProcessExit(projectService.pid);
   }
@@ -736,10 +675,21 @@ function coreProjectServicePid(project: CoreStatusProject | null): number | null
     : null;
 }
 
-async function ensureCoreProjectServiceForCli(projectRoot: string): Promise<CoreProjectServiceState> {
+async function ensureCoreProjectServiceForReadiness(projectRoot: string): Promise<CoreProjectServiceState> {
   const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
-  await waitForVerifiedProjectService(projectRoot);
   return response.result.project;
+}
+
+async function restartCoreProjectServiceForReadiness(projectRoot: string): Promise<CoreProjectServiceState> {
+  await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+  removeMetadataEndpoint(projectRoot);
+  return ensureCoreProjectServiceForReadiness(projectRoot);
+}
+
+async function ensureCoreProjectServiceForCli(projectRoot: string): Promise<CoreProjectServiceState> {
+  const project = await ensureCoreProjectServiceForReadiness(projectRoot);
+  await waitForVerifiedProjectService(projectRoot);
+  return project;
 }
 
 async function ensureCoreProjectServiceForCliWithRepair(projectRoot: string): Promise<CoreProjectServiceState> {
@@ -1104,8 +1054,9 @@ program
   .action(async (opts: { host?: string; port?: string; daemonUrl?: string; daemon?: boolean; open?: boolean }) => {
     try {
       const shouldEnsureDaemon = opts.daemon !== false;
-      const daemonInfo = shouldEnsureDaemon ? await ensureDaemonRunning() : null;
-      const daemonUrl = opts.daemonUrl?.trim() || `http://${getDaemonHost()}:${daemonInfo?.port ?? getDaemonPort()}`;
+      const coreStatus = shouldEnsureDaemon ? await requestCoreCommand(CORE_COMMAND_NAMES.status) : null;
+      const daemonUrl =
+        opts.daemonUrl?.trim() || `http://${getDaemonHost()}:${coreStatus?.result.daemon.port ?? getDaemonPort()}`;
       const server = await startLocalUiServer({
         host: opts.host,
         port: parsePortOption(opts.port, DEFAULT_LOCAL_UI_PORT),
