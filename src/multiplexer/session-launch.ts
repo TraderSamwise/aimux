@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 import { initProject, loadConfig } from "../config.js";
+import { getProjectStateDirFor } from "../paths.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
@@ -581,6 +582,7 @@ export function createSession(
       args: finalArgs,
       extraEnv: {
         ...(launchEnv ?? {}),
+        AIMUX_METADATA_ENDPOINT_FILE: `${getProjectStateDirFor(projectRoot)}/metadata-api.txt`,
         AIMUX_SESSION_ID: sessionId,
         AIMUX_TOOL: toolConfigKey ?? command,
       },
@@ -600,6 +602,7 @@ export function createSession(
       args: finalArgs,
       extraEnv: {
         ...(launchEnv ?? {}),
+        AIMUX_METADATA_ENDPOINT_FILE: `${getProjectStateDirFor(projectRoot)}/metadata-api.txt`,
         AIMUX_SESSION_ID: sessionId,
         AIMUX_PROJECT_ROOT: projectRoot,
         AIMUX_TOOL: toolConfigKey ?? command,

@@ -149,6 +149,8 @@ describe("createSession", () => {
     expect(createWindowArgs[3]).toBe("env");
     expect(createWindowArgs[4][0]).toBe("-i");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=claude-");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_METADATA_ENDPOINT_FILE=");
+    expect(createWindowArgs[4].join(" ")).toContain("metadata-api.txt");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=claude");
     expect(createWindowArgs[4]).toContain("claude");
 
@@ -211,6 +213,8 @@ describe("createSession", () => {
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     expect(createWindowArgs[3]).toBe("env");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=claude-");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_METADATA_ENDPOINT_FILE=");
+    expect(createWindowArgs[4].join(" ")).toContain("metadata-api.txt");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=claude-custom");
     expect(createWindowArgs[4]).toContain(claudeBin);
 
@@ -271,6 +275,8 @@ describe("createSession", () => {
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     expect(createWindowArgs[3]).toBe("env");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=codex-");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_METADATA_ENDPOINT_FILE=");
+    expect(createWindowArgs[4].join(" ")).toContain("metadata-api.txt");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_PROJECT_ROOT=");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=codex-gpt5");
     expect(createWindowArgs[4]).toContain(codexBin);

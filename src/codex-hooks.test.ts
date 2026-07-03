@@ -16,14 +16,17 @@ import {
 const MANAGED_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"];
 
 describe("buildCodexHookCommand", () => {
-  it("is self-gating on AIMUX_SESSION_ID and falls back to empty JSON", () => {
+  it("posts through the project service endpoint and falls back to empty JSON", () => {
     const cmd = buildCodexHookCommand("permission-request");
-    expect(cmd).toContain('[ -n "$AIMUX_SESSION_ID" ]');
-    expect(cmd).toContain("codex-hook");
+    expect(cmd).toContain("AIMUX_SESSION_ID");
+    expect(cmd).toContain("AIMUX_METADATA_ENDPOINT_FILE");
+    expect(cmd).toContain("/hooks/codex");
+    expect(cmd).toContain("curl");
     expect(cmd).toContain("permission-request");
-    expect(cmd).toContain('--session "$AIMUX_SESSION_ID"');
-    expect(cmd).toContain('--project "$AIMUX_PROJECT_ROOT"');
-    expect(cmd.endsWith("|| echo '{}'")).toBe(true);
+    expect(cmd).not.toContain("codex-hook");
+    expect(cmd).not.toContain("--project");
+    expect(cmd).not.toContain("bin/aimux");
+    expect(cmd.endsWith("'")).toBe(true);
   });
 });
 
@@ -35,7 +38,7 @@ describe("codexLaunchHookArgs", () => {
 
 describe("isAimuxOwnedCodexHookCommand", () => {
   it("matches only aimux commands, not cmux or foreign ones", () => {
-    expect(isAimuxOwnedCodexHookCommand("node /x/main.js codex-hook stop")).toBe(true);
+    expect(isAimuxOwnedCodexHookCommand("curl http://127.0.0.1:1/hooks/codex?action=stop")).toBe(true);
     expect(isAimuxOwnedCodexHookCommand("cmux hooks codex stop")).toBe(false);
     expect(isAimuxOwnedCodexHookCommand("my-own-thing.sh")).toBe(false);
     expect(isAimuxOwnedCodexHookCommand(undefined)).toBe(false);
