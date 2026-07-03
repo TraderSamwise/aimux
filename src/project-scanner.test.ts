@@ -7,6 +7,7 @@ import { RuntimeTopologyStore, emptyRuntimeTopology } from "./runtime-core/topol
 let tmpHome: string;
 let projectA: string;
 let projectB: string;
+let tmpDirOverride: string | undefined;
 let registryProjects: Array<{ id: string; name: string; repoRoot: string; lastSeen: string }>;
 
 vi.mock("node:os", async () => {
@@ -14,6 +15,7 @@ vi.mock("node:os", async () => {
   return {
     ...actual,
     homedir: () => tmpHome,
+    tmpdir: () => tmpDirOverride ?? actual.tmpdir(),
   };
 });
 
@@ -69,6 +71,7 @@ function writeTopologySession(
 
 describe("project-scanner", () => {
   beforeEach(() => {
+    tmpDirOverride = undefined;
     tmpHome = makeTmpDir("aimux-home-");
     projectA = join(tmpHome, "work", "project-a");
     projectB = join(tmpHome, "work", "project-b");
@@ -325,7 +328,11 @@ describe("project-scanner", () => {
   });
 
   it("does not hide tmp path siblings that only share the tmp prefix", async () => {
-    const tmpSiblingProject = join(`${tmpdir()}-aimux-sibling`, "aimux-real-project");
+    const tmpParent = makeTmpDir("aimux-tmp-parent-");
+    tmpDirOverride = join(tmpParent, "tmp");
+    const tmpSiblingRoot = `${tmpDirOverride}-aimux-sibling`;
+    const tmpSiblingProject = join(tmpSiblingRoot, "aimux-real-project");
+    mkdirSync(tmpDirOverride, { recursive: true });
     mkdirSync(join(tmpSiblingProject, ".aimux"), { recursive: true });
     registryProjects = [
       {
@@ -341,7 +348,7 @@ describe("project-scanner", () => {
 
     expect(projects.map((project) => project.path)).toEqual([tmpSiblingProject]);
 
-    rmSync(`${tmpdir()}-aimux-sibling`, { recursive: true, force: true });
+    rmSync(tmpParent, { recursive: true, force: true });
   });
 
   it("builds registered dashboard session names from each project's config", async () => {
