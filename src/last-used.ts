@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
 import { join } from "node:path";
 import { parseRecencyTimestamp } from "./recency.js";
@@ -113,8 +113,6 @@ export function compareLastUsed(
 }
 
 function persistLastUsedState(projectRoot: string, state: LastUsedState): void {
-  const dir = getProjectStateDirFor(projectRoot);
-  mkdirSync(dir, { recursive: true });
   // Recency is a recoverable hint on hot TUI paths; avoid fsync latency.
   atomicWriteFast(getLastUsedPath(projectRoot), `${JSON.stringify(state, null, 2)}\n`);
 }
