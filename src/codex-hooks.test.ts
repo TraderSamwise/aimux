@@ -39,6 +39,7 @@ describe("codexLaunchHookArgs", () => {
 describe("isAimuxOwnedCodexHookCommand", () => {
   it("matches only aimux commands, not cmux or foreign ones", () => {
     expect(isAimuxOwnedCodexHookCommand("curl http://127.0.0.1:1/hooks/codex?action=stop")).toBe(true);
+    expect(isAimuxOwnedCodexHookCommand("aimux codex-hook stop --project /tmp/repo")).toBe(true);
     expect(isAimuxOwnedCodexHookCommand("cmux hooks codex stop")).toBe(false);
     expect(isAimuxOwnedCodexHookCommand("my-own-thing.sh")).toBe(false);
     expect(isAimuxOwnedCodexHookCommand(undefined)).toBe(false);
@@ -77,6 +78,17 @@ describe("mergeCodexHooks", () => {
     const once = mergeCodexHooks({});
     const twice = mergeCodexHooks(once);
     expect(twice).toEqual(once);
+  });
+
+  it("removes legacy aimux-owned codex-hook commands while adding the service hook", () => {
+    const existing: CodexHooksFile = {
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "aimux codex-hook stop --project /tmp/repo" }] }] },
+    };
+    const merged = mergeCodexHooks(existing);
+    const stop = merged.hooks!.Stop;
+    expect(stop).toHaveLength(1);
+    expect(stop[0].hooks![0].command).toContain("/hooks/codex");
+    expect(stop[0].hooks![0].command).not.toContain("codex-hook");
   });
 
   it("preserves unrelated top-level keys", () => {

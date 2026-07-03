@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MetadataServer } from "./metadata-server.js";
+import { loadMetadataState } from "./metadata-store.js";
 import { initPaths } from "./paths.js";
 import { ProjectEventBus, type AlertEvent } from "./project-events.js";
 
@@ -271,6 +272,20 @@ describe("interaction endpoints", () => {
       hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } },
     });
     stop();
+  });
+
+  it("keeps Codex permission hooks telemetry-only without stranded response attention", async () => {
+    const response = await postJson(`${base}/hooks/codex?action=permission-request&sessionId=codex-1`, {
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+      cwd: "/tmp/worktree",
+    });
+    expect(response.status).toBe(200);
+    expect(response.json).toEqual({});
+
+    const pending = await (await fetch(`${base}/agents/interaction/pending?sessionId=codex-1`)).json();
+    expect(pending.requests).toHaveLength(0);
+    expect(loadMetadataState().sessions["codex-1"]?.derived?.attention).not.toBe("needs_response");
   });
 
   it("records backend session ids from hook payloads without a CLI adapter", async () => {
