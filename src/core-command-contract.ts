@@ -1,3 +1,5 @@
+import type { RelayStatusSnapshot } from "./relay-client.js";
+
 export const CORE_API_ROUTES = {
   commands: "/core/commands",
 } as const;
@@ -8,6 +10,7 @@ export const CORE_COMMAND_NAMES = {
   projectsList: "core.projects.list",
   projectEnsure: "core.project.ensure",
   projectStop: "core.project.stop",
+  projectKill: "core.project.kill",
   relayStatus: "core.relay.status",
   relayEnable: "core.relay.enable",
   relayDisable: "core.relay.disable",
@@ -35,6 +38,8 @@ export interface CoreStatusProject {
   serviceEndpoint: unknown;
 }
 
+export type CoreRelaySnapshot = RelayStatusSnapshot | { status: "off" };
+
 export interface CoreStatusResult {
   daemon: {
     pid: number;
@@ -44,7 +49,7 @@ export interface CoreStatusResult {
     serviceInfo: unknown;
   };
   projects: CoreStatusProject[];
-  relay: unknown;
+  relay: CoreRelaySnapshot;
   updatedAt: string;
 }
 
@@ -72,8 +77,12 @@ export interface CoreProjectStopResult {
   project: CoreProjectServiceState | null;
 }
 
+export interface CoreProjectKillResult {
+  project: CoreProjectServiceState | null;
+}
+
 export interface CoreRelayResult {
-  relay: unknown;
+  relay: CoreRelaySnapshot;
 }
 
 export interface CoreCommandPayloadByName {
@@ -82,6 +91,7 @@ export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.projectsList]: undefined;
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectPayload;
+  [CORE_COMMAND_NAMES.projectKill]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.relayStatus]: undefined;
   [CORE_COMMAND_NAMES.relayEnable]: undefined;
   [CORE_COMMAND_NAMES.relayDisable]: undefined;
@@ -93,6 +103,7 @@ export interface CoreCommandResultByName {
   [CORE_COMMAND_NAMES.projectsList]: CoreProjectsListResult;
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectEnsureResult;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectStopResult;
+  [CORE_COMMAND_NAMES.projectKill]: CoreProjectKillResult;
   [CORE_COMMAND_NAMES.relayStatus]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayEnable]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayDisable]: CoreRelayResult;

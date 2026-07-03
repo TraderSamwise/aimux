@@ -64,19 +64,22 @@ describe("core command route", () => {
     });
   });
 
-  it("rejects project commands without a projectRoot", async () => {
-    const daemon = new AimuxDaemon();
-    const result = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
-      id: "bad-project",
-      command: CORE_COMMAND_NAMES.projectEnsure,
-      payload: {},
-    });
-    expect(result.status).toBe(400);
-    expect(result.body).toEqual({
-      ok: false,
-      id: "bad-project",
-      command: CORE_COMMAND_NAMES.projectEnsure,
-      error: "projectRoot is required",
-    });
-  });
+  it.each([CORE_COMMAND_NAMES.projectEnsure, CORE_COMMAND_NAMES.projectStop, CORE_COMMAND_NAMES.projectKill])(
+    "rejects %s without a projectRoot",
+    async (command) => {
+      const daemon = new AimuxDaemon();
+      const result = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+        id: "bad-project",
+        command,
+        payload: {},
+      });
+      expect(result.status).toBe(400);
+      expect(result.body).toEqual({
+        ok: false,
+        id: "bad-project",
+        command,
+        error: "projectRoot is required",
+      });
+    },
+  );
 });
