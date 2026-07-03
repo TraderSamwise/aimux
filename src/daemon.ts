@@ -846,6 +846,7 @@ export class AimuxDaemon {
     }
     const issuedAt = new Date().toISOString();
     const payload = envelope?.payload as { projectRoot?: unknown } | undefined;
+    const daemonInfo = loadDaemonInfo();
     switch (command) {
       case CORE_COMMAND_NAMES.ping:
         return { status: 200, body: { ok: true, id, command, issuedAt, result: { pong: true } } };
@@ -861,6 +862,8 @@ export class AimuxDaemon {
               daemon: {
                 pid: process.pid,
                 port: getDaemonPort(),
+                startedAt: daemonInfo?.startedAt ?? issuedAt,
+                updatedAt: daemonInfo?.updatedAt ?? issuedAt,
                 serviceInfo: getProjectServiceManifest(),
               },
               projects: this.listProjectsForRoute(),

@@ -35,6 +35,8 @@ describe("core command route", () => {
     expect(body.id).toBe("test-status");
     expect(body.command).toBe(CORE_COMMAND_NAMES.status);
     expect((body.result as CoreStatusResult).daemon.pid).toBe(process.pid);
+    expect((body.result as CoreStatusResult).daemon.startedAt).toEqual(expect.any(String));
+    expect((body.result as CoreStatusResult).daemon.updatedAt).toEqual(expect.any(String));
     expect(Array.isArray((body.result as CoreStatusResult).projects)).toBe(true);
     expect(body.result).toHaveProperty("relay");
     for (const project of (body.result as CoreStatusResult).projects) {

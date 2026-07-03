@@ -39,6 +39,8 @@ export interface CoreStatusResult {
   daemon: {
     pid: number;
     port: number;
+    startedAt: string;
+    updatedAt: string;
     serviceInfo: unknown;
   };
   projects: CoreStatusProject[];
