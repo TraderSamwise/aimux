@@ -45,6 +45,7 @@ import {
   getDaemonHost,
   getDaemonPort,
   loadDaemonInfo,
+  loadDaemonState,
   stopDaemon,
   stopProjectService,
 } from "./daemon.js";
@@ -1535,21 +1536,45 @@ daemonCmd
   .description("Show daemon status")
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
-    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.status);
-    const payload = {
-      daemon: result.daemon,
-      projects: result.projects,
-      relay: result.relay,
+    const info = loadDaemonInfo();
+    const state = loadDaemonState();
+    let payload: {
+      daemon: unknown;
+      projects: unknown[];
+      relay: unknown;
     };
+    try {
+      const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.status, undefined, {
+        ensureDaemon: false,
+        timeoutMs: 1000,
+      });
+      payload = {
+        daemon: result.daemon,
+        projects: result.projects,
+        relay: result.relay,
+      };
+    } catch {
+      payload = {
+        daemon: info,
+        projects: Object.values(state.projects).map((project) => ({ ...project, serviceAlive: false })),
+        relay: { status: "off" },
+      };
+    }
     if (opts.json) {
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
-    console.log(`Daemon pid=${result.daemon.pid} port=${result.daemon.port}`);
-    const liveProjectServices = result.projects.filter((project) => project.serviceAlive).length;
-    console.log(`Known projects: ${result.projects.length}`);
+    const daemon = payload.daemon as { pid?: number; port?: number } | null;
+    if (!daemon) {
+      console.log("aimux daemon is not running.");
+      return;
+    }
+    console.log(`Daemon pid=${daemon.pid} port=${daemon.port}`);
+    const projects = payload.projects as Array<{ serviceAlive?: boolean }>;
+    const liveProjectServices = projects.filter((project) => project.serviceAlive).length;
+    console.log(`Known projects: ${projects.length}`);
     console.log(`Live project services: ${liveProjectServices}`);
-    const r = result.relay as { status?: string; relayUrl?: string };
+    const r = payload.relay as { status?: string; relayUrl?: string };
     if (r.status && r.status !== "off") {
       console.log(`Relay: ${r.status}${r.relayUrl ? ` (${r.relayUrl})` : ""}`);
     } else {
