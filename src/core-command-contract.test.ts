@@ -36,6 +36,14 @@ describe("core command route", () => {
     expect(body.command).toBe(CORE_COMMAND_NAMES.status);
     expect((body.result as CoreStatusResult).daemon.pid).toBe(process.pid);
     expect(Array.isArray((body.result as CoreStatusResult).projects)).toBe(true);
+    for (const project of (body.result as CoreStatusResult).projects) {
+      expect(project).toHaveProperty("id");
+      expect(project).toHaveProperty("name");
+      expect(project).toHaveProperty("path");
+      expect(project).toHaveProperty("dashboardSessionName");
+      expect(project).toHaveProperty("serviceAlive");
+      expect(project).toHaveProperty("serviceEndpoint");
+    }
   });
 
   it("rejects unknown commands", async () => {
