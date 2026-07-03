@@ -719,17 +719,21 @@ export function renderLibraryScreen(ctx: any): void {
     }
   }
   const focusLine = entries.length === 0 ? 1 : ctx.libraryIndex + 2;
+  const selectedPath = entries[ctx.libraryIndex]?.path;
+  const pathFlash = ctx.libraryPathFlash === selectedPath ? selectedPath : undefined;
+  const footerLines = [
+    footerHints(
+      "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [Enter] show path  [r] refresh  [Esc] dashboard  [q] quit",
+    ),
+  ];
+  if (pathFlash) footerLines.push(style(`Path: ${pathFlash}`, "muted"));
   ctx.writeFrame(
     composeScreenFrame({
       cols,
       rows,
       header,
       content: listLines,
-      footerLines: [
-        footerHints(
-          "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [Enter] show path  [r] refresh  [Esc] dashboard  [q] quit",
-        ),
-      ],
+      footerLines,
       focusLine,
       twoPane,
       rightPanel: (width, height) => renderLibraryDetails(ctx, width, height),
