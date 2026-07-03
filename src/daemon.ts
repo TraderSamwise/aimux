@@ -11,7 +11,7 @@ import {
   getProjectIdFor,
 } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
-import { loadMetadataEndpointByProjectId } from "./metadata-store.js";
+import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
@@ -25,6 +25,7 @@ import {
   assertNeverCoreCommand,
   isCoreCommandName,
   type CoreCommandEnvelope,
+  type CoreCommandName,
   type CoreCommandResponse,
 } from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
@@ -809,23 +810,45 @@ export class AimuxDaemon {
     });
   }
 
-  private async stopProject(projectRoot: string): Promise<ProjectServiceState | null> {
+  private async stopProject(projectRoot: string, opts?: { force?: boolean }): Promise<ProjectServiceState | null> {
     const projectId = getProjectIdFor(pathResolve(projectRoot));
     const existing = this.state.projects[projectId];
     if (!existing) return null;
     const actor = this.projectActors.get(projectId);
     if (actor) {
-      await actor.stop();
+      if (opts?.force) {
+        await actor.kill();
+      } else {
+        await actor.stop();
+      }
       this.projectActors.delete(projectId);
     } else if (existing.pid !== process.pid && isPidAlive(existing.pid)) {
       await this.terminateLegacyProjectService(existing);
     }
     delete this.state.projects[projectId];
+    removeMetadataEndpoint(existing.projectRoot);
     this.refreshState();
     return existing;
   }
 
-  private routeCoreCommand(body: unknown): { status: number; body: CoreCommandResponse } {
+  private requireProjectRoot(
+    id: string,
+    command: CoreCommandName,
+    payload: { projectRoot?: unknown } | undefined,
+  ): { ok: true; projectRoot: string } | { ok: false; response: { status: number; body: CoreCommandResponse } } {
+    if (typeof payload?.projectRoot !== "string" || !payload.projectRoot.trim()) {
+      return {
+        ok: false,
+        response: {
+          status: 400,
+          body: { ok: false, id, command, error: "projectRoot is required" },
+        },
+      };
+    }
+    return { ok: true, projectRoot: payload.projectRoot };
+  }
+
+  private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
     const envelope = body as CoreCommandEnvelope | undefined;
     const id =
       typeof envelope?.id === "string" && envelope.id.trim()
@@ -844,6 +867,8 @@ export class AimuxDaemon {
       };
     }
     const issuedAt = new Date().toISOString();
+    const payload = envelope?.payload as { projectRoot?: unknown } | undefined;
+    const daemonInfo = loadDaemonInfo();
     switch (command) {
       case CORE_COMMAND_NAMES.ping:
         return { status: 200, body: { ok: true, id, command, issuedAt, result: { pong: true } } };
@@ -859,12 +884,77 @@ export class AimuxDaemon {
               daemon: {
                 pid: process.pid,
                 port: getDaemonPort(),
+                startedAt: daemonInfo?.startedAt ?? issuedAt,
+                updatedAt: daemonInfo?.updatedAt ?? issuedAt,
                 serviceInfo: getProjectServiceManifest(),
               },
               projects: this.listProjectsForRoute(),
+              relay: this.getRelayStatus(),
               updatedAt: this.state.updatedAt,
             },
           },
+        };
+      case CORE_COMMAND_NAMES.projectsList:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { projects: this.listProjectsForRoute() } },
+        };
+      case CORE_COMMAND_NAMES.projectEnsure: {
+        const ensureProjectRoot = this.requireProjectRoot(id, command, payload);
+        if (!ensureProjectRoot.ok) return ensureProjectRoot.response;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: { project: await this.ensureProject(ensureProjectRoot.projectRoot) },
+          },
+        };
+      }
+      case CORE_COMMAND_NAMES.projectStop: {
+        const stopProjectRoot = this.requireProjectRoot(id, command, payload);
+        if (!stopProjectRoot.ok) return stopProjectRoot.response;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: { project: await this.stopProject(stopProjectRoot.projectRoot) },
+          },
+        };
+      }
+      case CORE_COMMAND_NAMES.projectKill: {
+        const killProjectRoot = this.requireProjectRoot(id, command, payload);
+        if (!killProjectRoot.ok) return killProjectRoot.response;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: { project: await this.stopProject(killProjectRoot.projectRoot, { force: true }) },
+          },
+        };
+      }
+      case CORE_COMMAND_NAMES.relayStatus:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { relay: this.getRelayStatus() } },
+        };
+      case CORE_COMMAND_NAMES.relayEnable:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { relay: this.enableRelay() } },
+        };
+      case CORE_COMMAND_NAMES.relayDisable:
+        return {
+          status: 200,
+          body: { ok: true, id, command, issuedAt, result: { relay: this.disableRelay() } },
         };
       default:
         return assertNeverCoreCommand(command);
