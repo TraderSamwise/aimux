@@ -38,7 +38,9 @@ import {
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
-import { AimuxDaemon, getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState, stopDaemon } from "./daemon.js";
+import { AimuxDaemon } from "./daemon.js";
+import { getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
+import { stopDaemon } from "./daemon-supervisor.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import {
   CORE_COMMAND_NAMES,
