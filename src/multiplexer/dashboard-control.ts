@@ -533,19 +533,23 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
 
   let settled = false;
+  let repairLockReleased = false;
   let repairTimeout: ReturnType<typeof setTimeout> | null = null;
-  const repairAbortController = new AbortController();
+  const releaseRepairLock = () => {
+    if (repairLockReleased) return;
+    repairLockReleased = true;
+    releaseRuntimeGuardRepairLock(lockPath);
+  };
   const clearRepairTimeout = () => {
     if (!repairTimeout) return;
     clearTimeout(repairTimeout);
     repairTimeout = null;
   };
-  const fail = (message: string, options: { keepRepairLock?: boolean } = {}) => {
+  const fail = (message: string, options: { keepRepairLock?: boolean; title?: string } = {}) => {
     if (settled) return;
     settled = true;
     clearRepairTimeout();
-    repairAbortController.abort();
-    if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
+    if (!options.keepRepairLock) releaseRepairLock();
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
     host.runtimeGuardRepairRetryAt = Date.now() + RUNTIME_GUARD_REPAIR_RETRY_MS;
@@ -554,7 +558,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.runtimeGuardRepairBusy = false;
     }
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
-    showRuntimeGuardRepairFailure(host, "Aimux repair failed", message);
+    showRuntimeGuardRepairFailure(host, options.title ?? "Aimux repair failed", message);
   };
   const succeed = async (result: RuntimeRestartResult) => {
     if (settled) return;
@@ -583,7 +587,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (settled) return;
     settled = true;
     clearRepairTimeout();
-    releaseRuntimeGuardRepairLock(lockPath);
+    releaseRepairLock();
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
     host.runtimeGuardRepairRetryAt = undefined;
@@ -608,17 +612,22 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       projectRoot,
       reloadDashboards: false,
       verifyDashboards: false,
-      abortSignal: repairAbortController.signal,
-      abortDrainMs: 5_000,
     });
     repairTimeout = setTimeout(() => {
-      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
+      fail(`aimux repair is still running after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
+        keepRepairLock: true,
+        title: "Aimux repair still running",
+      });
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
-    void repair.then(
-      (result) => void succeed(result).catch((error) => fail(error instanceof Error ? error.message : String(error))),
-      (error) => fail(error instanceof Error ? error.message : String(error)),
-    );
+    void repair
+      .then(
+        (result) => void succeed(result).catch((error) => fail(error instanceof Error ? error.message : String(error))),
+        (error) => fail(error instanceof Error ? error.message : String(error)),
+      )
+      .finally(() => {
+        releaseRepairLock();
+      });
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }

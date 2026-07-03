@@ -30,8 +30,6 @@ import { getGlobalAimuxDir } from "./paths.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
 const RUNTIME_RESTART_LOCK_STALE_MS = 120_000;
-const DEFAULT_RESTART_ABORT_DRAIN_MS = 5_000;
-const RESTART_ABORTED = Symbol("restart aborted");
 
 export interface RuntimeRestartProjectResult {
   projectRoot: string;
@@ -131,7 +129,6 @@ export interface RestartAimuxControlPlaneOptions {
   reloadDashboards?: boolean;
   verifyDashboards?: boolean;
   abortSignal?: AbortSignal;
-  abortDrainMs?: number;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -148,47 +145,6 @@ function restartAbortError(): Error {
 
 function throwIfRestartAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw restartAbortError();
-}
-
-function abortDrainDelay(ms: number): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-}
-
-async function waitForRestartAbortDrain<T>(promise: Promise<T>, drainMs: number): Promise<void> {
-  await Promise.race([
-    promise.then(
-      () => undefined,
-      () => undefined,
-    ),
-    abortDrainDelay(drainMs),
-  ]);
-}
-
-async function raceRestartWithAbort<T>(
-  promise: Promise<T>,
-  signal: AbortSignal | undefined,
-  drainMs: number,
-): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) {
-    await waitForRestartAbortDrain(promise, drainMs);
-    throw restartAbortError();
-  }
-  let cleanup = () => {};
-  const aborted = new Promise<typeof RESTART_ABORTED>((resolve) => {
-    const onAbort = () => resolve(RESTART_ABORTED);
-    signal.addEventListener("abort", onAbort, { once: true });
-    cleanup = () => signal.removeEventListener("abort", onAbort);
-  });
-  promise.finally(cleanup).catch(() => {});
-  const result = await Promise.race([promise, aborted]);
-  if (result !== RESTART_ABORTED) return result;
-  await waitForRestartAbortDrain(promise, drainMs);
-  throw restartAbortError();
 }
 
 function runtimeRestartLockPath(): string {
@@ -707,13 +663,8 @@ export async function restartAimuxControlPlane(
   if (!lockPath) {
     throw new Error("aimux restart is already running");
   }
-  const restart = restartAimuxControlPlaneUnlocked(options);
   try {
-    return await raceRestartWithAbort(
-      restart,
-      options.abortSignal,
-      options.abortDrainMs ?? DEFAULT_RESTART_ABORT_DRAIN_MS,
-    );
+    return await restartAimuxControlPlaneUnlocked(options);
   } finally {
     releaseRuntimeRestartLock(lockPath);
   }
