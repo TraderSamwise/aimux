@@ -784,6 +784,41 @@ describe("restartAimuxControlPlane", () => {
     expect(result.summary.failures).toBe(1);
   });
 
+  it("can repair the control plane without reloading or verifying dashboards", async () => {
+    const before = coherenceReport();
+    const after = coherenceReport();
+    const buildRuntimeCoherenceReport = vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after);
+    const resolveDashboardTarget = vi.fn();
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      verifyAfterRestart: true,
+      verificationTimeoutMs: 0,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      stopProjectService: vi.fn(async () => null),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget,
+      isPidAlive: () => false,
+      reloadDashboards: false,
+      verifyDashboards: false,
+    });
+
+    expect(resolveDashboardTarget).not.toHaveBeenCalled();
+    expect(result.projects.find((project) => project.projectRoot === "/repo/alpha")?.dashboard.status).toBe("skipped");
+    expect(result.verification.status).toBe("ok");
+    expect(result.summary.dashboardsReloaded).toBe(0);
+    expect(result.summary.failures).toBe(0);
+  });
+
   it("records and notifies restart repair diagnostics", async () => {
     const repairNotifier = {
       record: vi.fn(),

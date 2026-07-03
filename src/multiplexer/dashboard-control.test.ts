@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getProjectServiceManifest } from "../project-service-manifest.js";
 import { getProjectStateDirFor } from "../paths.js";
 import { loadLastUsedState } from "../last-used.js";
+import type { RuntimeRestartResult } from "../runtime-restart.js";
 
 const mocks = vi.hoisted(() => ({
   requestJson: vi.fn(),
@@ -37,6 +38,36 @@ function healthyServiceResponse(pid = 2, projectRoot = process.cwd()) {
       projectStateDir: getProjectStateDirFor(projectRoot),
       pid,
       serviceInfo: getProjectServiceManifest(),
+    },
+  };
+}
+
+function successfulRepairResult(projectRoot = "/repo/app"): RuntimeRestartResult {
+  return {
+    startedAt: "2026-06-21T00:00:00.000Z",
+    finishedAt: "2026-06-21T00:00:01.000Z",
+    before: null as never,
+    verification: { status: "ok", after: null, error: null },
+    daemon: {
+      previous: null,
+      current: { pid: 1, port: 43190, startedAt: "after", updatedAt: "after" },
+    },
+    projects: [
+      {
+        projectRoot,
+        runtimeRebuildRequired: false,
+        runtime: { status: "skipped", error: null },
+        service: { status: "ensured", state: null, error: null },
+        dashboard: { status: "skipped", sessionName: null, target: null, error: null },
+      },
+    ],
+    summary: {
+      projects: 1,
+      servicesEnsured: 1,
+      runtimeRepairs: 0,
+      dashboardsReloaded: 0,
+      runtimeRebuildRequired: 0,
+      failures: 0,
     },
   };
 }
@@ -1263,8 +1294,44 @@ describe("startRuntimeGuardRepair", () => {
 
     startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
 
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: "/repo/app" });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      projectRoot: "/repo/app",
+      reloadDashboards: false,
+      verifyDashboards: false,
+    });
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
+  });
+
+  it("reloads a self-drifted dashboard only after repair cleanup", async () => {
+    const repair = deferred<RuntimeRestartResult>();
+    mocks.restartAimuxControlPlane.mockReturnValueOnce(repair.promise);
+    const lockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
+    const reloadDashboardAfterRuntimeGuardRepair = vi.fn();
+    const host = {
+      mode: "dashboard",
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      runtimeGuardState: { kind: "stale", reason: "self-drift" },
+      renderCurrentDashboardView: vi.fn(),
+      reloadDashboardAfterRuntimeGuardRepair,
+    };
+
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    startRuntimeGuardRepair(host as never, { kind: "stale", reason: "self-drift" });
+    const renderCallsBeforeResolve = host.renderCurrentDashboardView.mock.calls.length;
+    repair.resolve(successfulRepairResult());
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.runtimeGuardRepairBusy).toBe(false);
+    expect(host.dashboardBusyState).toBeNull();
+    expect(existsSync(lockPath)).toBe(false);
+    expect(reloadDashboardAfterRuntimeGuardRepair).toHaveBeenCalledWith("/repo/app");
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(renderCallsBeforeResolve);
   });
 
   it("does not block navigation while another dashboard owns the repair lock", async () => {
@@ -1606,7 +1673,7 @@ describe("startRuntimeGuardRepair", () => {
       startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
       expect(host.dashboardErrorState).toBeNull();
 
-      successfulRepair.resolve(undefined);
+      successfulRepair.resolve(successfulRepairResult());
       await vi.advanceTimersByTimeAsync(0);
       expect(host.runtimeGuardState).toEqual({ kind: "ok" });
       expect(host.dashboardErrorState).toBeNull();
@@ -1642,7 +1709,7 @@ describe("startRuntimeGuardRepair", () => {
 
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
-    repair.resolve(undefined);
+    repair.resolve(successfulRepairResult());
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(host.runtimeGuardRepairing).toBe(false);
@@ -1687,7 +1754,7 @@ describe("startRuntimeGuardRepair", () => {
     try {
       const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
       startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
-      repair.resolve(undefined);
+      repair.resolve(successfulRepairResult());
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
       expect(finishRefresh).toBeDefined();
       finishRefresh?.(true);
@@ -1735,7 +1802,7 @@ describe("startRuntimeGuardRepair", () => {
     try {
       const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
       startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
-      repair.resolve(undefined);
+      repair.resolve(successfulRepairResult());
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
       expect(finishRefresh).toBeDefined();
       vi.advanceTimersByTime(45_000);
@@ -1781,7 +1848,7 @@ describe("startRuntimeGuardRepair", () => {
     try {
       const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
       startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
-      repair.resolve(undefined);
+      repair.resolve(successfulRepairResult());
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
       vi.advanceTimersByTime(45_001);
       await Promise.resolve();
@@ -1824,7 +1891,7 @@ describe("startRuntimeGuardRepair", () => {
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
     host.mode = "session";
-    repair.resolve(undefined);
+    repair.resolve(successfulRepairResult());
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(host.runtimeGuardRepairing).toBe(false);
@@ -1865,7 +1932,7 @@ describe("startRuntimeGuardRepair", () => {
 
     const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
     startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
-    repair.resolve(undefined);
+    repair.resolve(successfulRepairResult());
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(host.runtimeGuardRepairing).toBe(false);
@@ -1961,7 +2028,11 @@ describe("refreshRuntimeGuard", () => {
     await refreshRuntimeGuard(host as never);
 
     expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: "/repo/app" });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      projectRoot: "/repo/app",
+      reloadDashboards: false,
+      verifyDashboards: false,
+    });
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 

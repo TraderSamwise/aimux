@@ -126,6 +126,8 @@ export interface RestartAimuxControlPlaneOptions {
   verificationTimeoutMs?: number;
   verificationIntervalMs?: number;
   repairNotifier?: RepairNotifier | null;
+  reloadDashboards?: boolean;
+  verifyDashboards?: boolean;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -282,9 +284,13 @@ function selectProjectRoots(before: RuntimeCoherenceReport, projectRoot?: string
   return uniqueSorted(roots);
 }
 
-function projectNeedsCurrentRuntimeRepair(project: RuntimeCoherenceReport["projects"][number]): boolean {
+function projectNeedsCurrentRuntimeRepair(
+  project: RuntimeCoherenceReport["projects"][number],
+  options: { verifyDashboards: boolean },
+): boolean {
   if (project.runtime.rebuildRequired) return true;
   if (project.service.status !== "ok") return true;
+  if (!options.verifyDashboards) return false;
   return project.dashboards.some((dashboard) => dashboard.status !== "ok");
 }
 
@@ -583,6 +589,7 @@ async function verifyPostRestartCoherence(input: {
   coherence: BuildRuntimeCoherenceReportOptions | undefined;
   ensureProjectService?: typeof ensureProjectService;
   projectRoots: Set<string>;
+  verifyDashboards: boolean;
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
   intervalMs: number;
@@ -601,7 +608,7 @@ async function verifyPostRestartCoherence(input: {
       const failedProjects = after.projects
         .filter((project) => input.projectRoots.has(project.projectRoot))
         .filter((project) => {
-          return projectNeedsCurrentRuntimeRepair(project);
+          return projectNeedsCurrentRuntimeRepair(project, { verifyDashboards: input.verifyDashboards });
         })
         .map((project) => project.projectRoot);
       const unhealthyProjects = [...missingProjects, ...failedProjects];
@@ -659,7 +666,11 @@ async function restartAimuxControlPlaneUnlocked(
   const now = options.now ?? (() => new Date());
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
-  const dashboardProjectRoots = selectDashboardProjectRoots(before, options.projectRoot);
+  const reloadDashboards = options.reloadDashboards ?? true;
+  const verifyDashboards = options.verifyDashboards ?? reloadDashboards;
+  const dashboardProjectRoots = reloadDashboards
+    ? selectDashboardProjectRoots(before, options.projectRoot)
+    : new Set<string>();
   const verificationProjectRoots = options.projectRoot ? new Set([options.projectRoot]) : new Set(projectRoots);
   const runtimeRepairProjectRoots = selectRuntimeRepairProjectRoots(before);
   const beforeServices = before.projects.flatMap((project): ProjectServiceIdentityWithPid[] => {
@@ -794,6 +805,7 @@ async function restartAimuxControlPlaneUnlocked(
       coherence: options.coherence,
       ensureProjectService: ensureService,
       projectRoots: verificationProjectRoots,
+      verifyDashboards,
       sleep,
       timeoutMs: options.verificationTimeoutMs ?? POST_RESTART_VERIFICATION_TIMEOUT_MS,
       intervalMs: options.verificationIntervalMs ?? 250,
