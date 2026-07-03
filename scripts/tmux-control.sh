@@ -605,7 +605,10 @@ for idx, item in enumerate(items[:len(keys)]):
 
 if len(args) <= 3:
     raise SystemExit(1)
-subprocess.run(["tmux", *args], check=True)
+try:
+    subprocess.run(["tmux", *args], check=True)
+except subprocess.CalledProcessError:
+    raise SystemExit(1)
 PY
 }
 
