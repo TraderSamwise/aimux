@@ -151,12 +151,6 @@ if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMU
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
 if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
 
-if [ "\${1:-}" = "expose" ]; then
-  AIMUX_POPUP_EXPOSE_ENTRY="\$AIMUX_ROOT/dist/popup-expose.js"
-  export AIMUX_POPUP_EXPOSE_ENTRY
-  exec "\$AIMUX_NODE_BIN" --input-type=module -e 'import("node:url").then(({ pathToFileURL }) => import(pathToFileURL(process.env.AIMUX_POPUP_EXPOSE_ENTRY).href)).then((m) => m.runExpose()).catch((error) => { console.error(error); process.exit(1); });' "\$0" "\$@"
-fi
-
 exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/main.js" "\$@"
 EOF
 chmod +x "$DEST/bin/aimux"
