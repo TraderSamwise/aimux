@@ -39,9 +39,25 @@ describe("launcher environment targeting", () => {
 });
 
 describe("cliEntryFor", () => {
-  it("routes every invocation to the full CLI", () => {
+  it("routes sidecar-owned control-plane commands to the lean core CLI", () => {
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "status"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "ensure"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "status", "--json"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "projects"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "projects", "list"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "status"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "enable"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "disable"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "--debug", "remote", "status"])).toBe("core");
+  });
+
+  it("keeps runtime and help commands on the full CLI", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "spawn"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "agent-stream", "claude-1"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "unlock"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "--help"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux"])).toBe("main");
   });
