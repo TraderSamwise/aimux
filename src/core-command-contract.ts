@@ -77,9 +77,7 @@ export interface CoreProjectStopResult {
   project: CoreProjectServiceState | null;
 }
 
-export interface CoreProjectKillResult {
-  project: CoreProjectServiceState | null;
-}
+export type CoreProjectKillResult = CoreProjectStopResult;
 
 export interface CoreRelayResult {
   relay: CoreRelaySnapshot;
