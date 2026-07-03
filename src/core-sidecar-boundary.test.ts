@@ -55,6 +55,15 @@ describe("core sidecar module boundary", () => {
     expect(clientSource).not.toContain("requestDaemonJson");
   });
 
+  it("keeps the routed core CLI out of the full runtime and TUI graph", () => {
+    const coreCli = source("./core-cli.ts");
+    const forbidden = ["./main.js", "./multiplexer/", "./tmux/", "./dashboard/", "./local-ui-server.js"];
+
+    for (const pattern of forbidden) {
+      expect(coreCli).not.toContain(pattern);
+    }
+  });
+
   it("keeps ordinary clients out of daemon supervisor lifecycle code", () => {
     const allowed = new Set(["core-command-client.ts", "daemon-supervisor.ts", "main.ts", "runtime-restart.ts"]);
     const offenders = listSourceFiles(".").filter((path) => {
