@@ -44,6 +44,17 @@ describe("core sidecar module boundary", () => {
     expect(source("./daemon-client.ts")).toContain("export async function requestDaemonJson");
   });
 
+  it("keeps core command HTTP transport separate from lifecycle startup", () => {
+    const clientSource = source("./core-command-client.ts");
+    const transportSource = source("./core-command-transport.ts");
+
+    expect(transportSource).not.toContain("daemon-supervisor.js");
+    expect(clientSource).toContain("ensureDaemonRunning");
+    expect(clientSource).toContain("sendCoreCommand");
+    expect(clientSource).not.toContain("CORE_API_ROUTES");
+    expect(clientSource).not.toContain("requestDaemonJson");
+  });
+
   it("keeps ordinary clients out of daemon supervisor lifecycle code", () => {
     const allowed = new Set(["core-command-client.ts", "daemon-supervisor.ts", "main.ts", "runtime-restart.ts"]);
     const offenders = listSourceFiles(".").filter((path) => {
