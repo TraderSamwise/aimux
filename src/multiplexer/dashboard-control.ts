@@ -1,7 +1,5 @@
 import { writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
-import { getAimuxCliLaunchCommand } from "../cli-launcher.js";
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
@@ -18,6 +16,7 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import type { TmuxClientInfo } from "../tmux/runtime-manager.js";
 import { openManagedServiceWindow, openManagedSessionWindow, type TmuxServiceTarget } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
+import { restartAimuxControlPlane } from "../runtime-restart.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -58,7 +57,6 @@ type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
 const RUNTIME_GUARD_REPAIR_LOCK_STALE_MS = 120_000;
 const RUNTIME_GUARD_REPAIR_TIMEOUT_MS = 45_000;
-const RUNTIME_GUARD_REPAIR_KILL_GRACE_MS = 5_000;
 const RUNTIME_GUARD_REPAIR_RETRY_MS = 5_000;
 const PROJECT_SERVICE_ENDPOINT_HEALTH_CACHE_MS = 30_000;
 const PENDING_DASHBOARD_LOCAL_NAVIGATION_TTL_MS = 10_000;
@@ -302,11 +300,6 @@ function showDashboardFooterFlash(host: DashboardControlHost, message: string, t
   host.footerFlashTicks = ticks;
 }
 
-function scrubStableShimEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const { AIMUX_CLI_BIN: _cliBin, AIMUX_INSTALL_ROOT: _installRoot, ...rest } = env;
-  return rest;
-}
-
 function runtimeGuardRepairLockPath(): string {
   return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
 }
@@ -511,24 +504,15 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   let settled = false;
   let repairTimeout: ReturnType<typeof setTimeout> | null = null;
-  let repairKillTimeout: ReturnType<typeof setTimeout> | null = null;
-  let childExited = false;
-  let releaseLockWhenChildExits = false;
   const clearRepairTimeout = () => {
     if (!repairTimeout) return;
     clearTimeout(repairTimeout);
     repairTimeout = null;
   };
-  const clearRepairKillTimeout = () => {
-    if (!repairKillTimeout) return;
-    clearTimeout(repairKillTimeout);
-    repairKillTimeout = null;
-  };
   const fail = (message: string, options: { keepRepairLock?: boolean } = {}) => {
     if (settled) return;
     settled = true;
     clearRepairTimeout();
-    if (!options.keepRepairLock) clearRepairKillTimeout();
     if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
@@ -559,7 +543,6 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (settled) return;
     settled = true;
     clearRepairTimeout();
-    clearRepairKillTimeout();
     releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = undefined;
@@ -576,46 +559,16 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   };
 
   try {
-    const launch = resolveDashboardReloadLaunch(projectRoot);
-    const child = spawn(launch.command, launch.args, { detached: true, env: launch.env, stdio: "ignore" });
-    if (typeof child.pid === "number" && child.pid > 0) {
-      writeRuntimeGuardRepairLockOwner(lockPath, child.pid, projectRoot);
-    }
+    writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+    const repair = restartAimuxControlPlane({ projectRoot });
     repairTimeout = setTimeout(() => {
-      if (!childExited) {
-        releaseLockWhenChildExits = true;
-        try {
-          child.kill?.("SIGTERM");
-        } catch {}
-        repairKillTimeout = setTimeout(() => {
-          repairKillTimeout = null;
-          if (childExited) return;
-          try {
-            child.kill?.("SIGKILL");
-          } catch {}
-        }, RUNTIME_GUARD_REPAIR_KILL_GRACE_MS);
-        repairKillTimeout.unref?.();
-      }
-      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
-        keepRepairLock: !childExited,
-      });
+      fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
-    child.on("error", (error) => fail(error instanceof Error ? error.message : String(error)));
-    child.on("exit", (code, signal) => {
-      childExited = true;
-      clearRepairKillTimeout();
-      if (releaseLockWhenChildExits) {
-        releaseRuntimeGuardRepairLock(lockPath);
-        releaseLockWhenChildExits = false;
-      }
-      if (code === 0) {
-        void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error)));
-        return;
-      }
-      fail(signal ? `aimux repair exited on ${signal}` : `aimux repair exited with code ${code ?? "unknown"}`);
-    });
-    child.unref();
+    void repair.then(
+      () => void succeed().catch((error) => fail(error instanceof Error ? error.message : String(error))),
+      (error) => fail(error instanceof Error ? error.message : String(error)),
+    );
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
@@ -656,30 +609,6 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
   } finally {
     host.runtimeGuardProbing = false;
   }
-}
-
-export interface DashboardReloadLaunch {
-  command: string;
-  args: string[];
-  env: NodeJS.ProcessEnv;
-  source: "stable-shim" | "current-entry";
-}
-
-export function resolveDashboardReloadLaunch(
-  projectRoot: string,
-  options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
-): DashboardReloadLaunch {
-  const env = options.env ?? process.env;
-  const launch = getAimuxCliLaunchCommand(["restart", "--project", projectRoot], {
-    env,
-    currentArgvEntry: options.currentArgvEntry,
-  });
-  return {
-    command: launch.command,
-    args: launch.args,
-    env: launch.source === "current-entry" ? scrubStableShimEnv(env) : env,
-    source: launch.source,
-  };
 }
 
 export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data: Buffer): boolean {
