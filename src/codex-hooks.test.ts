@@ -22,6 +22,9 @@ describe("buildCodexHookCommand", () => {
     expect(cmd).toContain("AIMUX_METADATA_ENDPOINT_FILE");
     expect(cmd).toContain("/hooks/codex");
     expect(cmd).toContain("curl");
+    expect(cmd).toContain("--url-query");
+    expect(cmd).toContain("aimux hook $1");
+    expect(cmd).toContain("post failed");
     expect(cmd).toContain("permission-request");
     expect(cmd).not.toContain("codex-hook");
     expect(cmd).not.toContain("--project");
@@ -57,9 +60,9 @@ describe("mergeCodexHooks", () => {
     }
   });
 
-  it("gives PermissionRequest a long timeout and lifecycle events a short one", () => {
+  it("keeps Codex hook posts short-lived", () => {
     const merged = mergeCodexHooks({});
-    expect(merged.hooks!.PermissionRequest[0].hooks![0].timeout).toBe(120000);
+    expect(merged.hooks!.PermissionRequest[0].hooks![0].timeout).toBe(5000);
     expect(merged.hooks!.Stop[0].hooks![0].timeout).toBe(5000);
   });
 
