@@ -321,6 +321,20 @@ describe("interaction endpoints", () => {
     expect(recorded).toEqual([{ sessionId: "codex-1", backendSessionId: "codex-backend-1" }]);
   });
 
+  it("accepts hook session ids from the generated hook header", async () => {
+    const response = await fetch(`${base}/hooks/codex?action=prompt-submit`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aimux-session-id": "codex-header-1",
+      },
+      body: JSON.stringify({ session_id: "codex-backend-header-1" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({});
+    expect(loadMetadataState().sessions["codex-header-1"]?.derived?.activity).toBe("running");
+  });
+
   it("does not fail hook handling when backend session recording fails", async () => {
     server.stop();
     server = new MetadataServer({

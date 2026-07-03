@@ -22,7 +22,8 @@ describe("buildCodexHookCommand", () => {
     expect(cmd).toContain("AIMUX_METADATA_ENDPOINT_FILE");
     expect(cmd).toContain("/hooks/codex");
     expect(cmd).toContain("curl");
-    expect(cmd).toContain("--url-query");
+    expect(cmd).toContain("x-aimux-session-id");
+    expect(cmd).not.toContain("--url-query");
     expect(cmd).toContain("aimux hook $1");
     expect(cmd).toContain("post failed");
     expect(cmd).toContain("permission-request");
