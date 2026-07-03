@@ -275,6 +275,11 @@ describe("interaction endpoints", () => {
   });
 
   it("keeps Codex permission hooks telemetry-only without stranded response attention", async () => {
+    const started = await postJson(`${base}/hooks/codex?action=prompt-submit&sessionId=codex-1`, {
+      session_id: "codex-backend-1",
+    });
+    expect(started.status).toBe(200);
+
     const response = await postJson(`${base}/hooks/codex?action=permission-request&sessionId=codex-1`, {
       tool_name: "Bash",
       tool_input: { command: "ls" },
@@ -285,7 +290,10 @@ describe("interaction endpoints", () => {
 
     const pending = await (await fetch(`${base}/agents/interaction/pending?sessionId=codex-1`)).json();
     expect(pending.requests).toHaveLength(0);
-    expect(loadMetadataState().sessions["codex-1"]?.derived?.attention).not.toBe("needs_response");
+    const session = loadMetadataState().sessions["codex-1"];
+    expect(session).toBeDefined();
+    expect(session?.derived).toBeDefined();
+    expect(session?.derived?.attention).not.toBe("needs_response");
   });
 
   it("records backend session ids from hook payloads without a CLI adapter", async () => {
