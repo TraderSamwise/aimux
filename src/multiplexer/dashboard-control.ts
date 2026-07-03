@@ -534,6 +534,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   let settled = false;
   let repairTimeout: ReturnType<typeof setTimeout> | null = null;
+  const repairAbortController = new AbortController();
   const clearRepairTimeout = () => {
     if (!repairTimeout) return;
     clearTimeout(repairTimeout);
@@ -543,6 +544,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (settled) return;
     settled = true;
     clearRepairTimeout();
+    repairAbortController.abort();
     if (!options.keepRepairLock) releaseRuntimeGuardRepairLock(lockPath);
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
@@ -602,7 +604,12 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   try {
     writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
-    const repair = restartAimuxControlPlane({ projectRoot, reloadDashboards: false, verifyDashboards: false });
+    const repair = restartAimuxControlPlane({
+      projectRoot,
+      reloadDashboards: false,
+      verifyDashboards: false,
+      abortSignal: repairAbortController.signal,
+    });
     repairTimeout = setTimeout(() => {
       fail(`aimux repair timed out after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`);
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);

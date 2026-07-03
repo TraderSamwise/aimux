@@ -128,6 +128,7 @@ export interface RestartAimuxControlPlaneOptions {
   repairNotifier?: RepairNotifier | null;
   reloadDashboards?: boolean;
   verifyDashboards?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -136,6 +137,30 @@ function uniqueSorted(values: string[]): string[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function restartAbortError(): Error {
+  return new Error("aimux restart aborted");
+}
+
+function throwIfRestartAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw restartAbortError();
+}
+
+async function raceRestartWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    promise.catch(() => {});
+    throw restartAbortError();
+  }
+  let cleanup = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    const onAbort = () => reject(restartAbortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    cleanup = () => signal.removeEventListener("abort", onAbort);
+  });
+  promise.finally(cleanup).catch(() => {});
+  return Promise.race([promise, aborted]);
 }
 
 function runtimeRestartLockPath(): string {
@@ -649,12 +674,14 @@ async function verifyPostRestartCoherence(input: {
 export async function restartAimuxControlPlane(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
+  throwIfRestartAborted(options.abortSignal);
   const lockPath = tryAcquireRuntimeRestartLock(options.isPidAlive ?? defaultIsPidAlive);
   if (!lockPath) {
     throw new Error("aimux restart is already running");
   }
+  const restart = restartAimuxControlPlaneUnlocked(options);
   try {
-    return await restartAimuxControlPlaneUnlocked(options);
+    return await raceRestartWithAbort(restart, options.abortSignal);
   } finally {
     releaseRuntimeRestartLock(lockPath);
   }
@@ -665,6 +692,7 @@ async function restartAimuxControlPlaneUnlocked(
 ): Promise<RuntimeRestartResult> {
   const now = options.now ?? (() => new Date());
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
+  throwIfRestartAborted(options.abortSignal);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
   const reloadDashboards = options.reloadDashboards ?? true;
   const verifyDashboards = options.verifyDashboards ?? reloadDashboards;
@@ -686,6 +714,7 @@ async function restartAimuxControlPlaneUnlocked(
   });
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
   const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
+  throwIfRestartAborted(options.abortSignal);
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -723,6 +752,7 @@ async function restartAimuxControlPlaneUnlocked(
     killPid,
   });
   const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
+  throwIfRestartAborted(options.abortSignal);
   const ensureService = options.ensureProjectService ?? ensureProjectService;
   const stopService =
     options.stopProjectService ?? (options.ensureProjectService ? async () => null : stopProjectService);
@@ -734,6 +764,7 @@ async function restartAimuxControlPlaneUnlocked(
   const projects: RuntimeRestartProjectResult[] = [];
 
   for (const projectRoot of projectRoots) {
+    throwIfRestartAborted(options.abortSignal);
     const result = emptyProjectResult(projectRoot);
     result.runtimeRebuildRequired = runtimeRepairProjectRoots.has(projectRoot);
     result.runtime = repairRuntimeContract({

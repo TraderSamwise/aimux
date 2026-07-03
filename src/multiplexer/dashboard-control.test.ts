@@ -1294,11 +1294,14 @@ describe("startRuntimeGuardRepair", () => {
 
     startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
 
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
-      projectRoot: "/repo/app",
-      reloadDashboards: false,
-      verifyDashboards: false,
-    });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRoot: "/repo/app",
+        reloadDashboards: false,
+        verifyDashboards: false,
+        abortSignal: expect.any(AbortSignal),
+      }),
+    );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
@@ -1562,6 +1565,7 @@ describe("startRuntimeGuardRepair", () => {
       await Promise.resolve();
       expect(existsSync(lockPath)).toBe(false);
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
+      expect(mocks.restartAimuxControlPlane.mock.calls[0]?.[0].abortSignal.aborted).toBe(true);
 
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
@@ -2028,11 +2032,14 @@ describe("refreshRuntimeGuard", () => {
     await refreshRuntimeGuard(host as never);
 
     expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
-      projectRoot: "/repo/app",
-      reloadDashboards: false,
-      verifyDashboards: false,
-    });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRoot: "/repo/app",
+        reloadDashboards: false,
+        verifyDashboards: false,
+        abortSignal: expect.any(AbortSignal),
+      }),
+    );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
   });
 
