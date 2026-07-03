@@ -1638,7 +1638,6 @@ export class MetadataServer {
   private notifyCodexHookPermissionTelemetry(sessionId: string, payload: CodexHookPayload): void {
     const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
     const cwd = (typeof payload.cwd === "string" && payload.cwd.trim()) || this.currentProjectRoot();
-    this.tracker.setAttention(sessionId, "needs_response");
     this.emitAlert({
       kind: "interaction_request",
       sessionId,

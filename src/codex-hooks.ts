@@ -34,7 +34,7 @@ const CODEX_HOOK_EVENTS: ReadonlyArray<{ event: string; action: string; timeoutM
   { event: "PermissionRequest", action: "permission-request", timeoutMs: 120000 },
 ];
 
-const AIMUX_CODEX_HOOK_MARKER = "/hooks/codex";
+const AIMUX_CODEX_HOOK_MARKERS = ["/hooks/codex", "codex-hook"];
 
 export function getCodexHome(codexHome?: string): string {
   return codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
@@ -56,7 +56,7 @@ export function buildCodexHookCommand(action: string): string {
 }
 
 export function isAimuxOwnedCodexHookCommand(command: unknown): boolean {
-  return typeof command === "string" && command.includes(AIMUX_CODEX_HOOK_MARKER);
+  return typeof command === "string" && AIMUX_CODEX_HOOK_MARKERS.some((marker) => command.includes(marker));
 }
 
 /** Per-launch flags that enable + trust hooks without any config.toml mutation.
