@@ -43,11 +43,26 @@ export class CoreProjectActor {
     await withProjectPaths(this.state.projectRoot, async () => {
       ensureProjectPaths();
       initProject();
-      this.mux = new Multiplexer({
+      const mux = new Multiplexer({
         contextWatcherEnabled: false,
         projectRoot: this.state.projectRoot,
       });
-      await this.mux.startProjectServiceHost();
+      this.mux = mux;
+      try {
+        await mux.startProjectServiceHost();
+      } catch (error) {
+        this.mux = null;
+        this.started = false;
+        await mux.cleanup().catch((cleanupError: unknown) => {
+          log.warn("failed to clean up core project actor after startup failure", "daemon", {
+            projectId: this.state.projectId,
+            projectRoot: this.state.projectRoot,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        });
+        removeMetadataEndpoint(this.state.projectRoot);
+        throw error;
+      }
       this.started = true;
     });
     log.info("started core project actor", "daemon", {
