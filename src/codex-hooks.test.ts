@@ -16,7 +16,7 @@ import {
 const MANAGED_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"];
 
 describe("buildCodexHookCommand", () => {
-  it("posts through the project service endpoint and falls back to empty JSON", () => {
+  it("posts through the project service endpoint without legacy CLI adapters", () => {
     const cmd = buildCodexHookCommand("permission-request");
     expect(cmd).toContain("AIMUX_SESSION_ID");
     expect(cmd).toContain("AIMUX_METADATA_ENDPOINT_FILE");
