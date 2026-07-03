@@ -348,57 +348,57 @@ describe("restartAimuxControlPlane", () => {
     await firstRestart;
   });
 
-  it("releases the global lock after the abort drain when an in-process restart is hung", async () => {
-    vi.useFakeTimers();
-    try {
-      const abortController = new AbortController();
-      const stopDaemon = vi.fn(() => new Promise<ReturnType<typeof stoppedDaemon>>(() => {}));
-      const firstRestart = restartAimuxControlPlane({
-        now: () => new Date("2026-06-20T00:00:01.000Z"),
-        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
-        stopDaemon,
-        ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+  it("keeps the global lock until an aborted in-process restart reaches a checkpoint", async () => {
+    const abortController = new AbortController();
+    let releaseStopDaemon: ((value: ReturnType<typeof stoppedDaemon>) => void) | undefined;
+    const stopDaemon = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof stoppedDaemon>>((resolve) => {
+          releaseStopDaemon = resolve;
+        }),
+    );
+    const firstRestart = restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon,
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(),
+      createTmux: () => ({ isAvailable: () => true }),
+      isPidAlive: (pid) => pid === process.pid,
+      abortSignal: abortController.signal,
+    });
+    const firstRestartError = firstRestart.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(stopDaemon).toHaveBeenCalled());
+
+    abortController.abort();
+    await expect(
+      restartAimuxControlPlane({
+        buildRuntimeCoherenceReport: vi.fn(async () => okCoherenceReport()),
+        stopDaemon: vi.fn(async () => stoppedDaemon()),
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9003, port: 43190, startedAt: "after", updatedAt: "after" })),
         ensureProjectService: vi.fn(),
         createTmux: () => ({ isAvailable: () => true }),
         isPidAlive: (pid) => pid === process.pid,
-        abortSignal: abortController.signal,
-        abortDrainMs: 25,
-      });
-      const firstRestartError = firstRestart.then(
-        () => null,
-        (error: unknown) => error,
-      );
-      await vi.waitFor(() => expect(stopDaemon).toHaveBeenCalled());
+      }),
+    ).rejects.toThrow("aimux restart is already running");
 
-      abortController.abort();
-      await expect(
-        restartAimuxControlPlane({
-          buildRuntimeCoherenceReport: vi.fn(async () => okCoherenceReport()),
-          stopDaemon: vi.fn(async () => stoppedDaemon()),
-          ensureDaemonRunning: vi.fn(async () => ({ pid: 9003, port: 43190, startedAt: "after", updatedAt: "after" })),
-          ensureProjectService: vi.fn(),
-          createTmux: () => ({ isAvailable: () => true }),
-          isPidAlive: (pid) => pid === process.pid,
-        }),
-      ).rejects.toThrow("aimux restart is already running");
+    releaseStopDaemon?.(stoppedDaemon());
+    await expect(firstRestartError).resolves.toMatchObject({ message: "aimux restart aborted" });
 
-      await vi.advanceTimersByTimeAsync(25);
-      await expect(firstRestartError).resolves.toMatchObject({ message: "aimux restart aborted" });
-
-      await expect(
-        restartAimuxControlPlane({
-          now: () => new Date("2026-06-20T00:00:02.000Z"),
-          buildRuntimeCoherenceReport: vi.fn(async () => okCoherenceReport()),
-          stopDaemon: vi.fn(async () => stoppedDaemon()),
-          ensureDaemonRunning: vi.fn(async () => ({ pid: 9003, port: 43190, startedAt: "after", updatedAt: "after" })),
-          ensureProjectService: vi.fn(),
-          createTmux: () => ({ isAvailable: () => true }),
-          isPidAlive: (pid) => pid === process.pid,
-        }),
-      ).resolves.toMatchObject({ daemon: { current: { pid: 9003 } } });
-    } finally {
-      vi.useRealTimers();
-    }
+    await expect(
+      restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:02.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => okCoherenceReport()),
+        stopDaemon: vi.fn(async () => stoppedDaemon()),
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9003, port: 43190, startedAt: "after", updatedAt: "after" })),
+        ensureProjectService: vi.fn(),
+        createTmux: () => ({ isAvailable: () => true }),
+        isPidAlive: (pid) => pid === process.pid,
+      }),
+    ).resolves.toMatchObject({ daemon: { current: { pid: 9003 } } });
   });
 
   it("does not replace stale restart locks while the recorded owner is alive", async () => {

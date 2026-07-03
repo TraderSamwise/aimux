@@ -1299,8 +1299,6 @@ describe("startRuntimeGuardRepair", () => {
         projectRoot: "/repo/app",
         reloadDashboards: false,
         verifyDashboards: false,
-        abortSignal: expect.any(AbortSignal),
-        abortDrainMs: 5000,
       }),
     );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
@@ -1484,7 +1482,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["repair failed"]);
   });
 
-  it("fails locally and releases the dashboard repair lock when guarded repair hangs", async () => {
+  it("fails locally and keeps the dashboard repair lock while guarded repair hangs", async () => {
     vi.useFakeTimers();
     const host = {
       projectRoot: "/repo/app",
@@ -1505,15 +1503,17 @@ describe("startRuntimeGuardRepair", () => {
       vi.useRealTimers();
     }
 
-    expect(existsSync(join(testAimuxHome!, "locks", "dashboard-control-plane-repair"))).toBe(false);
+    expect(existsSync(join(testAimuxHome!, "locks", "dashboard-control-plane-repair"))).toBe(true);
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.runtimeGuardRepairBusy).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
     expect(host.runtimeGuardRepairFailedKey).toBe("runtime-rebuild-required");
-    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
+    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair still running", [
+      "aimux repair is still running after 45s",
+    ]);
   });
 
-  it("does not show a second repair failure when a timed-out repair later rejects", async () => {
+  it("releases the dashboard repair lock when a timed-out repair later rejects", async () => {
     vi.useFakeTimers();
     const repair = deferred();
     mocks.restartAimuxControlPlane.mockReturnValueOnce(repair.promise);
@@ -1533,8 +1533,9 @@ describe("startRuntimeGuardRepair", () => {
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       vi.advanceTimersByTime(45_000);
       await Promise.resolve();
-      expect(existsSync(lockPath)).toBe(false);
+      expect(existsSync(lockPath)).toBe(true);
       repair.reject(new Error("late failure"));
+      await Promise.resolve();
       await Promise.resolve();
       expect(existsSync(lockPath)).toBe(false);
     } finally {
@@ -1544,7 +1545,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(host.showDashboardError).toHaveBeenCalledTimes(1);
   });
 
-  it("allows another dashboard repair attempt after a timed-out repair cooldown", async () => {
+  it("allows another dashboard repair attempt after a timed-out repair settles and the cooldown passes", async () => {
     vi.useFakeTimers();
     const repair = deferred();
     mocks.restartAimuxControlPlane.mockReturnValueOnce(repair.promise).mockReturnValueOnce(new Promise(() => {}));
@@ -1564,13 +1565,19 @@ describe("startRuntimeGuardRepair", () => {
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       vi.advanceTimersByTime(45_000);
       await Promise.resolve();
-      expect(existsSync(lockPath)).toBe(false);
+      expect(existsSync(lockPath)).toBe(true);
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
-      expect(mocks.restartAimuxControlPlane.mock.calls[0]?.[0].abortSignal.aborted).toBe(true);
 
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
       vi.advanceTimersByTime(5_001);
+      startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
+      expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
+
+      repair.resolve(undefined);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(existsSync(lockPath)).toBe(false);
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(2);
       expect(existsSync(lockPath)).toBe(true);
@@ -1818,7 +1825,9 @@ describe("startRuntimeGuardRepair", () => {
 
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
-    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
+    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair still running", [
+      "aimux repair is still running after 45s",
+    ]);
   });
 
   it("does not refresh dashboard data after guarded repair times out during probing", async () => {
@@ -1857,7 +1866,9 @@ describe("startRuntimeGuardRepair", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
       vi.advanceTimersByTime(45_001);
       await Promise.resolve();
-      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["aimux repair timed out after 45s"]);
+      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair still running", [
+        "aimux repair is still running after 45s",
+      ]);
       const renderCallsAfterTimeout = host.renderCurrentDashboardView.mock.calls.length;
       expect(finishProbe).toBeDefined();
       finishProbe?.(healthyServiceResponse(2, "/repo/app"));
@@ -2038,8 +2049,6 @@ describe("refreshRuntimeGuard", () => {
         projectRoot: "/repo/app",
         reloadDashboards: false,
         verifyDashboards: false,
-        abortSignal: expect.any(AbortSignal),
-        abortDrainMs: 5000,
       }),
     );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
