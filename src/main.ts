@@ -50,7 +50,12 @@ import {
   stopProjectService,
 } from "./daemon.js";
 import { requestCoreCommand } from "./core-command-client.js";
-import { CORE_COMMAND_NAMES, type CoreProjectServiceState, type CoreStatusProject } from "./core-command-contract.js";
+import {
+  CORE_COMMAND_NAMES,
+  type CoreProjectServiceState,
+  type CoreRelaySnapshot,
+  type CoreStatusProject,
+} from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
@@ -882,6 +887,10 @@ async function ensureCoreProjectServiceForCliWithRepair(projectRoot: string): Pr
   }
 }
 
+function relayLastError(relay: CoreRelaySnapshot): string | null {
+  return "lastError" in relay ? relay.lastError : null;
+}
+
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
@@ -1314,7 +1323,7 @@ hostCmd
   .action(async () => {
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
-    const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+    const response = await requestCoreCommand(CORE_COMMAND_NAMES.projectKill, { projectRoot });
     if (!response.result.project) {
       console.log("No live project service to kill.");
       return;
@@ -1569,7 +1578,7 @@ daemonCmd
     let payload: {
       daemon: unknown;
       projects: unknown[];
-      relay: unknown;
+      relay: CoreRelaySnapshot;
     };
     try {
       const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.status, undefined, {
@@ -1606,7 +1615,7 @@ daemonCmd
     const liveProjectServices = projects.filter((project) => project.serviceAlive).length;
     console.log(`Known projects: ${projects.length}`);
     console.log(`Live project services: ${liveProjectServices}`);
-    const r = payload.relay as { status?: string; relayUrl?: string };
+    const r = payload.relay;
     if (r.status && r.status !== "off") {
       console.log(`Relay: ${r.status}${r.relayUrl ? ` (${r.relayUrl})` : ""}`);
     } else {
@@ -1713,9 +1722,9 @@ program
             ensureDaemon: false,
             timeoutMs: 1000,
           });
-          const relay = result.relay as { status?: string; lastError?: string | null };
+          const relay = result.relay;
           relayStatus = relay.status ?? "unknown";
-          relayError = relay.lastError ?? null;
+          relayError = relayLastError(relay);
         } catch (err) {
           relayError = err instanceof Error ? err.message : String(err);
         }
@@ -1795,7 +1804,7 @@ remoteCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { json?: boolean }) => {
     const creds = loadCredentials();
-    let relay: unknown = { status: "off" };
+    let relay: CoreRelaySnapshot = { status: "off" };
     if (loadDaemonInfo()) {
       try {
         const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayStatus, undefined, {
@@ -1815,11 +1824,12 @@ remoteCmd
       console.log("Not logged in. Run `aimux login` to enable remote access.");
       return;
     }
-    const r = relay as { status?: string; relayUrl?: string; lastError?: string | null };
+    const r = relay;
     console.log(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
     console.log(`Relay: ${creds.relayUrl}`);
     console.log(`Connection: ${r.status ?? "unknown"}`);
-    if (r.lastError) console.log(`Last error: ${r.lastError}`);
+    const lastError = relayLastError(r);
+    if (lastError) console.log(`Last error: ${lastError}`);
   });
 
 remoteCmd
@@ -1831,7 +1841,7 @@ remoteCmd
       process.exit(1);
     }
     const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
-    const r = result.relay as { status?: string };
+    const r = result.relay;
     console.log(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
   });
 

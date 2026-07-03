@@ -25,6 +25,7 @@ import {
   assertNeverCoreCommand,
   isCoreCommandName,
   type CoreCommandEnvelope,
+  type CoreCommandName,
   type CoreCommandResponse,
 } from "./core-command-contract.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
@@ -809,13 +810,17 @@ export class AimuxDaemon {
     });
   }
 
-  private async stopProject(projectRoot: string): Promise<ProjectServiceState | null> {
+  private async stopProject(projectRoot: string, opts?: { force?: boolean }): Promise<ProjectServiceState | null> {
     const projectId = getProjectIdFor(pathResolve(projectRoot));
     const existing = this.state.projects[projectId];
     if (!existing) return null;
     const actor = this.projectActors.get(projectId);
     if (actor) {
-      await actor.stop();
+      if (opts?.force) {
+        await actor.kill();
+      } else {
+        await actor.stop();
+      }
       this.projectActors.delete(projectId);
     } else if (existing.pid !== process.pid && isPidAlive(existing.pid)) {
       await this.terminateLegacyProjectService(existing);
@@ -824,6 +829,23 @@ export class AimuxDaemon {
     removeMetadataEndpoint(existing.projectRoot);
     this.refreshState();
     return existing;
+  }
+
+  private requireProjectRoot(
+    id: string,
+    command: CoreCommandName,
+    payload: { projectRoot?: unknown } | undefined,
+  ): { ok: true; projectRoot: string } | { ok: false; response: { status: number; body: CoreCommandResponse } } {
+    if (typeof payload?.projectRoot !== "string" || !payload.projectRoot.trim()) {
+      return {
+        ok: false,
+        response: {
+          status: 400,
+          body: { ok: false, id, command, error: "projectRoot is required" },
+        },
+      };
+    }
+    return { ok: true, projectRoot: payload.projectRoot };
   }
 
   private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
@@ -877,13 +899,9 @@ export class AimuxDaemon {
           status: 200,
           body: { ok: true, id, command, issuedAt, result: { projects: this.listProjectsForRoute() } },
         };
-      case CORE_COMMAND_NAMES.projectEnsure:
-        if (typeof payload?.projectRoot !== "string" || !payload.projectRoot.trim()) {
-          return {
-            status: 400,
-            body: { ok: false, id, command, error: "projectRoot is required" },
-          };
-        }
+      case CORE_COMMAND_NAMES.projectEnsure: {
+        const ensureProjectRoot = this.requireProjectRoot(id, command, payload);
+        if (!ensureProjectRoot.ok) return ensureProjectRoot.response;
         return {
           status: 200,
           body: {
@@ -891,16 +909,13 @@ export class AimuxDaemon {
             id,
             command,
             issuedAt,
-            result: { project: await this.ensureProject(payload.projectRoot) },
+            result: { project: await this.ensureProject(ensureProjectRoot.projectRoot) },
           },
         };
-      case CORE_COMMAND_NAMES.projectStop:
-        if (typeof payload?.projectRoot !== "string" || !payload.projectRoot.trim()) {
-          return {
-            status: 400,
-            body: { ok: false, id, command, error: "projectRoot is required" },
-          };
-        }
+      }
+      case CORE_COMMAND_NAMES.projectStop: {
+        const stopProjectRoot = this.requireProjectRoot(id, command, payload);
+        if (!stopProjectRoot.ok) return stopProjectRoot.response;
         return {
           status: 200,
           body: {
@@ -908,9 +923,24 @@ export class AimuxDaemon {
             id,
             command,
             issuedAt,
-            result: { project: await this.stopProject(payload.projectRoot) },
+            result: { project: await this.stopProject(stopProjectRoot.projectRoot) },
           },
         };
+      }
+      case CORE_COMMAND_NAMES.projectKill: {
+        const killProjectRoot = this.requireProjectRoot(id, command, payload);
+        if (!killProjectRoot.ok) return killProjectRoot.response;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: { project: await this.stopProject(killProjectRoot.projectRoot, { force: true }) },
+          },
+        };
+      }
       case CORE_COMMAND_NAMES.relayStatus:
         return {
           status: 200,

@@ -19,6 +19,7 @@ const STALE_SERVICE_TIMESTAMP = new Date(0).toISOString();
 const coreActorMock = vi.hoisted(() => ({
   starts: vi.fn(),
   stops: vi.fn(),
+  kills: vi.fn(),
   failStartFor: new Set<string>(),
   instances: [] as Array<{ projectRoot: string; running: boolean }>,
 }));
@@ -84,6 +85,11 @@ vi.mock("./core-project-actor.js", () => ({
     async stop() {
       this.running = false;
       coreActorMock.stops(this.projectRoot);
+    }
+
+    async kill() {
+      this.running = false;
+      coreActorMock.kills(this.projectRoot);
     }
   },
 }));
@@ -186,6 +192,7 @@ describe("daemon supervision", () => {
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
     coreActorMock.stops.mockReset();
+    coreActorMock.kills.mockReset();
     coreActorMock.failStartFor.clear();
     coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
@@ -281,6 +288,29 @@ describe("daemon supervision", () => {
     expect(body.ok).toBe(true);
     expect(body.result.project?.projectRoot).toBe(projectRoot);
     expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.kills).not.toHaveBeenCalled();
+  });
+
+  it("kills project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "kill-project",
+      command: CORE_COMMAND_NAMES.projectKill,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectKill>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project?.projectRoot).toBe(projectRoot);
+    expect(coreActorMock.kills).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.stops).not.toHaveBeenCalled();
   });
 
   it("clears stale metadata endpoints when core stops a legacy project service", async () => {
@@ -1029,6 +1059,7 @@ describe("daemon routing (relay + proxy)", () => {
     spawnMock.mockReset();
     coreActorMock.starts.mockReset();
     coreActorMock.stops.mockReset();
+    coreActorMock.kills.mockReset();
     coreActorMock.instances.length = 0;
     execFileSyncMock.mockReset();
     vi.mocked(requestJson).mockReset();

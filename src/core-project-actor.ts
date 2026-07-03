@@ -88,4 +88,13 @@ export class CoreProjectActor {
       pid: process.pid,
     });
   }
+
+  async kill(): Promise<void> {
+    await this.stop();
+    log.warn("force-stopped core project actor", "daemon", {
+      projectId: this.state.projectId,
+      projectRoot: this.state.projectRoot,
+      pid: process.pid,
+    });
+  }
 }
