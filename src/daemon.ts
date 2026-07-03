@@ -37,6 +37,7 @@ const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_PROBE_TIMEOUT_MS = 2_500;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
+const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
@@ -734,8 +735,23 @@ export class AimuxDaemon {
     }
 
     const nextActor = actor ?? new CoreProjectActor(resolvedRoot);
+    let state: ProjectServiceState;
+    try {
+      state = await nextActor.start();
+    } catch (error) {
+      if (this.projectActors.get(projectId) === nextActor) {
+        this.projectActors.delete(projectId);
+      }
+      await nextActor.stop().catch((stopError: unknown) => {
+        log.warn("failed to clean up project actor after start failure", "daemon", {
+          projectId,
+          projectRoot: resolvedRoot,
+          error: stopError instanceof Error ? stopError.message : String(stopError),
+        });
+      });
+      throw error;
+    }
     this.projectActors.set(projectId, nextActor);
-    const state = await nextActor.start();
     this.state.projects[projectId] = state;
     this.refreshState();
     return state;
@@ -758,7 +774,17 @@ export class AimuxDaemon {
     try {
       process.kill(existing.pid, "SIGTERM");
     } catch {}
-    await this.waitForProjectServiceExit(existing.pid, PROJECT_SERVICE_TERM_GRACE_MS);
+    if (await this.waitForProjectServiceExit(existing.pid, PROJECT_SERVICE_TERM_GRACE_MS)) return;
+    log.warn("legacy project service did not stop after SIGTERM; killing", "daemon", {
+      projectId: existing.projectId,
+      projectRoot: existing.projectRoot,
+      pid: existing.pid,
+    });
+    try {
+      process.kill(existing.pid, "SIGKILL");
+    } catch {}
+    if (await this.waitForProjectServiceExit(existing.pid, PROJECT_SERVICE_KILL_GRACE_MS)) return;
+    throw new Error(`legacy project service ${existing.pid} did not exit`);
   }
 
   private async waitForProjectServiceExit(pid: number, timeoutMs: number): Promise<boolean> {
