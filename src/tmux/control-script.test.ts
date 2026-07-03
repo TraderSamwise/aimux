@@ -3040,10 +3040,20 @@ describe("tmux-control.sh", () => {
         "--pane-id",
         "%42",
       ],
-      { TMUX_FAKE_DISPLAY_MENU_EXIT: "1", TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([]) },
+      {
+        TMUX_FAKE_DISPLAY_MENU_EXIT: "1",
+        TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
+          {
+            label: "claude",
+            target: { windowId: "@claude", windowName: "claude" },
+            metadata: { sessionId: "claude-1", command: "claude", worktreePath: "/repo/project/worktree" },
+          },
+        ]),
+      },
     );
 
     const log = readLog(envRoot);
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux"))).toBe(true);
     expect(log).toContain(
       "display-message -t %42 #[fg=colour203,bold]aimux#[default] couldn't open switcher - no local tmux target available",
     );
