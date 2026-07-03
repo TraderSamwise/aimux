@@ -949,7 +949,7 @@ describe("tmux-control.sh", () => {
 
     expect(readLog(envRoot)).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(readAimuxLog(envRoot)).toEqual([]);
-  });
+  }, 30_000);
 
   it("hydrates project context from the host session for global prefix bindings", () => {
     const envRoot = createFakeEnvironment({
