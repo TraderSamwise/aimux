@@ -11,10 +11,6 @@ export interface AimuxCliLaunchCommand {
   stableShimPath: string;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
 function fileExists(path: string): boolean {
   try {
     return existsSync(path) && statSync(path).isFile();
@@ -51,7 +47,7 @@ function shouldUseStableShim(input: {
   return resolve(current).startsWith(nativeRoot);
 }
 
-export function getAimuxCliLaunchCommand(
+function resolveAimuxCliLaunchCommand(
   args: string[] = [],
   options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
 ): AimuxCliLaunchCommand {
@@ -82,7 +78,20 @@ export function getAimuxCliLaunchCommand(
   };
 }
 
-export function buildAimuxCliShellCommand(args: string[]): string {
-  const launch = getAimuxCliLaunchCommand(args);
-  return [launch.command, ...launch.args].map(shellQuote).join(" ");
+export function getAimuxDaemonLaunchCommand(
+  options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
+): AimuxCliLaunchCommand {
+  return resolveAimuxCliLaunchCommand(["daemon", "run"], options);
+}
+
+export function getAimuxDashboardLaunchCommand(
+  options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
+): AimuxCliLaunchCommand {
+  return resolveAimuxCliLaunchCommand(["--tmux-dashboard-internal"], options);
+}
+
+export function getAimuxCurrentCliIdentity(
+  options: { env?: NodeJS.ProcessEnv; currentArgvEntry?: string } = {},
+): AimuxCliLaunchCommand {
+  return resolveAimuxCliLaunchCommand([], options);
 }
