@@ -159,7 +159,9 @@ switch (args[0]) {
   case "list-windows": listWindows(); break;
   case "display-message": displayMessage(); break;
   case "capture-pane": capturePane(); break;
-  case "display-menu": break;
+  case "display-menu":
+    if (process.env.TMUX_FAKE_DISPLAY_MENU_EXIT === "1") fail();
+    break;
   case "display-popup": break;
   case "new-window": break;
   case "show-options": showOptions(); break;
@@ -177,7 +179,19 @@ switch (args[0]) {
     join(binDir, "curl"),
     `#!/bin/sh
 printf '%s\\n' "$*" >> "$TMUX_FAKE_CURL_LOG"
-exit 28
+for arg in "$@"; do
+  case "$arg" in
+    *"/control/switchable-agents"*)
+      if [ -n "$TMUX_FAKE_SWITCHABLE_RESPONSE" ]; then
+        printf '%s' "$TMUX_FAKE_SWITCHABLE_RESPONSE"
+      else
+        printf '{"ok":true,"items":[]}'
+      fi
+      exit "\${TMUX_FAKE_CURL_EXIT:-0}"
+      ;;
+  esac
+done
+exit "\${TMUX_FAKE_CURL_EXIT:-0}"
 `,
   );
 
@@ -231,8 +245,26 @@ function readLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
     .map((args) => args.join(" "));
 }
 
+function readLogEventually(envRoot: ReturnType<typeof createFakeEnvironment>, pattern: string): string[] {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const lines = readLog(envRoot);
+    if (lines.some((line) => line.includes(pattern))) return lines;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  return readLog(envRoot);
+}
+
 function readCurlLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
   return readFileSync(envRoot.curlLogPath, "utf8").trim().split("\n").filter(Boolean);
+}
+
+function readCurlLogEventually(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const lines = readCurlLog(envRoot);
+    if (lines.length) return lines;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  return [];
 }
 
 function readAimuxLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
@@ -242,6 +274,20 @@ function readAimuxLog(envRoot: ReturnType<typeof createFakeEnvironment>): string
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
   return [];
+}
+
+function expectDashboardReloadRequest(envRoot: ReturnType<typeof createFakeEnvironment>): void {
+  const curlLog = readCurlLogEventually(envRoot);
+  expect(curlLog).toHaveLength(1);
+  expect(curlLog[0]).toContain("--data-binary");
+  expect(curlLog[0]).toContain('"forceReload": true');
+  expect(curlLog[0]).toContain('"focus": true');
+  expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/open-dashboard");
+  expect(readAimuxLog(envRoot)).toEqual([]);
+}
+
+function switchableResponse(items: Array<Record<string, unknown>>): string {
+  return JSON.stringify({ ok: true, items });
 }
 
 const tempRoots: string[] = [];
@@ -306,9 +352,7 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("does not use the current-session fast dashboard path for a failed-start pane", () => {
@@ -361,9 +405,7 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("does not strip project session names that merely contain client", () => {
@@ -677,9 +719,77 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
+  });
+
+  it("reports when a stale dashboard reload request cannot reach the project service", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "aimux-control-project-"));
+    tempRoots.push(projectRoot);
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj": {
+          "@aimux-dashboard-build": "build-current",
+          "@aimux-project-root": "/repo/project",
+          "@aimux-runtime-owner": "owner-current",
+        },
+        "aimux-proj-client-1234abcd": {
+          "@aimux-project-root": projectRoot,
+          "@aimux-runtime-owner": "owner-current",
+        },
+      },
+      windowOptions: {
+        "@dash": {
+          "@aimux-dashboard-build": "build-old",
+          "@aimux-dashboard-owner": "owner-current",
+        },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-1234abcd",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: projectRoot,
+          currentCommand: "bash",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), `${projectRoot}\n`);
+
+    runControl(
+      envRoot,
+      [
+        "dashboard",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--project-root",
+        projectRoot,
+        "--current-client-session",
+        "aimux-proj-client-1234abcd",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "shell",
+        "--current-window-id",
+        "@shell",
+        "--current-path",
+        projectRoot,
+      ],
+      { TMUX_FAKE_CURL_EXIT: "28" },
+    );
+
+    const log = readLogEventually(envRoot, "dashboard reload failed");
+    expect(log.some((entry) => entry.includes("dashboard reload failed"))).toBe(true);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("reloads instead of switching to a dashboard without a current readiness stamp", () => {
@@ -746,9 +856,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("reloads instead of switching to a dashboard with missing build metadata", () => {
@@ -813,9 +921,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("opens coordination by switching to the dashboard instead of showing a popup", () => {
@@ -2664,7 +2770,7 @@ describe("tmux-control.sh", () => {
     expect(curlLog).toEqual([]);
   });
 
-  it("shows the switch menu locally when the endpoint is stale", () => {
+  it("shows the switch menu from the project-service fast-control API", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
@@ -2726,32 +2832,49 @@ describe("tmux-control.sh", () => {
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
     writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
 
-    runControl(envRoot, [
-      "menu",
-      "--project-state-dir",
-      envRoot.projectStateDir,
-      "--current-client-session",
-      "aimux-proj-client-deadbeef",
-      "--client-tty",
-      "/dev/live",
-      "--current-window",
-      "claude",
-      "--current-window-id",
-      "@claude",
-      "--current-path",
-      "/repo/project/worktree",
-    ]);
+    runControl(
+      envRoot,
+      [
+        "menu",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-deadbeef",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project/worktree",
+      ],
+      {
+        TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
+          {
+            label: "codex coder",
+            target: { windowId: "@codex", windowName: "codex" },
+            metadata: { sessionId: "codex-1", command: "codex", worktreePath: "/repo/project/worktree" },
+          },
+        ]),
+      },
+    );
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
-    expect(
-      log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux -x P -y P -w 56 -h 10 -E exec")),
-    ).toBe(true);
-    expect(curlLog).toEqual([]);
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux"))).toBe(true);
+    expect(log.some((entry) => entry.includes("run-shell -b"))).toBe(true);
+    expect(log.some((entry) => entry.includes("scripts/tmux-control.sh window"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--window-id @codex"))).toBe(true);
+    expect(log.some((entry) => entry.includes("display-popup"))).toBe(false);
+    expect(curlLog).toHaveLength(1);
+    expect(curlLog[0]).toContain("/control/switchable-agents");
+    expect(curlLog[0]).toContain("scope=worktree");
+    expect(curlLog[0]).toContain("currentWindowId=%40claude");
   });
 
-  it("opens the exposé grid popup locally", () => {
+  it("opens expose as a tmux-native project-service menu", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
@@ -2777,42 +2900,110 @@ describe("tmux-control.sh", () => {
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
     writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
 
-    runControl(envRoot, [
-      "expose",
-      "--project-state-dir",
-      envRoot.projectStateDir,
-      "--current-client-session",
-      "aimux-proj-client-deadbeef",
-      "--client-tty",
-      "/dev/live",
-      "--current-window",
-      "claude",
-      "--current-window-id",
-      "@claude",
-      "--current-path",
-      "/repo/project/worktree",
-      "--aimux-home",
-      "/home/user/.aimux-custom",
-    ]);
+    runControl(
+      envRoot,
+      [
+        "expose",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-deadbeef",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project/worktree",
+        "--aimux-home",
+        "/home/user/.aimux-custom",
+      ],
+      {
+        TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
+          {
+            label: "codex",
+            target: { windowId: "@codex", windowName: "codex" },
+            metadata: { sessionId: "codex-1", command: "codex", worktreePath: "/repo/project/worktree" },
+          },
+        ]),
+      },
+    );
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(
-      log.some((entry) =>
-        // -E now starts with the instant pre-paint (cat the snapshot) before exec-ing exposé.
-        entry.includes("display-popup -c /dev/live -T aimux exposé -x C -y C -w 100% -h 100% -B -E printf"),
-      ),
-    ).toBe(true);
-    expect(
-      log.some((entry) => entry.includes("cat ") && entry.includes("exec") && entry.includes("expose --project-root")),
-    ).toBe(true);
-    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
-      true,
-    );
-    expect(curlLog).toEqual([]);
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux project"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--window-id @codex"))).toBe(true);
+    expect(log.some((entry) => entry.includes("display-popup"))).toBe(false);
+    expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
+    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(false);
+    expect(curlLog).toHaveLength(1);
+    expect(curlLog[0]).toContain("/control/switchable-agents");
+    expect(curlLog[0]).toContain("scope=all");
   });
 
-  it("opens a meta-dashboard window locally", () => {
+  it("opens meta as a tmux-native project-service menu", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
+      windows: {
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", command: "claude", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(
+      envRoot,
+      [
+        "meta",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-deadbeef",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project/worktree",
+        "--aimux-home",
+        "/home/user/.aimux-custom",
+      ],
+      {
+        TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
+          {
+            label: "claude",
+            target: { windowId: "@claude", windowName: "claude" },
+            metadata: { sessionId: "claude-1", command: "claude", worktreePath: "/repo/project/worktree" },
+          },
+        ]),
+      },
+    );
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux project"))).toBe(true);
+    expect(log.some((entry) => entry.includes("new-window"))).toBe(false);
+    expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(false);
+    expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
+    expect(curlLog).toHaveLength(1);
+    expect(curlLog[0]).toContain("scope=all");
+  });
+
+  it("reports a switch menu failure when the project-service menu cannot render", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
@@ -2830,31 +3021,41 @@ describe("tmux-control.sh", () => {
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
     writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
 
-    runControl(envRoot, [
-      "meta",
-      "--project-state-dir",
-      envRoot.projectStateDir,
-      "--current-client-session",
-      "aimux-proj-client-deadbeef",
-      "--client-tty",
-      "/dev/live",
-      "--current-window",
-      "claude",
-      "--current-window-id",
-      "@claude",
-      "--current-path",
-      "/repo/project/worktree",
-      "--aimux-home",
-      "/home/user/.aimux-custom",
-    ]);
+    runControl(
+      envRoot,
+      [
+        "menu",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-deadbeef",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project/worktree",
+        "--pane-id",
+        "%42",
+      ],
+      {
+        TMUX_FAKE_DISPLAY_MENU_EXIT: "1",
+        TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
+          {
+            label: "claude",
+            target: { windowId: "@claude", windowName: "claude" },
+            metadata: { sessionId: "claude-1", command: "claude", worktreePath: "/repo/project/worktree" },
+          },
+        ]),
+      },
+    );
 
     const log = readLog(envRoot);
-    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-1234abcd -n meta-dashboard"))).toBe(
-      true,
-    );
-    expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
-      true,
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux"))).toBe(true);
+    expect(log).toContain(
+      "display-message -t %42 #[fg=colour203,bold]aimux#[default] couldn't open switcher - no local tmux target available",
     );
   });
 });

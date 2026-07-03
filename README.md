@@ -485,13 +485,11 @@ Dashboard hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A v` | Request code review for active agent |
 | `Ctrl+A 1-9` | Focus agent by number from the dashboard |
 | `Ctrl+A d` | Return to dashboard window |
-| `Ctrl+A g` | Exposé: tile live previews of agents; press `1`-`9` to jump, `g` to zoom out |
-| `Ctrl+A m` | Meta dashboard: cross-project tmux dashboard for running projects |
+| `Ctrl+A g` | Project switcher menu for live agents/services |
+| `Ctrl+A m` | Project switcher menu for live agents/services |
 | `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
 
-When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` (Exposé) also works inside an agent window, where it scopes to that agent's worktree by default; set `expose.initialScope` to `worktree`, `project`, or `global` to choose the starting scope. With Exposé open, pressing `g` zooms the scope out one level — worktree → project (all worktrees) → all projects — so you can widen the view without leaving the overlay; the zoom is per-session and resets next time you open it.
-
-The meta dashboard is a local tmux window named `meta-dashboard`. It lists registered projects for the current `AIMUX_HOME`, groups running projects by worktree, refreshes from local tmux state, and jumps by switching the real terminal client into the target project's per-client session. Opening Exposé from the meta dashboard starts in `global` scope, showing live tiles across all running projects.
+When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` and `Ctrl+A m` open tmux-native menus whose entries come from the project service fast-control API, then tmux switches the local terminal client into the selected window.
 
 Main dashboard orchestration shortcuts:
 

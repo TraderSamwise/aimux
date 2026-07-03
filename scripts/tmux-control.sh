@@ -97,7 +97,6 @@ hydrate_from_tmux_pane() {
 hydrate_from_tmux_pane || true
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
 project_context_session() {
@@ -127,10 +126,6 @@ hydrate_project_context || true
 
 debug_log_line() {
   printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
-}
-
-shell_quote() {
-  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
 
 resolve_live_client() {
@@ -364,13 +359,34 @@ reload_local_dashboard() {
   debug_log_line "dashboard reload fallback project_root=$project_root"
   show_local_message "#[fg=colour220,bold]aimux#[default] reloading dashboard"
   (
-    cd "$project_root" || exit 1
     reload_client_tty="${live_client_tty-${client_tty-}}"
     reload_client_session="${live_client_session-${current_client_session-}}"
-    set -- dashboard-reload --open
-    [ -n "$reload_client_tty" ] && set -- "$@" --client-tty "$reload_client_tty"
-    [ -n "$reload_client_session" ] && set -- "$@" --current-client-session "$reload_client_session"
-    "$aimux_bin" "$@"
+    metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
+    [ -n "$metadata_api" ] || {
+      debug_log_line "dashboard reload api unavailable: missing metadata-api.txt"
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
+      exit 1
+    }
+    reload_body=$(python3 - "$reload_client_tty" "$reload_client_session" "$current_window_id" <<'PY'
+import json
+import sys
+
+client_tty, current_client_session, current_window_id = sys.argv[1:4]
+body = {"focus": True, "forceReload": True}
+if client_tty:
+    body["clientTty"] = client_tty
+if current_client_session:
+    body["currentClientSession"] = current_client_session
+if current_window_id:
+    body["currentWindowId"] = current_window_id
+print(json.dumps(body))
+PY
+)
+    curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$reload_body" "$metadata_api/control/open-dashboard" || {
+      debug_log_line "dashboard reload api failed endpoint=$metadata_api"
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
+      exit 1
+    }
   ) >/dev/null 2>&1 &
   return 0
 }
@@ -477,97 +493,123 @@ report_control_failure() {
     *) action_label="$action" ;;
   esac
   debug_log_line "control failure action=$action reason=$failure_reason"
-  show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label — $failure_reason"
+  show_local_message "#[fg=colour203,bold]aimux#[default] couldn't $action_label - $failure_reason"
 }
 
 show_local_switcher() {
-  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
-    resolve_live_client || return 1
-  fi
-  popup_client_tty="${live_client_tty-}"
-  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
-  popup_session="${live_client_session-}"
-  [ -n "$popup_session" ] || popup_session="$current_client_session"
-  switcher_cmd="exec $(shell_quote "$aimux_bin") switcher --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id")"
-  if [ -n "$popup_client_tty" ]; then
-    tmux display-popup -c "$popup_client_tty" -T "aimux" -x P -y P -w 56 -h 10 -E "$switcher_cmd" >/dev/null 2>&1 || return 1
-  else
-    tmux display-popup -T "aimux" -x P -y P -w 56 -h 10 -E "$switcher_cmd" >/dev/null 2>&1 || return 1
-  fi
+  show_metadata_menu "worktree" "aimux" || return 1
   exit 0
 }
 
 show_local_expose() {
-  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
-    resolve_live_client || return 1
-  fi
-  popup_client_tty="${live_client_tty-}"
-  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
-  popup_session="${live_client_session-}"
-  [ -n "$popup_session" ] || popup_session="$current_client_session"
-  home_arg=""
-  [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
-  # tmux popups are fixed-size, so exposé exits 75 when it detects the terminal resized;
-  # relaunch it at the new 100%×100% bounds. Each pass recaptures a fresh backdrop.
-  # Relies on display-popup -E propagating the command's exit code (tmux >= 3.3); on
-  # older tmux popup_status is always 0, so the loop simply never relaunches.
-  while :; do
-    # Snapshot the host BEFORE the popup opens; opening it transiently reflows the host pane,
-    # so an in-popup capture would catch a mis-sized frame. Exposé reads then deletes this file.
-    backdrop_arg=""
-    prepaint=""
-    expose_backdrop=$(mktemp 2>/dev/null || true)
-    if [ -n "$expose_backdrop" ]; then
-      capture_target="${current_window_id:-$popup_session}"
-      if tmux capture-pane -p -e -t "$capture_target" -S 0 > "$expose_backdrop" 2>/dev/null; then
-        backdrop_arg="--backdrop-file $(shell_quote "$expose_backdrop")"
-        # Paint the captured screen instantly so the popup shows your work while the exposé
-        # process cold-starts; exposé then atomically repaints it dimmed with the panel.
-        prepaint="printf '\\033[H'; cat $(shell_quote "$expose_backdrop"); "
-      else
-        rm -f "$expose_backdrop"
-      fi
-    fi
-    expose_cmd="${prepaint}exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
-    if [ -n "$popup_client_tty" ]; then
-      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
-      popup_status=$?
-    else
-      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
-      popup_status=$?
-    fi
-    rm -f "$expose_backdrop"
-    [ "$popup_status" = 75 ] && continue
-    break
-  done
+  show_metadata_menu "all" "aimux project" || return 1
   exit 0
 }
 
 show_local_meta() {
+  show_metadata_menu "all" "aimux project" || return 1
+  exit 0
+}
+
+show_metadata_menu() {
+  menu_scope="$1"
+  menu_title="$2"
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
-  popup_session="${live_client_session-}"
-  [ -n "$popup_session" ] || popup_session="$current_client_session"
-  popup_client_tty="${live_client_tty-}"
-  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
-  [ -n "$popup_session" ] || return 1
+  menu_session="${live_client_session-}"
+  [ -n "$menu_session" ] || menu_session="$current_client_session"
+  menu_client_tty="${live_client_tty-}"
+  [ -n "$menu_client_tty" ] || menu_client_tty="$client_tty"
+  python3 - "$menu_scope" "$menu_title" "$project_root" "$current_path" "$current_window_id" "$script_dir/tmux-control.sh" "$project_state_dir" "$menu_session" "$menu_client_tty" "$current_window" "$pane_id" <<'PY'
+import json
+import os
+import shlex
+import subprocess
+import sys
+import urllib.parse
 
-  existing_index=$(tmux list-windows -t "$popup_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 == "meta-dashboard" { print $1; exit }')
-  if [ -n "$existing_index" ]; then
-    if [ -n "$popup_client_tty" ]; then
-      tmux switch-client -c "$popup_client_tty" -t "${popup_session}:${existing_index}" >/dev/null 2>&1 || return 1
-    else
-      tmux switch-client -t "${popup_session}:${existing_index}" >/dev/null 2>&1 || return 1
-    fi
-    exit 0
-  fi
+scope, title, project_root, current_path, current_window_id, script, state_dir, menu_session, client_tty, current_window, pane_id = sys.argv[1:12]
 
-  home_arg=""
-  [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
-  meta_cmd="exec $(shell_quote "$aimux_bin") meta-dashboard --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg"
-  tmux new-window -t "$popup_session" -n meta-dashboard "$meta_cmd" >/dev/null 2>&1 || return 1
-  exit 0
+def read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except Exception:
+        return ""
+
+def fetch_items():
+    endpoint = read_text(os.path.join(state_dir, "metadata-api.txt"))
+    if not endpoint:
+        raise SystemExit(1)
+    params = {
+        "scope": scope,
+        "currentClientSession": menu_session,
+        "currentWindow": current_window,
+        "currentWindowId": current_window_id,
+        "currentPath": current_path,
+    }
+    query = urllib.parse.urlencode({key: value for key, value in params.items() if value})
+    url = endpoint.rstrip("/") + "/control/switchable-agents"
+    if query:
+        url += "?" + query
+    raw = subprocess.check_output(["curl", "-fsS", "--max-time", "4", url], text=True, stderr=subprocess.DEVNULL)
+    payload = json.loads(raw)
+    items = payload.get("items")
+    if not payload.get("ok") or not isinstance(items, list):
+        raise SystemExit(1)
+    return items
+
+def safe_label(value, limit=64):
+    cleaned = " ".join(str(value or "").split())
+    if len(cleaned) > limit:
+        return cleaned[: limit - 3] + "..."
+    return cleaned
+
+items = fetch_items()
+if not items:
+    raise SystemExit(1)
+
+args = ["display-menu"]
+if client_tty:
+    args += ["-c", client_tty]
+args += ["-T", title]
+keys = list("123456789abcdefghijklmnopqrstuvwxyz")
+for idx, item in enumerate(items[:len(keys)]):
+    target = item.get("target") if isinstance(item.get("target"), dict) else {}
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    window_id = target.get("windowId") or target.get("id")
+    if not window_id:
+        continue
+    worktree = metadata.get("worktreePath") or project_root
+    basename = os.path.basename(str(worktree).rstrip("/")) or str(worktree)
+    label_text = item.get("label") or metadata.get("label") or metadata.get("command") or target.get("windowName") or window_id
+    marker = "* " if window_id == current_window_id else ""
+    label = safe_label(f"{marker}{basename} - {label_text}")
+    command = ["sh", script, "window"]
+    for flag, value in [
+        ("--project-state-dir", state_dir),
+        ("--project-root", project_root),
+        ("--current-client-session", menu_session),
+        ("--client-tty", client_tty),
+        ("--current-window", current_window),
+        ("--current-window-id", current_window_id),
+        ("--current-path", current_path),
+        ("--pane-id", pane_id),
+        ("--window-id", window_id),
+    ]:
+        if value:
+            command.extend([flag, value])
+    shell_command = " ".join(shlex.quote(part) for part in command)
+    args += [label, keys[idx], f"run-shell -b {shlex.quote(shell_command)}"]
+
+if len(args) <= 3:
+    raise SystemExit(1)
+try:
+    subprocess.run(["tmux", *args], check=True)
+except subprocess.CalledProcessError:
+    raise SystemExit(1)
+PY
 }
 
 resolve_host_session_name() {

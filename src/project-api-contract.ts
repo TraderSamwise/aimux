@@ -947,6 +947,7 @@ export interface SwitchableAgentsInput {
   currentWindow?: string;
   currentWindowId?: string;
   currentPath?: string;
+  scope?: "all" | "worktree";
 }
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {

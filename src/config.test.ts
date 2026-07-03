@@ -238,43 +238,17 @@ describe("config", () => {
     });
   });
 
-  it("defaults exposé to worktree initial scope", () => {
-    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ initialScope: "worktree", dimInactive: false });
-  });
-
-  it("merges an exposé initialScope override", () => {
-    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
-    writeFileSync(
-      join(repoRoot, ".aimux/config.json"),
-      JSON.stringify({ expose: { initialScope: "global" } }, null, 2) + "\n",
-    );
-
-    expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("global");
-  });
-
-  it("merges an exposé dimInactive override", () => {
-    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
-    writeFileSync(
-      join(repoRoot, ".aimux/config.json"),
-      JSON.stringify({ expose: { dimInactive: true } }, null, 2) + "\n",
-    );
-
-    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ initialScope: "worktree", dimInactive: true });
-  });
-
   it("reads an explicit projectRoot config without touching global path state", () => {
-    // Exposé relies on this to load config without initPaths' write side effects.
     const otherRepo = mkdtempSync(join(tmpdir(), "aimux-config-other-"));
     try {
       mkdirSync(join(otherRepo, ".git"), { recursive: true });
       mkdirSync(join(otherRepo, ".aimux"), { recursive: true });
       writeFileSync(
         join(otherRepo, ".aimux/config.json"),
-        JSON.stringify({ expose: { initialScope: "project" } }, null, 2) + "\n",
+        JSON.stringify({ worktrees: { baseDir: ".custom-worktrees" } }, null, 2) + "\n",
       );
-      expect(loadConfig({ includeGlobal: false, projectRoot: otherRepo }).expose.initialScope).toBe("project");
-      // The default-init repo (repoRoot) has no such override.
-      expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("worktree");
+      expect(loadConfig({ includeGlobal: false, projectRoot: otherRepo }).worktrees.baseDir).toBe(".custom-worktrees");
+      expect(loadConfig({ includeGlobal: false }).worktrees.baseDir).toBe(".aimux/worktrees");
     } finally {
       rmSync(otherRepo, { recursive: true, force: true });
     }

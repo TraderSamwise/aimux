@@ -18,21 +18,12 @@ export function prepareStableCliEnv(env: MutableEnv = process.env): void {
   if (blank(env.AIMUX_WEB_APP_URL)) env.AIMUX_WEB_APP_URL = DEFAULT_WEB_APP_URL;
 }
 
-/** Which CLI entry to load for the given argv. `expose` uses the lightweight popup entry. */
-export function cliEntryFor(argv: string[]): "expose" | "main" {
-  return argv[2] === "expose" ? "expose" : "main";
+export function cliEntryFor(_argv: string[]): "main" {
+  return "main";
 }
 
-/**
- * Load and run the CLI entry for the current argv. `expose` routes to the lightweight
- * popup entry (no full-CLI graph) to avoid the cold-start blank; everything else loads
- * the full program, which self-runs via its top-level parse().
- */
 export function runRoutedCli(): void {
-  const run =
-    cliEntryFor(process.argv) === "expose"
-      ? import("./popup-expose.js").then((m) => m.runExpose())
-      : import("./main.js").then(() => undefined);
+  const run = import("./main.js").then(() => undefined);
 
   void run.catch((error: unknown) => {
     console.error(error);
