@@ -235,6 +235,15 @@ function readCurlLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[
   return readFileSync(envRoot.curlLogPath, "utf8").trim().split("\n").filter(Boolean);
 }
 
+function readCurlLogEventually(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const lines = readCurlLog(envRoot);
+    if (lines.length) return lines;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  return [];
+}
+
 function readAimuxLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const lines = readFileSync(envRoot.aimuxLogPath, "utf8").trim().split("\n").filter(Boolean);
@@ -242,6 +251,16 @@ function readAimuxLog(envRoot: ReturnType<typeof createFakeEnvironment>): string
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
   return [];
+}
+
+function expectDashboardReloadRequest(envRoot: ReturnType<typeof createFakeEnvironment>): void {
+  const curlLog = readCurlLogEventually(envRoot);
+  expect(curlLog).toHaveLength(1);
+  expect(curlLog[0]).toContain("--data-binary");
+  expect(curlLog[0]).toContain('"forceReload": true');
+  expect(curlLog[0]).toContain('"focus": true');
+  expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/open-dashboard");
+  expect(readAimuxLog(envRoot)).toEqual([]);
 }
 
 const tempRoots: string[] = [];
@@ -306,9 +325,7 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("does not use the current-session fast dashboard path for a failed-start pane", () => {
@@ -361,9 +378,7 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
     expect(log.some((line) => line.includes("no local tmux target available"))).toBe(false);
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("does not strip project session names that merely contain client", () => {
@@ -677,9 +692,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("reloads instead of switching to a dashboard without a current readiness stamp", () => {
@@ -746,9 +759,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("reloads instead of switching to a dashboard with missing build metadata", () => {
@@ -813,9 +824,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-1234abcd:0");
-    expect(readAimuxLog(envRoot)).toEqual([
-      `${projectRoot}|dashboard-reload --open --client-tty /dev/live --current-client-session aimux-proj-client-1234abcd`,
-    ]);
+    expectDashboardReloadRequest(envRoot);
   });
 
   it("opens coordination by switching to the dashboard instead of showing a popup", () => {
@@ -2745,13 +2754,14 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-1234abcd");
-    expect(
-      log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux -x P -y P -w 56 -h 10 -E exec")),
-    ).toBe(true);
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux"))).toBe(true);
+    expect(log.some((entry) => entry.includes("scripts/tmux-control.sh window"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--window-id @codex"))).toBe(true);
+    expect(log.some((entry) => entry.includes("display-popup"))).toBe(false);
     expect(curlLog).toEqual([]);
   });
 
-  it("opens the exposé grid popup locally", () => {
+  it("opens exposé as a tmux-native global menu", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
@@ -2797,22 +2807,14 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(
-      log.some((entry) =>
-        // -E now starts with the instant pre-paint (cat the snapshot) before exec-ing exposé.
-        entry.includes("display-popup -c /dev/live -T aimux exposé -x C -y C -w 100% -h 100% -B -E printf"),
-      ),
-    ).toBe(true);
-    expect(
-      log.some((entry) => entry.includes("cat ") && entry.includes("exec") && entry.includes("expose --project-root")),
-    ).toBe(true);
-    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
-      true,
-    );
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux expose"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--window-id @codex"))).toBe(true);
+    expect(log.some((entry) => entry.includes("display-popup"))).toBe(false);
+    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(false);
     expect(curlLog).toEqual([]);
   });
 
-  it("opens a meta-dashboard window locally", () => {
+  it("opens the cross-project meta surface as a tmux-native menu", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
@@ -2820,6 +2822,9 @@ describe("tmux-control.sh", () => {
           { id: "@dash", index: 0, name: "dashboard-live" },
           { id: "@claude", index: 1, name: "claude" },
         ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", command: "claude", worktreePath: "/repo/project/worktree" },
       },
       sessionOptions: {
         "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
@@ -2849,12 +2854,8 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
-    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-1234abcd -n meta-dashboard"))).toBe(
-      true,
-    );
-    expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-custom"))).toBe(
-      true,
-    );
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux projects"))).toBe(true);
+    expect(log.some((entry) => entry.includes("new-window"))).toBe(false);
+    expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(false);
   });
 });

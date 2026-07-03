@@ -103,7 +103,7 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
-import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "./runtime-owner.js";
+import { TMUX_DASHBOARD_READY_OPTION } from "./runtime-owner.js";
 import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
@@ -118,6 +118,7 @@ import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
 import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
+import { resolveDashboardTarget } from "./dashboard/targets.js";
 import { isUsableDashboardTarget } from "./dashboard/targets.js";
 import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
@@ -2462,6 +2463,7 @@ export class MetadataServer {
                 clientTty?: string;
                 currentWindowId?: string;
                 focus?: boolean;
+                forceReload?: boolean;
                 screen?: string;
               })
             : {};
@@ -2472,6 +2474,10 @@ export class MetadataServer {
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         const rawScreen = body.screen ?? url.searchParams.get("screen") ?? undefined;
         const screen = parseDashboardControlScreen(rawScreen);
+        const forceReload =
+          body.forceReload === true ||
+          url.searchParams.get("forceReload") === "1" ||
+          url.searchParams.get("forceReload") === "true";
         if (rawScreen != null && !screen) {
           send(res, 400, { ok: false, error: "invalid dashboard screen" });
           return;
@@ -2517,29 +2523,11 @@ export class MetadataServer {
             });
           }
         }
-        const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(this.currentProjectRoot());
-        const dashboardSession = tmux.ensureProjectSession(this.currentProjectRoot(), dashboardCommand);
-        const openSessionName =
-          focusClientSession && tmux.hasSession(focusClientSession)
-            ? focusClientSession
-            : tmux.getOpenSessionName(dashboardSession.sessionName);
-        const target = tmux.ensureDashboardWindow(openSessionName, this.currentProjectRoot(), dashboardCommand);
-        const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-        const currentReadyStamp = tmux.getWindowOption(target, TMUX_DASHBOARD_READY_OPTION);
-        const currentDashboardOwner = tmux.getWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION);
-        const currentOwner = getRuntimeOwnerId();
-        if (
-          !tmux.isWindowAlive(target) ||
-          currentBuildStamp !== dashboardBuildStamp ||
-          currentReadyStamp !== dashboardBuildStamp ||
-          currentDashboardOwner !== currentOwner
-        ) {
-          tmux.setWindowOption(target, TMUX_DASHBOARD_READY_OPTION, "");
-          tmux.respawnWindow(target, dashboardCommand);
-        }
-        tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
-        tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
-        tmux.setWindowOption(target, TMUX_DASHBOARD_OWNER_OPTION, currentOwner);
+        const { dashboardBuildStamp } = getDashboardCommandSpec(this.currentProjectRoot());
+        const { dashboardTarget: target } = resolveDashboardTarget(this.currentProjectRoot(), tmux, {
+          forceReload,
+          openInHostSession: true,
+        });
         if (!(await waitForDashboardReady(tmux, target, dashboardBuildStamp))) {
           send(res, 503, { ok: false, error: "dashboard did not become ready" });
           return;
