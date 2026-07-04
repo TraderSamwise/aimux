@@ -349,8 +349,12 @@ function rewriteLocalStatuslineArtifacts(
   tmux.refreshStatus();
 }
 
-async function postProjectServiceJson(path: string, body: unknown, options?: { timeoutMs?: number }): Promise<any> {
-  const projectRoot = resolveProjectRoot(process.cwd());
+async function postProjectServiceJson(
+  path: string,
+  body: unknown,
+  options?: { timeoutMs?: number; projectRoot?: string },
+): Promise<any> {
+  const projectRoot = options?.projectRoot ?? resolveProjectRoot(process.cwd());
   await ensureDaemonProjectReady(projectRoot);
   const endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
@@ -368,8 +372,8 @@ async function postProjectServiceJson(path: string, body: unknown, options?: { t
   return json;
 }
 
-async function getProjectServiceJson(path: string, opts?: { notFound?: "null" }): Promise<any> {
-  const projectRoot = resolveProjectRoot(process.cwd());
+async function getProjectServiceJson(path: string, opts?: { notFound?: "null"; projectRoot?: string }): Promise<any> {
+  const projectRoot = opts?.projectRoot ?? resolveProjectRoot(process.cwd());
   await ensureDaemonProjectReady(projectRoot);
   let endpoint = await resolveProjectServiceEndpoint(projectRoot);
   if (!endpoint) {
@@ -2100,6 +2104,7 @@ messageCmd
   .option("--assignee <role>", "Route to a role if no explicit session id is provided")
   .option("--tool <tool>", "Route to a tool if no explicit session id is provided")
   .option("--worktree <path>", "Prefer a target in this worktree")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Sender session id", "user")
   .option("--title <title>", "Conversation title if a new thread is opened")
   .option("--kind <kind>", "request|reply|status|decision|handoff|note", "request")
@@ -2112,6 +2117,7 @@ messageCmd
         assignee?: string;
         tool?: string;
         worktree?: string;
+        project?: string;
         from?: string;
         title?: string;
         kind?: MessageKind;
@@ -2126,17 +2132,22 @@ messageCmd
         console.error("aimux: message send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      const result = await postProjectServiceJson("/threads/send", {
-        threadId: opts.thread,
-        from: opts.from ?? "user",
-        to,
-        assignee: opts.assignee,
-        tool: opts.tool,
-        worktreePath: opts.worktree,
-        kind: (opts.kind as MessageKind) ?? "request",
-        body,
-        title: opts.title,
-      });
+      const projectRoot = await prepareProjectContext(opts.project);
+      const result = await postProjectServiceJson(
+        "/threads/send",
+        {
+          threadId: opts.thread,
+          from: opts.from ?? "user",
+          to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          worktreePath: opts.worktree,
+          kind: (opts.kind as MessageKind) ?? "request",
+          body,
+          title: opts.title,
+        },
+        { projectRoot },
+      );
       console.log(`thread ${result.thread.id}`);
       console.log(`message ${result.message.id}`);
       if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
@@ -2155,12 +2166,23 @@ handoffCmd
   .option("--assignee <role>", "Route to a role if no explicit session id is provided")
   .option("--tool <tool>", "Route to a tool if no explicit session id is provided")
   .option("--worktree <path>", "Prefer a target in this worktree")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Sender session id", "user")
   .option("--title <title>", "Handoff thread title")
+  .option("--json", "Emit JSON")
   .action(
     async (
       body: string,
-      opts: { to?: string; assignee?: string; tool?: string; worktree?: string; from?: string; title?: string },
+      opts: {
+        to?: string;
+        assignee?: string;
+        tool?: string;
+        worktree?: string;
+        project?: string;
+        from?: string;
+        title?: string;
+        json?: boolean;
+      },
     ) => {
       const to = opts.to
         ?.split(",")
@@ -2170,15 +2192,24 @@ handoffCmd
         console.error("aimux: handoff send requires --to, --assignee, or --tool");
         process.exit(1);
       }
-      const result = await postProjectServiceJson("/handoff", {
-        from: opts.from ?? "user",
-        to,
-        assignee: opts.assignee,
-        tool: opts.tool,
-        body,
-        title: opts.title,
-        worktreePath: opts.worktree,
-      });
+      const projectRoot = await prepareProjectContext(opts.project);
+      const result = await postProjectServiceJson(
+        "/handoff",
+        {
+          from: opts.from ?? "user",
+          to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          body,
+          title: opts.title,
+          worktreePath: opts.worktree,
+        },
+        { projectRoot },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
       console.log(`thread ${result.thread.id}`);
       console.log(`message ${result.message.id}`);
       if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
@@ -2191,14 +2222,25 @@ handoffCmd
   .command("accept")
   .description("Accept an existing handoff thread")
   .argument("<threadId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
-  .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/handoff/accept", {
-      threadId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (threadId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/handoff/accept",
+      {
+        threadId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`thread ${result.thread.id}`);
     console.log(`message ${result.message.id}`);
   });
@@ -2207,14 +2249,25 @@ handoffCmd
   .command("complete")
   .description("Complete an existing handoff thread")
   .argument("<threadId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Optional completion note")
-  .action(async (threadId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/handoff/complete", {
-      threadId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (threadId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/handoff/complete",
+      {
+        threadId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`thread ${result.thread.id}`);
     console.log(`message ${result.message.id}`);
   });
@@ -2226,13 +2279,15 @@ taskCmd
   .description("List orchestrated tasks")
   .option("--session <sessionId>", "Filter to tasks assigned to or created by a session")
   .option("--status <status>", "Filter by task status")
+  .option("--project <path>", "Project path")
   .option("--json", "Emit JSON")
-  .action(async (opts: { session?: string; status?: string; json?: boolean }) => {
+  .action(async (opts: { session?: string; status?: string; project?: string; json?: boolean }) => {
     const params = new URLSearchParams();
     if (opts.session) params.set("session", opts.session);
     if (opts.status) params.set("status", opts.status);
     const query = params.toString();
-    const result = await getProjectServiceJson(`/tasks${query ? `?${query}` : ""}`);
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await getProjectServiceJson(`/tasks${query ? `?${query}` : ""}`, { projectRoot });
     const tasks = Array.isArray(result.tasks) ? result.tasks : [];
     if (opts.json) {
       console.log(JSON.stringify({ tasks }, null, 2));
@@ -2254,9 +2309,14 @@ taskCmd
   .command("show")
   .description("Show an orchestrated task")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--json", "Emit JSON")
-  .action(async (taskId: string, opts: { json?: boolean }) => {
-    const detail = await getProjectServiceJson(`/tasks/${encodeURIComponent(taskId)}`, { notFound: "null" });
+  .action(async (taskId: string, opts: { project?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const detail = await getProjectServiceJson(`/tasks/${encodeURIComponent(taskId)}`, {
+      notFound: "null",
+      projectRoot,
+    });
     if (!detail?.task) {
       console.error(`aimux: task not found: ${taskId}`);
       process.exit(1);
@@ -2294,6 +2354,8 @@ taskCmd
   .option("--type <type>", "task|review", "task")
   .option("--diff <text>", "Optional diff snippet or review payload")
   .option("--worktree <path>", "Associated worktree path")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
   .action(
     async (
       description: string,
@@ -2306,19 +2368,30 @@ taskCmd
         type?: "task" | "review";
         diff?: string;
         worktree?: string;
+        project?: string;
+        json?: boolean;
       },
     ) => {
-      const result = await postProjectServiceJson("/tasks/assign", {
-        from: opts.from ?? "user",
-        to: opts.to,
-        assignee: opts.assignee,
-        tool: opts.tool,
-        description,
-        prompt: opts.prompt,
-        type: opts.type,
-        diff: opts.diff,
-        worktreePath: opts.worktree,
-      });
+      const projectRoot = await prepareProjectContext(opts.project);
+      const result = await postProjectServiceJson(
+        "/tasks/assign",
+        {
+          from: opts.from ?? "user",
+          to: opts.to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          description,
+          prompt: opts.prompt,
+          type: opts.type,
+          diff: opts.diff,
+          worktreePath: opts.worktree,
+        },
+        { projectRoot },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
       console.log(`task ${result.task.id}`);
       if (result.thread?.id) console.log(`thread ${result.thread.id}`);
     },
@@ -2328,14 +2401,25 @@ taskCmd
   .command("accept")
   .description("Accept an assigned task and mark it in progress")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Accepting session id", "user")
   .option("--body <text>", "Optional acceptance note")
-  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/tasks/accept", {
-      taskId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/tasks/accept",
+      {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`task ${result.task.id}`);
     if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
@@ -2344,14 +2428,25 @@ taskCmd
   .command("block")
   .description("Mark a task blocked and route it back for attention")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Blocking session id", "user")
   .option("--body <text>", "Blocking reason")
-  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/tasks/block", {
-      taskId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/tasks/block",
+      {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`task ${result.task.id}`);
     if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
@@ -2360,14 +2455,25 @@ taskCmd
   .command("complete")
   .description("Complete a task explicitly and publish the result")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Completing session id", "user")
   .option("--body <text>", "Completion summary/result")
-  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/tasks/complete", {
-      taskId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/tasks/complete",
+      {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`task ${result.task.id}`);
     if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
@@ -2376,14 +2482,25 @@ taskCmd
   .command("reopen")
   .description("Reopen a completed or blocked task chain")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Reopening session id", "user")
   .option("--body <text>", "Optional reopening note")
-  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/tasks/reopen", {
-      taskId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/tasks/reopen",
+      {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`task ${result.task.id}`);
     if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
@@ -2394,14 +2511,25 @@ reviewCmd
   .command("approve")
   .description("Approve a review task")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Optional approval note")
-  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/reviews/approve", {
-      taskId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/reviews/approve",
+      {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`task ${result.task.id}`);
     if (result.thread?.id) console.log(`thread ${result.thread.id}`);
   });
@@ -2410,14 +2538,25 @@ reviewCmd
   .command("request-changes")
   .description("Request changes on a review task")
   .argument("<taskId>")
+  .option("--project <path>", "Project path")
   .option("--from <sessionId>", "Reviewer session id", "user")
   .option("--body <text>", "Requested changes")
-  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
-    const result = await postProjectServiceJson("/reviews/request-changes", {
-      taskId,
-      from: opts.from ?? "user",
-      body: opts.body,
-    });
+  .option("--json", "Emit JSON")
+  .action(async (taskId: string, opts: { project?: string; from?: string; body?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const result = await postProjectServiceJson(
+      "/reviews/request-changes",
+      {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      },
+      { projectRoot },
+    );
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`task ${result.task.id}`);
     if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
     if (result.thread?.id) console.log(`thread ${result.thread.id}`);

@@ -1288,6 +1288,189 @@ describe("daemon supervision", () => {
     expect(emptyParticipants.body).toBe("participants is required\n");
   });
 
+  it("serves workflow text routes through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(
+      async (url: string, opts: { body?: unknown; timeoutMs?: number } = {}) => {
+        if (url.endsWith(`${PROJECT_API_ROUTES.tasks.list}?session=claude-1&status=todo`)) {
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              tasks: [
+                {
+                  id: "task-1",
+                  type: "task",
+                  status: "todo",
+                  assignedBy: "user",
+                  assignedTo: "claude-1",
+                  description: "Ship it",
+                  threadId: "thread-1",
+                },
+              ],
+            },
+          };
+        }
+        if (url.endsWith(`${PROJECT_API_ROUTES.tasks.list}/task-1`)) {
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              task: {
+                id: "task-1",
+                type: "task",
+                status: "todo",
+                assignedBy: "user",
+                assignedTo: "claude-1",
+                description: "Ship it",
+                prompt: "Implement it",
+                threadId: "thread-1",
+              },
+              thread: { id: "thread-1" },
+              messages: [],
+            },
+          };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.handoff.send)) {
+          expect(opts.body).toEqual({
+            from: "user",
+            to: ["claude-1"],
+            assignee: "coder",
+            tool: "claude",
+            body: "Take over",
+            title: "Handoff",
+            worktreePath: "feature",
+          });
+          expect(opts.timeoutMs).toBe(120_000);
+          return {
+            status: 200,
+            json: { ok: true, thread: { id: "thread-2" }, message: { id: "msg-2" }, deliveredTo: ["claude-1"] },
+          };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.handoff.accept)) {
+          expect(opts.body).toEqual({ threadId: "thread-2", from: "claude-1", body: "ok" });
+          return { status: 200, json: { ok: true, thread: { id: "thread-2" }, message: { id: "msg-3" } } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.tasks.assign)) {
+          expect(opts.body).toEqual({
+            from: "user",
+            to: "claude-1",
+            assignee: "coder",
+            tool: "claude",
+            description: "Ship it",
+            prompt: "Implement",
+            type: "review",
+            diff: "diff",
+            worktreePath: "feature",
+          });
+          return { status: 200, json: { ok: true, task: { id: "task-2" }, thread: { id: "thread-3" } } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.tasks.complete)) {
+          expect(opts.body).toEqual({ taskId: "task-1", from: "claude-1", body: "done" });
+          return { status: 200, json: { ok: true, task: { id: "task-1" }, thread: { id: "thread-1" } } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.reviews.approve)) {
+          expect(opts.body).toEqual({ taskId: "task-1", from: "reviewer", body: "ok" });
+          return { status: 200, json: { ok: true, task: { id: "task-1" }, thread: { id: "thread-1" } } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.reviews.requestChanges)) {
+          expect(opts.body).toEqual({ taskId: "task-1", from: "reviewer", body: "fix" });
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              task: { id: "task-1" },
+              followUpTask: { id: "task-3" },
+              thread: { id: "thread-1" },
+            },
+          };
+        }
+        return { status: 200, json: projectServiceHealth(process.pid) };
+      },
+    );
+
+    const listed = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.taskListText}?project=${encodeURIComponent(projectRoot)}&session=claude-1&status=todo`,
+    );
+    const listedJson = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.taskListText}?json=1&project=${encodeURIComponent(projectRoot)}&session=claude-1&status=todo`,
+    );
+    const shown = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.taskShowText}?project=${encodeURIComponent(projectRoot)}&taskId=task-1`,
+    );
+    const handoff = await daemon.routeRequest("POST", CORE_API_ROUTES.handoffSendText, {
+      project: projectRoot,
+      body: "Take over",
+      to: "claude-1",
+      assignee: "coder",
+      tool: "claude",
+      title: "Handoff",
+      worktree: "feature",
+    });
+    const accepted = await daemon.routeRequest("POST", CORE_API_ROUTES.handoffAcceptText, {
+      project: projectRoot,
+      threadId: "thread-2",
+      from: "claude-1",
+      body: "ok",
+    });
+    const assigned = await daemon.routeRequest("POST", CORE_API_ROUTES.taskAssignText, {
+      project: projectRoot,
+      description: "Ship it",
+      to: "claude-1",
+      assignee: "coder",
+      tool: "claude",
+      prompt: "Implement",
+      type: "review",
+      diff: "diff",
+      worktree: "feature",
+    });
+    const completed = await daemon.routeRequest("POST", CORE_API_ROUTES.taskCompleteText, {
+      project: projectRoot,
+      taskId: "task-1",
+      from: "claude-1",
+      body: "done",
+    });
+    const approved = await daemon.routeRequest("POST", CORE_API_ROUTES.reviewApproveText, {
+      project: projectRoot,
+      taskId: "task-1",
+      from: "reviewer",
+      body: "ok",
+    });
+    const changes = await daemon.routeRequest("POST", CORE_API_ROUTES.reviewRequestChangesText, {
+      project: projectRoot,
+      taskId: "task-1",
+      from: "reviewer",
+      body: "fix",
+    });
+    const badHandoff = await daemon.routeRequest("POST", CORE_API_ROUTES.handoffSendText, {
+      project: projectRoot,
+      body: "No target",
+    });
+
+    expect(listed.body).toContain("task-1  task  todo  target=claude-1 thread=thread-1");
+    expect(JSON.parse(String(listedJson.body))).toEqual({
+      tasks: [
+        expect.objectContaining({
+          id: "task-1",
+        }),
+      ],
+    });
+    expect(shown.body).toContain("Ship it (task)");
+    expect(handoff.body).toBe("thread thread-2\nmessage msg-2\ndelivered claude-1\n");
+    expect(accepted.body).toBe("thread thread-2\nmessage msg-3\n");
+    expect(assigned.body).toBe("task task-2\nthread thread-3\n");
+    expect(completed.body).toBe("task task-1\nthread thread-1\n");
+    expect(approved.body).toBe("task task-1\nthread thread-1\n");
+    expect(changes.body).toBe("task task-1\nfollow-up task-3\nthread thread-1\n");
+    expect(badHandoff.status).toBe(400);
+    expect(badHandoff.body).toBe("aimux: handoff send requires --to, --assignee, or --tool\n");
+  });
+
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
     const { saveCredentials } = await import("./credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
