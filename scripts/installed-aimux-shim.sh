@@ -132,6 +132,41 @@ aimux_post_text_route() {
   esac
 }
 
+aimux_post_query_text_route() {
+  path="$1"
+  timeout="${2:-60}"
+  shift 2
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-core-query-post.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST --get "$@" \
+      "http://127.0.0.1:$port$path" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*)
+      cat "$body_file"
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 0
+      ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+}
+
 aimux_auth_text_route() {
   start_path="$1"
   wait_path="$2"
@@ -250,6 +285,266 @@ aimux_try_daemon_project_ensure() {
   [ "$json" -eq 1 ] && path="/core/project-ensure-text?json=1"
   aimux_curl_project_arg_text_route "$path" "$project_root"
 }
+
+aimux_try_lifecycle_spawn() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  worktree_path=""
+  tool=""
+  open=1
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tool)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        tool="$1"
+        ;;
+      --tool=*)
+        tool="${1#--tool=}"
+        [ -n "$tool" ] || return 1
+        ;;
+      --project)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        project_root="$1"
+        ;;
+      --project=*)
+        project_root="${1#--project=}"
+        [ -n "$project_root" ] || return 1
+        ;;
+      --worktree)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        worktree_path="$1"
+        ;;
+      --worktree=*)
+        worktree_path="${1#--worktree=}"
+        [ -n "$worktree_path" ] || return 1
+        ;;
+      --no-open)
+        open=0
+        ;;
+      --json)
+        json=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  [ -n "$tool" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  if [ -n "$worktree_path" ]; then
+    worktree_path="$(aimux_resolve_project_arg "$worktree_path")" || return 1
+  fi
+  path="/core/lifecycle/spawn-text"
+  [ "$json" -eq 1 ] && path="/core/lifecycle/spawn-text?json=1"
+  set -- --data-urlencode "project=$project_root" --data-urlencode "tool=$tool" --data-urlencode "open=$open"
+  [ -n "$worktree_path" ] && set -- "$@" --data-urlencode "worktreePath=$worktree_path"
+  aimux_post_query_text_route "$path" 120 "$@"
+}
+
+aimux_try_lifecycle_stop() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  session_id=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        project_root="$1"
+        ;;
+      --project=*)
+        project_root="${1#--project=}"
+        [ -n "$project_root" ] || return 1
+        ;;
+      --json)
+        json=1
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        [ -z "$session_id" ] || return 1
+        session_id="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$session_id" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/lifecycle/stop-text"
+  [ "$json" -eq 1 ] && path="/core/lifecycle/stop-text?json=1"
+  aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+}
+
+aimux_try_lifecycle_kill() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  session_id=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        project_root="$1"
+        ;;
+      --project=*)
+        project_root="${1#--project=}"
+        [ -n "$project_root" ] || return 1
+        ;;
+      --json)
+        json=1
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        [ -z "$session_id" ] || return 1
+        session_id="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$session_id" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/lifecycle/kill-text"
+  [ "$json" -eq 1 ] && path="/core/lifecycle/kill-text?json=1"
+  aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+}
+
+aimux_try_lifecycle_fork() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  source_session_id=""
+  worktree_path=""
+  instruction=""
+  tool=""
+  open=1
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tool)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        tool="$1"
+        ;;
+      --tool=*)
+        tool="${1#--tool=}"
+        [ -n "$tool" ] || return 1
+        ;;
+      --project)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        project_root="$1"
+        ;;
+      --project=*)
+        project_root="${1#--project=}"
+        [ -n "$project_root" ] || return 1
+        ;;
+      --worktree)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        worktree_path="$1"
+        ;;
+      --worktree=*)
+        worktree_path="${1#--worktree=}"
+        [ -n "$worktree_path" ] || return 1
+        ;;
+      --instruction)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        instruction="$1"
+        ;;
+      --instruction=*)
+        instruction="${1#--instruction=}"
+        ;;
+      --no-open)
+        open=0
+        ;;
+      --json)
+        json=1
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        [ -z "$source_session_id" ] || return 1
+        source_session_id="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$source_session_id" ] || return 1
+  [ -n "$tool" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  if [ -n "$worktree_path" ]; then
+    worktree_path="$(aimux_resolve_project_arg "$worktree_path")" || return 1
+  fi
+  path="/core/lifecycle/fork-text"
+  [ "$json" -eq 1 ] && path="/core/lifecycle/fork-text?json=1"
+  set -- --data-urlencode "project=$project_root" --data-urlencode "sourceSessionId=$source_session_id" \
+    --data-urlencode "tool=$tool" --data-urlencode "open=$open"
+  [ -n "$worktree_path" ] && set -- "$@" --data-urlencode "worktreePath=$worktree_path"
+  [ -n "$instruction" ] && set -- "$@" --data-urlencode "instruction=$instruction"
+  aimux_post_query_text_route "$path" 120 "$@"
+}
+
+case "${1:-}" in
+  spawn)
+    if aimux_try_lifecycle_spawn "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  stop)
+    if aimux_try_lifecycle_stop "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  kill)
+    if aimux_try_lifecycle_kill "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  fork)
+    if aimux_try_lifecycle_fork "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+esac
 
 case "${1:-} ${2:-}" in
   "host status")

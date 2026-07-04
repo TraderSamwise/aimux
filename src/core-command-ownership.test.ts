@@ -6,6 +6,10 @@ import { isCoreCliCommand } from "./core-cli-routing.js";
 type Disposition = "shim-fast-path" | "node-core-fallback";
 
 const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
+  { command: "spawn", shimNeedle: "/core/lifecycle/spawn-text" },
+  { command: "stop <sessionId>", shimNeedle: "/core/lifecycle/stop-text" },
+  { command: "kill <sessionId>", shimNeedle: "/core/lifecycle/kill-text" },
+  { command: "fork <sourceSessionId>", shimNeedle: "/core/lifecycle/fork-text" },
   { command: "restart", shimNeedle: "/core/restart-text" },
 ];
 

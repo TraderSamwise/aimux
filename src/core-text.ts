@@ -36,6 +36,35 @@ export interface CoreLoginTextPayload {
   relay: CoreRelaySnapshot;
 }
 
+export interface CoreLifecycleSpawnTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: unknown;
+  tool: string;
+  worktreePath: string;
+  opened: boolean;
+}
+
+export interface CoreLifecycleStopTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: unknown;
+  status: unknown;
+}
+
+export interface CoreLifecycleKillTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: unknown;
+  status: unknown;
+  previousStatus: unknown;
+}
+
+export interface CoreLifecycleForkTextPayload extends CoreLifecycleSpawnTextPayload {
+  sourceSessionId: string;
+  threadId: unknown;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -152,6 +181,22 @@ export function renderCoreLoginLines(payload: CoreLoginTextPayload): string[] {
 
 export function renderCoreSecurityUnlockLines(payload: CoreLoginTextPayload): string[] {
   return ["", `✓ Security unlocked for ${payload.userId}`, ...renderRelayAuthLines(payload.relay)];
+}
+
+export function renderCoreLifecycleSpawnLines(payload: CoreLifecycleSpawnTextPayload): string[] {
+  return [`spawned ${String(payload.sessionId)}`];
+}
+
+export function renderCoreLifecycleStopLines(payload: CoreLifecycleStopTextPayload): string[] {
+  return [`stopped ${String(payload.sessionId)}`];
+}
+
+export function renderCoreLifecycleKillLines(payload: CoreLifecycleKillTextPayload): string[] {
+  return [`graveyarded ${String(payload.sessionId)}`];
+}
+
+export function renderCoreLifecycleForkLines(payload: CoreLifecycleForkTextPayload): string[] {
+  return [`forked ${String(payload.sessionId)}`, `thread ${String(payload.threadId)}`];
 }
 
 function renderRelayAuthLines(relay: CoreRelaySnapshot): string[] {
