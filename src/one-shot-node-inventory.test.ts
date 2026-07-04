@@ -87,6 +87,18 @@ function listSourceFiles(root: string, options: { includeTests?: boolean } = {})
 }
 
 describe("one-shot Node runtime inventory", () => {
+  it("keeps public package entrypoints on the bin shim", () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+      main?: string;
+      bin?: { aimux?: string };
+      scripts?: { start?: string };
+    };
+
+    expect(packageJson.main).toBe("bin/aimux");
+    expect(packageJson.bin?.aimux).toBe("./bin/aimux");
+    expect(packageJson.scripts?.start).toBe("./bin/aimux");
+  });
+
   it("keeps the Node CLI bootstrap explicit", () => {
     expect(cliBootstrapInventory).toHaveLength(2);
     for (const entry of cliBootstrapInventory) {
