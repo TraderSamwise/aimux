@@ -20,6 +20,7 @@ import {
   type CoreCommandResponse,
 } from "./core-command-contract.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 import { CoreProjectActor } from "./core-project-actor.js";
 import {
@@ -388,6 +389,49 @@ export class AimuxDaemon {
     return { ok: true, projectRoot: payload.projectRoot };
   }
 
+  private optionalProjectRoot(
+    id: string,
+    command: CoreCommandName,
+    payload: { projectRoot?: unknown } | undefined,
+  ): { ok: true; projectRoot?: string } | { ok: false; response: { status: number; body: CoreCommandResponse } } {
+    if (payload?.projectRoot === undefined) return { ok: true };
+    if (typeof payload.projectRoot !== "string" || !payload.projectRoot.trim()) {
+      return {
+        ok: false,
+        response: {
+          status: 400,
+          body: { ok: false, id, command, error: "projectRoot must be a non-empty string when provided" },
+        },
+      };
+    }
+    return { ok: true, projectRoot: pathResolve(payload.projectRoot) };
+  }
+
+  private currentDaemonInfo(issuedAt: string): AimuxDaemonInfo {
+    const daemonInfo = loadDaemonInfo();
+    return {
+      pid: process.pid,
+      port: getDaemonPort(),
+      startedAt: daemonInfo?.startedAt ?? issuedAt,
+      updatedAt: daemonInfo?.updatedAt ?? issuedAt,
+    };
+  }
+
+  private async restartControlPlane(issuedAt: string, projectRoot?: string) {
+    const restart = await restartAimuxControlPlane({
+      projectRoot,
+      stopDaemon: async () => null,
+      ensureDaemonRunning: async () => this.currentDaemonInfo(issuedAt),
+      ensureProjectService: (root) => this.ensureProject(root),
+      stopProjectService: (root) => this.stopProject(root),
+      isAimuxProjectServiceProcess: () => false,
+    });
+    return {
+      restart,
+      text: renderRuntimeRestartResult(restart),
+    };
+  }
+
   private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
     const envelope = body as CoreCommandEnvelope | undefined;
     const id =
@@ -478,6 +522,20 @@ export class AimuxDaemon {
             command,
             issuedAt,
             result: { project: await this.stopProject(killProjectRoot.projectRoot, { force: true }) },
+          },
+        };
+      }
+      case CORE_COMMAND_NAMES.restart: {
+        const restartProjectRoot = this.optionalProjectRoot(id, command, payload);
+        if (!restartProjectRoot.ok) return restartProjectRoot.response;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: await this.restartControlPlane(issuedAt, restartProjectRoot.projectRoot),
           },
         };
       }
