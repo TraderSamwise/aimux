@@ -60,6 +60,14 @@ download_optional() {
 need node
 need tar
 
+NODE_VERSION="$(node -v 2>/dev/null || true)"
+NODE_MAJOR="${NODE_VERSION#v}"
+NODE_MAJOR="${NODE_MAJOR%%.*}"
+case "$NODE_MAJOR" in
+  '' | *[!0-9]*) fail "Node.js >= 24 is required" ;;
+  *) [ "$NODE_MAJOR" -ge 24 ] || fail "Node.js >= 24 is required" ;;
+esac
+
 if [ -e "$BIN_DIR/aimux" ] || [ -L "$BIN_DIR/aimux" ]; then
   HAD_EXISTING_INSTALL=1
 elif [ -d "$INSTALL_ROOT" ]; then
