@@ -585,6 +585,109 @@ describe("daemon supervision", () => {
     expect(projectsList.body).toBe(`${basename(projectRoot)}  idle  ${projectRoot}\n`);
   });
 
+  it("serves remote status text for the installed shell shim without leaking tokens", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    saveCredentials({
+      version: 1,
+      relayUrl: "wss://relay.example",
+      token: "secret-token",
+      userId: "user_123",
+      createdAt: new Date().toISOString(),
+      remoteEnabled: true,
+    });
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("GET", CORE_API_ROUTES.remoteStatusText);
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toBe("Remote access: enabled\nRelay: wss://relay.example\nConnection: off\n");
+    expect(response.body).not.toContain("secret-token");
+  });
+
+  it("preserves remote status JSON shape for the installed shell shim", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    saveCredentials({
+      version: 1,
+      relayUrl: "wss://relay.example",
+      token: "secret-token",
+      userId: "user_123",
+      createdAt: new Date().toISOString(),
+      remoteEnabled: true,
+    });
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("GET", `${CORE_API_ROUTES.remoteStatusText}?json=1`);
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body as string)).toEqual({ loggedIn: true, relay: { status: "off" } });
+    expect(response.body).not.toContain("secret-token");
+  });
+
+  it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const previousWebSocket = globalThis.WebSocket;
+    class FakeWebSocket extends EventTarget {
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        super();
+      }
+
+      close(): void {
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+
+    const missing = await daemon.routeRequest("POST", CORE_API_ROUTES.remoteEnableText);
+
+    expect(missing.status).toBe(401);
+    expect(missing.body).toBe("Not logged in. Run `aimux login` first.\n");
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    try {
+      saveCredentials({
+        version: 1,
+        relayUrl: "wss://relay.example",
+        token: "secret-token",
+        userId: "user_123",
+        createdAt: new Date().toISOString(),
+        remoteEnabled: false,
+      });
+      const enabled = await daemon.routeRequest("POST", CORE_API_ROUTES.remoteEnableText);
+
+      expect(enabled.status).toBe(200);
+      expect(enabled.body).toBe("✓ Remote access enabled (connection: connecting)\n");
+    } finally {
+      globalThis.WebSocket = previousWebSocket;
+    }
+  });
+
+  it("serves remote disable text for the installed shell shim", async () => {
+    const { saveCredentials, loadCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    saveCredentials({
+      version: 1,
+      relayUrl: "wss://relay.example",
+      token: "secret-token",
+      userId: "user_123",
+      createdAt: new Date().toISOString(),
+      remoteEnabled: true,
+    });
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.remoteDisableText);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("✓ Remote access disabled. Daemon disconnected from relay.\n");
+    expect(loadCredentials()?.remoteEnabled).toBe(false);
+  });
+
   it("clears stale metadata endpoints when core stops a legacy project service", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 

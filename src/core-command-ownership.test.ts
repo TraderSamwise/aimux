@@ -87,10 +87,30 @@ const coreCommandDispositions: Array<{
     disposition: "shim-fast-path",
     shimNeedle: "/core/project-ensure-text?json=1",
   },
-  { command: "remote status", args: ["remote", "status"], disposition: "node-core-fallback" },
-  { command: "remote status --json", args: ["remote", "status", "--json"], disposition: "node-core-fallback" },
-  { command: "remote enable", args: ["remote", "enable"], disposition: "node-core-fallback" },
-  { command: "remote disable", args: ["remote", "disable"], disposition: "node-core-fallback" },
+  {
+    command: "remote status",
+    args: ["remote", "status"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/remote-status-text",
+  },
+  {
+    command: "remote status --json",
+    args: ["remote", "status", "--json"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/remote-status-text?json=1",
+  },
+  {
+    command: "remote enable",
+    args: ["remote", "enable"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/remote-enable-text",
+  },
+  {
+    command: "remote disable",
+    args: ["remote", "disable"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/remote-disable-text",
+  },
 ];
 
 describe("core command ownership inventory", () => {
@@ -123,7 +143,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(12);
+    expect(fastPaths).toHaveLength(16);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
@@ -135,6 +155,6 @@ describe("core command ownership inventory", () => {
       .filter((entry) => entry.disposition === "node-core-fallback")
       .map((entry) => entry.command);
 
-    expect(backlog).toEqual(["remote status", "remote status --json", "remote enable", "remote disable"]);
+    expect(backlog).toEqual([]);
   });
 });

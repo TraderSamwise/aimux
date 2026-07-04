@@ -31,18 +31,13 @@ Node launcher when a matching daemon is already running:
 | `aimux daemon project-ensure --project <path> [--json]` | `CUT`  | daemon | Uses `/core/project-ensure-text` with an explicit project payload.                              |
 | `aimux host status [--json]`                            | `CUT`  | daemon | Uses `/core/host-status-text` with the current directory as project context.                    |
 | `aimux projects list [--json]`                          | `CUT`  | daemon | Uses `/core/projects-list-text`.                                                                |
+| `aimux remote status [--json]`                          | `CUT`  | daemon | Uses `/core/remote-status-text`; status JSON never includes credential tokens.                  |
+| `aimux remote enable`                                   | `CUT`  | daemon | Uses `/core/remote-enable-text`; credential mutation and relay connect are daemon-owned.        |
+| `aimux remote disable`                                  | `CUT`  | daemon | Uses `/core/remote-disable-text`; credential mutation and relay disconnect are daemon-owned.    |
 
 ## Core-Routable But Not Yet Shim-Fast
 
-These commands already have a core CLI path, but the installed command still
-spawns Node before reaching it. Each should either become a shell fast path or be
-reclassified with a documented reason.
-
-| Command                        | Status    | Target Owner | Next Cut                                                                                   |
-| ------------------------------ | --------- | ------------ | ------------------------------------------------------------------------------------------ |
-| `aimux remote status [--json]` | `SIDEcar` | daemon       | Move credential/relay summary behind a daemon-owned status route.                          |
-| `aimux remote enable`          | `SIDEcar` | daemon       | Move credential mutation and relay connect orchestration behind a daemon command route.    |
-| `aimux remote disable`         | `SIDEcar` | daemon       | Move credential mutation and relay disconnect orchestration behind a daemon command route. |
+No commands currently live in this category.
 
 ## Normal User Command Families
 
@@ -56,7 +51,8 @@ reclassified with a documented reason.
 | `aimux thread ...`, `aimux message ...`                   | `LEGACY`    | project service | Exchange/thread workflows should route through project-service contracts.                 |
 | `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `LEGACY`    | project service | Workflow mutations should have one exchange-backed API contract.                          |
 | `aimux login`, `aimux logout`, `aimux whoami`             | `LEGACY`    | daemon          | Account/session state should be daemon-owned for all clients.                             |
-| `aimux remote ...`, `aimux security ...`                  | `SIDEcar`   | daemon          | Some core routing exists; installed no-spawn path is incomplete.                          |
+| `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                     |
+| `aimux security ...`                                      | `SIDEcar`   | daemon          | Core routing exists; installed no-spawn path is incomplete.                               |
 
 ## Local Runtime And Developer Plumbing
 
