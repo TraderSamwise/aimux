@@ -34,7 +34,7 @@ const processInspectionPatterns = [
   { id: "lsof-cwd", pattern: /execFileSync\(\s*["'`]lsof["'`][\s\S]{0,180}["'`]cwd["'`]/ },
 ] as const;
 
-const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);
+const allowedRuntimePatternMatches = new Set<string>();
 const allowedProcessInspectionFiles = new Set(["src/process-inspector.ts"]);
 const allowedCommandArgMatchFiles = new Set(["src/process-args.ts", "src/process-inspector.ts"]);
 const allowedRetiredMainEntrypoints = [

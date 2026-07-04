@@ -12,18 +12,19 @@ EXPO_PUBLIC_AIMUX_CONNECTION_MODE=local \
   EXPO_PUBLIC_AIMUX_DAEMON_URL=http://localhost:43190 \
   yarn export:web
 
-node <<'NODE'
-const fs = require("fs");
-const path = require("path");
-
-const indexPath = path.join(process.cwd(), "dist", "index.html");
-let html = fs.readFileSync(indexPath, "utf8");
-const script = '<script src="/aimux-local-config.js"></script>';
-if (!html.includes("/aimux-local-config.js")) {
-  html = html.replace("</head>", `  ${script}\n</head>`);
-}
-fs.writeFileSync(indexPath, html);
-NODE
+INDEX_HTML="$APP_DIST/index.html"
+LOCAL_CONFIG_SCRIPT='<script src="/aimux-local-config.js"></script>'
+if ! grep -Fq "/aimux-local-config.js" "$INDEX_HTML"; then
+  tmp_html="$(mktemp)"
+  awk -v script="$LOCAL_CONFIG_SCRIPT" '
+    /<\/head>/ && !inserted {
+      print "  " script
+      inserted = 1
+    }
+    { print }
+  ' "$INDEX_HTML" > "$tmp_html"
+  mv "$tmp_html" "$INDEX_HTML"
+fi
 
 cd "$ROOT_DIR"
 rm -rf "$OUT_DIR"
