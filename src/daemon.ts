@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve as pathResolve } from "node:path";
-import { getProjectIdFor } from "./paths.js";
+import { ensureProjectPaths, getProjectIdFor } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
@@ -682,6 +682,7 @@ export class AimuxDaemon {
       if (!project) {
         return { status: 400, body: "project query is required\n", contentType: "text/plain; charset=utf-8" };
       }
+      ensureProjectPaths(project);
       const { payload, knownProject } = this.hostStatusPayload(project, new Date().toISOString());
       return this.textOrJsonLines(routeUrl, payload, renderCoreHostStatusLines(payload, knownProject));
     }
