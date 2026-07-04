@@ -28,6 +28,7 @@ const runtimeRestartMock = vi.hoisted(() => ({
   restartAimuxControlPlane: vi.fn(),
   renderRuntimeRestartResult: vi.fn(),
 }));
+const ensureProjectPathsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -44,6 +45,7 @@ vi.mock("./paths.js", () => ({
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
+  ensureProjectPaths: ensureProjectPathsMock,
 }));
 
 vi.mock("./project-scanner.js", () => ({
@@ -233,6 +235,7 @@ describe("daemon supervision", () => {
     runtimeRestartMock.restartAimuxControlPlane.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReturnValue("Aimux Restart\n  failures: 0");
+    ensureProjectPathsMock.mockReset();
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
@@ -479,6 +482,7 @@ describe("daemon supervision", () => {
     expect(response.body).toContain(`Service pid=${process.pid}`);
     expect(response.body).toContain("Metadata: not running");
     expect(response.body).toContain("Tmux session: aimux-test");
+    expect(ensureProjectPathsMock).toHaveBeenCalledWith(projectRoot);
   });
 
   it("serves host status JSON for the installed shell shim", async () => {
