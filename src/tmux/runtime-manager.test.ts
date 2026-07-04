@@ -1723,7 +1723,7 @@ describe("TmuxRuntimeManager", () => {
       {
         cwd: "/repo/mobile",
         command: "/usr/local/bin/node",
-        args: ["/repo/mobile/dist/main.js", "--tmux-dashboard-internal"],
+        args: ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"],
       },
     );
     expect(exec.calls.at(-1)?.args).toEqual([
@@ -1734,7 +1734,7 @@ describe("TmuxRuntimeManager", () => {
       "-c",
       "/repo/mobile",
       "/usr/local/bin/node",
-      "/repo/mobile/dist/main.js",
+      "/repo/mobile/dist/launcher-bin.js",
       "--tmux-dashboard-internal",
     ]);
   });

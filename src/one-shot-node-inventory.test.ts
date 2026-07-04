@@ -10,6 +10,13 @@ const cliBootstrapInventory = [
 const scanRoots = ["bin", "scripts", "src"] as const;
 const skippedDirectories = new Set([".git", "coverage", "dist", "dist-ui", "node_modules", "release"]);
 const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/];
+const skippedDeclarationFiles = [/\.d\.ts$/];
+// Keep split so this test file does not match its own retired-entrypoint scan.
+const retiredMainSlashPath = "dist/" + "main.js";
+const retiredMainPatterns = [
+  { id: "slash-path", pattern: new RegExp(retiredMainSlashPath.replace("/", "\\/")) },
+  { id: "path-join", pattern: /["'`]dist["'`]\s*,\s*["'`]main\.js["'`]/ },
+] as const;
 
 const runtimeNodeLaunchPatterns = [
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
@@ -20,6 +27,15 @@ const runtimeNodeLaunchPatterns = [
 ] as const;
 
 const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);
+const allowedRetiredMainEntrypoints = [
+  { file: "src/dashboard/command-spec.ts", id: "path-join", lineIncludes: 'join(installRoot, "dist", "main.js")' },
+  { file: "src/daemon.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+  { file: "src/project-takeover.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+  { file: "src/runtime-coherence.test.ts", id: "slash-path", lineIncludes: "/opt/aimux/native/local-old/dist/main.js" },
+  { file: "src/runtime-coherence.ts", id: "slash-path", lineIncludes: '"/dist/main.js"' },
+  { file: "src/runtime-restart.test.ts", id: "slash-path", lineIncludes: "/old/dist/main.js" },
+  { file: "src/runtime-restart.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+] as const;
 
 const launchContractUsage = [
   {
@@ -36,9 +52,10 @@ const launchContractUsage = [
   },
 ] as const;
 
-function listSourceFiles(root: string): string[] {
+function listSourceFiles(root: string, options: { includeTests?: boolean } = {}): string[] {
   const absoluteRoot = join(process.cwd(), root);
   const files: string[] = [];
+  const skipPatterns = options.includeTests ? skippedDeclarationFiles : skippedFiles;
   const visit = (path: string) => {
     const relativePath = relative(process.cwd(), path);
     const stat = statSync(path);
@@ -48,7 +65,7 @@ function listSourceFiles(root: string): string[] {
       return;
     }
     if (!stat.isFile()) return;
-    if (skippedFiles.some((pattern) => pattern.test(relativePath))) return;
+    if (skipPatterns.some((pattern) => pattern.test(relativePath))) return;
     files.push(relativePath);
   };
   visit(absoluteRoot);
@@ -81,6 +98,26 @@ describe("one-shot Node runtime inventory", () => {
           violations.push(`${file}:${contract.name}`);
         }
       }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps the retired main entrypoint quarantined", () => {
+    const violations: string[] = [];
+    for (const file of scanRoots.flatMap((root) => listSourceFiles(root, { includeTests: true }))) {
+      if (file === "src/one-shot-node-inventory.test.ts") continue;
+      const lines = readFileSync(join(process.cwd(), file), "utf8").split("\n");
+      lines.forEach((line, index) => {
+        for (const entry of retiredMainPatterns) {
+          if (!entry.pattern.test(line)) continue;
+          const allowed = allowedRetiredMainEntrypoints.some(
+            (candidate) =>
+              candidate.file === file && candidate.id === entry.id && line.includes(candidate.lineIncludes),
+          );
+          if (!allowed) violations.push(`${file}:${index + 1}:${entry.id}`);
+        }
+      });
     }
 
     expect(violations).toEqual([]);
