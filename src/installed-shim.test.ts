@@ -625,6 +625,19 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js login\n`);
   });
 
+  it("falls back to the Node launcher for security unlock when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "\n✓ Security unlocked for user-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["security", "unlock"], { NODE_EXIT: "40" });
+
+    expect(result.status).toBe(40);
+    expect(result.stdout).toBe("");
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js security unlock\n`);
+  });
+
   it("falls back to the Node launcher for text fast paths when the daemon build is stale", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
