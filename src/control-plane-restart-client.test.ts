@@ -115,6 +115,20 @@ describe("restartControlPlaneFromCli", () => {
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: "/repo", stopDaemon: undefined });
   });
 
+  it("uses local bootstrap repair without a project scope", async () => {
+    const restart = restartResult();
+    mocks.requestCoreCommand.mockRejectedValueOnce(
+      new Error("aimux daemon on default port is from a different local build"),
+    );
+    mocks.restartAimuxControlPlane.mockResolvedValueOnce(restart);
+    mocks.renderRuntimeRestartResult.mockReturnValueOnce("local text");
+
+    const result = await restartControlPlaneFromCli();
+
+    expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: undefined, stopDaemon: undefined });
+  });
+
   it("preserves stale daemon info for local bootstrap repair", async () => {
     const restart = restartResult();
     const daemon = {

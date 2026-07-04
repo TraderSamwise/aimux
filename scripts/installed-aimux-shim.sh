@@ -70,6 +70,8 @@ aimux_try_daemon_ensure() {
 aimux_try_restart() {
   port="$(aimux_matching_daemon_port)" || return 1
   body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-restart.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
   status="$(
     curl -sS --max-time 300 -o "$body_file" -w '%{http_code}' -X POST \
       "http://127.0.0.1:$port/core/restart-text" 2>/dev/null || true
@@ -77,11 +79,13 @@ aimux_try_restart() {
   case "$status" in
     '' | 000)
       rm -f "$body_file"
+      trap - EXIT INT TERM
       return 1
       ;;
   esac
   cat "$body_file"
   rm -f "$body_file"
+  trap - EXIT INT TERM
   case "$status" in
     2*) return 0 ;;
     *) return 2 ;;

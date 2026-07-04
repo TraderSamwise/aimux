@@ -18,6 +18,7 @@ import {
   type CoreCommandEnvelope,
   type CoreCommandName,
   type CoreCommandResponse,
+  type CoreRestartResult,
 } from "./core-command-contract.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
@@ -423,7 +424,7 @@ export class AimuxDaemon {
     };
   }
 
-  private async restartControlPlane(issuedAt: string, projectRoot?: string) {
+  private async restartControlPlane(issuedAt: string, projectRoot?: string): Promise<CoreRestartResult> {
     const restart = await restartAimuxControlPlane({
       projectRoot,
       stopDaemon: async () => null,
@@ -599,12 +600,20 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {
       const issuedAt = new Date().toISOString();
-      const result = await this.restartControlPlane(issuedAt);
-      return {
-        status: result.restart.summary.failures > 0 ? 500 : 200,
-        body: `${result.text}\n`,
-        contentType: "text/plain; charset=utf-8",
-      };
+      try {
+        const result = await this.restartControlPlane(issuedAt);
+        return {
+          status: result.restart.summary.failures > 0 ? 500 : 200,
+          body: `${result.text}\n`,
+          contentType: "text/plain; charset=utf-8",
+        };
+      } catch (error) {
+        return {
+          status: 500,
+          body: `${error instanceof Error ? error.message : String(error)}\n`,
+          contentType: "text/plain; charset=utf-8",
+        };
+      }
     }
 
     if (method === "GET" && pathname === "/relay/status") {
