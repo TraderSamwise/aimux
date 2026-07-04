@@ -15,16 +15,30 @@ export interface ProjectServiceManifest {
   buildStamp: string;
 }
 
+function resolveArtifact(compiledPath: string, sourcePath: string): string {
+  if (existsSync(compiledPath)) return compiledPath;
+  if (existsSync(sourcePath)) return sourcePath;
+  throw new Error(`unable to locate project service build artifact: ${compiledPath}`);
+}
+
 function computeBuildStamp(): string {
-  const candidateUrls = [new URL("./main.js", import.meta.url), new URL("./main.ts", import.meta.url)];
-  const entryPath = candidateUrls.map((url) => fileURLToPath(url)).find((candidate) => existsSync(candidate));
-  if (!entryPath) {
-    throw new Error("unable to locate project service entrypoint for build stamp");
-  }
-  const stat = statSync(entryPath);
-  const content = readFileSync(entryPath);
-  const hash = createHash("sha1").update(content).digest("hex").slice(0, 12);
-  return `${Math.trunc(stat.mtimeMs)}-${hash}`;
+  const artifactPaths = [
+    resolveArtifact(
+      fileURLToPath(new URL("./launcher-bin.js", import.meta.url)),
+      fileURLToPath(new URL("./launcher-bin.ts", import.meta.url)),
+    ),
+    resolveArtifact(
+      fileURLToPath(new URL("./main.js", import.meta.url)),
+      fileURLToPath(new URL("./main.ts", import.meta.url)),
+    ),
+  ];
+  const hash = createHash("sha1");
+  const mtimes = artifactPaths.map((entryPath) => {
+    const stat = statSync(entryPath);
+    hash.update(readFileSync(entryPath));
+    return Math.trunc(stat.mtimeMs);
+  });
+  return `${mtimes.join(".")}-${hash.digest("hex").slice(0, 12)}`;
 }
 
 export const PROJECT_SERVICE_BUILD_STAMP = computeBuildStamp();

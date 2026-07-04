@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
+import { basename } from "node:path";
 import { getAimuxDashboardLaunchCommand } from "../cli-launcher.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
@@ -29,10 +30,23 @@ const DASHBOARD_ENV_STAMP_DEFAULTS: Partial<Record<(typeof DASHBOARD_ENV_KEYS)[n
 };
 const STABLE_SHIM_ENV_KEYS = ["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"] as const;
 
-function resolveDashboardScriptPath(): string {
-  const compiledPath = fileURLToPath(new URL("../main.js", import.meta.url));
+function resolveExistingArtifact(compiledPath: string, sourcePath: string): string {
   if (existsSync(compiledPath)) return compiledPath;
-  return fileURLToPath(new URL("../main.ts", import.meta.url));
+  return sourcePath;
+}
+
+function resolveDashboardScriptPath(): string {
+  return resolveExistingArtifact(
+    fileURLToPath(new URL("../launcher-bin.js", import.meta.url)),
+    fileURLToPath(new URL("../launcher-bin.ts", import.meta.url)),
+  );
+}
+
+function resolveDashboardImplementationPath(): string {
+  return resolveExistingArtifact(
+    fileURLToPath(new URL("../main.js", import.meta.url)),
+    fileURLToPath(new URL("../main.ts", import.meta.url)),
+  );
 }
 
 function buildDashboardEnvCommandPrefix(
@@ -55,10 +69,13 @@ function dashboardEnvForLaunch(env: NodeJS.ProcessEnv, source: "stable-shim" | "
   return rest;
 }
 
-function buildDashboardStamp(scriptPath: string, command: string): string {
-  const mtime = String(statSync(scriptPath).mtimeMs);
+function buildDashboardStamp(artifactPaths: string[], command: string): string {
+  const artifactStamp = [...new Set(artifactPaths)]
+    .map((path) => `${basename(path)}:${Math.trunc(statSync(path).mtimeMs)}`)
+    .join("|");
+  const artifactHash = createHash("sha256").update(artifactStamp).digest("hex").slice(0, 16);
   const commandHash = createHash("sha256").update(command).digest("hex").slice(0, 16);
-  return `${mtime}-${commandHash}`;
+  return `${artifactHash}-${commandHash}`;
 }
 
 export function getDashboardCommandSpec(
@@ -66,6 +83,7 @@ export function getDashboardCommandSpec(
   env: NodeJS.ProcessEnv = process.env,
 ): DashboardCommandSpec {
   const scriptPath = resolveDashboardScriptPath();
+  const implementationPath = resolveDashboardImplementationPath();
   const launch = getAimuxDashboardLaunchCommand({ env, currentArgvEntry: scriptPath });
   const aimuxCommand = [launch.command, ...launch.args].map(shellQuote).join(" ");
   const dashboardEnv = dashboardEnvForLaunch(env, launch.source);
@@ -179,7 +197,7 @@ export function getDashboardCommandSpec(
   const stampCommand = wrappedDashboardCommand.replace(dashboardEntrypoint, dashboardStampEntrypoint);
   return {
     scriptPath,
-    dashboardBuildStamp: buildDashboardStamp(scriptPath, stampCommand),
+    dashboardBuildStamp: buildDashboardStamp([scriptPath, implementationPath], stampCommand),
     dashboardCommand: {
       cwd: projectRoot,
       command: "bash",

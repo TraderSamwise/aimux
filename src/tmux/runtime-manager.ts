@@ -270,11 +270,15 @@ export class TmuxRuntimeManager {
     const runtimeScript = fileURLToPath(import.meta.url);
     const controlScript = fileURLToPath(new URL("../../scripts/tmux-control.sh", import.meta.url));
     const statuslineScript = fileURLToPath(new URL("../../scripts/tmux-statusline.sh", import.meta.url));
+    const launcherScript = this.getExistingRuntimeArtifact([
+      fileURLToPath(new URL("../launcher-bin.js", import.meta.url)),
+      fileURLToPath(new URL("../launcher-bin.ts", import.meta.url)),
+    ]);
     const dashboardScript = this.getExistingRuntimeArtifact([
       fileURLToPath(new URL("../main.js", import.meta.url)),
       fileURLToPath(new URL("../main.ts", import.meta.url)),
     ]);
-    return [runtimeScript, controlScript, statuslineScript, dashboardScript]
+    return [runtimeScript, controlScript, statuslineScript, launcherScript, dashboardScript]
       .map((path) => `${basename(path)}:${Math.trunc(statSync(path).mtimeMs)}`)
       .join("|");
   }
