@@ -1083,6 +1083,11 @@ describe("daemon supervision", () => {
           expect(opts.timeoutMs).toBe(120_000);
           return { status: 200, json: { ok: true, sessionId: "claude-1", status: "offline" } };
         }
+        if (url.endsWith(PROJECT_API_ROUTES.agents.kill)) {
+          expect(opts.body).toEqual({ sessionId: "claude-1" });
+          expect(opts.timeoutMs).toBe(120_000);
+          return { status: 200, json: { ok: true, sessionId: "claude-1", status: "graveyard" } };
+        }
         if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.cleanup)) {
           expect(opts.body).toEqual({ dryRun: true });
           expect(opts.timeoutMs).toBe(120_000);
@@ -1108,6 +1113,10 @@ describe("daemon supervision", () => {
       "POST",
       `${CORE_API_ROUTES.graveyardResurrectText}?project=${encodeURIComponent(projectRoot)}&sessionId=claude-1`,
     );
+    const sent = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.graveyardSendText}?project=${encodeURIComponent(projectRoot)}&sessionId=claude-1`,
+    );
     const cleanup = await daemon.routeRequest(
       "POST",
       `${CORE_API_ROUTES.graveyardCleanupText}?project=${encodeURIComponent(projectRoot)}&dryRun=1`,
@@ -1115,6 +1124,7 @@ describe("daemon supervision", () => {
 
     expect(listed.body).toContain("claude-1");
     expect(resurrected.body).toBe("resurrected claude-1\n");
+    expect(sent.body).toBe("graveyarded claude-1\n");
     expect(cleanup.body).toContain("Graveyard cleanup would remove 1 item(s); 0 failed.");
   });
 
