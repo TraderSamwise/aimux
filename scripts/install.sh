@@ -132,6 +132,9 @@ fi
 
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -d "$TMP_DIR/aimux" ] || fail "release archive did not contain aimux/"
+[ -f "$TMP_DIR/aimux/BUILD_STAMP" ] || fail "release archive is missing BUILD_STAMP; install a current aimux release"
+[ -f "$TMP_DIR/aimux/scripts/installed-aimux-shim.sh" ] \
+  || fail "release archive is missing scripts/installed-aimux-shim.sh; install a current aimux release"
 
 INSTALLED_VERSION="$(cat "$TMP_DIR/aimux/VERSION" 2>/dev/null || printf '%s' "$VERSION_LABEL")"
 DEST="$INSTALL_ROOT/$INSTALLED_VERSION"
@@ -156,10 +159,12 @@ if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME
 if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
 if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
+export AIMUX_NODE_BIN AIMUX_ROOT
 
-exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/launcher-bin.js" "\$@"
+exec "\$AIMUX_ROOT/scripts/installed-aimux-shim.sh" "\$@"
 EOF
 chmod +x "$DEST/bin/aimux"
+chmod +x "$DEST/scripts/installed-aimux-shim.sh"
 ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"
 
 printf 'Installed aimux %s to %s\n' "$INSTALLED_VERSION" "$DEST"
