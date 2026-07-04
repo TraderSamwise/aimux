@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   requestCoreCommand: vi.fn(),
   setRemoteEnabled: vi.fn(),
   clearCredentials: vi.fn(),
+  runLoginFlow: vi.fn(),
 }));
 
 vi.mock("./core-command-client.js", () => ({
@@ -39,6 +40,10 @@ vi.mock("./credentials.js", () => ({
 vi.mock("./daemon-state.js", () => ({
   loadDaemonInfo: () => mocks.daemonInfo,
   loadDaemonState: () => mocks.daemonState,
+}));
+
+vi.mock("./login-flow.js", () => ({
+  runLoginFlow: mocks.runLoginFlow,
 }));
 
 vi.mock("./paths.js", () => ({
@@ -143,6 +148,8 @@ describe("runCoreCli", () => {
     mocks.setRemoteEnabled.mockReset();
     mocks.clearCredentials.mockReset();
     mocks.clearCredentials.mockReturnValue("cleared");
+    mocks.runLoginFlow.mockReset();
+    mocks.runLoginFlow.mockResolvedValue({ userId: "user-1" });
   });
 
   it("renders host status from the core sidecar", async () => {
@@ -325,5 +332,29 @@ describe("runCoreCli", () => {
       stdout: [],
       stderr: ["Failed to remove credentials file — check permissions."],
     });
+  });
+
+  it("runs login through the core fallback and reconnects a running daemon", async () => {
+    const result = await run(["login"]);
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: ["", "✓ Logged in as user-1", "Remote access is enabled (connection: connected)."],
+    });
+    expect(mocks.runLoginFlow).toHaveBeenCalledWith();
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.relayEnable, undefined, {
+      ensureDaemon: false,
+      timeoutMs: 1000,
+    });
+  });
+
+  it("runs security unlock through the core fallback", async () => {
+    const result = await run(["security", "unlock"]);
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: ["", "✓ Security unlocked for user-1", "Remote access is enabled (connection: connected)."],
+    });
+    expect(mocks.runLoginFlow).toHaveBeenCalledWith({ action: "security-unlock" });
   });
 });

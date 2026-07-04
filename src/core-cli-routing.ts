@@ -101,5 +101,7 @@ export function isCoreCliCommand(args: string[]): boolean {
   if (command === "remote" && ["enable", "disable"].includes(subcommand ?? "")) return args.length === 2;
   if (command === "whoami") return hasOnlyAllowedFlags(args.slice(1), new Set(["--json"]));
   if (command === "logout") return args.length === 1;
+  if (command === "login") return args.length === 1;
+  if (command === "security" && subcommand === "unlock") return args.length === 2;
   return false;
 }

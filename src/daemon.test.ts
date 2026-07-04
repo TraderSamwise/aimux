@@ -29,6 +29,7 @@ const runtimeRestartMock = vi.hoisted(() => ({
   renderRuntimeRestartResult: vi.fn(),
 }));
 const ensureProjectPathsMock = vi.hoisted(() => vi.fn());
+const loginFlowMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -104,6 +105,10 @@ vi.mock("./core-project-actor.js", () => ({
 vi.mock("./runtime-restart.js", () => ({
   restartAimuxControlPlane: runtimeRestartMock.restartAimuxControlPlane,
   renderRuntimeRestartResult: runtimeRestartMock.renderRuntimeRestartResult,
+}));
+
+vi.mock("./login-flow.js", () => ({
+  runLoginFlow: loginFlowMock,
 }));
 
 function listMockDesktopProjects() {
@@ -236,6 +241,8 @@ describe("daemon supervision", () => {
     runtimeRestartMock.renderRuntimeRestartResult.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReturnValue("Aimux Restart\n  failures: 0");
     ensureProjectPathsMock.mockReset();
+    loginFlowMock.mockReset();
+    loginFlowMock.mockResolvedValue({ userId: "user_123" });
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
@@ -673,6 +680,93 @@ describe("daemon supervision", () => {
     expect(response.status).toBe(200);
     expect(response.body).toBe("✓ Logged out. Remote access disabled.\n");
     expect(loadCredentials()).toBeNull();
+  });
+
+  it("serves login text through the daemon auth flow", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    loginFlowMock.mockImplementation(async (opts: { onMessage?: (line: string) => void }) => {
+      opts.onMessage?.("should stay out of route output");
+      saveCredentials({
+        version: 1,
+        relayUrl: "wss://relay.example",
+        token: "secret-token",
+        userId: "user_123",
+        createdAt: new Date().toISOString(),
+        remoteEnabled: true,
+      });
+      return { userId: "user_123" };
+    });
+    const previousWebSocket = globalThis.WebSocket;
+    class FakeWebSocket extends EventTarget {
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        super();
+      }
+
+      close(): void {
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    try {
+      const daemon = new AimuxDaemon();
+
+      const response = await daemon.routeRequest("POST", CORE_API_ROUTES.loginText);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toBe("\n✓ Logged in as user_123\nRemote access is enabled (connection: connecting).\n");
+      expect(response.body).not.toContain("secret-token");
+      expect(loginFlowMock).toHaveBeenCalledWith({
+        webAppUrl: undefined,
+        action: undefined,
+        onMessage: expect.any(Function),
+      });
+    } finally {
+      globalThis.WebSocket = previousWebSocket;
+    }
+  });
+
+  it("serves security unlock text through the daemon auth flow", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    loginFlowMock.mockImplementation(async () => {
+      saveCredentials({
+        version: 1,
+        relayUrl: "wss://relay.example",
+        token: "secret-token",
+        userId: "user_123",
+        createdAt: new Date().toISOString(),
+        remoteEnabled: true,
+      });
+      return { userId: "user_123" };
+    });
+    const previousWebSocket = globalThis.WebSocket;
+    class FakeWebSocket extends EventTarget {
+      close(): void {
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    try {
+      const daemon = new AimuxDaemon();
+
+      const response = await daemon.routeRequest("POST", CORE_API_ROUTES.securityUnlockText);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toBe(
+        "\n✓ Security unlocked for user_123\nRemote access is enabled (connection: connecting).\n",
+      );
+      expect(loginFlowMock).toHaveBeenCalledWith({
+        webAppUrl: undefined,
+        action: "security-unlock",
+        onMessage: expect.any(Function),
+      });
+    } finally {
+      globalThis.WebSocket = previousWebSocket;
+    }
   });
 
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {

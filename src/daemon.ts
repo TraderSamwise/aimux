@@ -18,6 +18,7 @@ import {
   type CoreCommandEnvelope,
   type CoreCommandName,
   type CoreCommandResponse,
+  type CoreRelaySnapshot,
   type CoreRestartResult,
   type CoreStatusProject,
 } from "./core-command-contract.js";
@@ -25,12 +26,14 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreLoginLines,
   renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
+  renderCoreSecurityUnlockLines,
   renderCoreWhoamiLines,
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
@@ -38,6 +41,7 @@ import {
   type CoreRemoteStatusTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
+import { runLoginFlow } from "./login-flow.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
@@ -354,6 +358,34 @@ export class AimuxDaemon {
       return { status: 200, body: `${JSON.stringify(json, null, 2)}\n`, contentType: "text/plain; charset=utf-8" };
     }
     return { status: 200, body: `${lines.join("\n")}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private async runAuthTextRoute(opts: {
+    body: unknown;
+    action?: "security-unlock";
+    render: (payload: { userId: string; relay: CoreRelaySnapshot }) => string[];
+  }): Promise<DaemonRouteResponse> {
+    const body = opts.body as { webAppUrl?: unknown } | undefined;
+    try {
+      const { userId } = await runLoginFlow({
+        webAppUrl: typeof body?.webAppUrl === "string" ? body.webAppUrl : undefined,
+        action: opts.action,
+        onMessage: () => {},
+      });
+      const relay = this.enableRelay();
+      return {
+        status: 200,
+        body: `${opts.render({ userId, relay }).join("\n")}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    } catch (error) {
+      const prefix = opts.action === "security-unlock" ? "Security unlock failed" : "Login failed";
+      return {
+        status: 500,
+        body: `${prefix}: ${error instanceof Error ? error.message : String(error)}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    }
   }
 
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
@@ -790,6 +822,10 @@ export class AimuxDaemon {
       return this.textOrJsonLines(routeUrl, { relay: { status: "off" } }, renderCoreRemoteDisableLines(true));
     }
 
+    if (method === "POST" && pathname === CORE_API_ROUTES.loginText) {
+      return this.runAuthTextRoute({ body, render: renderCoreLoginLines });
+    }
+
     if (method === "POST" && pathname === CORE_API_ROUTES.logoutText) {
       this.disableRelay();
       const result = clearCredentials();
@@ -798,6 +834,10 @@ export class AimuxDaemon {
         body: `${renderCoreLogoutLines(result).join("\n")}\n`,
         contentType: "text/plain; charset=utf-8",
       };
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.securityUnlockText) {
+      return this.runAuthTextRoute({ body, action: "security-unlock", render: renderCoreSecurityUnlockLines });
     }
 
     if (method === "GET" && pathname === "/relay/status") {

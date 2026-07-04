@@ -36,6 +36,8 @@ Node launcher when a matching daemon is already running:
 | `aimux remote disable`                                  | `CUT`  | daemon | Uses `/core/remote-disable-text`; credential mutation and relay disconnect are daemon-owned.    |
 | `aimux whoami [--json]`                                 | `CUT`  | daemon | Uses `/core/whoami-text`; account JSON never includes credential tokens.                        |
 | `aimux logout`                                          | `CUT`  | daemon | Uses `/core/logout-text`; relay disconnect and credential removal are daemon-owned.             |
+| `aimux login`                                           | `CUT`  | daemon | Uses `/core/login-text`; daemon owns browser auth, credential save, and relay reconnect.        |
+| `aimux security unlock`                                 | `CUT`  | daemon | Uses `/core/security-unlock-text`; daemon owns re-auth and relay reconnect.                     |
 
 ## Core-Routable But Not Yet Shim-Fast
 
@@ -53,9 +55,9 @@ No commands currently live in this category.
 | `aimux thread ...`, `aimux message ...`                   | `LEGACY`    | project service | Exchange/thread workflows should route through project-service contracts.                 |
 | `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `LEGACY`    | project service | Workflow mutations should have one exchange-backed API contract.                          |
 | `aimux whoami`, `aimux logout`                            | `CUT`       | daemon          | Installed shim uses daemon text routes; stale daemon falls back to the core CLI.          |
-| `aimux login`                                             | `BOOTSTRAP` | daemon          | Interactive browser auth still starts Node; next cut should host this flow in the daemon. |
+| `aimux login`, `aimux security unlock`                    | `CUT`       | daemon          | Plain auth commands use daemon text routes; custom auth flags remain bootstrap cleanup.   |
 | `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                     |
-| `aimux security ...`                                      | `SIDEcar`   | daemon          | `unlock` shares the interactive browser auth problem; non-auth checks still need a cut.   |
+| `aimux security ...`                                      | `SIDEcar`   | daemon          | Non-auth security checks still need a cut if they become normal user commands.            |
 
 ## Local Runtime And Developer Plumbing
 

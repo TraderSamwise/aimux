@@ -290,6 +290,30 @@ case "${1:-} ${2:-}" in
       fi
     fi
     ;;
+  "login ")
+    if [ "$#" -eq 1 ]; then
+      if aimux_post_text_route "/core/login-text" 360; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
+    fi
+    ;;
+  "security unlock")
+    if [ "$#" -eq 2 ]; then
+      if aimux_post_text_route "/core/security-unlock-text" 360; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
+    fi
+    ;;
   "restart ")
     if [ "$#" -eq 1 ]; then
       if aimux_try_restart; then
