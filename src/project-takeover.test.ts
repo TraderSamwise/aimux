@@ -20,6 +20,12 @@ vi.mock("node:child_process", () => ({
 let tmpHome = "";
 let livePids = new Set<number>();
 
+function currentProjectServiceArgs(projectRoot: string): string {
+  return `node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id ${getProjectIdFor(
+    projectRoot,
+  )} --project-root ${projectRoot}`;
+}
+
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
@@ -34,9 +40,7 @@ describe("project takeover", () => {
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${join(tmpHome, "repo-a")}\n`;
-      return `node /opt/aimux/dist/main.js __project-service-internal --project-id ${getProjectIdFor(
-        join(tmpHome, "repo-a"),
-      )} --project-root ${join(tmpHome, "repo-a")}`;
+      return currentProjectServiceArgs(join(tmpHome, "repo-a"));
     });
     vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
       const numericPid = Number(pid);
@@ -160,9 +164,7 @@ describe("project takeover", () => {
     const defaultHome = join(tmpHome, ".aimux");
 
     vi.mocked(requestJson).mockRejectedValueOnce(new Error("other daemon unavailable"));
-    execFileSyncMock.mockReturnValue(
-      `node /opt/aimux/dist/main.js __project-service-internal --project-id ${projectId} --project-root ${projectRoot}-old`,
-    );
+    execFileSyncMock.mockReturnValue(`${currentProjectServiceArgs(projectRoot)}-old`);
     mkdirSync(join(defaultHome, "daemon"), { recursive: true });
     writeJson(join(defaultHome, "daemon", "daemon.json"), { pid: 1001, port: 43190 });
     writeJson(join(defaultHome, "daemon", "state.json"), {
