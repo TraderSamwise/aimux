@@ -53,6 +53,13 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "enable"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "disable"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "--debug", "remote", "status"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "enable", "--debug"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p", "--trace"])).toBe(
+      "core",
+    );
+    expect(
+      cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "--log-level", "debug", "--project", "/p"]),
+    ).toBe("core");
   });
 
   it("keeps runtime and help commands on the full CLI", () => {
@@ -62,6 +69,7 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "enable", "extra"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "status", "extra"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "projects", "list", "extra", "--json"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "enable", "extra", "--debug"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "spawn"])).toBe("main");

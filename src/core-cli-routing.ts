@@ -5,12 +5,20 @@ export function coreCommandArgs(argvOrRawArgs: string[]): string[] {
   const result: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if ((arg === "--debug" || arg === "--trace") && result.length === 0) continue;
-    if ((arg === "--log-level" || arg === "--log-category") && result.length === 0) {
+    if (arg === "--debug" || arg === "--trace") continue;
+    if (arg === "--log-level" || arg === "--log-category") {
+      const value = args[index + 1] ?? "";
+      if (!value || value.startsWith("-")) {
+        result.push(arg);
+        continue;
+      }
       index += 1;
       continue;
     }
-    if ((arg.startsWith("--log-level=") || arg.startsWith("--log-category=")) && result.length === 0) continue;
+    if (arg.startsWith("--log-level=") || arg.startsWith("--log-category=")) {
+      if (arg.endsWith("=")) result.push(arg);
+      continue;
+    }
     result.push(arg);
   }
   return result;
