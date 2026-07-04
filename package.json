@@ -30,7 +30,7 @@
     "dev:gui:android:relay": "aimux daemon ensure && yarn --cwd app dev:android:relay",
     "dev:gui:relay": "yarn dev:gui:web:relay",
     "dev:daemon": "aimux daemon restart",
-    "start": "node dist/launcher-bin.js",
+    "start": "./bin/aimux",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
