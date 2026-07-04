@@ -441,6 +441,25 @@ describe("daemon supervision", () => {
     expect(response.body).toContain("Relay: off");
   });
 
+  it("serves daemon ensure JSON for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("GET", `${CORE_API_ROUTES.daemonEnsureText}?json=1`);
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(JSON.parse(response.body as string)).toEqual({
+      daemon: {
+        pid: process.pid,
+        port: 43190,
+        startedAt: expect.any(String),
+        updatedAt: expect.any(String),
+        serviceInfo: getProjectServiceManifest(),
+      },
+    });
+  });
+
   it("preserves daemon status JSON shape for the installed shell shim", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

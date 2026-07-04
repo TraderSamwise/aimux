@@ -25,7 +25,7 @@ Node launcher when a matching daemon is already running:
 | Command                          | Status | Owner  | Notes                                                                                           |
 | -------------------------------- | ------ | ------ | ----------------------------------------------------------------------------------------------- |
 | `aimux restart`                  | `CUT`  | daemon | Uses `/core/restart-text`; orchestrates daemon, services, runtime repair, and dashboard reload. |
-| `aimux daemon ensure`            | `CUT`  | daemon | Reads daemon health directly from the installed shell shim. JSON mode is not fast-pathed yet.   |
+| `aimux daemon ensure [--json]`   | `CUT`  | daemon | Reads daemon health directly or uses `/core/daemon-ensure-text`.                                |
 | `aimux daemon status [--json]`   | `CUT`  | daemon | Uses `/core/daemon-status-text`.                                                                |
 | `aimux daemon projects [--json]` | `CUT`  | daemon | Uses `/core/daemon-projects-text`.                                                              |
 | `aimux projects list [--json]`   | `CUT`  | daemon | Uses `/core/projects-list-text`.                                                                |
@@ -38,7 +38,6 @@ reclassified with a documented reason.
 
 | Command                                                 | Status    | Target Owner | Next Cut                                                                                        |
 | ------------------------------------------------------- | --------- | ------------ | ----------------------------------------------------------------------------------------------- |
-| `aimux daemon ensure --json`                            | `SIDEcar` | daemon       | Add a JSON installed fast path or route through the daemon status text endpoint.                |
 | `aimux host status [--json]`                            | `SIDEcar` | daemon       | Add a daemon text/JSON route that resolves the current project without shell JSON construction. |
 | `aimux daemon project-ensure --project <path> [--json]` | `SIDEcar` | daemon       | Add a safe installed transport for project path payloads.                                       |
 | `aimux remote status [--json]`                          | `SIDEcar` | daemon       | Move credential/relay summary behind a daemon-owned status route.                               |
