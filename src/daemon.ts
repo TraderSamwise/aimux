@@ -528,6 +528,22 @@ export class AimuxDaemon {
     return value !== "0" && value !== "false";
   }
 
+  private integerParam(
+    routeUrl: URL,
+    body: unknown,
+    name: string,
+    defaultValue: number,
+    flagName = name,
+  ): number | DaemonRouteResponse {
+    const raw = this.stringParam(routeUrl, body, name);
+    if (raw === undefined || raw.trim() === "") return defaultValue;
+    const trimmed = raw.trim();
+    if (!/^-?\d+$/.test(trimmed)) return this.textError(400, `Error: --${flagName} must be an integer`);
+    const value = Number(trimmed);
+    if (!Number.isSafeInteger(value)) return this.textError(400, `Error: --${flagName} must be a safe integer`);
+    return value;
+  }
+
   private resolveLifecycleWorktree(projectRoot: string, worktreePath: string | undefined): string | undefined {
     if (!worktreePath) return undefined;
     return worktreePath.startsWith("/") ? pathResolve(worktreePath) : pathResolve(projectRoot, worktreePath);
@@ -647,9 +663,8 @@ export class AimuxDaemon {
     if (typeof project !== "string") return project;
     const sessionId = this.requiredParam(routeUrl, body, "sessionId");
     if (typeof sessionId !== "string") return sessionId;
-    const startLineRaw = this.stringParam(routeUrl, body, "startLine") ?? "-120";
-    const startLine = Number.parseInt(startLineRaw, 10);
-    if (Number.isNaN(startLine)) return this.textError(400, "Error: --start-line must be an integer");
+    const startLine = this.integerParam(routeUrl, body, "startLine", -120, "start-line");
+    if (typeof startLine !== "number") return startLine;
 
     const params = new URLSearchParams({ sessionId, startLine: String(startLine) });
     const result = await this.getProjectServiceJson(project, `${PROJECT_API_ROUTES.livePane.output}?${params}`);
