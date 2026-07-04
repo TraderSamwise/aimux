@@ -132,6 +132,9 @@ fi
 
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -d "$TMP_DIR/aimux" ] || fail "release archive did not contain aimux/"
+[ -f "$TMP_DIR/aimux/BUILD_STAMP" ] || fail "release archive is missing BUILD_STAMP; install a current aimux release"
+[ -f "$TMP_DIR/aimux/scripts/installed-aimux-shim.sh" ] \
+  || fail "release archive is missing scripts/installed-aimux-shim.sh; install a current aimux release"
 
 INSTALLED_VERSION="$(cat "$TMP_DIR/aimux/VERSION" 2>/dev/null || printf '%s' "$VERSION_LABEL")"
 DEST="$INSTALL_ROOT/$INSTALLED_VERSION"

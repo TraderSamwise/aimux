@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const shimPath = join(process.cwd(), "scripts", "installed-aimux-shim.sh");
+const installPath = join(process.cwd(), "scripts", "install.sh");
 
 function makeFixture() {
   const root = join(tmpdir(), `aimux-installed-shim-${process.pid}-${Date.now()}-${Math.random()}`);
@@ -134,5 +135,31 @@ describe("installed aimux shim", () => {
     expect(result.status).toBe(31);
     expect(result.stdout).toBe("");
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
+  });
+
+  it("rejects release archives without the installed shim contract", () => {
+    const root = join(tmpdir(), `aimux-install-contract-${process.pid}-${Date.now()}-${Math.random()}`);
+    const packageRoot = join(root, "pkg", "aimux");
+    const archive = join(root, "old.tar.gz");
+    const installRoot = join(root, "native");
+    const binDir = join(root, "bin");
+    mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+    writeFileSync(join(packageRoot, "VERSION"), "old-local\n");
+    const tar = spawnSync("tar", ["-czf", archive, "-C", join(root, "pkg"), "aimux"], { encoding: "utf8" });
+    expect(tar.status).toBe(0);
+
+    const result = spawnSync("sh", [installPath, archive], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AIMUX_INSTALL_ROOT: installRoot,
+        AIMUX_BIN_DIR: binDir,
+        AIMUX_SKIP_POST_INSTALL_RESTART: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("release archive is missing BUILD_STAMP");
+    expect(existsSync(join(installRoot, "old-local"))).toBe(false);
   });
 });
