@@ -52,6 +52,34 @@ function hasOnlyAllowedFlags(args: string[], allowed: Set<string>): boolean {
   return args.every((arg) => allowed.has(arg));
 }
 
+function isCoreHostAgentReadArgs(args: string[]): boolean {
+  if (args[0] !== "host" || args[1] !== "agent-read" || !args[2] || args[2].startsWith("-")) return false;
+  for (let index = 3; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--project") {
+      const value = args[index + 1] ?? "";
+      if (!value || value.startsWith("-")) return false;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--project=")) {
+      if (!arg.slice("--project=".length)) return false;
+      continue;
+    }
+    if (arg === "--start-line") {
+      if (!(args[index + 1] ?? "")) return false;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--start-line=")) {
+      if (!arg.slice("--start-line=".length)) return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 export function parseCoreProjectEnsureArgs(args: string[]): CoreProjectEnsureArgs | null {
   if (args[0] !== "daemon" || args[1] !== "project-ensure") return null;
   let project: string | null = null;
@@ -92,6 +120,7 @@ export function isCoreCliCommand(args: string[]): boolean {
   if (hasHelp(args)) return false;
   const [command, subcommand] = args;
   if (command === "host" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
+  if (command === "host" && subcommand === "agent-read") return isCoreHostAgentReadArgs(args);
   if (command === "daemon" && ["ensure", "status", "projects"].includes(subcommand ?? "")) {
     return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   }
