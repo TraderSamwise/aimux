@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -23,6 +23,7 @@ function makeFixture() {
   const textRouteFile = join(root, "text-route.txt");
   const daemonInfoPath = join(home, "daemon", "daemon.json");
   const nodeLog = join(root, "node.log");
+  const curlLog = join(root, "curl.log");
   const curlPath = join(bin, "curl");
   const nodePath = join(bin, "node");
 
@@ -33,7 +34,14 @@ set -eu
 url=""
 output_file=""
 write_status=""
+pending_data=0
 while [ "$#" -gt 0 ]; do
+  if [ "$pending_data" -eq 1 ]; then
+    printf '%s\\n' "$1" >> "$CURL_LOG"
+    pending_data=0
+    shift
+    continue
+  fi
   case "$1" in
     -o)
       shift
@@ -42,6 +50,9 @@ while [ "$#" -gt 0 ]; do
     -w)
       shift
       write_status="$1"
+      ;;
+    --data-urlencode)
+      pending_data=1
       ;;
     http://*)
       url="$1"
@@ -87,19 +98,21 @@ exit "\${NODE_EXIT:-7}"
     AIMUX_NODE_BIN: nodePath,
     AIMUX_HOME: home,
     AIMUX_DAEMON_PORT: "45678",
+    CURL_LOG: curlLog,
     HEALTH_FILE: healthFile,
     RESTART_FILE: restartFile,
     TEXT_ROUTE_FILE: textRouteFile,
     NODE_LOG: nodeLog,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
   };
-  const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}) =>
+  const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}, options: { cwd?: string } = {}) =>
     spawnSync("sh", [shimPath, ...args], {
       encoding: "utf8",
       env: { ...env, ...extraEnv },
+      cwd: options.cwd,
     });
 
-  return { aimuxRoot, daemonInfoPath, healthFile, restartFile, textRouteFile, nodeLog, run };
+  return { aimuxRoot, curlLog, daemonInfoPath, healthFile, restartFile, textRouteFile, nodeLog, root, run };
 }
 
 function health(buildStamp: string, pid = 123, port = 45678): string {
@@ -299,6 +312,21 @@ describe("installed aimux shim", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("Ensured project service for /repo (pid 88)\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("resolves relative daemon project-ensure paths before calling the daemon", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Ensured project service for /repo (pid 88)\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "project-ensure", "--project", "."], {}, { cwd: projectDir });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain(`project=${realpathSync(projectDir)}\n`);
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
