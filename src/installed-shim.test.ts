@@ -20,6 +20,7 @@ function makeFixture() {
 
   const healthFile = join(root, "health.json");
   const restartFile = join(root, "restart.txt");
+  const textRouteFile = join(root, "text-route.txt");
   const daemonInfoPath = join(home, "daemon", "daemon.json");
   const nodeLog = join(root, "node.log");
   const curlPath = join(bin, "curl");
@@ -48,7 +49,11 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-case "$url" in
+  case "$url" in
+  */core/daemon-status-text*|*/core/daemon-projects-text*|*/core/projects-list-text*)
+    [ -f "$TEXT_ROUTE_FILE" ] || exit 22
+    cat "$TEXT_ROUTE_FILE"
+    ;;
   */core/restart-text)
     [ -f "$RESTART_FILE" ] || exit 22
     if [ -n "$output_file" ]; then
@@ -84,6 +89,7 @@ exit "\${NODE_EXIT:-7}"
     AIMUX_DAEMON_PORT: "45678",
     HEALTH_FILE: healthFile,
     RESTART_FILE: restartFile,
+    TEXT_ROUTE_FILE: textRouteFile,
     NODE_LOG: nodeLog,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
   };
@@ -93,7 +99,7 @@ exit "\${NODE_EXIT:-7}"
       env: { ...env, ...extraEnv },
     });
 
-  return { aimuxRoot, daemonInfoPath, healthFile, restartFile, nodeLog, run };
+  return { aimuxRoot, daemonInfoPath, healthFile, restartFile, textRouteFile, nodeLog, run };
 }
 
 function health(buildStamp: string, pid = 123, port = 45678): string {
@@ -190,6 +196,55 @@ describe("installed aimux shim", () => {
 
     expect(result.status).toBe(19);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
+  });
+
+  it("serves daemon status from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Daemon pid=321 port=45678\nKnown projects: 1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "status"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Daemon pid=321 port=45678\nKnown projects: 1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves daemon status JSON from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "daemon": {"pid": 321}\n}\n');
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "status", "--json"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('{\n  "daemon": {"pid": 321}\n}\n');
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves project list commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "repo  live  /repo\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["daemon", "projects"]).stdout).toBe("repo  live  /repo\n");
+    expect(fixture.run(["projects", "list"]).stdout).toBe("repo  live  /repo\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for text fast paths when the daemon build is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Daemon pid=321 port=45678\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "status"], { NODE_EXIT: "33" });
+
+    expect(result.status).toBe(33);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon status\n`);
   });
 
   it("falls back to the Node launcher for non-fast-path commands", () => {
