@@ -6,35 +6,27 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is not installed or not on PATH" >&2
+  exit 1
+fi
+
 instruction="aimux verification developer instructions $(date +%s)"
 prompt="aimux verification user prompt"
-config_value="$(node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$instruction")"
+config_value="$(jq -Rn --arg value "$instruction" '$value')"
 
 output="$(codex debug prompt-input -c "developer_instructions=${config_value}" "$prompt")"
 
-AIMUX_CODEX_PROMPT_INPUT="$output" node - "$instruction" "$prompt" <<'NODE'
-const expectedInstruction = process.argv[2];
-const expectedPrompt = process.argv[3];
-const input = process.env.AIMUX_CODEX_PROMPT_INPUT ?? "";
-const messages = JSON.parse(input);
+flatten_text='(.content // []) | map(select(.text? | type == "string") | .text) | join("\n")'
 
-function flattenText(message) {
-  return (message.content ?? [])
-    .map((part) => (part && typeof part.text === "string" ? part.text : ""))
-    .filter(Boolean)
-    .join("\n");
-}
+if ! printf '%s' "$output" | jq -e --arg expected "$instruction" "any(.[]; .role == \"developer\" and (($flatten_text) | contains(\$expected)))" >/dev/null; then
+  echo "Codex did not expose developer_instructions as developer-visible prompt input" >&2
+  exit 1
+fi
 
-const developer = messages.find((message) => message.role === "developer" && flattenText(message).includes(expectedInstruction));
-const user = messages.find((message) => message.role === "user" && flattenText(message).includes(expectedPrompt));
+if ! printf '%s' "$output" | jq -e --arg expected "$prompt" "any(.[]; .role == \"user\" and (($flatten_text) | contains(\$expected)))" >/dev/null; then
+  echo "Codex debug prompt-input did not include the verification user prompt" >&2
+  exit 1
+fi
 
-if (!developer) {
-  throw new Error("Codex did not expose developer_instructions as developer-visible prompt input");
-}
-
-if (!user) {
-  throw new Error("Codex debug prompt-input did not include the verification user prompt");
-}
-
-console.log("Codex developer_instructions channel verified");
-NODE
+echo "Codex developer_instructions channel verified"
