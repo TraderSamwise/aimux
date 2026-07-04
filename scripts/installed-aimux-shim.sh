@@ -167,6 +167,41 @@ aimux_post_query_text_route() {
   esac
 }
 
+aimux_get_query_text_route() {
+  path="$1"
+  timeout="${2:-60}"
+  shift 2
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-core-query-get.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' --get "$@" \
+      "http://127.0.0.1:$port$path" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*)
+      cat "$body_file"
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 0
+      ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+}
+
 aimux_auth_text_route() {
   start_path="$1"
   wait_path="$2"
@@ -229,9 +264,7 @@ aimux_auth_text_route() {
 aimux_curl_project_text_route() {
   path="$1"
   project_root="$(pwd -P 2>/dev/null)" || return 1
-  port="$(aimux_matching_daemon_port)" || return 1
-  curl -fsS --max-time 5 --get --data-urlencode "project=$project_root" \
-    "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+  aimux_get_query_text_route "$path" 5 --data-urlencode "project=$project_root"
 }
 
 aimux_curl_project_arg_text_route() {
@@ -251,6 +284,14 @@ aimux_resolve_project_arg() {
   case "$project_arg" in
     /*) printf '%s\n' "$project_arg" ;;
     *) printf '%s/%s\n' "$(pwd -P)" "$project_arg" ;;
+  esac
+}
+
+aimux_resolve_path_arg() {
+  path_arg="$1"
+  case "$path_arg" in
+    /*) printf '%s\n' "$path_arg" ;;
+    *) printf '%s/%s\n' "$(pwd -P)" "$path_arg" ;;
   esac
 }
 
@@ -537,9 +578,7 @@ aimux_try_worktree() {
       aimux_parse_project_json_args "$@" || return 1
       path="/core/worktree/list-text"
       [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/worktree/list-text?json=1"
-      port="$(aimux_matching_daemon_port)" || return 1
-      curl -fsS --max-time 5 --get --data-urlencode "project=$AIMUX_PARSED_PROJECT" \
-        "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+      aimux_get_query_text_route "$path" 5 --data-urlencode "project=$AIMUX_PARSED_PROJECT"
       ;;
     create)
       shift
@@ -559,6 +598,7 @@ aimux_try_worktree() {
       [ "$#" -gt 0 ] || return 1
       target_path="$1"
       case "$target_path" in -*) return 1 ;; esac
+      target_path="$(aimux_resolve_path_arg "$target_path")" || return 1
       shift
       aimux_parse_project_json_args "$@" || return 1
       case "$action" in
@@ -586,9 +626,7 @@ aimux_try_graveyard() {
       aimux_parse_project_json_args "$@" || return 1
       path="/core/graveyard/list-text"
       [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/graveyard/list-text?json=1"
-      port="$(aimux_matching_daemon_port)" || return 1
-      curl -fsS --max-time 5 --get --data-urlencode "project=$AIMUX_PARSED_PROJECT" \
-        "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+      aimux_get_query_text_route "$path" 5 --data-urlencode "project=$AIMUX_PARSED_PROJECT"
       ;;
     send|resurrect)
       action="$subcommand"

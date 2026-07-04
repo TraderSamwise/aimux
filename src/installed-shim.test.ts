@@ -534,16 +534,38 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["worktree", "create", "next", "--project", "/repo", "--json"]).stdout).toBe(
       "removed /repo/wt\n",
     );
-    expect(fixture.run(["worktree", "remove", "../wt", "--project=/repo"]).stdout).toBe("removed /repo/wt\n");
-    expect(fixture.run(["worktree", "graveyard", "../wt", "--project=/repo"]).stdout).toBe("removed /repo/wt\n");
-    expect(fixture.run(["worktree", "resurrect", "../wt", "--project=/repo"]).stdout).toBe("removed /repo/wt\n");
-    expect(fixture.run(["worktree", "delete-graveyard", "../wt", "--project=/repo"]).stdout).toBe("removed /repo/wt\n");
+    expect(fixture.run(["worktree", "remove", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(fixture.run(["worktree", "graveyard", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(fixture.run(["worktree", "resurrect", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(
+      fixture.run(["worktree", "delete-graveyard", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout,
+    ).toBe("removed /repo/wt\n");
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
     expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
     expect(curlLog).toContain("project=/repo\n");
     expect(curlLog).toContain("name=next\n");
-    expect(curlLog).toContain("path=../wt\n");
+    expect(curlLog).toContain(`path=${realpathSync(projectDir)}/../wt\n`);
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("prints daemon errors for worktree list without falling back to Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Error: project service unavailable\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["worktree", "list", "--project", "/repo"], { TEXT_ROUTE_STATUS: "503" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("Error: project service unavailable\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
