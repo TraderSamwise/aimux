@@ -5,15 +5,18 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
+  renderCoreWhoamiLines,
+  coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
 } from "./core-text.js";
 import { requestCoreCommand } from "./core-command-client.js";
-import { loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
 import { initPaths } from "./paths.js";
 import { findMainRepo } from "./worktree.js";
@@ -200,6 +203,36 @@ async function runRemoteDisable(io: Required<CoreCliIo>): Promise<number> {
   return 0;
 }
 
+async function runWhoami(args: string[], io: Required<CoreCliIo>): Promise<number> {
+  const creds = loadCredentials();
+  const payload = {
+    credentials: creds
+      ? {
+          userId: creds.userId,
+          relayUrl: creds.relayUrl,
+          remoteEnabled: creds.remoteEnabled,
+        }
+      : null,
+  };
+  if (hasFlag(args, "--json")) {
+    io.stdout(JSON.stringify(coreWhoamiJson(payload), null, 2));
+    return 0;
+  }
+  renderCoreWhoamiLines(payload).forEach(io.stdout);
+  return 0;
+}
+
+async function runLogout(io: Required<CoreCliIo>): Promise<number> {
+  if (loadDaemonInfo()) {
+    try {
+      await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
+    } catch {}
+  }
+  const result = clearCredentials();
+  renderCoreLogoutLines(result).forEach(result === "failed" ? io.stderr : io.stdout);
+  return result === "failed" ? 1 : 0;
+}
+
 export async function runCoreCli(
   rawArgs: string[] = process.argv.slice(2),
   ioOptions: CoreCliIo = {},
@@ -221,6 +254,8 @@ export async function runCoreCli(
     if (command === "remote" && subcommand === "status") return await runRemoteStatus(args, io);
     if (command === "remote" && subcommand === "enable") return await runRemoteEnable(io);
     if (command === "remote" && subcommand === "disable") return await runRemoteDisable(io);
+    if (command === "whoami") return await runWhoami(args, io);
+    if (command === "logout") return await runLogout(io);
     io.stderr(`unsupported core command: ${args.join(" ")}`);
     return 2;
   } catch (error) {
