@@ -63,7 +63,6 @@ No commands currently live in this category.
 | `aimux whoami`, `aimux logout`                            | `CUT`       | daemon          | Installed shim uses daemon text routes; stale daemon falls back to the core CLI.                       |
 | `aimux login`, `aimux security unlock`                    | `CUT`       | daemon          | Plain auth commands use daemon text routes; custom auth flags remain bootstrap cleanup.                |
 | `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                                  |
-| `aimux security ...`                                      | `SIDEcar`   | daemon          | Non-auth security checks still need a cut if they become normal user commands.                         |
 
 ## Local Runtime And Developer Plumbing
 
@@ -73,7 +72,9 @@ No commands currently live in this category.
 | `aimux restart-runtime`                                                 | `BOOTSTRAP` | daemon + tmux          | Advanced runtime repair; normal restart should decide when this is needed.           |
 | `aimux repair`                                                          | `BOOTSTRAP` | daemon + tmux          | Internal repair path, not a user decision UI.                                        |
 | `aimux host ui`, `host serve`, `host stop`, `host kill`, `host restart` | `INTERNAL`  | daemon                 | Host/service management plumbing.                                                    |
-| `aimux host topology`, `host agent-read`, `host agent-stream`           | `SIDEcar`   | project service + tmux | Should become project-service API reads/streams with no direct CLI state writes.     |
+| `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
+| `aimux host agent-stream`                                              | `SIDEcar`   | project service + tmux | Needs daemon streaming/proxy transport before it can avoid the Node launcher safely. |
+| `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |
 | `aimux doctor ...`                                                      | `INTERNAL`  | daemon/project service | Diagnostics should read daemon/project-service reports, not recompute truth locally. |
 | `aimux logs ...`                                                        | `INTERNAL`  | daemon/filesystem      | Debug log access; may stay explicitly internal.                                      |
 | `aimux metadata ...`                                                    | `INTERNAL`  | project service        | Agent/runtime integration plumbing, not a user-facing state authority.               |

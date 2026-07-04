@@ -42,6 +42,7 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "task reopen <taskId>", shimNeedle: "/core/task/reopen-text" },
   { command: "review approve <taskId>", shimNeedle: "/core/review/approve-text" },
   { command: "review request-changes <taskId>", shimNeedle: "/core/review/request-changes-text" },
+  { command: "host agent-read <sessionId>", shimNeedle: "/core/host-agent-read-text" },
 ];
 
 const coreCommandDispositions: Array<{
