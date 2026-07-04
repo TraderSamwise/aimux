@@ -156,10 +156,12 @@ if [ -z "\${AIMUX_HOME:-}" ]; then AIMUX_HOME="\$HOME/.aimux"; export AIMUX_HOME
 if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMUX_DAEMON_PORT; fi
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
 if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
+export AIMUX_NODE_BIN AIMUX_ROOT
 
-exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/launcher-bin.js" "\$@"
+exec "\$AIMUX_ROOT/scripts/installed-aimux-shim.sh" "\$@"
 EOF
 chmod +x "$DEST/bin/aimux"
+chmod +x "$DEST/scripts/installed-aimux-shim.sh"
 ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"
 
 printf 'Installed aimux %s to %s\n' "$INSTALLED_VERSION" "$DEST"
