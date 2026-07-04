@@ -11,6 +11,17 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "kill <sessionId>", shimNeedle: "/core/lifecycle/kill-text" },
   { command: "fork <sourceSessionId>", shimNeedle: "/core/lifecycle/fork-text" },
   { command: "restart", shimNeedle: "/core/restart-text" },
+  { command: "worktree", shimNeedle: "/core/worktree/list-text" },
+  { command: "worktree list", shimNeedle: "/core/worktree/list-text" },
+  { command: "worktree create <name>", shimNeedle: "/core/worktree/create-text" },
+  { command: "worktree remove <path>", shimNeedle: "/core/worktree/remove-text" },
+  { command: "worktree graveyard <path>", shimNeedle: "/core/worktree/graveyard-text" },
+  { command: "worktree resurrect <path>", shimNeedle: "/core/worktree/resurrect-text" },
+  { command: "worktree delete-graveyard <path>", shimNeedle: "/core/worktree/delete-graveyard-text" },
+  { command: "graveyard list", shimNeedle: "/core/graveyard/list-text" },
+  { command: "graveyard send <id>", shimNeedle: "/core/graveyard/send-text" },
+  { command: "graveyard resurrect <id>", shimNeedle: "/core/graveyard/resurrect-text" },
+  { command: "graveyard cleanup", shimNeedle: "/core/graveyard/cleanup-text" },
 ];
 
 const coreCommandDispositions: Array<{
