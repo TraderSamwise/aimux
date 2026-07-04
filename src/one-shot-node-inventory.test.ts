@@ -21,8 +21,9 @@ const retiredMainPatterns = [
 
 const runtimeNodeLaunchPatterns = [
   { id: "direct-node-launcher", pattern: /\bnode\s+dist\/launcher-bin\.js\b/ },
+  { id: "node-eval", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-e\b/ },
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
-  { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*node\s+-\s*<</ },
+  { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-\b[\s\S]{0,120}<</ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },

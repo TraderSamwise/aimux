@@ -71,8 +71,6 @@ elif [ -d "$INSTALL_ROOT" ]; then
   done
 fi
 
-node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(major >= 24 ? 0 : 1)' \
-  || fail "Node.js >= 24 is required"
 NODE_BIN="$(command -v node)"
 
 shell_quote() {
