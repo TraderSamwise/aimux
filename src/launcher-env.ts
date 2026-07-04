@@ -1,6 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { coreCommandArgs, isCoreCliCommand } from "./core-cli-routing.js";
+import {
+  coreCommandArgs,
+  hasCoreGlobalLoggingArgs,
+  isCoreCliCommand,
+  isCoreProjectEnsureCommand,
+  isValidCoreProjectEnsureArgs,
+} from "./core-cli-routing.js";
 
 const DEFAULT_HOME = join(homedir(), ".aimux");
 const DEFAULT_DAEMON_PORT = "43190";
@@ -22,7 +28,11 @@ export function prepareStableCliEnv(env: MutableEnv = process.env): void {
 export type CliEntry = "core" | "main";
 
 export function cliEntryFor(argv: string[]): CliEntry {
-  return isCoreCliCommand(coreCommandArgs(argv)) ? "core" : "main";
+  const args = coreCommandArgs(argv);
+  if (hasCoreGlobalLoggingArgs(argv)) {
+    return isCoreProjectEnsureCommand(args) && !isValidCoreProjectEnsureArgs(args) ? "core" : "main";
+  }
+  return isCoreCliCommand(args) ? "core" : "main";
 }
 
 export function runRoutedCli(): void {
