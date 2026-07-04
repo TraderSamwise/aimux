@@ -101,16 +101,19 @@ describe("one-shot Node runtime inventory", () => {
   });
 
   it("keeps package scripts from invoking local Node tools through node", () => {
+    const localNodeToolPattern = /\bnode\s+(?:[.][/])?scripts[/]/;
     const files = ["package.json", "app/package.json"];
     const violations = files.flatMap((file) => {
       const packageJson = JSON.parse(readFileSync(join(process.cwd(), file), "utf8")) as {
         scripts?: Record<string, string>;
       };
       return Object.entries(packageJson.scripts ?? {})
-        .filter(([, script]) => /\bnode\s+scripts\//.test(script))
+        .filter(([, script]) => localNodeToolPattern.test(script))
         .map(([name]) => `${file}:scripts.${name}`);
     });
 
+    expect(localNodeToolPattern.test("node scripts/tool.js")).toBe(true);
+    expect(localNodeToolPattern.test("node ./scripts/tool.js")).toBe(true);
     expect(violations).toEqual([]);
   });
 
