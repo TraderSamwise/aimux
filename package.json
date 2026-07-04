@@ -30,8 +30,6 @@
     "dev:gui:android:relay": "aimux daemon ensure && yarn --cwd app dev:android:relay",
     "dev:gui:relay": "yarn dev:gui:web:relay",
     "dev:daemon": "aimux daemon restart",
-    "dev:daemon:openrig": "bash scripts/dev-lanes/openrig-runtime-core.sh daemon restart",
-    "dev:aimux:openrig": "bash scripts/dev-lanes/openrig-runtime-core.sh",
     "start": "node dist/launcher-bin.js",
     "test": "vitest run",
     "test:watch": "vitest",

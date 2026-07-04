@@ -8,6 +8,7 @@ const cliBootstrapInventory = [
 ] as const;
 
 const scanRoots = ["bin", "scripts", "src"] as const;
+const runtimeBoundaryFiles = ["package.json", "app/package.json"] as const;
 const skippedDirectories = new Set([".git", "coverage", "dist", "dist-ui", "node_modules", "release"]);
 const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/];
 const skippedDeclarationFiles = [/\.d\.ts$/];
@@ -24,6 +25,7 @@ const runtimeNodeLaunchPatterns = [
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
+  { id: "dev-lane", pattern: /scripts\/dev-lanes|dev:aimux:|dev:daemon:/ },
 ] as const;
 
 const processInspectionPatterns = [
@@ -94,7 +96,8 @@ describe("one-shot Node runtime inventory", () => {
 
   it("keeps runtime Node launch sites in an explicit allowlist", () => {
     const violations: string[] = [];
-    for (const file of scanRoots.flatMap((root) => listSourceFiles(root))) {
+    const files = [...scanRoots.flatMap((root) => listSourceFiles(root)), ...runtimeBoundaryFiles];
+    for (const file of files) {
       const text = readFileSync(join(process.cwd(), file), "utf8");
       for (const entry of runtimeNodeLaunchPatterns) {
         if (!entry.pattern.test(text)) continue;
