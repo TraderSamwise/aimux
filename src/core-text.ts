@@ -6,6 +6,24 @@ export interface CoreDaemonStatusTextPayload {
   relay: CoreRelaySnapshot;
 }
 
+export interface CoreHostStatusTextPayload {
+  projectRoot: string;
+  sessionName: string | null;
+  daemon: { serviceInfo?: unknown };
+  projectService: unknown | null;
+  serviceAlive: boolean;
+  metadataEndpoint: unknown;
+  expectedServiceManifest: unknown;
+}
+
+function coreProjectServicePid(projectService: unknown): number | null {
+  return projectService &&
+    typeof projectService === "object" &&
+    typeof (projectService as { pid?: unknown }).pid === "number"
+    ? (projectService as { pid: number }).pid
+    : null;
+}
+
 export function renderCoreDaemonStatusLines(payload: CoreDaemonStatusTextPayload): string[] {
   const daemon = payload.daemon;
   if (!daemon) return ["aimux daemon is not running."];
@@ -18,6 +36,17 @@ export function renderCoreDaemonStatusLines(payload: CoreDaemonStatusTextPayload
   } else {
     lines.push("Relay: off");
   }
+  return lines;
+}
+
+export function renderCoreHostStatusLines(payload: CoreHostStatusTextPayload, knownProject: boolean): string[] {
+  if (!knownProject) return [`No known control service for ${payload.projectRoot}`];
+  const lines = [`Service: ${payload.serviceAlive ? "live" : "idle"}`];
+  const pid = coreProjectServicePid(payload.projectService);
+  if (pid !== null) lines.push(`Service pid=${pid}`);
+  lines.push(`Metadata: ${payload.metadataEndpoint ? JSON.stringify(payload.metadataEndpoint) : "not running"}`);
+  lines.push(`Expected manifest: ${JSON.stringify(payload.expectedServiceManifest)}`);
+  lines.push(`Tmux session: ${payload.sessionName}`);
   return lines;
 }
 
