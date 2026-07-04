@@ -138,3 +138,6 @@ patches:
 
 The aim is not to preserve every old internal command path. The aim is a smaller
 system with one obvious owner for each behavior.
+
+The command-level working inventory lives in
+[command-ownership-inventory.md](command-ownership-inventory.md).
