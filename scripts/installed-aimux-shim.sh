@@ -114,6 +114,18 @@ aimux_curl_project_arg_text_route() {
     "http://127.0.0.1:$port$path" 2>/dev/null || return 1
 }
 
+aimux_resolve_project_arg() {
+  project_arg="$1"
+  if [ -d "$project_arg" ]; then
+    (cd "$project_arg" && pwd -P) || return 1
+    return 0
+  fi
+  case "$project_arg" in
+    /*) printf '%s\n' "$project_arg" ;;
+    *) printf '%s/%s\n' "$(pwd -P)" "$project_arg" ;;
+  esac
+}
+
 aimux_try_daemon_project_ensure() {
   shift 2
   project_root=""
@@ -140,6 +152,7 @@ aimux_try_daemon_project_ensure() {
     shift
   done
   [ -n "$project_root" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
   path="/core/project-ensure-text"
   [ "$json" -eq 1 ] && path="/core/project-ensure-text?json=1"
   aimux_curl_project_arg_text_route "$path" "$project_root"
