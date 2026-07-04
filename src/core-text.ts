@@ -25,6 +25,12 @@ export interface CoreRemoteStatusTextPayload {
   relay: CoreRelaySnapshot;
 }
 
+export interface CoreWhoamiTextPayload {
+  credentials: { userId: string; relayUrl: string; remoteEnabled: boolean } | null;
+}
+
+export type CoreLogoutTextResult = "cleared" | "none" | "failed";
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -103,4 +109,34 @@ export function renderCoreRemoteDisableLines(daemonDisconnected: boolean): strin
   return [
     daemonDisconnected ? "✓ Remote access disabled. Daemon disconnected from relay." : "✓ Remote access disabled.",
   ];
+}
+
+export function renderCoreWhoamiLines(payload: CoreWhoamiTextPayload): string[] {
+  const credentials = payload.credentials;
+  if (!credentials) return ["Not logged in. Run `aimux login` to enable remote access."];
+  return [
+    `Logged in as ${credentials.userId}`,
+    `Relay: ${credentials.relayUrl}`,
+    `Remote access: ${credentials.remoteEnabled ? "enabled" : "disabled"}`,
+  ];
+}
+
+export function coreWhoamiJson(
+  payload: CoreWhoamiTextPayload,
+): { loggedIn: true; userId: string; relayUrl: string; remoteEnabled: boolean } | { loggedIn: false } {
+  const credentials = payload.credentials;
+  return credentials
+    ? {
+        loggedIn: true,
+        userId: credentials.userId,
+        relayUrl: credentials.relayUrl,
+        remoteEnabled: credentials.remoteEnabled,
+      }
+    : { loggedIn: false };
+}
+
+export function renderCoreLogoutLines(result: CoreLogoutTextResult): string[] {
+  if (result === "cleared") return ["✓ Logged out. Remote access disabled."];
+  if (result === "none") return ["Not logged in."];
+  return ["Failed to remove credentials file — check permissions."];
 }

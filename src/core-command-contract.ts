@@ -7,12 +7,14 @@ export const CORE_API_ROUTES = {
   daemonProjectsText: "/core/daemon-projects-text",
   daemonStatusText: "/core/daemon-status-text",
   hostStatusText: "/core/host-status-text",
+  logoutText: "/core/logout-text",
   projectEnsureText: "/core/project-ensure-text",
   projectsListText: "/core/projects-list-text",
   remoteDisableText: "/core/remote-disable-text",
   remoteEnableText: "/core/remote-enable-text",
   remoteStatusText: "/core/remote-status-text",
   restartText: "/core/restart-text",
+  whoamiText: "/core/whoami-text",
 } as const;
 
 export const CORE_COMMAND_NAMES = {

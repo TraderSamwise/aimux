@@ -7,7 +7,7 @@ import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
-import { loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import {
@@ -25,14 +25,18 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
+  renderCoreWhoamiLines,
+  coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
   type CoreHostStatusTextPayload,
   type CoreRemoteStatusTextPayload,
+  type CoreWhoamiTextPayload,
 } from "./core-text.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
@@ -295,6 +299,19 @@ export class AimuxDaemon {
     return {
       credentials: credentials ? { relayUrl: credentials.relayUrl, remoteEnabled: credentials.remoteEnabled } : null,
       relay: this.getRelayStatus(),
+    };
+  }
+
+  private whoamiTextPayload(): CoreWhoamiTextPayload {
+    const credentials = loadCredentials();
+    return {
+      credentials: credentials
+        ? {
+            userId: credentials.userId,
+            relayUrl: credentials.relayUrl,
+            remoteEnabled: credentials.remoteEnabled,
+          }
+        : null,
     };
   }
 
@@ -751,6 +768,11 @@ export class AimuxDaemon {
       return this.textOrJsonLines(routeUrl, json, renderCoreRemoteStatusLines(payload));
     }
 
+    if (method === "GET" && pathname === CORE_API_ROUTES.whoamiText) {
+      const payload = this.whoamiTextPayload();
+      return this.textOrJsonLines(routeUrl, coreWhoamiJson(payload), renderCoreWhoamiLines(payload));
+    }
+
     if (method === "POST" && pathname === CORE_API_ROUTES.remoteEnableText) {
       if (!loadCredentials()) {
         return {
@@ -766,6 +788,16 @@ export class AimuxDaemon {
     if (method === "POST" && pathname === CORE_API_ROUTES.remoteDisableText) {
       this.disableRelay();
       return this.textOrJsonLines(routeUrl, { relay: { status: "off" } }, renderCoreRemoteDisableLines(true));
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.logoutText) {
+      this.disableRelay();
+      const result = clearCredentials();
+      return {
+        status: result === "failed" ? 500 : 200,
+        body: `${renderCoreLogoutLines(result).join("\n")}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
     }
 
     if (method === "GET" && pathname === "/relay/status") {

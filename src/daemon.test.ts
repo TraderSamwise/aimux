@@ -626,6 +626,55 @@ describe("daemon supervision", () => {
     expect(response.body).not.toContain("secret-token");
   });
 
+  it("serves whoami text and JSON for the installed shell shim without leaking tokens", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    saveCredentials({
+      version: 1,
+      relayUrl: "wss://relay.example",
+      token: "secret-token",
+      userId: "user_123",
+      createdAt: new Date().toISOString(),
+      remoteEnabled: true,
+    });
+    const daemon = new AimuxDaemon();
+
+    const text = await daemon.routeRequest("GET", CORE_API_ROUTES.whoamiText);
+    const json = await daemon.routeRequest("GET", `${CORE_API_ROUTES.whoamiText}?json=1`);
+
+    expect(text.status).toBe(200);
+    expect(text.body).toBe("Logged in as user_123\nRelay: wss://relay.example\nRemote access: enabled\n");
+    expect(text.body).not.toContain("secret-token");
+    expect(json.status).toBe(200);
+    expect(JSON.parse(json.body as string)).toEqual({
+      loggedIn: true,
+      userId: "user_123",
+      relayUrl: "wss://relay.example",
+      remoteEnabled: true,
+    });
+    expect(json.body).not.toContain("secret-token");
+  });
+
+  it("serves logout text and clears credentials for the installed shell shim", async () => {
+    const { saveCredentials, loadCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    saveCredentials({
+      version: 1,
+      relayUrl: "wss://relay.example",
+      token: "secret-token",
+      userId: "user_123",
+      createdAt: new Date().toISOString(),
+      remoteEnabled: true,
+    });
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.logoutText);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("✓ Logged out. Remote access disabled.\n");
+    expect(loadCredentials()).toBeNull();
+  });
+
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
     const { saveCredentials } = await import("./credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");

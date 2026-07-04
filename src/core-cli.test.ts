@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   initPaths: vi.fn(),
   requestCoreCommand: vi.fn(),
   setRemoteEnabled: vi.fn(),
+  clearCredentials: vi.fn(),
 }));
 
 vi.mock("./core-command-client.js", () => ({
@@ -30,6 +31,7 @@ vi.mock("./core-command-client.js", () => ({
 }));
 
 vi.mock("./credentials.js", () => ({
+  clearCredentials: mocks.clearCredentials,
   loadCredentials: () => mocks.credentials,
   setRemoteEnabled: mocks.setRemoteEnabled,
 }));
@@ -139,6 +141,8 @@ describe("runCoreCli", () => {
       throw new Error(`unexpected command ${command}`);
     });
     mocks.setRemoteEnabled.mockReset();
+    mocks.clearCredentials.mockReset();
+    mocks.clearCredentials.mockReturnValue("cleared");
   });
 
   it("renders host status from the core sidecar", async () => {
@@ -271,5 +275,55 @@ describe("runCoreCli", () => {
 
     expect(result).toMatchObject({ code: 0, stdout: ["✓ Remote access disabled."] });
     expect(mocks.setRemoteEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it("renders whoami without leaking credential tokens", async () => {
+    mocks.credentials = {
+      version: 1,
+      relayUrl: "wss://relay.example",
+      token: "secret-token",
+      userId: "user-1",
+      createdAt: iso,
+      remoteEnabled: true,
+    };
+
+    await expect(run(["whoami"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Logged in as user-1", "Relay: wss://relay.example", "Remote access: enabled"],
+    });
+    const jsonResult = await run(["whoami", "--json"]);
+    const payload = JSON.parse(jsonResult.stdout.join("\n")) as Record<string, unknown>;
+
+    expect(jsonResult.code).toBe(0);
+    expect(payload).toEqual({
+      loggedIn: true,
+      userId: "user-1",
+      relayUrl: "wss://relay.example",
+      remoteEnabled: true,
+    });
+    expect(JSON.stringify(payload)).not.toContain("secret-token");
+  });
+
+  it("logs out through the core fallback and disconnects a running daemon best-effort", async () => {
+    const result = await run(["logout"]);
+
+    expect(result).toMatchObject({ code: 0, stdout: ["✓ Logged out. Remote access disabled."], stderr: [] });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.relayDisable, undefined, {
+      ensureDaemon: false,
+      timeoutMs: 1000,
+    });
+    expect(mocks.clearCredentials).toHaveBeenCalled();
+  });
+
+  it("returns logout credential removal failures on stderr", async () => {
+    mocks.clearCredentials.mockReturnValue("failed");
+
+    const result = await run(["logout"]);
+
+    expect(result).toMatchObject({
+      code: 1,
+      stdout: [],
+      stderr: ["Failed to remove credentials file — check permissions."],
+    });
   });
 });

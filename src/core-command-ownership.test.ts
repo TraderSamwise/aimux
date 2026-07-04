@@ -111,6 +111,24 @@ const coreCommandDispositions: Array<{
     disposition: "shim-fast-path",
     shimNeedle: "/core/remote-disable-text",
   },
+  {
+    command: "whoami",
+    args: ["whoami"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/whoami-text",
+  },
+  {
+    command: "whoami --json",
+    args: ["whoami", "--json"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/whoami-text?json=1",
+  },
+  {
+    command: "logout",
+    args: ["logout"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/logout-text",
+  },
 ];
 
 describe("core command ownership inventory", () => {
@@ -132,6 +150,9 @@ describe("core command ownership inventory", () => {
       "remote status --json",
       "remote enable",
       "remote disable",
+      "whoami",
+      "whoami --json",
+      "logout",
     ]);
 
     for (const entry of coreCommandDispositions) {
@@ -143,7 +164,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(16);
+    expect(fastPaths).toHaveLength(19);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);

@@ -270,6 +270,26 @@ case "${1:-} ${2:-}" in
       fi
     fi
     ;;
+  "whoami " | "whoami --json")
+    if [ "$#" -eq 1 ] && aimux_curl_text_route "/core/whoami-text"; then
+      exit 0
+    fi
+    if [ "$#" -eq 2 ] && [ "${2:-}" = "--json" ] && aimux_curl_text_route "/core/whoami-text?json=1"; then
+      exit 0
+    fi
+    ;;
+  "logout ")
+    if [ "$#" -eq 1 ]; then
+      if aimux_post_text_route "/core/logout-text"; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
+    fi
+    ;;
   "restart ")
     if [ "$#" -eq 1 ]; then
       if aimux_try_restart; then
