@@ -19,7 +19,14 @@ import {
   type CoreCommandName,
   type CoreCommandResponse,
   type CoreRestartResult,
+  type CoreStatusProject,
 } from "./core-command-contract.js";
+import {
+  renderCoreDaemonProjectsLines,
+  renderCoreDaemonStatusLines,
+  renderCoreProjectsListLines,
+  type CoreDaemonStatusTextPayload,
+} from "./core-text.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
@@ -252,6 +259,28 @@ export class AimuxDaemon {
         serviceEndpoint: loadMetadataEndpointByProjectId(project.id),
       };
     });
+  }
+
+  private daemonStatusTextPayload(
+    projects: CoreStatusProject[] = this.listProjectsForRoute(),
+  ): CoreDaemonStatusTextPayload {
+    const serviceAliveById = new Map(projects.map((project) => [project.id, project.serviceAlive]));
+    const daemon = this.currentDaemonInfo(new Date().toISOString());
+    return {
+      daemon: { ...daemon, serviceInfo: getProjectServiceManifest() },
+      projects: Object.values(this.state.projects).map((project) => ({
+        ...project,
+        serviceAlive: serviceAliveById.get(project.projectId) ?? false,
+      })),
+      relay: this.getRelayStatus(),
+    };
+  }
+
+  private textOrJsonLines(routeUrl: URL, json: unknown, lines: string[]): DaemonRouteResponse {
+    if (routeUrl.searchParams.get("json") === "1") {
+      return { status: 200, body: `${JSON.stringify(json, null, 2)}\n`, contentType: "text/plain; charset=utf-8" };
+    }
+    return { status: 200, body: `${lines.join("\n")}\n`, contentType: "text/plain; charset=utf-8" };
   }
 
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
@@ -615,6 +644,22 @@ export class AimuxDaemon {
           contentType: "text/plain; charset=utf-8",
         };
       }
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.daemonStatusText) {
+      const projects = this.listProjectsForRoute();
+      const payload = this.daemonStatusTextPayload(projects);
+      return this.textOrJsonLines(routeUrl, payload, renderCoreDaemonStatusLines(payload));
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.daemonProjectsText) {
+      const projects = this.listProjectsForRoute();
+      return this.textOrJsonLines(routeUrl, { projects }, renderCoreDaemonProjectsLines(projects));
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.projectsListText) {
+      const projects = this.listProjectsForRoute();
+      return this.textOrJsonLines(routeUrl, { projects }, renderCoreProjectsListLines(projects));
     }
 
     if (method === "GET" && pathname === "/relay/status") {
