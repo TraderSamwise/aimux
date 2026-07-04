@@ -61,6 +61,7 @@ export interface RuntimeRestartResult {
   daemon: {
     previous: AimuxDaemonInfo | null;
     current: AimuxDaemonInfo;
+    retained?: boolean;
   };
   projects: RuntimeRestartProjectResult[];
   summary: {
@@ -126,6 +127,7 @@ export interface RestartAimuxControlPlaneOptions {
   repairNotifier?: RepairNotifier | null;
   reloadDashboards?: boolean;
   verifyDashboards?: boolean;
+  retainDaemon?: boolean;
   abortSignal?: AbortSignal;
 }
 
@@ -798,6 +800,7 @@ async function restartAimuxControlPlaneUnlocked(
     daemon: {
       previous: previousDaemon,
       current: currentDaemon,
+      retained: options.retainDaemon === true,
     },
     projects,
     summary: {
@@ -839,7 +842,11 @@ function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
       ts: result.finishedAt,
       projectRoot: project.projectRoot,
       action: "control-plane-restart",
-      reason: result.daemon.previous ? "daemon restarted" : "daemon started",
+      reason: result.daemon.retained
+        ? "daemon retained"
+        : result.daemon.previous
+          ? "daemon restarted"
+          : "daemon started",
       status: controlStatus,
       details: {
         previousDaemonPid: result.daemon.previous?.pid ?? null,
@@ -890,9 +897,14 @@ function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
 }
 
 export function renderRuntimeRestartResult(result: RuntimeRestartResult): string {
+  const daemonStatus = result.daemon.retained
+    ? `retained pid=${result.daemon.current.pid}`
+    : `${result.daemon.previous ? `restarted pid=${result.daemon.previous.pid}` : "started"} -> pid=${
+        result.daemon.current.pid
+      }`;
   const lines = [
     "Aimux Restart",
-    `  daemon: ${result.daemon.previous ? `restarted pid=${result.daemon.previous.pid}` : "started"} -> pid=${result.daemon.current.pid}`,
+    `  daemon: ${daemonStatus}`,
     `  projects: ${result.summary.projects}`,
     `  services ensured: ${result.summary.servicesEnsured}`,
     `  runtime repaired: ${result.summary.runtimeRepairs}`,

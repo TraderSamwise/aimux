@@ -432,6 +432,7 @@ export class AimuxDaemon {
       ensureProjectService: (root) => this.ensureProject(root),
       stopProjectService: (root) => this.stopProject(root),
       isAimuxProjectServiceProcess,
+      retainDaemon: true,
     });
     return {
       restart,

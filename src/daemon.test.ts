@@ -377,6 +377,7 @@ describe("daemon supervision", () => {
         projectRoot,
         stopDaemon: expect.any(Function),
         ensureDaemonRunning: expect.any(Function),
+        retainDaemon: true,
       }),
     );
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
