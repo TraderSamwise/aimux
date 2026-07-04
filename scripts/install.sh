@@ -151,7 +151,7 @@ if [ -z "\${AIMUX_DAEMON_PORT:-}" ]; then AIMUX_DAEMON_PORT="43190"; export AIMU
 if [ -z "\${AIMUX_ENV:-}" ]; then AIMUX_ENV="production"; export AIMUX_ENV; fi
 if [ -z "\${AIMUX_WEB_APP_URL:-}" ]; then AIMUX_WEB_APP_URL="https://aimux.app"; export AIMUX_WEB_APP_URL; fi
 
-exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/main.js" "\$@"
+exec "\$AIMUX_NODE_BIN" "\$AIMUX_ROOT/dist/launcher-bin.js" "\$@"
 EOF
 chmod +x "$DEST/bin/aimux"
 ln -sfn "$DEST/bin/aimux" "$BIN_DIR/aimux"

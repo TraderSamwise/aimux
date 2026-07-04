@@ -37,6 +37,7 @@ function commandArgs(argv: string[]): string[] {
 }
 
 function isCoreCliCommand(args: string[]): boolean {
+  if (args.includes("--help") || args.includes("-h")) return false;
   const [command, subcommand] = args;
   if (command === "host" && subcommand === "status") return true;
   if (command === "daemon") {
