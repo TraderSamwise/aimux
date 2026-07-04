@@ -99,5 +99,7 @@ export function isCoreCliCommand(args: string[]): boolean {
   if (command === "projects" && subcommand === "list") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "remote" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "remote" && ["enable", "disable"].includes(subcommand ?? "")) return args.length === 2;
+  if (command === "whoami") return hasOnlyAllowedFlags(args.slice(1), new Set(["--json"]));
+  if (command === "logout") return args.length === 1;
   return false;
 }
