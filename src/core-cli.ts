@@ -5,12 +5,14 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreLoginLines,
   renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
+  renderCoreSecurityUnlockLines,
   renderCoreWhoamiLines,
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
@@ -18,6 +20,7 @@ import {
 import { requestCoreCommand } from "./core-command-client.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
+import { runLoginFlow } from "./login-flow.js";
 import { initPaths } from "./paths.js";
 import { findMainRepo } from "./worktree.js";
 
@@ -203,6 +206,24 @@ async function runRemoteDisable(io: Required<CoreCliIo>): Promise<number> {
   return 0;
 }
 
+async function enableRelayBestEffort(): Promise<CoreRelaySnapshot> {
+  if (!loadDaemonInfo()) return { status: "off" };
+  try {
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable, undefined, {
+      ensureDaemon: false,
+      timeoutMs: 1000,
+    });
+    return result.relay;
+  } catch (error) {
+    return {
+      status: "disconnected",
+      relayUrl: "",
+      lastConnectedAt: null,
+      lastError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function runWhoami(args: string[], io: Required<CoreCliIo>): Promise<number> {
   const creds = loadCredentials();
   const payload = {
@@ -233,6 +254,20 @@ async function runLogout(io: Required<CoreCliIo>): Promise<number> {
   return result === "failed" ? 1 : 0;
 }
 
+async function runLogin(io: Required<CoreCliIo>): Promise<number> {
+  const { userId } = await runLoginFlow();
+  const relay = await enableRelayBestEffort();
+  renderCoreLoginLines({ userId, relay }).forEach(io.stdout);
+  return 0;
+}
+
+async function runSecurityUnlock(io: Required<CoreCliIo>): Promise<number> {
+  const { userId } = await runLoginFlow({ action: "security-unlock" });
+  const relay = await enableRelayBestEffort();
+  renderCoreSecurityUnlockLines({ userId, relay }).forEach(io.stdout);
+  return 0;
+}
+
 export async function runCoreCli(
   rawArgs: string[] = process.argv.slice(2),
   ioOptions: CoreCliIo = {},
@@ -256,6 +291,8 @@ export async function runCoreCli(
     if (command === "remote" && subcommand === "disable") return await runRemoteDisable(io);
     if (command === "whoami") return await runWhoami(args, io);
     if (command === "logout") return await runLogout(io);
+    if (command === "login") return await runLogin(io);
+    if (command === "security" && subcommand === "unlock") return await runSecurityUnlock(io);
     io.stderr(`unsupported core command: ${args.join(" ")}`);
     return 2;
   } catch (error) {

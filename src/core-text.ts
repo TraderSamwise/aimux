@@ -31,6 +31,11 @@ export interface CoreWhoamiTextPayload {
 
 export type CoreLogoutTextResult = "cleared" | "none" | "failed";
 
+export interface CoreLoginTextPayload {
+  userId: string;
+  relay: CoreRelaySnapshot;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -139,4 +144,25 @@ export function renderCoreLogoutLines(result: CoreLogoutTextResult): string[] {
   if (result === "cleared") return ["✓ Logged out. Remote access disabled."];
   if (result === "none") return ["Not logged in."];
   return ["Failed to remove credentials file — check permissions."];
+}
+
+export function renderCoreLoginLines(payload: CoreLoginTextPayload): string[] {
+  return ["", `✓ Logged in as ${payload.userId}`, ...renderRelayAuthLines(payload.relay)];
+}
+
+export function renderCoreSecurityUnlockLines(payload: CoreLoginTextPayload): string[] {
+  return ["", `✓ Security unlocked for ${payload.userId}`, ...renderRelayAuthLines(payload.relay)];
+}
+
+function renderRelayAuthLines(relay: CoreRelaySnapshot): string[] {
+  const status = relay.status ?? "unknown";
+  const lines =
+    status === "off"
+      ? ["Remote access is enabled. The daemon will connect on next start."]
+      : status === "connected" || status === "connecting" || status === "reconnecting"
+        ? [`Remote access is enabled (connection: ${status}).`]
+        : [`Remote access credentials were saved, but relay is ${status}.`];
+  const lastError = relayLastError(relay);
+  if (lastError) lines.push(`Last error: ${lastError}`);
+  return lines;
 }

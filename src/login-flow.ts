@@ -30,6 +30,7 @@ function openBrowser(url: string): void {
 export interface LoginOptions {
   webAppUrl?: string;
   action?: "security-unlock";
+  onMessage?: (message: string) => void;
 }
 
 export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: string }> {
@@ -39,6 +40,7 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
   // sync.
   const webAppUrl = resolveWebAppUrl(opts.webAppUrl);
   const relayUrl = resolveRelayUrl();
+  const onMessage = opts.onMessage ?? console.log;
 
   const state = randomBytes(16).toString("hex");
 
@@ -134,8 +136,8 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
       });
       if (opts.action) qs.set("action", opts.action);
       const authUrl = `${webAppUrl}/cli-auth?${qs.toString()}`;
-      console.log("Opening your browser to sign in...");
-      console.log(`If it doesn't open, visit:\n  ${authUrl}\n`);
+      onMessage("Opening your browser to sign in...");
+      onMessage(`If it doesn't open, visit:\n  ${authUrl}\n`);
       openBrowser(authUrl);
     });
   });
