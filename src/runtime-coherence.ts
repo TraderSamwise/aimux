@@ -406,7 +406,7 @@ function currentNativeInstallRoot(cliLaunch: AimuxCliLaunchCommand): string | nu
     return cliLaunch.currentEntryPath.slice(0, versionEnd + 1);
   }
   if (cliLaunch.source !== "stable-shim") return null;
-  for (const suffix of ["/dist/main.js", "/bin/aimux"]) {
+  for (const suffix of ["/dist/launcher-bin.js", "/dist/main.js", "/bin/aimux"]) {
     if (cliLaunch.currentEntryPath.endsWith(suffix)) {
       return `${cliLaunch.currentEntryPath.slice(0, -suffix.length)}/`;
     }

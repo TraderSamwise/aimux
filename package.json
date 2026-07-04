@@ -2,7 +2,7 @@
   "name": "aimux-cli",
   "version": "0.1.24",
   "description": "Native CLI agent multiplexer — run AI coding tools with their native TUIs intact",
-  "main": "dist/main.js",
+  "main": "dist/launcher-bin.js",
   "bin": {
     "aimux": "./bin/aimux"
   },
@@ -32,7 +32,7 @@
     "dev:daemon": "aimux daemon restart",
     "dev:daemon:openrig": "bash scripts/dev-lanes/openrig-runtime-core.sh daemon restart",
     "dev:aimux:openrig": "bash scripts/dev-lanes/openrig-runtime-core.sh",
-    "start": "node dist/main.js",
+    "start": "node dist/launcher-bin.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

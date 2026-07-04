@@ -16,7 +16,7 @@ describe("aimux launch contracts", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "aimux-launcher-"));
     shim = join(dir, "bin", "aimux");
-    nativeEntry = join(dir, "native", "old-build", "dist", "main.js");
+    nativeEntry = join(dir, "native", "old-build", "dist", "launcher-bin.js");
     mkdirSync(join(dir, "bin"), { recursive: true });
     mkdirSync(join(dir, "native", "old-build", "dist"), { recursive: true });
     writeFileSync(shim, "#!/usr/bin/env node\n");
@@ -40,10 +40,10 @@ describe("aimux launch contracts", () => {
   it("keeps source runs on the current entry when not inside a native install", () => {
     const launch = getAimuxDaemonLaunchCommand({
       env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
-      currentArgvEntry: join(dir, "checkout", "dist", "main.js"),
+      currentArgvEntry: join(dir, "checkout", "dist", "launcher-bin.js"),
     });
     expect(launch.command).toBe(process.execPath);
-    expect(launch.args[0]).toMatch(/main\.(js|ts)$/);
+    expect(launch.args[0]).toMatch(/launcher-bin\.(js|ts)$/);
     expect(launch.args.slice(1)).toEqual(["daemon", "run"]);
     expect(launch.source).toBe("current-entry");
   });

@@ -52,7 +52,7 @@ function createTmux(overrides: Partial<TmuxRuntimeManager> = {}): TmuxRuntimeMan
       return [];
     }),
     isWindowAlive: vi.fn(() => true),
-    displayMessage: vi.fn(() => "node /current/dist/main.js --tmux-dashboard-internal"),
+    displayMessage: vi.fn(() => "node /current/dist/launcher-bin.js --tmux-dashboard-internal"),
     getWindowOption: vi.fn((target: { windowId: string }, key: string) => {
       if (key === "@aimux-dashboard-build") return target.windowId === "@1" ? "dashboard-old" : "dashboard-new";
       if (key === TMUX_DASHBOARD_OWNER_OPTION) return "owner-new";
@@ -578,7 +578,7 @@ describe("runtime coherence report", () => {
           return [];
         }),
         displayMessage: vi.fn((_format: string, target: string) =>
-          target === "@3" ? "sh -lc tail -f /dev/null" : "node /current/dist/main.js --tmux-dashboard-internal",
+          target === "@3" ? "sh -lc tail -f /dev/null" : "node /current/dist/launcher-bin.js --tmux-dashboard-internal",
         ),
         getWindowOption: vi.fn((target: { windowId: string }, key: string) => {
           if (target.windowId === "@3") return null;
@@ -702,7 +702,7 @@ describe("runtime coherence report", () => {
         command: "/opt/aimux/bin/aimux",
         args: [],
         source: "stable-shim",
-        currentEntryPath: "/opt/aimux/native/local-current/dist/main.js",
+        currentEntryPath: "/opt/aimux/native/local-current/dist/launcher-bin.js",
         stableShimPath: "/opt/aimux/bin/aimux",
       })),
       getDashboardBuildStamp: () => "dashboard-new",
