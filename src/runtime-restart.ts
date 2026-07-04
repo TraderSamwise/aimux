@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { ensureDaemonRunning, ensureProjectService, stopDaemon, stopProjectService } from "./daemon-supervisor.js";
@@ -18,9 +17,15 @@ import {
 } from "./runtime-owner.js";
 import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
-import { commandArgValueMatches } from "./process-args.js";
 import { defaultRepairNotifier, type RepairEvent, type RepairNotifier } from "./repair-events.js";
 import { getGlobalAimuxDir } from "./paths.js";
+import {
+  isAimuxProjectServiceProcess as defaultIsAimuxProjectServiceProcess,
+  isPidAlive as defaultIsPidAlive,
+  type ProjectServiceProcessIdentity,
+} from "./process-inspector.js";
+
+export { isExitedProcessState } from "./process-inspector.js";
 
 export type RuntimeRestartStepStatus = "ensured" | "reloaded" | "repaired" | "skipped" | "failed";
 const RUNTIME_RESTART_LOCK_STALE_MS = 120_000;
@@ -471,76 +476,10 @@ function repairRuntimeContract(input: {
   }
 }
 
-export function isExitedProcessState(state: string): boolean {
-  return state.trim().startsWith("Z");
-}
-
-function defaultIsPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-  if (process.platform !== "win32") {
-    try {
-      const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-      if (isExitedProcessState(state)) return false;
-    } catch {
-      try {
-        process.kill(pid, 0);
-      } catch {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-interface ProjectServiceIdentity {
-  projectId?: string;
-  projectRoot?: string;
-}
+type ProjectServiceIdentity = ProjectServiceProcessIdentity;
 
 interface ProjectServiceIdentityWithPid extends ProjectServiceIdentity {
   pid: number;
-}
-
-function readProcessCwd(pid: number): string | null {
-  try {
-    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const cwd = output
-      .split("\n")
-      .find((line) => line.startsWith("n"))
-      ?.slice(1)
-      .trim();
-    return cwd || null;
-  } catch {
-    return null;
-  }
-}
-
-function defaultIsAimuxProjectServiceProcess(pid: number, expected: ProjectServiceIdentity = {}): boolean {
-  try {
-    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (!args.includes("__project-service-internal")) return false;
-    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
-      return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
-    }
-    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
-    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function waitForPidExit(input: {

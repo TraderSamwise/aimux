@@ -26,11 +26,22 @@ const runtimeNodeLaunchPatterns = [
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
 ] as const;
 
+const processInspectionPatterns = [
+  { id: "pid-alive-helper", pattern: /function\s+isPidAlive\s*\(/ },
+  { id: "ps-args", pattern: /execFileSync\(\s*["'`]ps["'`][\s\S]{0,160}["'`]args=["'`]/ },
+  { id: "ps-stat", pattern: /execFileSync\(\s*["'`]ps["'`][\s\S]{0,160}["'`]stat=["'`]/ },
+  { id: "ps-table", pattern: /execFileSync\(\s*["'`]ps["'`][\s\S]{0,160}["'`]-axo["'`]/ },
+  { id: "lsof-cwd", pattern: /execFileSync\(\s*["'`]lsof["'`][\s\S]{0,180}["'`]cwd["'`]/ },
+] as const;
+
 const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);
+const allowedProcessInspectionFiles = new Set(["src/process-inspector.ts"]);
+const allowedCommandArgMatchFiles = new Set(["src/process-args.ts", "src/process-inspector.ts"]);
 const allowedRetiredMainEntrypoints = [
   { file: "src/dashboard/command-spec.ts", id: "path-join", lineIncludes: 'join(installRoot, "dist", "main.js")' },
   { file: "src/daemon.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
   { file: "src/project-takeover.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+  { file: "src/process-inspector.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
   { file: "src/runtime-coherence.test.ts", id: "slash-path", lineIncludes: "/opt/aimux/native/local-old/dist/main.js" },
   { file: "src/runtime-coherence.ts", id: "slash-path", lineIncludes: '"/dist/main.js"' },
   { file: "src/runtime-restart.test.ts", id: "slash-path", lineIncludes: "/old/dist/main.js" },
@@ -118,6 +129,23 @@ describe("one-shot Node runtime inventory", () => {
           if (!allowed) violations.push(`${file}:${index + 1}:${entry.id}`);
         }
       });
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps OS process inspection behind the shared inspector", () => {
+    const violations: string[] = [];
+    for (const file of scanRoots.flatMap((root) => listSourceFiles(root))) {
+      const text = readFileSync(join(process.cwd(), file), "utf8");
+      for (const entry of processInspectionPatterns) {
+        if (entry.pattern.test(text) && !allowedProcessInspectionFiles.has(file)) {
+          violations.push(`${file}:${entry.id}`);
+        }
+      }
+      if (text.includes("commandArgValueMatches") && !allowedCommandArgMatchFiles.has(file)) {
+        violations.push(`${file}:commandArgValueMatches`);
+      }
     }
 
     expect(violations).toEqual([]);
