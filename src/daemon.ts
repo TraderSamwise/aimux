@@ -68,6 +68,14 @@ const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+const LOCAL_AUTH_ROUTES = new Set<string>([
+  CORE_API_ROUTES.loginStartText,
+  CORE_API_ROUTES.loginWaitText,
+  CORE_API_ROUTES.loginText,
+  CORE_API_ROUTES.securityUnlockStartText,
+  CORE_API_ROUTES.securityUnlockWaitText,
+  CORE_API_ROUTES.securityUnlockText,
+]);
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
@@ -211,6 +219,17 @@ export class AimuxDaemon {
     setRemoteEnabled(true);
     this.connectRelayIfConfigured({ force: true });
     return this.getRelayStatus();
+  }
+
+  private enableRelayBestEffort(): CoreRelaySnapshot {
+    try {
+      return this.enableRelay();
+    } catch (error) {
+      const lastError = error instanceof Error ? error.message : String(error);
+      const relay = this.getRelayStatus();
+      if (relay.status === "off") return { status: "disconnected", relayUrl: "", lastConnectedAt: null, lastError };
+      return { ...relay, lastError };
+    }
   }
 
   disableRelay(): { status: "off" } {
@@ -380,7 +399,7 @@ export class AimuxDaemon {
         action: opts.action,
         onMessage: (message) => messages.push(message),
       });
-      const relay = this.enableRelay();
+      const relay = this.enableRelayBestEffort();
       const lines = [...messages, ...opts.render({ userId, relay })];
       return {
         status: 200,
@@ -412,7 +431,7 @@ export class AimuxDaemon {
         messages.push(message);
         if (messages.length >= 2) releaseMessages();
       },
-    }).then(({ userId }) => ({ userId, relay: this.enableRelay() }));
+    }).then(({ userId }) => ({ userId, relay: this.enableRelayBestEffort() }));
     this.authFlows.set(id, { promise, startedAt: Date.now() });
     await Promise.race([
       messagesReady,
@@ -786,6 +805,9 @@ export class AimuxDaemon {
     const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams);
     if (!access.ok) {
       return { status: access.status ?? 403, body: { ok: false, error: access.error ?? "remote access denied" } };
+    }
+    if (method === "POST" && LOCAL_AUTH_ROUTES.has(pathname) && actor) {
+      return { status: 403, body: "auth routes are loopback-only\n", contentType: "text/plain; charset=utf-8" };
     }
 
     if (method === "GET" && pathname === "/health") {

@@ -819,6 +819,19 @@ describe("daemon supervision", () => {
     }
   });
 
+  it("rejects auth browser routes from relay actors", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const headers = { "x-aimux-actor-role": "owner", "x-aimux-actor-user-id": "user_123" };
+
+    const start = await daemon.routeRequest("POST", CORE_API_ROUTES.loginStartText, undefined, headers);
+    const unlock = await daemon.routeRequest("POST", CORE_API_ROUTES.securityUnlockText, undefined, headers);
+
+    expect(start).toMatchObject({ status: 403, body: "auth routes are loopback-only\n" });
+    expect(unlock).toMatchObject({ status: 403, body: "auth routes are loopback-only\n" });
+    expect(loginFlowMock).not.toHaveBeenCalled();
+  });
+
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
     const { saveCredentials } = await import("./credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
