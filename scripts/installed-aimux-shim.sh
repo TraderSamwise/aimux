@@ -1132,7 +1132,7 @@ aimux_try_task() {
           --prompt=*) aimux_require_inline_value "${1#--prompt=}" || return 1; prompt="$AIMUX_ARG_VALUE" ;;
           --type) shift; aimux_require_arg_value "$@" || return 1; type="$AIMUX_ARG_VALUE" ;;
           --type=*) aimux_require_inline_value "${1#--type=}" || return 1; type="$AIMUX_ARG_VALUE" ;;
-          --diff) shift; aimux_require_arg_value "$@" || return 1; diff="$AIMUX_ARG_VALUE" ;;
+          --diff) shift; [ "$#" -gt 0 ] || return 1; [ -n "$1" ] || return 1; diff="$1" ;;
           --diff=*) aimux_require_inline_value "${1#--diff=}" || return 1; diff="$AIMUX_ARG_VALUE" ;;
           --worktree) shift; aimux_require_arg_value "$@" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
           --worktree=*) aimux_require_inline_value "${1#--worktree=}" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
