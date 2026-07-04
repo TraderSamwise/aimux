@@ -34,6 +34,8 @@ Node launcher when a matching daemon is already running:
 | `aimux remote status [--json]`                          | `CUT`  | daemon | Uses `/core/remote-status-text`; status JSON never includes credential tokens.                  |
 | `aimux remote enable`                                   | `CUT`  | daemon | Uses `/core/remote-enable-text`; credential mutation and relay connect are daemon-owned.        |
 | `aimux remote disable`                                  | `CUT`  | daemon | Uses `/core/remote-disable-text`; credential mutation and relay disconnect are daemon-owned.    |
+| `aimux whoami [--json]`                                 | `CUT`  | daemon | Uses `/core/whoami-text`; account JSON never includes credential tokens.                        |
+| `aimux logout`                                          | `CUT`  | daemon | Uses `/core/logout-text`; relay disconnect and credential removal are daemon-owned.             |
 
 ## Core-Routable But Not Yet Shim-Fast
 
@@ -50,9 +52,10 @@ No commands currently live in this category.
 | `aimux graveyard ...`                                     | `LEGACY`    | project service | Resurrection/cleanup should use topology-backed project-service routes.                   |
 | `aimux thread ...`, `aimux message ...`                   | `LEGACY`    | project service | Exchange/thread workflows should route through project-service contracts.                 |
 | `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `LEGACY`    | project service | Workflow mutations should have one exchange-backed API contract.                          |
-| `aimux login`, `aimux logout`, `aimux whoami`             | `LEGACY`    | daemon          | Account/session state should be daemon-owned for all clients.                             |
+| `aimux whoami`, `aimux logout`                            | `CUT`       | daemon          | Installed shim uses daemon text routes; stale daemon falls back to the core CLI.          |
+| `aimux login`                                             | `BOOTSTRAP` | daemon          | Interactive browser auth still starts Node; next cut should host this flow in the daemon. |
 | `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                     |
-| `aimux security ...`                                      | `SIDEcar`   | daemon          | Core routing exists; installed no-spawn path is incomplete.                               |
+| `aimux security ...`                                      | `SIDEcar`   | daemon          | `unlock` shares the interactive browser auth problem; non-auth checks still need a cut.   |
 
 ## Local Runtime And Developer Plumbing
 
