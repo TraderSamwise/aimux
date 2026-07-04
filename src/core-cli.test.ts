@@ -191,6 +191,28 @@ describe("runCoreCli", () => {
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
   });
 
+  it("rejects direct malformed project ensure invocations without mutating", async () => {
+    const result = await run(["daemon", "project-ensure", "--project", "--json"]);
+
+    expect(result).toMatchObject({ code: 1, stdout: [] });
+    expect(result.stderr[0]).toContain("invalid daemon project-ensure arguments");
+    expect(mocks.requestCoreCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown project ensure options without mutating", async () => {
+    const result = await run(["daemon", "project-ensure", "--project", "/repo", "--dry-run"]);
+
+    expect(result).toMatchObject({ code: 1, stdout: [] });
+    expect(mocks.requestCoreCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct unknown options on mutating remote commands without mutating", async () => {
+    const result = await run(["remote", "enable", "--json"]);
+
+    expect(result).toMatchObject({ code: 2, stdout: [] });
+    expect(mocks.requestCoreCommand).not.toHaveBeenCalled();
+  });
+
   it("lists projects with daemon and user-facing badges", async () => {
     await expect(run(["daemon", "projects"])).resolves.toMatchObject({
       stdout: ["repo  service  /repo"],

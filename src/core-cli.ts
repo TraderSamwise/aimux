@@ -1,4 +1,5 @@
 import { resolve as pathResolve } from "node:path";
+import { coreCommandArgs, isCoreCliCommand, isValidCoreProjectEnsureArgs } from "./core-cli-routing.js";
 import { CORE_COMMAND_NAMES, type CoreRelaySnapshot, type CoreStatusProject } from "./core-command-contract.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -22,21 +23,6 @@ function ioFor(io: CoreCliIo): Required<CoreCliIo> {
   return { ...defaultIo, ...io };
 }
 
-function commandArgs(rawArgs: string[]): string[] {
-  const result: string[] = [];
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const arg = rawArgs[index];
-    if ((arg === "--debug" || arg === "--trace") && result.length === 0) continue;
-    if ((arg === "--log-level" || arg === "--log-category") && result.length === 0) {
-      index += 1;
-      continue;
-    }
-    if ((arg.startsWith("--log-level=") || arg.startsWith("--log-category=")) && result.length === 0) continue;
-    result.push(arg);
-  }
-  return result;
-}
-
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
@@ -44,7 +30,10 @@ function hasFlag(args: string[], flag: string): boolean {
 function readOption(args: string[], name: string): string | null {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === name) return args[index + 1] ?? null;
+    if (arg === name) {
+      const value = args[index + 1] ?? null;
+      return value && !value.startsWith("-") ? value : null;
+    }
     if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
   }
   return null;
@@ -180,6 +169,10 @@ async function runDaemonProjects(args: string[], io: Required<CoreCliIo>): Promi
 }
 
 async function runDaemonProjectEnsure(args: string[], io: Required<CoreCliIo>): Promise<number> {
+  if (!isValidCoreProjectEnsureArgs(args)) {
+    io.stderr("error: invalid daemon project-ensure arguments");
+    return 1;
+  }
   const projectOption = readOption(args, "--project");
   if (!projectOption) {
     io.stderr("error: required option '--project <path>' not specified");
@@ -270,9 +263,13 @@ export async function runCoreCli(
   ioOptions: CoreCliIo = {},
 ): Promise<number> {
   const io = ioFor(ioOptions);
-  const args = commandArgs(rawArgs);
+  const args = coreCommandArgs(rawArgs);
   const [command, subcommand] = args;
   try {
+    if (!isCoreCliCommand(args)) {
+      io.stderr(`unsupported core command: ${args.join(" ")}`);
+      return 2;
+    }
     if (command === "host" && subcommand === "status") return await runHostStatus(args, io);
     if (command === "daemon" && subcommand === "ensure") return await runDaemonEnsure(args, io);
     if (command === "daemon" && subcommand === "status") return await runDaemonStatus(args, io);
