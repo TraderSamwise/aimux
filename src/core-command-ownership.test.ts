@@ -5,6 +5,10 @@ import { isCoreCliCommand } from "./core-cli-routing.js";
 
 type Disposition = "shim-fast-path" | "node-core-fallback";
 
+const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
+  { command: "restart", shimNeedle: "/core/restart-text" },
+];
+
 const coreCommandDispositions: Array<{
   command: string;
   args: string[];
@@ -108,7 +112,7 @@ describe("core command ownership inventory", () => {
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
     expect(fastPaths).toHaveLength(8);
-    for (const entry of fastPaths) {
+    for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
     }
