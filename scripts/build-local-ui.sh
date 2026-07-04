@@ -23,7 +23,8 @@ if ! grep -Fq "/aimux-local-config.js" "$INDEX_HTML"; then
     }
     { print }
   ' "$INDEX_HTML" > "$tmp_html"
-  mv "$tmp_html" "$INDEX_HTML"
+  cat "$tmp_html" > "$INDEX_HTML"
+  rm -f "$tmp_html"
 fi
 
 cd "$ROOT_DIR"
