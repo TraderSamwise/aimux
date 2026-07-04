@@ -276,6 +276,12 @@ export class AimuxDaemon {
     };
   }
 
+  private daemonEnsurePayload(issuedAt: string): { daemon: AimuxDaemonInfo & { serviceInfo: unknown } } {
+    return {
+      daemon: { ...this.currentDaemonInfo(issuedAt), serviceInfo: getProjectServiceManifest() },
+    };
+  }
+
   private textOrJsonLines(routeUrl: URL, json: unknown, lines: string[]): DaemonRouteResponse {
     if (routeUrl.searchParams.get("json") === "1") {
       return { status: 200, body: `${JSON.stringify(json, null, 2)}\n`, contentType: "text/plain; charset=utf-8" };
@@ -626,6 +632,12 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.commands) {
       return this.routeCoreCommand(body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.daemonEnsureText) {
+      const payload = this.daemonEnsurePayload(new Date().toISOString());
+      const line = `aimux daemon: pid ${payload.daemon.pid} on http://127.0.0.1:${payload.daemon.port}`;
+      return this.textOrJsonLines(routeUrl, payload, [line]);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {

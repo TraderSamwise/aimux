@@ -17,7 +17,12 @@ const coreCommandDispositions: Array<{
     disposition: "shim-fast-path",
     shimNeedle: "aimux_try_daemon_ensure",
   },
-  { command: "daemon ensure --json", args: ["daemon", "ensure", "--json"], disposition: "node-core-fallback" },
+  {
+    command: "daemon ensure --json",
+    args: ["daemon", "ensure", "--json"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/daemon-ensure-text?json=1",
+  },
   {
     command: "daemon status",
     args: ["daemon", "status"],
@@ -102,7 +107,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(7);
+    expect(fastPaths).toHaveLength(8);
     for (const entry of fastPaths) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
@@ -115,7 +120,6 @@ describe("core command ownership inventory", () => {
       .map((entry) => entry.command);
 
     expect(backlog).toEqual([
-      "daemon ensure --json",
       "host status",
       "host status --json",
       "daemon project-ensure",

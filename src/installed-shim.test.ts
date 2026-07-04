@@ -50,7 +50,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
   case "$url" in
-  */core/daemon-status-text*|*/core/daemon-projects-text*|*/core/projects-list-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/projects-list-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     cat "$TEXT_ROUTE_FILE"
     ;;
@@ -126,6 +126,19 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("serves daemon ensure JSON from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "daemon": {"pid": 321}\n}\n');
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "ensure", "--json"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('{\n  "daemon": {"pid": 321}\n}\n');
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
   it("falls back to the Node launcher for stale daemon health", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build")}\n`);
@@ -135,6 +148,20 @@ describe("installed aimux shim", () => {
 
     expect(result.status).toBe(17);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
+  });
+
+  it("falls back to the Node launcher for daemon ensure JSON when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build")}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "daemon": {"pid": 123}\n}\n');
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 123, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "ensure", "--json"], { NODE_EXIT: "18" });
+
+    expect(result.status).toBe(18);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure --json\n`,
+    );
   });
 
   it("falls back to the Node launcher when daemon state is missing", () => {
