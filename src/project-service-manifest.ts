@@ -36,7 +36,7 @@ function computeBuildStamp(): string {
   const mtimes = artifactPaths.map((entryPath) => {
     const stat = statSync(entryPath);
     hash.update(readFileSync(entryPath));
-    return Math.trunc(stat.mtimeMs);
+    return Math.trunc(stat.mtimeMs / 1000) * 1000;
   });
   return `${mtimes.join(".")}-${hash.digest("hex").slice(0, 12)}`;
 }

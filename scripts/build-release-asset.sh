@@ -51,6 +51,17 @@ cp package.json yarn.lock README.md "$PKG_DIR/"
 cp -R bin dist dist-ui scripts "$PKG_DIR/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 
+artifact_mtime_ms() {
+  case "$(uname -s)" in
+    Darwin) printf '%s000' "$(stat -f %m "$1")" ;;
+    *) printf '%s000' "$(stat -c %Y "$1")" ;;
+  esac
+}
+
+MAIN_ARTIFACT="$PKG_DIR/dist/main".js
+BUILD_STAMP="$(artifact_mtime_ms "$PKG_DIR/dist/launcher-bin.js").$(artifact_mtime_ms "$MAIN_ARTIFACT")-$(cat "$PKG_DIR/dist/launcher-bin.js" "$MAIN_ARTIFACT" | shasum -a 1 | awk '{ print substr($1, 1, 12) }')"
+printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"
+
 if [ "$PLATFORM" = "darwin" ]; then
   AIMUX_NOTIFIER_ARCH="$ARCH" AIMUX_NOTIFIER_BUILD_DIR="$PKG_DIR/native/darwin" \
     bash "$ROOT_DIR/native/darwin/build-aimux-notifier.sh"
