@@ -110,6 +110,25 @@ describe("getDashboardCommandSpec", () => {
     expect(getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp).not.toBe(first);
   });
 
+  it("changes stable-shim dashboard stamps when install contents change without mtime changes", () => {
+    const shim = join(tempDir, "bin", "aimux");
+    const mtimeMs = 1_700_000_000;
+    const firstInstall = createNativeInstall("first", mtimeMs);
+    const secondInstall = createNativeInstall("second", mtimeMs);
+    mkdirSync(dirname(shim), { recursive: true });
+    symlinkSync(join(firstInstall, "bin", "aimux"), shim);
+
+    const env = {
+      AIMUX_CLI_BIN: shim,
+      AIMUX_INSTALL_ROOT: join(process.cwd(), "src"),
+    } as NodeJS.ProcessEnv;
+    const first = getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp;
+    unlinkSync(shim);
+    symlinkSync(join(secondInstall, "bin", "aimux"), shim);
+
+    expect(getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp).not.toBe(first);
+  });
+
   function createNativeInstall(label: string, mtimeMs: number): string {
     const root = join(tempDir, "native", label);
     const bin = join(root, "bin");

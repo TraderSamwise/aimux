@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getAimuxDashboardLaunchCommand } from "../cli-launcher.js";
 import { DEFAULT_DAEMON_PORT, DEFAULT_ENV, DEFAULT_HOME, DEFAULT_WEB_APP_URL } from "../launcher-env.js";
@@ -85,12 +85,13 @@ function dashboardEnvForLaunch(env: NodeJS.ProcessEnv, source: "stable-shim" | "
 }
 
 function buildDashboardStamp(artifactPaths: string[], command: string): string {
-  const artifactStamp = [...new Set(artifactPaths)]
-    .map((path) => `${basename(path)}:${Math.trunc(statSync(path).mtimeMs)}`)
-    .join("|");
-  const artifactHash = createHash("sha256").update(artifactStamp).digest("hex").slice(0, 16);
+  const artifactHash = createHash("sha256");
+  for (const path of [...new Set(artifactPaths)]) {
+    artifactHash.update(`${path}:${Math.trunc(statSync(path).mtimeMs)}:`);
+    artifactHash.update(readFileSync(path));
+  }
   const commandHash = createHash("sha256").update(command).digest("hex").slice(0, 16);
-  return `${artifactHash}-${commandHash}`;
+  return `${artifactHash.digest("hex").slice(0, 16)}-${commandHash}`;
 }
 
 export function getDashboardCommandSpec(
