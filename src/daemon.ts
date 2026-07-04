@@ -27,6 +27,10 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreLifecycleForkLines,
+  renderCoreLifecycleKillLines,
+  renderCoreLifecycleSpawnLines,
+  renderCoreLifecycleStopLines,
   renderCoreLoginLines,
   renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
@@ -39,6 +43,10 @@ import {
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
   type CoreHostStatusTextPayload,
+  type CoreLifecycleForkTextPayload,
+  type CoreLifecycleKillTextPayload,
+  type CoreLifecycleSpawnTextPayload,
+  type CoreLifecycleStopTextPayload,
   type CoreRemoteStatusTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
@@ -76,6 +84,12 @@ const LOCAL_AUTH_ROUTES = new Set<string>([
   CORE_API_ROUTES.securityUnlockWaitText,
   CORE_API_ROUTES.securityUnlockText,
 ]);
+const LOCAL_LIFECYCLE_TEXT_ROUTES = new Set<string>([
+  CORE_API_ROUTES.lifecycleForkText,
+  CORE_API_ROUTES.lifecycleKillText,
+  CORE_API_ROUTES.lifecycleSpawnText,
+  CORE_API_ROUTES.lifecycleStopText,
+]);
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
@@ -100,6 +114,8 @@ interface DaemonRouteResponse {
   contentType?: string;
 }
 
+type ProjectServiceJson = Record<string, unknown> & { ok?: boolean; error?: unknown };
+
 type AuthAction = "security-unlock" | undefined;
 
 interface DaemonAuthFlow {
@@ -113,7 +129,19 @@ async function readJson(req: IncomingMessage): Promise<any> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   const body = Buffer.concat(chunks).toString("utf8").trim();
+  const contentType = String(req.headers["content-type"] ?? "");
+  if (body && contentType.startsWith("application/x-www-form-urlencoded")) {
+    return Object.fromEntries(new URLSearchParams(body).entries());
+  }
   return body ? JSON.parse(body) : {};
+}
+
+function requestHeaders(req: IncomingMessage): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers[name.toLowerCase()] = value;
+  }
+  return headers;
 }
 
 function send(res: ServerResponse, status: number, body: unknown, contentType = "application/json"): void {
@@ -387,6 +415,206 @@ export class AimuxDaemon {
       return { status: 200, body: `${JSON.stringify(json, null, 2)}\n`, contentType: "text/plain; charset=utf-8" };
     }
     return { status: 200, body: `${lines.join("\n")}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private textError(status: number, message: string): DaemonRouteResponse {
+    return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private stringParam(routeUrl: URL, body: unknown, name: string): string | undefined {
+    const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const bodyValue = record[name];
+    if (typeof bodyValue === "string") return bodyValue;
+    return routeUrl.searchParams.get(name) ?? undefined;
+  }
+
+  private requiredParam(routeUrl: URL, body: unknown, name: string): string | DaemonRouteResponse {
+    const value = this.stringParam(routeUrl, body, name);
+    if (!value?.trim()) return this.textError(400, `${name} is required`);
+    return value;
+  }
+
+  private booleanParam(routeUrl: URL, body: unknown, name: string, defaultValue: boolean): boolean {
+    const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const bodyValue = record[name];
+    if (typeof bodyValue === "boolean") return bodyValue;
+    if (typeof bodyValue === "number") return bodyValue !== 0;
+    const value = this.stringParam(routeUrl, body, name);
+    if (value === undefined) return defaultValue;
+    return value !== "0" && value !== "false";
+  }
+
+  private resolveLifecycleWorktree(projectRoot: string, worktreePath: string | undefined): string | undefined {
+    if (!worktreePath) return undefined;
+    return worktreePath.startsWith("/") ? pathResolve(worktreePath) : pathResolve(projectRoot, worktreePath);
+  }
+
+  private requiredProjectServiceString(
+    json: ProjectServiceJson,
+    action: string,
+    field: string,
+  ): string | DaemonRouteResponse {
+    const value = json[field];
+    if (typeof value === "string" && value.trim()) return value;
+    return this.textError(502, `Error: project service returned invalid ${action} response: ${field} is required`);
+  }
+
+  private async postProjectServiceJson(
+    projectRoot: string,
+    routePath: string,
+    body: Record<string, unknown>,
+    opts: { ensureProject?: boolean } = {},
+  ): Promise<
+    { ok: true; projectRoot: string; json: ProjectServiceJson } | { ok: false; response: DaemonRouteResponse }
+  > {
+    const resolvedRoot = this.resolveProjectRoot(projectRoot);
+    try {
+      if (opts.ensureProject !== false) await this.ensureProject(resolvedRoot);
+      const endpoint = loadMetadataEndpointByProjectId(getProjectIdFor(resolvedRoot));
+      if (!endpoint) {
+        return { ok: false, response: this.textError(503, `Error: project service unavailable for ${resolvedRoot}`) };
+      }
+      const { status, json } = await requestJson<ProjectServiceJson>(
+        `http://${endpoint.host}:${endpoint.port}${routePath}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+          timeoutMs: PROXY_TIMEOUT_MS,
+        },
+      );
+      if (status < 200 || status >= 300 || json?.ok === false) {
+        return {
+          ok: false,
+          response: this.textError(
+            status || 502,
+            `Error: ${json?.error ? String(json.error) : `project service returned ${status}`}`,
+          ),
+        };
+      }
+      return { ok: true, projectRoot: resolvedRoot, json };
+    } catch (error) {
+      return {
+        ok: false,
+        response: this.textError(502, `Error: ${error instanceof Error ? error.message : String(error)}`),
+      };
+    }
+  }
+
+  private async lifecycleSpawnTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const tool = this.requiredParam(routeUrl, body, "tool");
+    if (typeof tool !== "string") return tool;
+    const projectRoot = this.resolveProjectRoot(project);
+    const worktreePath = this.resolveLifecycleWorktree(projectRoot, this.stringParam(routeUrl, body, "worktreePath"));
+    const open = this.booleanParam(routeUrl, body, "open", true);
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.spawn, {
+      tool,
+      ...(worktreePath ? { worktreePath } : {}),
+      open,
+    });
+    if (!result.ok) return result.response;
+    const sessionId = this.requiredProjectServiceString(result.json, "spawn", "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const payload: CoreLifecycleSpawnTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId,
+      tool,
+      worktreePath: worktreePath ?? result.projectRoot,
+      opened: open,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreLifecycleSpawnLines(payload));
+  }
+
+  private async lifecycleStopTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.agents.stop,
+      { sessionId },
+      { ensureProject: false },
+    );
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, "stop", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const status = this.requiredProjectServiceString(result.json, "stop", "status");
+    if (typeof status !== "string") return status;
+    const payload: CoreLifecycleStopTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      status,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreLifecycleStopLines(payload));
+  }
+
+  private async lifecycleKillTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.agents.kill,
+      { sessionId },
+      { ensureProject: false },
+    );
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, "kill", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const status = this.requiredProjectServiceString(result.json, "kill", "status");
+    if (typeof status !== "string") return status;
+    const previousStatus = this.requiredProjectServiceString(result.json, "kill", "previousStatus");
+    if (typeof previousStatus !== "string") return previousStatus;
+    const payload: CoreLifecycleKillTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      status,
+      previousStatus,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreLifecycleKillLines(payload));
+  }
+
+  private async lifecycleForkTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sourceSessionId = this.requiredParam(routeUrl, body, "sourceSessionId");
+    if (typeof sourceSessionId !== "string") return sourceSessionId;
+    const tool = this.requiredParam(routeUrl, body, "tool");
+    if (typeof tool !== "string") return tool;
+    const instruction = this.stringParam(routeUrl, body, "instruction") || undefined;
+    const projectRoot = this.resolveProjectRoot(project);
+    const worktreePath = this.resolveLifecycleWorktree(projectRoot, this.stringParam(routeUrl, body, "worktreePath"));
+    const open = this.booleanParam(routeUrl, body, "open", true);
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.fork, {
+      sourceSessionId,
+      tool,
+      ...(instruction ? { instruction } : {}),
+      ...(worktreePath ? { worktreePath } : {}),
+      open,
+    });
+    if (!result.ok) return result.response;
+    const sessionId = this.requiredProjectServiceString(result.json, "fork", "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const threadId = this.requiredProjectServiceString(result.json, "fork", "threadId");
+    if (typeof threadId !== "string") return threadId;
+    const payload: CoreLifecycleForkTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sourceSessionId,
+      sessionId,
+      threadId,
+      tool,
+      worktreePath: worktreePath ?? result.projectRoot,
+      opened: open,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreLifecycleForkLines(payload));
   }
 
   private async runAuthTextRoute(opts: {
@@ -809,6 +1037,20 @@ export class AimuxDaemon {
     if (method === "POST" && LOCAL_AUTH_ROUTES.has(pathname) && actor) {
       return { status: 403, body: "auth routes are loopback-only\n", contentType: "text/plain; charset=utf-8" };
     }
+    if (method === "POST" && LOCAL_LIFECYCLE_TEXT_ROUTES.has(pathname) && actor) {
+      return {
+        status: 403,
+        body: "lifecycle text routes are loopback-only\n",
+        contentType: "text/plain; charset=utf-8",
+      };
+    }
+    if (method === "POST" && LOCAL_LIFECYCLE_TEXT_ROUTES.has(pathname) && (headers?.origin || headers?.Origin)) {
+      return {
+        status: 403,
+        body: "lifecycle text routes are cli-only\n",
+        contentType: "text/plain; charset=utf-8",
+      };
+    }
 
     if (method === "GET" && pathname === "/health") {
       return {
@@ -870,6 +1112,22 @@ export class AimuxDaemon {
       const project = await this.ensureProject(projectRoot);
       const payload = { project };
       return this.textOrJsonLines(routeUrl, payload, renderCoreProjectEnsureLines(payload));
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleSpawnText) {
+      return this.lifecycleSpawnTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleStopText) {
+      return this.lifecycleStopTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleKillText) {
+      return this.lifecycleKillTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleForkText) {
+      return this.lifecycleForkTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.daemonStatusText) {
@@ -1073,7 +1331,12 @@ export class AimuxDaemon {
     const url = new URL(req.url ?? "/", getDaemonBaseUrl());
     const body =
       req.method === "POST" && url.pathname !== CORE_API_ROUTES.restartText ? await readJson(req) : undefined;
-    const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
+    const result = await this.routeRequest(
+      req.method ?? "GET",
+      `${url.pathname}${url.search}`,
+      body,
+      requestHeaders(req),
+    );
     send(res, result.status, result.body, result.contentType);
   }
 }
