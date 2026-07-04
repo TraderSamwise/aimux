@@ -430,7 +430,7 @@ export class AimuxDaemon {
       ensureDaemonRunning: async () => this.currentDaemonInfo(issuedAt),
       ensureProjectService: (root) => this.ensureProject(root),
       stopProjectService: (root) => this.stopProject(root),
-      isAimuxProjectServiceProcess: () => false,
+      isAimuxProjectServiceProcess,
     });
     return {
       restart,
