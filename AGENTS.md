@@ -18,6 +18,9 @@ Agents inside aimux coordinate through aimux task, handoff, and thread commands 
 ## Runtime Architecture
 
 Aimux separates local execution from the shared control plane.
+The architecture north star, process model, and migration acceptance criteria are
+documented in `docs/core-sidecar-north-star.md`; treat that document as the
+ruler for API-first and long-lived-sidecar refactors.
 
 - The global daemon owns project discovery, project activation, and supervision of per-project services.
 - The per-project service (`src/metadata-server.ts`) is the single writer/authority for shared project control-plane state.
