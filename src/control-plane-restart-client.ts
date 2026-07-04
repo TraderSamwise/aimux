@@ -1,5 +1,7 @@
 import { requestCoreCommand } from "./core-command-client.js";
 import { CORE_COMMAND_NAMES } from "./core-command-contract.js";
+import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
+import { stopDaemonInfo } from "./daemon-supervisor.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane, type RuntimeRestartResult } from "./runtime-restart.js";
 
 export interface CliControlPlaneRestartResult {
@@ -14,6 +16,8 @@ function needsLocalBootstrap(error: unknown): boolean {
 }
 
 export async function restartControlPlaneFromCli(projectRoot?: string): Promise<CliControlPlaneRestartResult> {
+  const daemonBeforeRequest = loadDaemonInfo();
+  const daemonStateBeforeRequest = loadDaemonState();
   try {
     const response = await requestCoreCommand(CORE_COMMAND_NAMES.restart, projectRoot ? { projectRoot } : undefined);
     return {
@@ -23,7 +27,10 @@ export async function restartControlPlaneFromCli(projectRoot?: string): Promise<
     };
   } catch (error) {
     if (!needsLocalBootstrap(error)) throw error;
-    const restart = await restartAimuxControlPlane({ projectRoot });
+    const restart = await restartAimuxControlPlane({
+      projectRoot,
+      stopDaemon: daemonBeforeRequest ? () => stopDaemonInfo(daemonBeforeRequest, daemonStateBeforeRequest) : undefined,
+    });
     return {
       restart,
       text: renderRuntimeRestartResult(restart),

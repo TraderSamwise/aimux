@@ -3,9 +3,21 @@ import { CORE_COMMAND_NAMES } from "./core-command-contract.js";
 import type { RuntimeRestartResult } from "./runtime-restart.js";
 
 const mocks = vi.hoisted(() => ({
+  loadDaemonInfo: vi.fn(),
+  loadDaemonState: vi.fn(),
   requestCoreCommand: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
   renderRuntimeRestartResult: vi.fn(),
+  stopDaemonInfo: vi.fn(),
+}));
+
+vi.mock("./daemon-state.js", () => ({
+  loadDaemonInfo: mocks.loadDaemonInfo,
+  loadDaemonState: mocks.loadDaemonState,
+}));
+
+vi.mock("./daemon-supervisor.js", () => ({
+  stopDaemonInfo: mocks.stopDaemonInfo,
 }));
 
 vi.mock("./core-command-client.js", () => ({
@@ -46,6 +58,15 @@ describe("restartControlPlaneFromCli", () => {
     mocks.requestCoreCommand.mockReset();
     mocks.restartAimuxControlPlane.mockReset();
     mocks.renderRuntimeRestartResult.mockReset();
+    mocks.loadDaemonInfo.mockReset();
+    mocks.loadDaemonState.mockReset();
+    mocks.stopDaemonInfo.mockReset();
+    mocks.loadDaemonInfo.mockReturnValue(null);
+    mocks.loadDaemonState.mockReturnValue({
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      projects: {},
+    });
   });
 
   it("delegates normal restart work to the daemon core command", async () => {
@@ -91,7 +112,47 @@ describe("restartControlPlaneFromCli", () => {
     const result = await restartControlPlaneFromCli("/repo");
 
     expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: "/repo" });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: "/repo", stopDaemon: undefined });
+  });
+
+  it("preserves stale daemon info for local bootstrap repair", async () => {
+    const restart = restartResult();
+    const daemon = {
+      pid: 111,
+      port: 43190,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const state = {
+      version: 1 as const,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      projects: {
+        alpha: {
+          projectId: "alpha",
+          projectRoot: "/repo",
+          pid: 222,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    };
+    mocks.loadDaemonInfo.mockReturnValueOnce(daemon);
+    mocks.loadDaemonState.mockReturnValueOnce(state);
+    mocks.requestCoreCommand.mockRejectedValueOnce(
+      new Error("stored daemon health response does not match this Aimux build"),
+    );
+    mocks.restartAimuxControlPlane.mockImplementationOnce(async (options: { stopDaemon?: () => Promise<unknown> }) => {
+      expect(options.stopDaemon).toEqual(expect.any(Function));
+      await options.stopDaemon?.();
+      return restart;
+    });
+    mocks.stopDaemonInfo.mockResolvedValueOnce({ ...daemon, stoppedProjectServices: [state.projects.alpha] });
+    mocks.renderRuntimeRestartResult.mockReturnValueOnce("local text");
+
+    const result = await restartControlPlaneFromCli("/repo");
+
+    expect(result.source).toBe("local-bootstrap");
+    expect(mocks.stopDaemonInfo).toHaveBeenCalledWith(daemon, state);
   });
 
   it("does not mask non-bootstrap daemon errors", async () => {

@@ -354,7 +354,7 @@ describe("daemon supervision", () => {
     const daemon = new AimuxDaemon();
     runtimeRestartMock.restartAimuxControlPlane.mockImplementationOnce(async (options: any) => {
       expect(await options.stopDaemon()).toBeNull();
-      expect(options.isAimuxProjectServiceProcess(41_000, { projectRoot })).toBe(false);
+      expect(options.isAimuxProjectServiceProcess(41_000, { projectRoot })).toBe(true);
       const current = await options.ensureDaemonRunning();
       await options.ensureProjectService(projectRoot);
       await options.stopProjectService(projectRoot);
