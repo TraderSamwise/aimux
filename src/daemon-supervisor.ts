@@ -169,10 +169,11 @@ async function terminateDaemonOnDefaultPort(pid: number): Promise<void> {
   await waitForPidExit(pid, 2_000);
 }
 
-export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<StoppedDaemonInfo | null> {
-  const info = loadDaemonInfo();
-  if (!info) return null;
-  const state = loadDaemonState();
+export async function stopDaemonInfo(
+  info: AimuxDaemonInfo,
+  state = loadDaemonState(),
+  signal: NodeJS.Signals = "SIGTERM",
+): Promise<StoppedDaemonInfo> {
   const projectServiceStates = Object.values(state.projects);
   log.info("stopping daemon", "daemon", {
     pid: info.pid,
@@ -204,6 +205,12 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<St
   });
   clearDaemonInfo();
   return { ...info, stoppedProjectServices };
+}
+
+export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<StoppedDaemonInfo | null> {
+  const info = loadDaemonInfo();
+  if (!info) return null;
+  return stopDaemonInfo(info, loadDaemonState(), signal);
 }
 
 export async function ensureDaemonRunning(options: EnsureDaemonRunningOptions = {}): Promise<AimuxDaemonInfo> {

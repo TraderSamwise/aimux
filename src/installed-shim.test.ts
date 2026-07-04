@@ -19,6 +19,7 @@ function makeFixture() {
   writeFileSync(join(aimuxRoot, "dist", "launcher-bin.js"), "");
 
   const healthFile = join(root, "health.json");
+  const restartFile = join(root, "restart.txt");
   const daemonInfoPath = join(home, "daemon", "daemon.json");
   const nodeLog = join(root, "node.log");
   const curlPath = join(bin, "curl");
@@ -28,8 +29,40 @@ function makeFixture() {
     curlPath,
     `#!/usr/bin/env sh
 set -eu
-[ -f "$HEALTH_FILE" ] || exit 22
-cat "$HEALTH_FILE"
+url=""
+output_file=""
+write_status=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift
+      output_file="$1"
+      ;;
+    -w)
+      shift
+      write_status="$1"
+      ;;
+    http://*)
+      url="$1"
+      ;;
+  esac
+  shift
+done
+case "$url" in
+  */core/restart-text)
+    [ -f "$RESTART_FILE" ] || exit 22
+    if [ -n "$output_file" ]; then
+      cat "$RESTART_FILE" > "$output_file"
+    else
+      cat "$RESTART_FILE"
+    fi
+    [ -n "$write_status" ] && printf '%s' "\${RESTART_STATUS:-200}"
+    ;;
+  *)
+    [ -f "$HEALTH_FILE" ] || exit 22
+    cat "$HEALTH_FILE"
+    ;;
+esac
 `,
   );
   writeFileSync(
@@ -50,6 +83,7 @@ exit "\${NODE_EXIT:-7}"
     AIMUX_HOME: home,
     AIMUX_DAEMON_PORT: "45678",
     HEALTH_FILE: healthFile,
+    RESTART_FILE: restartFile,
     NODE_LOG: nodeLog,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
   };
@@ -59,7 +93,7 @@ exit "\${NODE_EXIT:-7}"
       env: { ...env, ...extraEnv },
     });
 
-  return { aimuxRoot, daemonInfoPath, healthFile, nodeLog, run };
+  return { aimuxRoot, daemonInfoPath, healthFile, restartFile, nodeLog, run };
 }
 
 function health(buildStamp: string, pid = 123, port = 45678): string {
@@ -118,13 +152,53 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
   });
 
-  it("falls back to the Node launcher for non-fast-path commands", () => {
+  it("serves restart from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.restartFile, "Aimux Restart\n  failures: 0\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["restart"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Aimux Restart\n  failures: 0\n");
+    expect(result.stderr).toBe("");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("returns restart failures from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.restartFile, "Aimux Restart\n  failures: 1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["restart"], { RESTART_STATUS: "500" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("Aimux Restart\n  failures: 1\n");
+    expect(result.stderr).toBe("");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for restart when the daemon build is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.restartFile, "Aimux Restart\n  failures: 0\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["restart"], { NODE_EXIT: "19" });
 
     expect(result.status).toBe(19);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
+  });
+
+  it("falls back to the Node launcher for non-fast-path commands", () => {
+    const fixture = makeFixture();
+
+    const result = fixture.run(["doctor"], { NODE_EXIT: "19" });
+
+    expect(result.status).toBe(19);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js doctor\n`);
   });
 
   it("leaves daemon startup to the Node supervisor", () => {

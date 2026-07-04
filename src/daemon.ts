@@ -18,8 +18,10 @@ import {
   type CoreCommandEnvelope,
   type CoreCommandName,
   type CoreCommandResponse,
+  type CoreRestartResult,
 } from "./core-command-contract.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 import { CoreProjectActor } from "./core-project-actor.js";
 import {
@@ -59,6 +61,12 @@ type ProjectsRouteProject = ReturnType<typeof listRegisteredDesktopProjects>[num
   serviceEndpoint: ReturnType<typeof loadMetadataEndpointByProjectId>;
 };
 
+interface DaemonRouteResponse {
+  status: number;
+  body: unknown;
+  contentType?: string;
+}
+
 async function readJson(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -68,11 +76,11 @@ async function readJson(req: IncomingMessage): Promise<any> {
   return body ? JSON.parse(body) : {};
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(res: ServerResponse, status: number, body: unknown, contentType = "application/json"): void {
   if (res.headersSent || res.writableEnded) return;
-  const payload = JSON.stringify(body);
+  const payload = contentType.startsWith("text/") ? String(body) : JSON.stringify(body);
   res.statusCode = status;
-  res.setHeader("content-type", "application/json");
+  res.setHeader("content-type", contentType);
   res.setHeader("content-length", Buffer.byteLength(payload));
   res.setHeader("connection", "close");
   res.end(payload);
@@ -388,6 +396,50 @@ export class AimuxDaemon {
     return { ok: true, projectRoot: payload.projectRoot };
   }
 
+  private optionalProjectRoot(
+    id: string,
+    command: CoreCommandName,
+    payload: { projectRoot?: unknown } | undefined,
+  ): { ok: true; projectRoot?: string } | { ok: false; response: { status: number; body: CoreCommandResponse } } {
+    if (payload?.projectRoot === undefined) return { ok: true };
+    if (typeof payload.projectRoot !== "string" || !payload.projectRoot.trim()) {
+      return {
+        ok: false,
+        response: {
+          status: 400,
+          body: { ok: false, id, command, error: "projectRoot must be a non-empty string when provided" },
+        },
+      };
+    }
+    return { ok: true, projectRoot: pathResolve(payload.projectRoot) };
+  }
+
+  private currentDaemonInfo(issuedAt: string): AimuxDaemonInfo {
+    const daemonInfo = loadDaemonInfo();
+    return {
+      pid: process.pid,
+      port: getDaemonPort(),
+      startedAt: daemonInfo?.startedAt ?? issuedAt,
+      updatedAt: daemonInfo?.updatedAt ?? issuedAt,
+    };
+  }
+
+  private async restartControlPlane(issuedAt: string, projectRoot?: string): Promise<CoreRestartResult> {
+    const restart = await restartAimuxControlPlane({
+      projectRoot,
+      stopDaemon: async () => null,
+      ensureDaemonRunning: async () => this.currentDaemonInfo(issuedAt),
+      ensureProjectService: (root) => this.ensureProject(root),
+      stopProjectService: (root) => this.stopProject(root),
+      isAimuxProjectServiceProcess,
+      retainDaemon: true,
+    });
+    return {
+      restart,
+      text: renderRuntimeRestartResult(restart),
+    };
+  }
+
   private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
     const envelope = body as CoreCommandEnvelope | undefined;
     const id =
@@ -481,6 +533,20 @@ export class AimuxDaemon {
           },
         };
       }
+      case CORE_COMMAND_NAMES.restart: {
+        const restartProjectRoot = this.optionalProjectRoot(id, command, payload);
+        if (!restartProjectRoot.ok) return restartProjectRoot.response;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: await this.restartControlPlane(issuedAt, restartProjectRoot.projectRoot),
+          },
+        };
+      }
       case CORE_COMMAND_NAMES.relayStatus:
         return {
           status: 200,
@@ -506,7 +572,7 @@ export class AimuxDaemon {
     path: string,
     body?: unknown,
     headers?: Record<string, string>,
-  ): Promise<{ status: number; body: unknown }> {
+  ): Promise<DaemonRouteResponse> {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
@@ -531,6 +597,24 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.commands) {
       return this.routeCoreCommand(body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {
+      const issuedAt = new Date().toISOString();
+      try {
+        const result = await this.restartControlPlane(issuedAt);
+        return {
+          status: result.restart.summary.failures > 0 ? 500 : 200,
+          body: `${result.text}\n`,
+          contentType: "text/plain; charset=utf-8",
+        };
+      } catch (error) {
+        return {
+          status: 500,
+          body: `${error instanceof Error ? error.message : String(error)}\n`,
+          contentType: "text/plain; charset=utf-8",
+        };
+      }
     }
 
     if (method === "GET" && pathname === "/relay/status") {
@@ -654,8 +738,9 @@ export class AimuxDaemon {
     }
 
     const url = new URL(req.url ?? "/", getDaemonBaseUrl());
-    const body = req.method === "POST" ? await readJson(req) : undefined;
+    const body =
+      req.method === "POST" && url.pathname !== CORE_API_ROUTES.restartText ? await readJson(req) : undefined;
     const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
-    send(res, result.status, result.body);
+    send(res, result.status, result.body, result.contentType);
   }
 }
