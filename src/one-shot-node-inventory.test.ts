@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const cliBootstrapInventory = [
   { id: "bin-shim", path: "bin/aimux", pattern: /node/ },
-  { id: "release-shim", path: "scripts/install.sh", pattern: /AIMUX_NODE_BIN[\s\S]*dist\/main\.js/ },
+  { id: "release-shim", path: "scripts/install.sh", pattern: /AIMUX_NODE_BIN[\s\S]*dist\/launcher-bin\.js/ },
 ] as const;
 
 const scanRoots = ["bin", "scripts", "src"] as const;
