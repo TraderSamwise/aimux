@@ -39,6 +39,7 @@ const processInspectionPatterns = [
 ] as const;
 
 const allowedRuntimePatternMatches = new Set<string>();
+const allowedProcessExecPathFiles = new Set(["src/cli-launcher.ts"]);
 const allowedProcessInspectionFiles = new Set(["src/process-inspector.ts"]);
 const allowedCommandArgMatchFiles = new Set(["src/process-args.ts", "src/process-inspector.ts"]);
 const allowedRetiredMainEntrypoints = [
@@ -146,6 +147,9 @@ describe("one-shot Node runtime inventory", () => {
       }
       if (text.includes("getAimuxCliLaunchCommand")) {
         violations.push(`${file}:generic-cli-launch-command`);
+      }
+      if (text.includes("process.execPath") && !allowedProcessExecPathFiles.has(file)) {
+        violations.push(`${file}:process.execPath`);
       }
       for (const contract of launchContractUsage) {
         if (text.includes(contract.name) && !contract.allowedFiles.has(file)) {
