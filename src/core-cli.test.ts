@@ -363,6 +363,25 @@ describe("runCoreCli", () => {
     });
   });
 
+  it("renders relay refresh failure without calling the login failed", async () => {
+    mocks.requestCoreCommand.mockImplementation(async (command: CoreCommandName) => {
+      if (command === CORE_COMMAND_NAMES.relayEnable) throw new Error("relay refused");
+      throw new Error(`unexpected command ${command}`);
+    });
+
+    const result = await run(["login"]);
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: [
+        "",
+        "✓ Logged in as user-1",
+        "Remote access credentials were saved, but relay is disconnected.",
+        "Last error: relay refused",
+      ],
+    });
+  });
+
   it("runs security unlock through the core fallback", async () => {
     const result = await run(["security", "unlock"]);
 
