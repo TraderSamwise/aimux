@@ -62,6 +62,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+printf 'URL=%s\n' "$url" >> "$CURL_LOG"
   case "$url" in
   */core/login-start-text*|*/core/security-unlock-start-text*)
     [ -f "$AUTH_START_FILE" ] || exit 22
@@ -636,15 +637,25 @@ describe("installed aimux shim", () => {
         "--participants",
         "claude-1,codex-1",
         "--project=/repo",
+        "--json",
       ]).stdout,
     ).toBe("thread thread-1\nstatus waiting\n");
     expect(
-      fixture.run(["thread", "send", "thread-1", "ping please", "--from", "user", "--to=claude-1", "--project=/repo"])
-        .stdout,
+      fixture.run([
+        "thread",
+        "send",
+        "thread-1",
+        "ping please",
+        "--from",
+        "user",
+        "--to=claude-1",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
     ).toBe("thread thread-1\nstatus waiting\n");
-    expect(fixture.run(["thread", "mark-seen", "thread-1", "--session", "user", "--project=/repo"]).stdout).toBe(
-      "thread thread-1\nstatus waiting\n",
-    );
+    expect(
+      fixture.run(["thread", "mark-seen", "thread-1", "--session", "user", "--project=/repo", "--json"]).stdout,
+    ).toBe("thread thread-1\nstatus waiting\n");
     expect(
       fixture.run([
         "thread",
@@ -655,6 +666,7 @@ describe("installed aimux shim", () => {
         "--owner=user",
         "--waiting-on=claude-1",
         "--project=/repo",
+        "--json",
       ]).stdout,
     ).toBe("thread thread-1\nstatus waiting\n");
     expect(
@@ -668,6 +680,7 @@ describe("installed aimux shim", () => {
         "--worktree=feature",
         "--title=Ask",
         "--project=/repo",
+        "--json",
       ]).stdout,
     ).toBe("thread thread-1\nstatus waiting\n");
 
@@ -680,7 +693,33 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("body=ping please\n");
     expect(curlLog).toContain("body=please help\n");
     expect(curlLog).toContain("waitingOn=claude-1\n");
+    expect(curlLog).toContain("/core/thread/open-text?json=1");
+    expect(curlLog).toContain("/core/thread/send-text?json=1");
+    expect(curlLog).toContain("/core/thread/mark-seen-text?json=1");
+    expect(curlLog).toContain("/core/thread/status-text?json=1");
+    expect(curlLog).toContain("/core/message/send-text?json=1");
     expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for invalid thread and message fast-path arguments", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "thread thread-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const thread = fixture.run(["thread", "open", "--title", "--from", "user", "--participants", "claude-1"], {
+      NODE_EXIT: "47",
+    });
+    const message = fixture.run(["message", "send", "body", "--to="], { NODE_EXIT: "48" });
+
+    expect(thread.status).toBe(47);
+    expect(message.status).toBe(48);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js thread open --title --from user --participants claude-1\n`,
+    );
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js message send body --to=\n`,
+    );
   });
 
   it("falls back to the Node launcher for thread and message commands when daemon health is stale", () => {
