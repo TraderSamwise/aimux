@@ -7,6 +7,7 @@ import { requestJson } from "./http-client.js";
 import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
+import { getProjectIdFor } from "./paths.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -151,7 +152,7 @@ function staleDaemonHealth(pid: number, port = 43190) {
 }
 
 function currentProjectServiceArgs(root: string): string {
-  return `node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id proj-${basename(
+  return `node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id ${getProjectIdFor(
     root,
   )} --project-root ${root}`;
 }

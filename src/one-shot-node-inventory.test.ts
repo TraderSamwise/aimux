@@ -11,6 +11,7 @@ const scanRoots = ["bin", "scripts", "src"] as const;
 const skippedDirectories = new Set([".git", "coverage", "dist", "dist-ui", "node_modules", "release"]);
 const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/];
 const skippedDeclarationFiles = [/\.d\.ts$/];
+// Keep split so this test file does not match its own retired-entrypoint scan.
 const retiredMainSlashPath = "dist/" + "main.js";
 const retiredMainPatterns = [
   { id: "slash-path", pattern: new RegExp(retiredMainSlashPath.replace("/", "\\/")) },
