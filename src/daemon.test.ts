@@ -576,18 +576,18 @@ describe("daemon supervision", () => {
     writeMetadataEndpointFor(process.pid);
     vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
       if (url.endsWith(PROJECT_API_ROUTES.agents.spawn)) {
-        expect(opts.body).toEqual({ tool: "claude", worktreePath: "/tmp/work", open: false });
+        expect(opts.body).toEqual({ tool: "claude", worktreePath: join(tmpRoot, "work"), open: false });
         return { status: 200, json: { ok: true, sessionId: "claude-1" } };
       }
       return { status: 200, json: projectServiceHealth(process.pid) };
     });
 
-    const response = await daemon.routeRequest(
-      "POST",
-      `${CORE_API_ROUTES.lifecycleSpawnText}?project=${encodeURIComponent(projectRoot)}&tool=claude&worktreePath=${encodeURIComponent(
-        "/tmp/work",
-      )}&open=0`,
-    );
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.lifecycleSpawnText, {
+      project: projectRoot,
+      tool: "claude",
+      worktreePath: "../work",
+      open: "0",
+    });
 
     expect(response.status).toBe(200);
     expect(response.body).toBe("spawned claude-1\n");
@@ -691,7 +691,7 @@ describe("daemon supervision", () => {
     );
 
     expect(response.status).toBe(404);
-    expect(response.body).toBe("session not found\n");
+    expect(response.body).toBe("Error: session not found\n");
   });
 
   it("preserves daemon status JSON shape for the installed shell shim", async () => {

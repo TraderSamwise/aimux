@@ -424,7 +424,7 @@ describe("installed aimux shim", () => {
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(
-      ["spawn", "--tool", "claude", "--worktree", worktreeDir, "--no-open", "--json"],
+      ["spawn", "--tool", "claude", "--worktree", "../work", "--no-open", "--json"],
       {},
       { cwd: projectDir },
     );
@@ -433,7 +433,7 @@ describe("installed aimux shim", () => {
     expect(result.stdout).toBe("spawned claude-1\n");
     expect(readFileSync(fixture.curlLog, "utf8")).toContain(`project=${realpathSync(projectDir)}\n`);
     expect(readFileSync(fixture.curlLog, "utf8")).toContain("tool=claude\n");
-    expect(readFileSync(fixture.curlLog, "utf8")).toContain(`worktreePath=${realpathSync(worktreeDir)}\n`);
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("worktreePath=../work\n");
     expect(readFileSync(fixture.curlLog, "utf8")).toContain("open=0\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
@@ -484,14 +484,14 @@ describe("installed aimux shim", () => {
   it("returns lifecycle daemon errors without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.textRouteFile, "session not found\n");
+    writeFileSync(fixture.textRouteFile, "Error: session not found\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["stop", "missing"], { TEXT_ROUTE_STATUS: "404" });
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("session not found\n");
+    expect(result.stderr).toBe("Error: session not found\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
