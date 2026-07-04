@@ -92,9 +92,39 @@ aimux_try_restart() {
   esac
 }
 
+aimux_curl_text_route() {
+  path="$1"
+  port="$(aimux_matching_daemon_port)" || return 1
+  curl -fsS --max-time 5 "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+}
+
 case "${1:-} ${2:-}" in
   "daemon ensure")
     if [ "$#" -eq 2 ] && aimux_try_daemon_ensure; then
+      exit 0
+    fi
+    ;;
+  "daemon status")
+    if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-status-text"; then
+      exit 0
+    fi
+    if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-status-text?json=1"; then
+      exit 0
+    fi
+    ;;
+  "daemon projects")
+    if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-projects-text"; then
+      exit 0
+    fi
+    if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-projects-text?json=1"; then
+      exit 0
+    fi
+    ;;
+  "projects list")
+    if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/projects-list-text"; then
+      exit 0
+    fi
+    if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/projects-list-text?json=1"; then
       exit 0
     fi
     ;;
