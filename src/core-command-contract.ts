@@ -9,6 +9,9 @@ export const CORE_API_ROUTES = {
   hostStatusText: "/core/host-status-text",
   projectEnsureText: "/core/project-ensure-text",
   projectsListText: "/core/projects-list-text",
+  remoteDisableText: "/core/remote-disable-text",
+  remoteEnableText: "/core/remote-enable-text",
+  remoteStatusText: "/core/remote-status-text",
   restartText: "/core/restart-text",
 } as const;
 

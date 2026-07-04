@@ -20,6 +20,11 @@ export interface CoreProjectEnsureTextPayload {
   project: CoreProjectServiceState;
 }
 
+export interface CoreRemoteStatusTextPayload {
+  credentials: { relayUrl: string; remoteEnabled: boolean } | null;
+  relay: CoreRelaySnapshot;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -71,4 +76,31 @@ export function renderCoreProjectsListLines(projects: CoreStatusProject[]): stri
     const liveBadge = project.serviceAlive ? "live" : "idle";
     return `${project.name}  ${liveBadge}  ${project.path}`;
   });
+}
+
+function relayLastError(relay: CoreRelaySnapshot): string | null {
+  return "lastError" in relay ? relay.lastError : null;
+}
+
+export function renderCoreRemoteStatusLines(payload: CoreRemoteStatusTextPayload): string[] {
+  const { credentials, relay } = payload;
+  if (!credentials) return ["Not logged in. Run `aimux login` to enable remote access."];
+  const lines = [
+    `Remote access: ${credentials.remoteEnabled ? "enabled" : "disabled"}`,
+    `Relay: ${credentials.relayUrl}`,
+    `Connection: ${relay.status ?? "unknown"}`,
+  ];
+  const lastError = relayLastError(relay);
+  if (lastError) lines.push(`Last error: ${lastError}`);
+  return lines;
+}
+
+export function renderCoreRemoteEnableLines(relay: CoreRelaySnapshot): string[] {
+  return [`✓ Remote access enabled (connection: ${relay.status ?? "unknown"})`];
+}
+
+export function renderCoreRemoteDisableLines(daemonDisconnected: boolean): string[] {
+  return [
+    daemonDisconnected ? "✓ Remote access disabled. Daemon disconnected from relay." : "✓ Remote access disabled.",
+  ];
 }
