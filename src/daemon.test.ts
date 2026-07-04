@@ -995,20 +995,112 @@ describe("daemon supervision", () => {
     expect(loginFlowMock).not.toHaveBeenCalled();
   });
 
-  it("rejects lifecycle text routes from relay actors", async () => {
+  it("rejects core text routes from relay actors", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     const headers = { "x-aimux-actor-role": "owner", "x-aimux-actor-user-id": "user_123" };
 
-    const response = await daemon.routeRequest(
+    const spawn = await daemon.routeRequest(
       "POST",
       `${CORE_API_ROUTES.lifecycleSpawnText}?project=${encodeURIComponent(projectRoot)}&tool=claude`,
       undefined,
       headers,
     );
+    const worktrees = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}`,
+      undefined,
+      headers,
+    );
 
-    expect(response).toMatchObject({ status: 403, body: "lifecycle text routes are loopback-only\n" });
+    expect(spawn).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
+    expect(worktrees).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(coreActorMock.starts).not.toHaveBeenCalled();
+  });
+
+  it("serves worktree text routes through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown } = {}) => {
+      if (url.endsWith(PROJECT_API_ROUTES.worktrees)) {
+        return {
+          status: 200,
+          json: { ok: true, worktrees: [{ name: "main", branch: "master", path: projectRoot }] },
+        };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.create)) {
+        expect(opts.body).toEqual({ name: "feature" });
+        return { status: 200, json: { ok: true, path: `${projectRoot}/.aimux/worktrees/feature`, status: "created" } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.remove)) {
+        expect(opts.body).toEqual({ path: `${projectRoot}/relative` });
+        return { status: 200, json: { ok: true, path: `${projectRoot}/relative`, status: "removed" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const listed = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const created = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.worktreeCreateText}?project=${encodeURIComponent(projectRoot)}&name=feature`,
+    );
+    const removed = await daemon.routeRequest("POST", CORE_API_ROUTES.worktreeRemoveText, {
+      project: projectRoot,
+      path: "relative",
+    });
+
+    expect(listed.body).toContain("main");
+    expect(created.body).toBe(`Created worktree "feature" at ${projectRoot}/.aimux/worktrees/feature\n`);
+    expect(removed.body).toBe(`removed ${projectRoot}/relative\n`);
+  });
+
+  it("serves graveyard text routes through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown } = {}) => {
+      if (url.endsWith(PROJECT_API_ROUTES.graveyard)) {
+        return { status: 200, json: { ok: true, entries: [{ id: "claude-1", tool: "claude" }], worktrees: [] } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.resurrectAgent)) {
+        expect(opts.body).toEqual({ sessionId: "claude-1" });
+        return { status: 200, json: { ok: true, sessionId: "claude-1", status: "offline" } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.cleanup)) {
+        expect(opts.body).toEqual({ dryRun: true });
+        return {
+          status: 200,
+          json: {
+            ok: true,
+            dryRun: true,
+            plan: { enabled: true, retentionDays: 30 },
+            results: [{ kind: "agent", id: "claude-old", status: "dry-run" }],
+          },
+        };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const listed = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.graveyardListText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const resurrected = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.graveyardResurrectText}?project=${encodeURIComponent(projectRoot)}&sessionId=claude-1`,
+    );
+    const cleanup = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.graveyardCleanupText}?project=${encodeURIComponent(projectRoot)}&dryRun=1`,
+    );
+
+    expect(listed.body).toContain("claude-1");
+    expect(resurrected.body).toBe("resurrected claude-1\n");
+    expect(cleanup.body).toContain("Graveyard cleanup would remove 1 item(s); 0 failed.");
   });
 
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
@@ -2266,7 +2358,7 @@ describe("daemon routing (relay + proxy)", () => {
     }
   });
 
-  it("rejects browser-origin lifecycle text route posts", async () => {
+  it("rejects browser-origin core text route requests", async () => {
     const originalPort = process.env.AIMUX_DAEMON_PORT;
     const port = "49194";
     process.env.AIMUX_DAEMON_PORT = port;
@@ -2286,7 +2378,15 @@ describe("daemon routing (relay + proxy)", () => {
       });
 
       expect(res.status).toBe(403);
-      expect(await res.text()).toBe("lifecycle text routes are cli-only\n");
+      expect(await res.text()).toBe("core text routes are cli-only\n");
+
+      const getRes = await fetch(
+        `http://127.0.0.1:${port}${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}`,
+        { headers: { Origin: "http://localhost:8081" } },
+      );
+
+      expect(getRes.status).toBe(403);
+      expect(await getRes.text()).toBe("core text routes are cli-only\n");
       expect(coreActorMock.starts).not.toHaveBeenCalled();
     } finally {
       daemon.stop();
