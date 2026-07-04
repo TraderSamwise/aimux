@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { childProcessImportPattern } from "./source-inventory-test-utils.js";
 
 const cliBootstrapInventory = [
   { id: "bin-shim", path: "bin/aimux", pattern: /node/ },
@@ -26,7 +27,7 @@ const runtimeNodeLaunchPatterns = [
   { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-\s*(?:[^\n<]*\s)?<</ },
   { id: "node-child-process-file-command", pattern: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*["'`]node["'`]/ },
   { id: "node-child-process-shell-command", pattern: /\b(?:exec|execSync)\(\s*["'`]node\b/ },
-  { id: "node-child-process-fork-command", pattern: /\bfork\(\s*["'`]/ },
+  { id: "node-child-process-fork-command", pattern: /\b(?:[A-Za-z_$][\w$]*\.)?fork\(/ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
@@ -180,8 +181,6 @@ describe("one-shot Node runtime inventory", () => {
   });
 
   it("keeps child process launch sites explicit", () => {
-    const childProcessImportPattern =
-      /(?:from\s+["'](?:node:)?child_process["']|import\(\s*["'`](?:node:)?child_process["'`]\s*\)|require\(\s*["'`](?:node:)?child_process["'`]\s*\))/;
     const violations = scanRoots
       .flatMap((root) => listSourceFiles(root))
       .filter((file) => childProcessImportPattern.test(readFileSync(join(process.cwd(), file), "utf8")))
@@ -206,6 +205,8 @@ describe("one-shot Node runtime inventory", () => {
     expect(fileCommand?.pattern.test('execFileSync("node", ["script.js"])')).toBe(true);
     expect(shellCommand?.pattern.test('execSync("node scripts/tool.js")')).toBe(true);
     expect(forkCommand?.pattern.test('fork("scripts/tool.js")')).toBe(true);
+    expect(forkCommand?.pattern.test("fork(scriptPath)")).toBe(true);
+    expect(forkCommand?.pattern.test("cp.fork(join(root, 'script.js'))")).toBe(true);
   });
 
   it("keeps the retired main entrypoint quarantined", () => {

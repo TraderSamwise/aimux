@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { childProcessImportPattern } from "./source-inventory-test-utils.js";
 
 function source(path: string): string {
   return readFileSync(new URL(path, import.meta.url), "utf8");
@@ -84,11 +85,9 @@ describe("core sidecar module boundary", () => {
 
   it("keeps routine multiplexer client screens out of child process launches", () => {
     const allowed = new Set(["multiplexer/dashboard-interaction.ts", "multiplexer/persistence-methods.ts"]);
-    const childProcessImport =
-      /(?:from\s+["'](?:node:)?child_process["']|import\(\s*["'`](?:node:)?child_process["'`]\s*\)|require\(\s*["'`](?:node:)?child_process["'`]\s*\))/;
     const offenders = listSourceFiles("multiplexer").filter((path) => {
       if (allowed.has(path)) return false;
-      return childProcessImport.test(source(`./${path}`));
+      return childProcessImportPattern.test(source(`./${path}`));
     });
 
     expect(offenders).toEqual([]);
