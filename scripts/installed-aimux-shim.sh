@@ -103,6 +103,9 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 2 ] && aimux_try_daemon_ensure; then
       exit 0
     fi
+    if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-ensure-text?json=1"; then
+      exit 0
+    fi
     ;;
   "daemon status")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-status-text"; then

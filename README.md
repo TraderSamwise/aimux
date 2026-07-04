@@ -145,6 +145,8 @@ The per-project tmux session is the long-lived runtime substrate. Aimux no longe
 ## Architecture
 
 Aimux separates local execution from the shared control plane.
+The target architecture and migration acceptance criteria are tracked in
+[docs/core-sidecar-north-star.md](docs/core-sidecar-north-star.md).
 
 Runtime layers:
 
@@ -476,43 +478,43 @@ Hotkey latency note:
 
 Dashboard hotkeys use the `Ctrl+A` leader prefix:
 
-| Key | Action |
-|---|---|
-| `Ctrl+A c` | Create new agent |
-| `Ctrl+A x` | Stop agent (→ offline) or kill offline agent (→ graveyard) |
-| `Ctrl+A w` | Create new worktree |
-| `Ctrl+A W` | Worktree management |
-| `Ctrl+A v` | Request code review for active agent |
-| `Ctrl+A 1-9` | Focus agent by number from the dashboard |
-| `Ctrl+A d` | Return to dashboard window |
-| `Ctrl+A g` | Project switcher menu for live agents/services |
-| `Ctrl+A m` | Project switcher menu for live agents/services |
-| `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
+| Key             | Action                                                     |
+| --------------- | ---------------------------------------------------------- |
+| `Ctrl+A c`      | Create new agent                                           |
+| `Ctrl+A x`      | Stop agent (→ offline) or kill offline agent (→ graveyard) |
+| `Ctrl+A w`      | Create new worktree                                        |
+| `Ctrl+A W`      | Worktree management                                        |
+| `Ctrl+A v`      | Request code review for active agent                       |
+| `Ctrl+A 1-9`    | Focus agent by number from the dashboard                   |
+| `Ctrl+A d`      | Return to dashboard window                                 |
+| `Ctrl+A g`      | Project switcher menu for live agents/services             |
+| `Ctrl+A m`      | Project switcher menu for live agents/services             |
+| `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard                   |
 
 When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` and `Ctrl+A m` open tmux-native menus whose entries come from the project service fast-control API, then tmux switches the local terminal client into the selected window.
 
 Main dashboard orchestration shortcuts:
 
-| Key | Action |
-|---|---|
-| `S` | Send direct message from the selected agent row |
-| `H` | Send handoff from the selected agent row |
-| `T` | Assign task from the selected agent row |
-| `o` | Jump to the most relevant thread for the selected agent |
+| Key | Action                                                        |
+| --- | ------------------------------------------------------------- |
+| `S` | Send direct message from the selected agent row               |
+| `H` | Send handoff from the selected agent row                      |
+| `T` | Assign task from the selected agent row                       |
+| `o` | Jump to the most relevant thread for the selected agent       |
 | `R` | Open quick reply when that agent has something waiting on you |
 
 Workflow screen shortcuts:
 
-| Key | Action |
-|---|---|
+| Key | Action                                                           |
+| --- | ---------------------------------------------------------------- |
 | `f` | Cycle workflow filters: all / waiting on me / blocked / families |
-| `a` | Accept selected handoff |
-| `c` | Complete selected handoff |
-| `b` | Mark selected thread blocked |
-| `x` | Mark selected thread done |
-| `P` | Approve selected review |
-| `J` | Request changes on selected review |
-| `E` | Reopen selected task chain |
+| `a` | Accept selected handoff                                          |
+| `c` | Complete selected handoff                                        |
+| `b` | Mark selected thread blocked                                     |
+| `x` | Mark selected thread done                                        |
+| `P` | Approve selected review                                          |
+| `J` | Request changes on selected review                               |
+| `E` | Reopen selected task chain                                       |
 
 Recommended tmux mental model:
 
@@ -605,7 +607,7 @@ export default function (api) {
     start() {
       api.metadata.setStatus("codex-abc123", "Watching", "info");
     },
-    stop() {}
+    stop() {},
   };
 }
 ```
@@ -842,17 +844,17 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 }
 ```
 
-| Field | Purpose |
-|---|---|
-| `preambleFlag` | Flag to inject system prompt (e.g. `["--append-system-prompt"]`) |
-| `resumeArgs` | Args to resume a session, with `{sessionId}` placeholder |
-| `resumeByBackendSessionId` | Whether aimux's stored backend id is safe to pass to `resumeArgs` |
-| `resumeFallback` | Non-specific fallback resume args for explicit latest-session flows; targeted dashboard restore must not use these |
-| `sessionIdFlag` | Flag to set session ID at spawn time |
-| `promptPatterns` | Regex patterns for idle/prompt detection in status bar |
-| `turnPatterns` | Regex patterns for extracting conversation turns from output |
-| `compactCommand` | Shell command for LLM-powered history compaction |
-| `instructionsFile` | Optional opt-in file to merge aimux's managed standing instructions into; disabled by default so aimux does not create `AGENTS.md` |
+| Field                            | Purpose                                                                                                                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preambleFlag`                   | Flag to inject system prompt (e.g. `["--append-system-prompt"]`)                                                                                                                |
+| `resumeArgs`                     | Args to resume a session, with `{sessionId}` placeholder                                                                                                                        |
+| `resumeByBackendSessionId`       | Whether aimux's stored backend id is safe to pass to `resumeArgs`                                                                                                               |
+| `resumeFallback`                 | Non-specific fallback resume args for explicit latest-session flows; targeted dashboard restore must not use these                                                              |
+| `sessionIdFlag`                  | Flag to set session ID at spawn time                                                                                                                                            |
+| `promptPatterns`                 | Regex patterns for idle/prompt detection in status bar                                                                                                                          |
+| `turnPatterns`                   | Regex patterns for extracting conversation turns from output                                                                                                                    |
+| `compactCommand`                 | Shell command for LLM-powered history compaction                                                                                                                                |
+| `instructionsFile`               | Optional opt-in file to merge aimux's managed standing instructions into; disabled by default so aimux does not create `AGENTS.md`                                              |
 | `developerInstructionsConfigKey` | Codex config key for model-visible standing instructions, normally `developer_instructions`; set to `null` only when you do not want aimux to inject Codex startup instructions |
 
 Codex startup instructions use `-c developer_instructions=...` when configured. Aimux does not create `AGENTS.md` by default; existing user-authored `AGENTS.md` files are still read by Codex itself. Verify the installed Codex CLI exposes the developer-instructions channel with:
