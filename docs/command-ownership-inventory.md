@@ -36,8 +36,8 @@ Node launcher when a matching daemon is already running:
 | `aimux remote disable`                                  | `CUT`  | daemon | Uses `/core/remote-disable-text`; credential mutation and relay disconnect are daemon-owned.    |
 | `aimux whoami [--json]`                                 | `CUT`  | daemon | Uses `/core/whoami-text`; account JSON never includes credential tokens.                        |
 | `aimux logout`                                          | `CUT`  | daemon | Uses `/core/logout-text`; relay disconnect and credential removal are daemon-owned.             |
-| `aimux login`                                           | `CUT`  | daemon | Uses `/core/login-text`; daemon owns browser auth, credential save, and relay reconnect.        |
-| `aimux security unlock`                                 | `CUT`  | daemon | Uses `/core/security-unlock-text`; daemon owns re-auth and relay reconnect.                     |
+| `aimux login`                                           | `CUT`  | daemon | Uses `/core/login-start-text` + `/core/login-wait-text`; daemon owns browser auth and relay reconnect. |
+| `aimux security unlock`                                 | `CUT`  | daemon | Uses `/core/security-unlock-start-text` + `/core/security-unlock-wait-text`; daemon owns re-auth. |
 
 ## Core-Routable But Not Yet Shim-Fast
 

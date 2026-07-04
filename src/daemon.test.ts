@@ -686,7 +686,8 @@ describe("daemon supervision", () => {
     const { saveCredentials } = await import("./credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
     loginFlowMock.mockImplementation(async (opts: { onMessage?: (line: string) => void }) => {
-      opts.onMessage?.("should stay out of route output");
+      opts.onMessage?.("Opening your browser to sign in...");
+      opts.onMessage?.("  https://aimux.app/cli-auth");
       saveCredentials({
         version: 1,
         relayUrl: "wss://relay.example",
@@ -717,10 +718,11 @@ describe("daemon supervision", () => {
       const response = await daemon.routeRequest("POST", CORE_API_ROUTES.loginText);
 
       expect(response.status).toBe(200);
-      expect(response.body).toBe("\n✓ Logged in as user_123\nRemote access is enabled (connection: connecting).\n");
+      expect(response.body).toBe(
+        "Opening your browser to sign in...\n  https://aimux.app/cli-auth\n\n✓ Logged in as user_123\nRemote access is enabled (connection: connecting).\n",
+      );
       expect(response.body).not.toContain("secret-token");
       expect(loginFlowMock).toHaveBeenCalledWith({
-        webAppUrl: undefined,
         action: undefined,
         onMessage: expect.any(Function),
       });
@@ -760,10 +762,58 @@ describe("daemon supervision", () => {
         "\n✓ Security unlocked for user_123\nRemote access is enabled (connection: connecting).\n",
       );
       expect(loginFlowMock).toHaveBeenCalledWith({
-        webAppUrl: undefined,
         action: "security-unlock",
         onMessage: expect.any(Function),
       });
+    } finally {
+      globalThis.WebSocket = previousWebSocket;
+    }
+  });
+
+  it("starts then waits on a daemon-owned login auth session", async () => {
+    const { saveCredentials } = await import("./credentials.js");
+    const { AimuxDaemon } = await import("./daemon.js");
+    let completeLogin: (() => void) | null = null;
+    loginFlowMock.mockImplementation(
+      (opts: { onMessage?: (line: string) => void }) =>
+        new Promise<{ userId: string }>((resolve) => {
+          opts.onMessage?.("Opening your browser to sign in...");
+          opts.onMessage?.("  https://aimux.app/cli-auth");
+          completeLogin = () => {
+            saveCredentials({
+              version: 1,
+              relayUrl: "wss://relay.example",
+              token: "secret-token",
+              userId: "user_123",
+              createdAt: new Date().toISOString(),
+              remoteEnabled: true,
+            });
+            resolve({ userId: "user_123" });
+          };
+        }),
+    );
+    const previousWebSocket = globalThis.WebSocket;
+    class FakeWebSocket extends EventTarget {
+      close(): void {
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    try {
+      const daemon = new AimuxDaemon();
+
+      const start = await daemon.routeRequest("POST", CORE_API_ROUTES.loginStartText);
+      expect(start.status).toBe(200);
+      expect(String(start.body)).toContain("Opening your browser to sign in...");
+      const sessionId = String(start.body).match(/^auth-session: ([^\n]+)/)?.[1];
+      expect(sessionId).toBeTruthy();
+
+      completeLogin?.();
+      const wait = await daemon.routeRequest("POST", `${CORE_API_ROUTES.loginWaitText}?id=${sessionId}`);
+
+      expect(wait.status).toBe(200);
+      expect(wait.body).toBe("\n✓ Logged in as user_123\nRemote access is enabled (connection: connecting).\n");
+      expect(wait.body).not.toContain("secret-token");
     } finally {
       globalThis.WebSocket = previousWebSocket;
     }

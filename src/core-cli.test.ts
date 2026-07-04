@@ -348,6 +348,21 @@ describe("runCoreCli", () => {
     });
   });
 
+  it("runs login through the core fallback when no daemon is running", async () => {
+    mocks.daemonInfo = null;
+
+    const result = await run(["login"]);
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: ["", "✓ Logged in as user-1", "Remote access is enabled. The daemon will connect on next start."],
+    });
+    expect(mocks.requestCoreCommand).not.toHaveBeenCalledWith(CORE_COMMAND_NAMES.relayEnable, undefined, {
+      ensureDaemon: false,
+      timeoutMs: 1000,
+    });
+  });
+
   it("runs security unlock through the core fallback", async () => {
     const result = await run(["security", "unlock"]);
 
