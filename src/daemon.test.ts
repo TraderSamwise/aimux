@@ -160,7 +160,7 @@ function staleDaemonHealth(pid: number, port = 43190) {
   };
 }
 
-function fakeRestartResult(current: unknown) {
+function fakeRestartResult(current: unknown, failures = 0) {
   return {
     startedAt: "2026-01-01T00:00:00.000Z",
     finishedAt: "2026-01-01T00:00:01.000Z",
@@ -174,7 +174,7 @@ function fakeRestartResult(current: unknown) {
       runtimeRepairs: 0,
       dashboardsReloaded: 0,
       runtimeRebuildRequired: 0,
-      failures: 0,
+      failures,
     },
   };
 }
@@ -382,6 +382,30 @@ describe("daemon supervision", () => {
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
     expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("serves restart text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    runtimeRestartMock.restartAimuxControlPlane.mockResolvedValueOnce(fakeRestartResult({ pid: process.pid }));
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.restartText);
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toBe("Aimux Restart\n  failures: 0\n");
+  });
+
+  it("returns a failing status for restart text when repair fails", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    runtimeRestartMock.restartAimuxControlPlane.mockResolvedValueOnce(fakeRestartResult({ pid: process.pid }, 1));
+    runtimeRestartMock.renderRuntimeRestartResult.mockReturnValueOnce("Aimux Restart\n  failures: 1");
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.restartText);
+
+    expect(response.status).toBe(500);
+    expect(response.body).toBe("Aimux Restart\n  failures: 1\n");
   });
 
   it("clears stale metadata endpoints when core stops a legacy project service", async () => {
