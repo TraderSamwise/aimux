@@ -1,5 +1,5 @@
 import { resolve as pathResolve } from "node:path";
-import { coreCommandArgs, isCoreCliCommand, isValidCoreProjectEnsureArgs } from "./core-cli-routing.js";
+import { coreCommandArgs, isCoreCliCommand, parseCoreProjectEnsureArgs } from "./core-cli-routing.js";
 import { CORE_COMMAND_NAMES, type CoreRelaySnapshot, type CoreStatusProject } from "./core-command-contract.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -25,18 +25,6 @@ function ioFor(io: CoreCliIo): Required<CoreCliIo> {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
-}
-
-function readOption(args: string[], name: string): string | null {
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === name) {
-      const value = args[index + 1] ?? null;
-      return value && !value.startsWith("-") ? value : null;
-    }
-    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
-  }
-  return null;
 }
 
 function resolveProjectRoot(cwd: string): string {
@@ -169,18 +157,14 @@ async function runDaemonProjects(args: string[], io: Required<CoreCliIo>): Promi
 }
 
 async function runDaemonProjectEnsure(args: string[], io: Required<CoreCliIo>): Promise<number> {
-  if (!isValidCoreProjectEnsureArgs(args)) {
+  const parsedArgs = parseCoreProjectEnsureArgs(args);
+  if (!parsedArgs) {
     io.stderr("error: invalid daemon project-ensure arguments");
     return 1;
   }
-  const projectOption = readOption(args, "--project");
-  if (!projectOption) {
-    io.stderr("error: required option '--project <path>' not specified");
-    return 1;
-  }
-  const projectRoot = resolveProjectRoot(pathResolve(projectOption));
+  const projectRoot = resolveProjectRoot(pathResolve(parsedArgs.project));
   const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
-  if (hasFlag(args, "--json")) {
+  if (parsedArgs.json) {
     io.stdout(JSON.stringify({ project: result.project }, null, 2));
     return 0;
   }
