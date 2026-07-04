@@ -390,5 +390,9 @@ describe("runCoreCli", () => {
       stdout: ["", "✓ Security unlocked for user-1", "Remote access is enabled (connection: connected)."],
     });
     expect(mocks.runLoginFlow).toHaveBeenCalledWith({ action: "security-unlock" });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.relayEnable, undefined, {
+      ensureDaemon: false,
+      timeoutMs: 1000,
+    });
   });
 });
