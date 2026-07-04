@@ -100,10 +100,10 @@ describe("one-shot Node runtime inventory", () => {
     expect(packageJson.scripts?.start).toBe("./bin/aimux");
   });
 
-  it("keeps package scripts from invoking local Node tools through node", () => {
+  it("keeps command configs from invoking local Node tools through node", () => {
     const localNodeToolPattern = /\bnode\s+(?:[.][/])?scripts[/]/;
-    const files = ["package.json", "app/package.json"];
-    const violations = files.flatMap((file) => {
+    const packageFiles = ["package.json", "app/package.json"];
+    const scriptViolations = packageFiles.flatMap((file) => {
       const packageJson = JSON.parse(readFileSync(join(process.cwd(), file), "utf8")) as {
         scripts?: Record<string, string>;
       };
@@ -111,10 +111,15 @@ describe("one-shot Node runtime inventory", () => {
         .filter(([, script]) => localNodeToolPattern.test(script))
         .map(([name]) => `${file}:scripts.${name}`);
     });
+    const configFiles = ["app/eas-release.config.json"];
+    const configViolations = configFiles.flatMap((file) => {
+      const text = readFileSync(join(process.cwd(), file), "utf8");
+      return localNodeToolPattern.test(text) ? [`${file}:commands`] : [];
+    });
 
     expect(localNodeToolPattern.test("node scripts/tool.js")).toBe(true);
     expect(localNodeToolPattern.test("node ./scripts/tool.js")).toBe(true);
-    expect(violations).toEqual([]);
+    expect([...scriptViolations, ...configViolations]).toEqual([]);
 
     for (const file of ["scripts/audit-agent-output-parser.mjs", "app/scripts/check-release-env.js"]) {
       expect(readFileSync(join(process.cwd(), file), "utf8"), file).not.toMatch(localNodeToolPattern);
