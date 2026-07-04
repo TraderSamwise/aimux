@@ -83,7 +83,7 @@ done
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     if [ -n "$output_file" ]; then
       cat "$TEXT_ROUTE_FILE" > "$output_file"
@@ -411,6 +411,114 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
       `${fixture.aimuxRoot}/dist/launcher-bin.js daemon project-ensure --project /repo --dry-run\n`,
     );
+  });
+
+  it("serves spawn from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    const worktreeDir = join(fixture.root, "work");
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "spawned claude-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(
+      ["spawn", "--tool", "claude", "--worktree", "../work", "--no-open", "--json"],
+      {},
+      { cwd: projectDir },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("spawned claude-1\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("tool=claude\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("worktreePath=../work\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("open=0\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves stop and kill from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    writeFileSync(fixture.textRouteFile, "stopped claude-1\n");
+    expect(fixture.run(["stop", "claude-1", "--project", "/repo"]).stdout).toBe("stopped claude-1\n");
+
+    writeFileSync(fixture.textRouteFile, "graveyarded claude-1\n");
+    expect(fixture.run(["kill", "claude-1", "--project=/repo", "--json"]).stdout).toBe("graveyarded claude-1\n");
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("project=/repo\n");
+    expect(curlLog).toContain("sessionId=claude-1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves fork from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "forked codex-2\nthread thread-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run([
+      "fork",
+      "claude-1",
+      "--tool",
+      "codex",
+      "--instruction",
+      "continue the fix",
+      "--no-open",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("forked codex-2\nthread thread-1\n");
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("sourceSessionId=claude-1\n");
+    expect(curlLog).toContain("tool=codex\n");
+    expect(curlLog).toContain("instruction=continue the fix\n");
+    expect(curlLog).toContain("open=0\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("returns lifecycle daemon errors without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Error: session not found\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["stop", "missing"], { TEXT_ROUTE_STATUS: "404" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("Error: session not found\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for lifecycle commands when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "spawned claude-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["spawn", "--tool", "claude"], { NODE_EXIT: "41" });
+
+    expect(result.status).toBe(41);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js spawn --tool claude\n`,
+    );
+  });
+
+  it("falls back to the Node launcher for invalid lifecycle arguments", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "stopped claude-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["stop"], { NODE_EXIT: "42" });
+
+    expect(result.status).toBe(42);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js stop\n`);
   });
 
   it("serves project list commands from a matching daemon without launching Node", () => {
