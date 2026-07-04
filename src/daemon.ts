@@ -33,12 +33,19 @@ import {
   renderCoreLifecycleStopLines,
   renderCoreLoginLines,
   renderCoreLogoutLines,
+  renderCoreMessageSendLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
   renderCoreSecurityUnlockLines,
+  renderCoreThreadListLines,
+  renderCoreThreadMarkSeenLines,
+  renderCoreThreadOpenLines,
+  renderCoreThreadSendLines,
+  renderCoreThreadShowLines,
+  renderCoreThreadStatusLines,
   renderCoreGraveyardAgentLines,
   renderCoreGraveyardCleanupLines,
   renderCoreGraveyardLines,
@@ -59,7 +66,13 @@ import {
   type CoreLifecycleKillTextPayload,
   type CoreLifecycleSpawnTextPayload,
   type CoreLifecycleStopTextPayload,
+  type CoreMessageSendTextPayload,
   type CoreRemoteStatusTextPayload,
+  type CoreThreadListTextPayload,
+  type CoreThreadOpenTextPayload,
+  type CoreThreadSendTextPayload,
+  type CoreThreadShowTextPayload,
+  type CoreThreadStatusTextPayload,
   type CoreWorktreeCreateTextPayload,
   type CoreWorktreePathTextPayload,
   type CoreWorktreeSummaryTextPayload,
@@ -109,6 +122,14 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
   CORE_API_ROUTES.lifecycleStopText,
+  CORE_API_ROUTES.messageSendText,
+  CORE_API_ROUTES.threadListText,
+  CORE_API_ROUTES.threadMarkSeenText,
+  CORE_API_ROUTES.threadOpenText,
+  CORE_API_ROUTES.threadSendText,
+  CORE_API_ROUTES.threadShowText,
+  CORE_API_ROUTES.threadStatusText,
+  CORE_API_ROUTES.threadsListText,
   CORE_API_ROUTES.worktreeCreateText,
   CORE_API_ROUTES.worktreeDeleteGraveyardText,
   CORE_API_ROUTES.worktreeGraveyardText,
@@ -450,6 +471,15 @@ export class AimuxDaemon {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
   }
 
+  private isRouteResponse(value: unknown): value is DaemonRouteResponse {
+    return Boolean(
+      value &&
+      typeof value === "object" &&
+      typeof (value as { status?: unknown }).status === "number" &&
+      "body" in value,
+    );
+  }
+
   private stringParam(routeUrl: URL, body: unknown, name: string): string | undefined {
     const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
     const bodyValue = record[name];
@@ -496,6 +526,25 @@ export class AimuxDaemon {
     const value = json[field];
     if (Array.isArray(value)) return value;
     return this.textError(502, `Error: project service returned invalid ${action} response: ${field} is required`);
+  }
+
+  private requiredProjectServiceObject(
+    json: ProjectServiceJson,
+    action: string,
+    field: string,
+  ): Record<string, unknown> | DaemonRouteResponse {
+    const value = json[field];
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+    return this.textError(502, `Error: project service returned invalid ${action} response: ${field} is required`);
+  }
+
+  private csvParam(routeUrl: URL, body: unknown, name: string): string[] | undefined {
+    const value = this.stringParam(routeUrl, body, name);
+    if (value === undefined) return undefined;
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   private async getProjectServiceJson(
@@ -691,6 +740,197 @@ export class AimuxDaemon {
       return this.textOrJsonLines(routeUrl, { ok: true, projectRoot: result.projectRoot, ...cleanupResult }, []);
     }
     return this.textOrJsonLines(routeUrl, payload, renderCoreGraveyardCleanupLines(payload));
+  }
+
+  private async threadListTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const session = this.stringParam(routeUrl, body, "session")?.trim();
+    const routePath = session
+      ? `${PROJECT_API_ROUTES.threads.list}?session=${encodeURIComponent(session)}`
+      : PROJECT_API_ROUTES.threads.list;
+    const result = await this.getProjectServiceJson(project, routePath);
+    if (!result.ok) return result.response;
+    if (!Array.isArray(result.json)) {
+      return this.textError(502, "Error: project service returned invalid thread list response");
+    }
+    const payload: CoreThreadListTextPayload = { summaries: result.json };
+    return this.textOrJsonLines(routeUrl, result.json, renderCoreThreadListLines(payload));
+  }
+
+  private async threadShowTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const threadId = this.requiredParam(routeUrl, body, "threadId");
+    if (typeof threadId !== "string") return threadId;
+    const result = await this.getProjectServiceJson(
+      project,
+      `${PROJECT_API_ROUTES.threads.list}/${encodeURIComponent(threadId)}`,
+    );
+    if (!result.ok) {
+      if (result.response.status === 404) return this.textError(404, `aimux: thread not found: ${threadId}`);
+      return result.response;
+    }
+    const thread = this.requiredProjectServiceObject(result.json, "thread show", "thread");
+    if (this.isRouteResponse(thread)) return thread;
+    if (typeof thread.id !== "string")
+      return this.textError(502, "Error: project service returned invalid thread show response: thread.id is required");
+    const messages = this.requiredProjectServiceArray(result.json, "thread show", "messages");
+    if (!Array.isArray(messages)) return messages;
+    const payload: CoreThreadShowTextPayload = { thread, messages };
+    return this.textOrJsonLines(routeUrl, { thread, messages }, renderCoreThreadShowLines(payload));
+  }
+
+  private async threadOpenTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const title = this.requiredParam(routeUrl, body, "title");
+    if (typeof title !== "string") return title;
+    const from = this.requiredParam(routeUrl, body, "from");
+    if (typeof from !== "string") return from;
+    const participants = this.csvParam(routeUrl, body, "participants");
+    if (!participants) return this.textError(400, "participants is required");
+    const kind = this.stringParam(routeUrl, body, "kind") || "conversation";
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.threads.open,
+      { title, from, participants, kind },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const thread = this.requiredProjectServiceObject(result.json, "thread open", "thread");
+    if (this.isRouteResponse(thread)) return thread;
+    if (typeof thread.id !== "string")
+      return this.textError(502, "Error: project service returned invalid thread open response: thread.id is required");
+    const payload: CoreThreadOpenTextPayload = { thread };
+    return this.textOrJsonLines(routeUrl, { thread }, renderCoreThreadOpenLines(payload));
+  }
+
+  private async threadSendTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const threadId = this.requiredParam(routeUrl, body, "threadId");
+    if (typeof threadId !== "string") return threadId;
+    const messageBody = this.requiredParam(routeUrl, body, "body");
+    if (typeof messageBody !== "string") return messageBody;
+    const from = this.requiredParam(routeUrl, body, "from");
+    if (typeof from !== "string") return from;
+    const to = this.csvParam(routeUrl, body, "to");
+    const kind = this.stringParam(routeUrl, body, "kind") || "note";
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.threads.send,
+      { threadId, from, ...(to ? { to } : {}), kind, body: messageBody },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const message = this.requiredProjectServiceObject(result.json, "thread send", "message");
+    if (this.isRouteResponse(message)) return message;
+    if (typeof message.id !== "string")
+      return this.textError(
+        502,
+        "Error: project service returned invalid thread send response: message.id is required",
+      );
+    const payload: CoreThreadSendTextPayload = { message };
+    return this.textOrJsonLines(routeUrl, { message }, renderCoreThreadSendLines(payload));
+  }
+
+  private async threadMarkSeenTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const threadId = this.requiredParam(routeUrl, body, "threadId");
+    if (typeof threadId !== "string") return threadId;
+    const session = this.requiredParam(routeUrl, body, "session");
+    if (typeof session !== "string") return session;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.threads.markSeen,
+      { threadId, session },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    return this.textOrJsonLines(routeUrl, result.json, renderCoreThreadMarkSeenLines());
+  }
+
+  private async threadStatusTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const threadId = this.requiredParam(routeUrl, body, "threadId");
+    if (typeof threadId !== "string") return threadId;
+    const status = this.requiredParam(routeUrl, body, "status");
+    if (typeof status !== "string") return status;
+    const owner = this.stringParam(routeUrl, body, "owner") || undefined;
+    const waitingOn = this.csvParam(routeUrl, body, "waitingOn");
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.threads.status,
+      { threadId, status, ...(owner ? { owner } : {}), ...(waitingOn ? { waitingOn } : {}) },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const thread = this.requiredProjectServiceObject(result.json, "thread status", "thread");
+    if (this.isRouteResponse(thread)) return thread;
+    if (typeof thread.id !== "string" || typeof thread.status !== "string") {
+      return this.textError(
+        502,
+        "Error: project service returned invalid thread status response: thread.id and thread.status are required",
+      );
+    }
+    const payload: CoreThreadStatusTextPayload = { thread };
+    return this.textOrJsonLines(routeUrl, { thread }, renderCoreThreadStatusLines(payload));
+  }
+
+  private async messageSendTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const messageBody = this.requiredParam(routeUrl, body, "body");
+    if (typeof messageBody !== "string") return messageBody;
+    const to = this.csvParam(routeUrl, body, "to");
+    const assignee = this.stringParam(routeUrl, body, "assignee") || undefined;
+    const tool = this.stringParam(routeUrl, body, "tool") || undefined;
+    const threadId = this.stringParam(routeUrl, body, "thread") || undefined;
+    const worktreePath = this.stringParam(routeUrl, body, "worktree") || undefined;
+    const title = this.stringParam(routeUrl, body, "title") || undefined;
+    if ((!to || to.length === 0) && !threadId && !assignee && !tool) {
+      return this.textError(400, "aimux: message send requires --to, --assignee, or --tool");
+    }
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.threads.send,
+      {
+        ...(threadId ? { threadId } : {}),
+        from: this.stringParam(routeUrl, body, "from") || "user",
+        ...(to ? { to } : {}),
+        ...(assignee ? { assignee } : {}),
+        ...(tool ? { tool } : {}),
+        ...(worktreePath ? { worktreePath } : {}),
+        kind: this.stringParam(routeUrl, body, "kind") || "request",
+        body: messageBody,
+        ...(title ? { title } : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const thread = this.requiredProjectServiceObject(result.json, "message send", "thread");
+    if (this.isRouteResponse(thread)) return thread;
+    if (typeof thread.id !== "string")
+      return this.textError(
+        502,
+        "Error: project service returned invalid message send response: thread.id is required",
+      );
+    const message = this.requiredProjectServiceObject(result.json, "message send", "message");
+    if (this.isRouteResponse(message)) return message;
+    if (typeof message.id !== "string")
+      return this.textError(
+        502,
+        "Error: project service returned invalid message send response: message.id is required",
+      );
+    const payload: CoreMessageSendTextPayload = { thread, message, deliveredTo: result.json.deliveredTo };
+    return this.textOrJsonLines(
+      routeUrl,
+      { thread, message, deliveredTo: result.json.deliveredTo },
+      renderCoreMessageSendLines(payload),
+    );
   }
 
   private async lifecycleSpawnTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -1383,6 +1623,37 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.graveyardCleanupText) {
       return this.graveyardCleanupTextRoute(routeUrl, body);
+    }
+
+    if (
+      method === "GET" &&
+      (pathname === CORE_API_ROUTES.threadsListText || pathname === CORE_API_ROUTES.threadListText)
+    ) {
+      return this.threadListTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.threadShowText) {
+      return this.threadShowTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.threadOpenText) {
+      return this.threadOpenTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.threadSendText) {
+      return this.threadSendTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.threadMarkSeenText) {
+      return this.threadMarkSeenTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.threadStatusText) {
+      return this.threadStatusTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.messageSendText) {
+      return this.messageSendTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.daemonStatusText) {

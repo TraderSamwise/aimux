@@ -1128,6 +1128,158 @@ describe("daemon supervision", () => {
     expect(cleanup.body).toContain("Graveyard cleanup would remove 1 item(s); 0 failed.");
   });
 
+  it("serves thread and message text routes through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(
+      async (url: string, opts: { body?: unknown; timeoutMs?: number } = {}) => {
+        if (url.endsWith(`${PROJECT_API_ROUTES.threads.list}?session=claude-1`)) {
+          return {
+            status: 200,
+            json: [
+              {
+                thread: {
+                  id: "thread-1",
+                  kind: "conversation",
+                  status: "open",
+                  title: "Hello",
+                  unreadBy: ["user"],
+                  waitingOn: ["claude-1"],
+                },
+                latestMessage: { from: "claude-1", kind: "reply", body: "done" },
+              },
+            ] as any,
+          };
+        }
+        if (url.endsWith(`${PROJECT_API_ROUTES.threads.list}/thread-1`)) {
+          return {
+            status: 200,
+            json: {
+              thread: {
+                id: "thread-1",
+                kind: "conversation",
+                status: "open",
+                title: "Hello",
+                participants: ["user", "claude-1"],
+              },
+              messages: [{ id: "msg-1", ts: "2026-01-01T00:00:00.000Z", from: "user", kind: "request", body: "hi" }],
+            },
+          };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.threads.open)) {
+          expect(opts.body).toEqual({
+            title: "Hello",
+            from: "user",
+            participants: ["claude-1", "codex-1"],
+            kind: "conversation",
+          });
+          expect(opts.timeoutMs).toBe(120_000);
+          return { status: 200, json: { ok: true, thread: { id: "thread-2", status: "open" } } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.threads.send)) {
+          expect(opts.timeoutMs).toBe(120_000);
+          if ((opts.body as any).threadId === "thread-1") {
+            expect(opts.body).toEqual({
+              threadId: "thread-1",
+              from: "user",
+              to: ["claude-1"],
+              kind: "note",
+              body: "ping",
+            });
+            return { status: 200, json: { ok: true, message: { id: "msg-2" } } };
+          }
+          expect(opts.body).toMatchObject({
+            from: "user",
+            to: ["claude-1"],
+            assignee: "coder",
+            tool: "claude",
+            worktreePath: "feature",
+            kind: "request",
+            body: "please",
+            title: "Ask",
+          });
+          return {
+            status: 200,
+            json: { ok: true, thread: { id: "thread-3" }, message: { id: "msg-3" }, deliveredTo: ["claude-1"] },
+          };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.threads.markSeen)) {
+          expect(opts.body).toEqual({ threadId: "thread-1", session: "user" });
+          expect(opts.timeoutMs).toBe(120_000);
+          return { status: 200, json: { ok: true } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.threads.status)) {
+          expect(opts.body).toEqual({
+            threadId: "thread-1",
+            status: "waiting",
+            owner: "user",
+            waitingOn: ["claude-1"],
+          });
+          expect(opts.timeoutMs).toBe(120_000);
+          return { status: 200, json: { ok: true, thread: { id: "thread-1", status: "waiting" } } };
+        }
+        return { status: 200, json: projectServiceHealth(process.pid) };
+      },
+    );
+
+    const listed = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.threadsListText}?project=${encodeURIComponent(projectRoot)}&session=claude-1`,
+    );
+    const listedJson = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.threadListText}?json=1&project=${encodeURIComponent(projectRoot)}&session=claude-1`,
+    );
+    const shown = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.threadShowText}?project=${encodeURIComponent(projectRoot)}&threadId=thread-1`,
+    );
+    const opened = await daemon.routeRequest("POST", CORE_API_ROUTES.threadOpenText, {
+      project: projectRoot,
+      title: "Hello",
+      from: "user",
+      participants: "claude-1,codex-1",
+    });
+    const sent = await daemon.routeRequest("POST", CORE_API_ROUTES.threadSendText, {
+      project: projectRoot,
+      threadId: "thread-1",
+      body: "ping",
+      from: "user",
+      to: "claude-1",
+    });
+    const seen = await daemon.routeRequest("POST", CORE_API_ROUTES.threadMarkSeenText, {
+      project: projectRoot,
+      threadId: "thread-1",
+      session: "user",
+    });
+    const status = await daemon.routeRequest("POST", CORE_API_ROUTES.threadStatusText, {
+      project: projectRoot,
+      threadId: "thread-1",
+      status: "waiting",
+      owner: "user",
+      waitingOn: "claude-1",
+    });
+    const message = await daemon.routeRequest("POST", CORE_API_ROUTES.messageSendText, {
+      project: projectRoot,
+      body: "please",
+      to: "claude-1",
+      assignee: "coder",
+      tool: "claude",
+      worktree: "feature",
+      title: "Ask",
+    });
+
+    expect(listed.body).toContain("thread-1  conversation  open unread=1 waiting=claude-1");
+    expect(JSON.parse(String(listedJson.body))).toHaveLength(1);
+    expect(shown.body).toContain("Hello (conversation)");
+    expect(opened.body).toBe("thread-2\n");
+    expect(sent.body).toBe("msg-2\n");
+    expect(seen.body).toBe("ok\n");
+    expect(status.body).toBe("thread thread-1\nstatus waiting\n");
+    expect(message.body).toBe("thread thread-3\nmessage msg-3\ndelivered claude-1\n");
+  });
+
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
     const { saveCredentials } = await import("./credentials.js");
     const { AimuxDaemon } = await import("./daemon.js");
