@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { resolve as pathResolve } from "node:path";
 import { ensureProjectPaths, getProjectIdFor } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
@@ -18,6 +19,7 @@ import {
   type CoreCommandEnvelope,
   type CoreCommandName,
   type CoreCommandResponse,
+  type CoreRelaySnapshot,
   type CoreRestartResult,
   type CoreStatusProject,
 } from "./core-command-contract.js";
@@ -25,12 +27,14 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreLoginLines,
   renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
+  renderCoreSecurityUnlockLines,
   renderCoreWhoamiLines,
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
@@ -38,6 +42,7 @@ import {
   type CoreRemoteStatusTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
+import { runLoginFlow } from "./login-flow.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
@@ -62,6 +67,15 @@ const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
+const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+const LOCAL_AUTH_ROUTES = new Set<string>([
+  CORE_API_ROUTES.loginStartText,
+  CORE_API_ROUTES.loginWaitText,
+  CORE_API_ROUTES.loginText,
+  CORE_API_ROUTES.securityUnlockStartText,
+  CORE_API_ROUTES.securityUnlockWaitText,
+  CORE_API_ROUTES.securityUnlockText,
+]);
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
@@ -84,6 +98,13 @@ interface DaemonRouteResponse {
   status: number;
   body: unknown;
   contentType?: string;
+}
+
+type AuthAction = "security-unlock" | undefined;
+
+interface DaemonAuthFlow {
+  promise: Promise<{ userId: string; relay: CoreRelaySnapshot }>;
+  startedAt: number;
 }
 
 async function readJson(req: IncomingMessage): Promise<any> {
@@ -137,6 +158,7 @@ export class AimuxDaemon {
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly projectActors = new Map<string, CoreProjectActor>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
+  private readonly authFlows = new Map<string, DaemonAuthFlow>();
   private state: DaemonState = loadDaemonState();
 
   async start(): Promise<void> {
@@ -197,6 +219,17 @@ export class AimuxDaemon {
     setRemoteEnabled(true);
     this.connectRelayIfConfigured({ force: true });
     return this.getRelayStatus();
+  }
+
+  private enableRelayBestEffort(): CoreRelaySnapshot {
+    try {
+      return this.enableRelay();
+    } catch (error) {
+      const lastError = error instanceof Error ? error.message : String(error);
+      const relay = this.getRelayStatus();
+      if (relay.status === "off") return { status: "disconnected", relayUrl: "", lastConnectedAt: null, lastError };
+      return { ...relay, lastError };
+    }
   }
 
   disableRelay(): { status: "off" } {
@@ -354,6 +387,96 @@ export class AimuxDaemon {
       return { status: 200, body: `${JSON.stringify(json, null, 2)}\n`, contentType: "text/plain; charset=utf-8" };
     }
     return { status: 200, body: `${lines.join("\n")}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private async runAuthTextRoute(opts: {
+    action?: "security-unlock";
+    render: (payload: { userId: string; relay: CoreRelaySnapshot }) => string[];
+  }): Promise<DaemonRouteResponse> {
+    const messages: string[] = [];
+    try {
+      const { userId } = await runLoginFlow({
+        action: opts.action,
+        onMessage: (message) => messages.push(message),
+      });
+      const relay = this.enableRelayBestEffort();
+      const lines = [...messages, ...opts.render({ userId, relay })];
+      return {
+        status: 200,
+        body: `${lines.join("\n")}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    } catch (error) {
+      const prefix = opts.action === "security-unlock" ? "Security unlock failed" : "Login failed";
+      const lines = [...messages, `${prefix}: ${error instanceof Error ? error.message : String(error)}`];
+      return {
+        status: 500,
+        body: `${lines.join("\n")}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    }
+  }
+
+  private async startAuthTextRoute(action: AuthAction): Promise<DaemonRouteResponse> {
+    this.pruneAuthFlows();
+    const id = randomUUID();
+    const messages: string[] = [];
+    let releaseMessages: () => void = () => {};
+    const messagesReady = new Promise<void>((resolve) => {
+      releaseMessages = resolve;
+    });
+    const promise = runLoginFlow({
+      action,
+      onMessage: (message) => {
+        messages.push(message);
+        if (messages.length >= 2) releaseMessages();
+      },
+    }).then(({ userId }) => ({ userId, relay: this.enableRelayBestEffort() }));
+    this.authFlows.set(id, { promise, startedAt: Date.now() });
+    await Promise.race([
+      messagesReady,
+      promise.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]);
+    return {
+      status: 200,
+      body: `auth-session: ${id}\n${messages.join("\n")}\n`,
+      contentType: "text/plain; charset=utf-8",
+    };
+  }
+
+  private async waitAuthTextRoute(
+    routeUrl: URL,
+    opts: { action?: "security-unlock"; render: (payload: { userId: string; relay: CoreRelaySnapshot }) => string[] },
+  ): Promise<DaemonRouteResponse> {
+    this.pruneAuthFlows();
+    const id = routeUrl.searchParams.get("id");
+    if (!id) return { status: 400, body: "auth session id is required\n", contentType: "text/plain; charset=utf-8" };
+    const flow = this.authFlows.get(id);
+    if (!flow) return { status: 404, body: "auth session not found\n", contentType: "text/plain; charset=utf-8" };
+    this.authFlows.delete(id);
+    try {
+      const result = await flow.promise;
+      return {
+        status: 200,
+        body: `${opts.render(result).join("\n")}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    } catch (error) {
+      const prefix = opts.action === "security-unlock" ? "Security unlock failed" : "Login failed";
+      return {
+        status: 500,
+        body: `${prefix}: ${error instanceof Error ? error.message : String(error)}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    }
+  }
+
+  private pruneAuthFlows(): void {
+    const now = Date.now();
+    for (const [id, flow] of this.authFlows.entries()) {
+      if (now - flow.startedAt > AUTH_FLOW_TTL_MS) this.authFlows.delete(id);
+    }
   }
 
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
@@ -683,6 +806,9 @@ export class AimuxDaemon {
     if (!access.ok) {
       return { status: access.status ?? 403, body: { ok: false, error: access.error ?? "remote access denied" } };
     }
+    if (method === "POST" && LOCAL_AUTH_ROUTES.has(pathname) && actor) {
+      return { status: 403, body: "auth routes are loopback-only\n", contentType: "text/plain; charset=utf-8" };
+    }
 
     if (method === "GET" && pathname === "/health") {
       return {
@@ -790,6 +916,18 @@ export class AimuxDaemon {
       return this.textOrJsonLines(routeUrl, { relay: { status: "off" } }, renderCoreRemoteDisableLines(true));
     }
 
+    if (method === "POST" && pathname === CORE_API_ROUTES.loginStartText) {
+      return this.startAuthTextRoute(undefined);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.loginWaitText) {
+      return this.waitAuthTextRoute(routeUrl, { render: renderCoreLoginLines });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.loginText) {
+      return this.runAuthTextRoute({ render: renderCoreLoginLines });
+    }
+
     if (method === "POST" && pathname === CORE_API_ROUTES.logoutText) {
       this.disableRelay();
       const result = clearCredentials();
@@ -798,6 +936,18 @@ export class AimuxDaemon {
         body: `${renderCoreLogoutLines(result).join("\n")}\n`,
         contentType: "text/plain; charset=utf-8",
       };
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.securityUnlockStartText) {
+      return this.startAuthTextRoute("security-unlock");
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.securityUnlockWaitText) {
+      return this.waitAuthTextRoute(routeUrl, { action: "security-unlock", render: renderCoreSecurityUnlockLines });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.securityUnlockText) {
+      return this.runAuthTextRoute({ action: "security-unlock", render: renderCoreSecurityUnlockLines });
     }
 
     if (method === "GET" && pathname === "/relay/status") {

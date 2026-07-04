@@ -132,6 +132,65 @@ aimux_post_text_route() {
   esac
 }
 
+aimux_auth_text_route() {
+  start_path="$1"
+  wait_path="$2"
+  timeout="${3:-360}"
+  port="$(aimux_matching_daemon_port)" || return 1
+  start_file="$(mktemp "${TMPDIR:-/tmp}/aimux-auth-start.XXXXXX")" || return 1
+  wait_file="$(mktemp "${TMPDIR:-/tmp}/aimux-auth-wait.XXXXXX")" || return 1
+  trap 'rm -f "$start_file" "$wait_file"' EXIT
+  trap 'rm -f "$start_file" "$wait_file"; exit 130' INT TERM
+  start_status="$(
+    curl -sS --max-time 10 -o "$start_file" -w '%{http_code}' -X POST \
+      "http://127.0.0.1:$port$start_path" 2>/dev/null || true
+  )"
+  case "$start_status" in
+    2*) ;;
+    '' | 000)
+      rm -f "$start_file" "$wait_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+    *)
+      cat "$start_file" >&2
+      rm -f "$start_file" "$wait_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+  session_id="$(sed -n '1s/^auth-session: //p' "$start_file")"
+  [ -n "$session_id" ] || {
+    rm -f "$start_file" "$wait_file"
+    trap - EXIT INT TERM
+    return 1
+  }
+  sed '1d' "$start_file"
+  wait_status="$(
+    curl -sS --max-time "$timeout" -o "$wait_file" -w '%{http_code}' -X POST \
+      "http://127.0.0.1:$port$wait_path?id=$session_id" 2>/dev/null || true
+  )"
+  case "$wait_status" in
+    2*)
+      cat "$wait_file"
+      rm -f "$start_file" "$wait_file"
+      trap - EXIT INT TERM
+      return 0
+      ;;
+    '' | 000)
+      rm -f "$start_file" "$wait_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+    *)
+      cat "$wait_file" >&2
+      rm -f "$start_file" "$wait_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+}
+
 aimux_curl_project_text_route() {
   path="$1"
   project_root="$(pwd -P 2>/dev/null)" || return 1
@@ -281,6 +340,30 @@ case "${1:-} ${2:-}" in
   "logout ")
     if [ "$#" -eq 1 ]; then
       if aimux_post_text_route "/core/logout-text"; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
+    fi
+    ;;
+  "login ")
+    if [ "$#" -eq 1 ]; then
+      if aimux_auth_text_route "/core/login-start-text" "/core/login-wait-text" 360; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
+    fi
+    ;;
+  "security unlock")
+    if [ "$#" -eq 2 ]; then
+      if aimux_auth_text_route "/core/security-unlock-start-text" "/core/security-unlock-wait-text" 360; then
         exit 0
       else
         code="$?"
