@@ -12,13 +12,13 @@ function makeFixture() {
   const home = join(root, "home");
   const bin = join(root, "bin");
   mkdirSync(join(aimuxRoot, "dist"), { recursive: true });
-  mkdirSync(home, { recursive: true });
+  mkdirSync(join(home, "daemon"), { recursive: true });
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(aimuxRoot, "BUILD_STAMP"), "build-1\n");
   writeFileSync(join(aimuxRoot, "dist", "launcher-bin.js"), "");
 
   const healthFile = join(root, "health.json");
-  const lockPath = join(home, "locks", "daemon-start");
+  const daemonInfoPath = join(home, "daemon", "daemon.json");
   const nodeLog = join(root, "node.log");
   const curlPath = join(bin, "curl");
   const nodePath = join(bin, "node");
@@ -36,10 +36,6 @@ cat "$HEALTH_FILE"
     `#!/usr/bin/env sh
 set -eu
 printf '%s\\n' "$*" >> "$NODE_LOG"
-if [ "\${NODE_MODE:-fallback}" = "start" ]; then
-  printf '%s\\n' "$START_HEALTH" > "$HEALTH_FILE"
-  exit 0
-fi
 exit "\${NODE_EXIT:-7}"
 `,
   );
@@ -62,7 +58,7 @@ exit "\${NODE_EXIT:-7}"
       env: { ...env, ...extraEnv },
     });
 
-  return { aimuxRoot, healthFile, lockPath, nodeLog, run };
+  return { aimuxRoot, daemonInfoPath, healthFile, nodeLog, run };
 }
 
 function health(buildStamp: string, pid = 123, port = 45678): string {
@@ -79,6 +75,7 @@ describe("installed aimux shim", () => {
   it("serves daemon ensure from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["daemon", "ensure"]);
 
@@ -91,10 +88,32 @@ describe("installed aimux shim", () => {
   it("falls back to the Node launcher for stale daemon health", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build")}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 123, port: 45678 })}\n`);
 
     const result = fixture.run(["daemon", "ensure"], { NODE_EXIT: "17" });
 
     expect(result.status).toBe(17);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
+  });
+
+  it("falls back to the Node launcher when daemon state is missing", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1")}\n`);
+
+    const result = fixture.run(["daemon", "ensure"], { NODE_EXIT: "23" });
+
+    expect(result.status).toBe(23);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
+  });
+
+  it("falls back to the Node launcher when daemon state and health pid disagree", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 123)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 999, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "ensure"], { NODE_EXIT: "29" });
+
+    expect(result.status).toBe(29);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
   });
 
@@ -107,17 +126,13 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
   });
 
-  it("starts the daemon process and waits for matching health when no daemon is live", () => {
+  it("leaves daemon startup to the Node supervisor", () => {
     const fixture = makeFixture();
 
-    const result = fixture.run(["daemon", "ensure"], {
-      NODE_MODE: "start",
-      START_HEALTH: health("build-1", 654),
-    });
+    const result = fixture.run(["daemon", "ensure"], { NODE_EXIT: "31" });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("aimux daemon: pid 654 on http://127.0.0.1:45678\n");
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon run\n`);
-    expect(existsSync(fixture.lockPath)).toBe(false);
+    expect(result.status).toBe(31);
+    expect(result.stdout).toBe("");
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
   });
 });
