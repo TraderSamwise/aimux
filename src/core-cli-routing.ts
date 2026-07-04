@@ -20,46 +20,57 @@ function hasHelp(args: string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
-function hasOnlyFlags(args: string[], allowed: Set<string>): boolean {
-  return args.every((arg) => !arg.startsWith("-") || allowed.has(arg));
+export interface CoreProjectEnsureArgs {
+  project: string;
+  json: boolean;
 }
 
-function hasNoOptions(args: string[]): boolean {
-  return args.every((arg) => !arg.startsWith("-"));
+function hasOnlyAllowedFlags(args: string[], allowed: Set<string>): boolean {
+  return args.every((arg) => allowed.has(arg));
 }
 
-function hasProjectOption(args: string[]): boolean {
-  const index = args.indexOf("--project");
-  if (index === -1) return false;
-  const value = args[index + 1];
-  return Boolean(value) && !value.startsWith("-");
-}
-
-export function isValidCoreProjectEnsureArgs(args: string[]): boolean {
-  if (args[0] !== "daemon" || args[1] !== "project-ensure") return false;
-  if (!hasProjectOption(args)) return false;
+export function parseCoreProjectEnsureArgs(args: string[]): CoreProjectEnsureArgs | null {
+  if (args[0] !== "daemon" || args[1] !== "project-ensure") return null;
+  let project: string | null = null;
+  let json = false;
   for (let index = 2; index < args.length; index += 1) {
     const arg = args[index];
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
     if (arg === "--project") {
+      const value = args[index + 1] ?? null;
+      if (!value || value.startsWith("-")) return null;
+      project = value;
       index += 1;
       continue;
     }
-    if (arg === "--json") continue;
-    return false;
+    if (arg.startsWith("--project=")) {
+      const value = arg.slice("--project=".length);
+      if (!value) return null;
+      project = value;
+      continue;
+    }
+    return null;
   }
-  return true;
+  return project ? { project, json } : null;
+}
+
+export function isValidCoreProjectEnsureArgs(args: string[]): boolean {
+  return parseCoreProjectEnsureArgs(args) !== null;
 }
 
 export function isCoreCliCommand(args: string[]): boolean {
   if (hasHelp(args)) return false;
   const [command, subcommand] = args;
-  if (command === "host" && subcommand === "status") return hasOnlyFlags(args.slice(2), new Set(["--json"]));
+  if (command === "host" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "daemon" && ["ensure", "status", "projects"].includes(subcommand ?? "")) {
-    return hasOnlyFlags(args.slice(2), new Set(["--json"]));
+    return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   }
   if (command === "daemon" && subcommand === "project-ensure") return true;
-  if (command === "projects" && subcommand === "list") return hasOnlyFlags(args.slice(2), new Set(["--json"]));
-  if (command === "remote" && subcommand === "status") return hasOnlyFlags(args.slice(2), new Set(["--json"]));
-  if (command === "remote" && ["enable", "disable"].includes(subcommand ?? "")) return hasNoOptions(args.slice(2));
+  if (command === "projects" && subcommand === "list") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
+  if (command === "remote" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
+  if (command === "remote" && ["enable", "disable"].includes(subcommand ?? "")) return args.length === 2;
   return false;
 }

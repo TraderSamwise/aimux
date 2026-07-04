@@ -191,6 +191,20 @@ describe("runCoreCli", () => {
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
   });
 
+  it("supports Commander-compatible project option forms", async () => {
+    await expect(run(["daemon", "project-ensure", "--project=/repo"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Ensured project service for /repo (pid 88)"],
+    });
+    mocks.requestCoreCommand.mockClear();
+
+    await expect(
+      run(["daemon", "project-ensure", "--project", "/wrong", "--project", "/repo", "--json"]),
+    ).resolves.toMatchObject({ code: 0 });
+
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
+  });
+
   it("rejects direct malformed project ensure invocations without mutating", async () => {
     const result = await run(["daemon", "project-ensure", "--project", "--json"]);
 
@@ -210,6 +224,13 @@ describe("runCoreCli", () => {
     const result = await run(["remote", "enable", "--json"]);
 
     expect(result).toMatchObject({ code: 2, stdout: [] });
+    expect(mocks.requestCoreCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct extra positionals without mutating", async () => {
+    await expect(run(["remote", "enable", "extra"])).resolves.toMatchObject({ code: 2, stdout: [] });
+    await expect(run(["daemon", "status", "extra"])).resolves.toMatchObject({ code: 2, stdout: [] });
+
     expect(mocks.requestCoreCommand).not.toHaveBeenCalled();
   });
 
