@@ -98,7 +98,23 @@ aimux_curl_text_route() {
   curl -fsS --max-time 5 "http://127.0.0.1:$port$path" 2>/dev/null || return 1
 }
 
+aimux_curl_project_text_route() {
+  path="$1"
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  port="$(aimux_matching_daemon_port)" || return 1
+  curl -fsS --max-time 5 --get --data-urlencode "project=$project_root" \
+    "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+}
+
 case "${1:-} ${2:-}" in
+  "host status")
+    if [ "$#" -eq 2 ] && aimux_curl_project_text_route "/core/host-status-text"; then
+      exit 0
+    fi
+    if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_project_text_route "/core/host-status-text?json=1"; then
+      exit 0
+    fi
+    ;;
   "daemon ensure")
     if [ "$#" -eq 2 ] && aimux_try_daemon_ensure; then
       exit 0

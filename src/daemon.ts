@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve as pathResolve } from "node:path";
-import { getProjectIdFor } from "./paths.js";
+import { ensureProjectPaths, getProjectIdFor } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
@@ -24,13 +24,16 @@ import {
 import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
+  renderCoreHostStatusLines,
   renderCoreProjectsListLines,
   type CoreDaemonStatusTextPayload,
+  type CoreHostStatusTextPayload,
 } from "./core-text.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 import { CoreProjectActor } from "./core-project-actor.js";
+import { findMainRepo } from "./worktree.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -280,6 +283,40 @@ export class AimuxDaemon {
     return {
       daemon: { ...this.currentDaemonInfo(issuedAt), serviceInfo: getProjectServiceManifest() },
     };
+  }
+
+  private hostStatusPayload(
+    cwd: string,
+    issuedAt: string,
+  ): { payload: CoreHostStatusTextPayload; knownProject: boolean } {
+    const projectRoot = this.resolveProjectRoot(cwd);
+    const project = this.findProjectForRoot(projectRoot);
+    const daemon = { ...this.currentDaemonInfo(issuedAt), serviceInfo: getProjectServiceManifest() };
+    return {
+      payload: {
+        projectRoot,
+        sessionName: project?.dashboardSessionName ?? null,
+        daemon,
+        projectService: project?.service ?? null,
+        serviceAlive: project?.serviceAlive ?? false,
+        metadataEndpoint: project?.serviceEndpoint ?? null,
+        expectedServiceManifest: daemon.serviceInfo,
+      },
+      knownProject: Boolean(project),
+    };
+  }
+
+  private resolveProjectRoot(cwd: string): string {
+    try {
+      return findMainRepo(cwd);
+    } catch {
+      return cwd;
+    }
+  }
+
+  private findProjectForRoot(projectRoot: string): CoreStatusProject | null {
+    const resolvedRoot = pathResolve(projectRoot);
+    return this.listProjectsForRoute().find((project) => pathResolve(project.path) === resolvedRoot) ?? null;
   }
 
   private textOrJsonLines(routeUrl: URL, json: unknown, lines: string[]): DaemonRouteResponse {
@@ -638,6 +675,16 @@ export class AimuxDaemon {
       const payload = this.daemonEnsurePayload(new Date().toISOString());
       const line = `aimux daemon: pid ${payload.daemon.pid} on http://127.0.0.1:${payload.daemon.port}`;
       return this.textOrJsonLines(routeUrl, payload, [line]);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.hostStatusText) {
+      const project = routeUrl.searchParams.get("project");
+      if (!project) {
+        return { status: 400, body: "project query is required\n", contentType: "text/plain; charset=utf-8" };
+      }
+      ensureProjectPaths(project);
+      const { payload, knownProject } = this.hostStatusPayload(project, new Date().toISOString());
+      return this.textOrJsonLines(routeUrl, payload, renderCoreHostStatusLines(payload, knownProject));
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {
