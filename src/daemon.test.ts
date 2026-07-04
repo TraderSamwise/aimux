@@ -7,6 +7,7 @@ import { requestJson } from "./http-client.js";
 import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { getProjectIdFor } from "./paths.js";
 
 let tmpRoot = "";
@@ -131,6 +132,7 @@ vi.mock("./http-client.js", () => ({
 }));
 
 function writeMetadataEndpointFor(pid: number) {
+  mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
   writeFileSync(
     join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"),
     JSON.stringify({
@@ -568,6 +570,130 @@ describe("daemon supervision", () => {
     expect(coreActorMock.starts).not.toHaveBeenCalled();
   });
 
+  it("serves lifecycle spawn text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.spawn)) {
+        expect(opts.body).toEqual({ tool: "claude", worktreePath: "/tmp/work", open: false });
+        return { status: 200, json: { ok: true, sessionId: "claude-1" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.lifecycleSpawnText}?project=${encodeURIComponent(projectRoot)}&tool=claude&worktreePath=${encodeURIComponent(
+        "/tmp/work",
+      )}&open=0`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("spawned claude-1\n");
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("serves lifecycle stop text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.stop)) {
+        expect(opts.body).toEqual({ sessionId: "claude-1" });
+        return { status: 200, json: { ok: true, sessionId: "claude-1", status: "offline" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.lifecycleStopText}?project=${encodeURIComponent(projectRoot)}&sessionId=claude-1`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("stopped claude-1\n");
+  });
+
+  it("serves lifecycle kill text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.kill)) {
+        expect(opts.body).toEqual({ sessionId: "claude-1" });
+        return {
+          status: 200,
+          json: { ok: true, sessionId: "claude-1", status: "graveyard", previousStatus: "offline" },
+        };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.lifecycleKillText}?project=${encodeURIComponent(projectRoot)}&sessionId=claude-1`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("graveyarded claude-1\n");
+  });
+
+  it("serves lifecycle fork JSON through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.fork)) {
+        expect(opts.body).toEqual({
+          sourceSessionId: "claude-1",
+          tool: "codex",
+          instruction: "continue",
+          open: true,
+        });
+        return { status: 200, json: { ok: true, sessionId: "codex-2", threadId: "thread-1" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.lifecycleForkText}?json=1&project=${encodeURIComponent(
+        projectRoot,
+      )}&sourceSessionId=claude-1&tool=codex&instruction=continue`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body as string)).toMatchObject({
+      ok: true,
+      projectRoot,
+      sourceSessionId: "claude-1",
+      sessionId: "codex-2",
+      threadId: "thread-1",
+      opened: true,
+    });
+  });
+
+  it("returns project-service lifecycle errors as text without proxying through Node", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.stop)) {
+        return { status: 404, json: { ok: false, error: "session not found" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.lifecycleStopText}?project=${encodeURIComponent(projectRoot)}&sessionId=missing`,
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body).toBe("session not found\n");
+  });
+
   it("preserves daemon status JSON shape for the installed shell shim", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
@@ -830,6 +956,22 @@ describe("daemon supervision", () => {
     expect(start).toMatchObject({ status: 403, body: "auth routes are loopback-only\n" });
     expect(unlock).toMatchObject({ status: 403, body: "auth routes are loopback-only\n" });
     expect(loginFlowMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects lifecycle text routes from relay actors", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const headers = { "x-aimux-actor-role": "owner", "x-aimux-actor-user-id": "user_123" };
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.lifecycleSpawnText}?project=${encodeURIComponent(projectRoot)}&tool=claude`,
+      undefined,
+      headers,
+    );
+
+    expect(response).toMatchObject({ status: 403, body: "lifecycle text routes are loopback-only\n" });
+    expect(coreActorMock.starts).not.toHaveBeenCalled();
   });
 
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {
