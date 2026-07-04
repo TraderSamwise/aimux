@@ -24,7 +24,7 @@ function coherenceReport(): RuntimeCoherenceReport {
       command: "/Users/sam/.local/bin/aimux",
       args: [],
       source: "stable-shim",
-      currentEntryPath: "/Users/sam/.aimux/native/current/dist/main.js",
+      currentEntryPath: "/Users/sam/.aimux/native/current/dist/launcher-bin.js",
       stableShimPath: "/Users/sam/.local/bin/aimux",
     },
     expected: {

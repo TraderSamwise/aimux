@@ -8,9 +8,10 @@ import {
   isValidCoreProjectEnsureArgs,
 } from "./core-cli-routing.js";
 
-const DEFAULT_HOME = join(homedir(), ".aimux");
-const DEFAULT_DAEMON_PORT = "43190";
-const DEFAULT_WEB_APP_URL = "https://aimux.app";
+export const DEFAULT_HOME = join(homedir(), ".aimux");
+export const DEFAULT_DAEMON_PORT = "43190";
+export const DEFAULT_ENV = "production";
+export const DEFAULT_WEB_APP_URL = "https://aimux.app";
 
 type MutableEnv = Record<string, string | undefined>;
 
@@ -21,7 +22,7 @@ function blank(value: string | undefined): boolean {
 export function prepareStableCliEnv(env: MutableEnv = process.env): void {
   if (blank(env.AIMUX_HOME)) env.AIMUX_HOME = DEFAULT_HOME;
   if (blank(env.AIMUX_DAEMON_PORT)) env.AIMUX_DAEMON_PORT = DEFAULT_DAEMON_PORT;
-  if (blank(env.AIMUX_ENV)) env.AIMUX_ENV = "production";
+  if (blank(env.AIMUX_ENV)) env.AIMUX_ENV = DEFAULT_ENV;
   if (blank(env.AIMUX_WEB_APP_URL)) env.AIMUX_WEB_APP_URL = DEFAULT_WEB_APP_URL;
 }
 

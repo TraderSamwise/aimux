@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { getProjectStateDirFor } from "./paths.js";
 import { buildProjectHookCommand } from "./project-hook-command.js";
@@ -13,10 +12,6 @@ export interface ClaudeHookPayload {
   object?: Record<string, unknown>;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
-}
-
-export function getAimuxCliEntryPath(): string {
-  return fileURLToPath(new URL("./main.js", import.meta.url));
 }
 
 export function shouldSkipClaudeSessionIdInjection(args: string[]): boolean {

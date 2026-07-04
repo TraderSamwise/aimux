@@ -20,9 +20,9 @@ function fileExists(path: string): boolean {
 }
 
 function currentEntryPath(): string {
-  const compiledPath = fileURLToPath(new URL("./main.js", import.meta.url));
+  const compiledPath = fileURLToPath(new URL("./launcher-bin.js", import.meta.url));
   if (fileExists(compiledPath)) return compiledPath;
-  return fileURLToPath(new URL("./main.ts", import.meta.url));
+  return fileURLToPath(new URL("./launcher-bin.ts", import.meta.url));
 }
 
 function normalizeDir(path: string): string {
