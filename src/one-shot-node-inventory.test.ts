@@ -100,6 +100,20 @@ describe("one-shot Node runtime inventory", () => {
     expect(packageJson.scripts?.start).toBe("./bin/aimux");
   });
 
+  it("keeps package scripts from invoking local Node tools through node", () => {
+    const files = ["package.json", "app/package.json"];
+    const violations = files.flatMap((file) => {
+      const packageJson = JSON.parse(readFileSync(join(process.cwd(), file), "utf8")) as {
+        scripts?: Record<string, string>;
+      };
+      return Object.entries(packageJson.scripts ?? {})
+        .filter(([, script]) => /\bnode\s+scripts\//.test(script))
+        .map(([name]) => `${file}:scripts.${name}`);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   it("keeps the Node CLI bootstrap explicit", () => {
     expect(cliBootstrapInventory).toHaveLength(2);
     for (const entry of cliBootstrapInventory) {

@@ -25,7 +25,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "check:env": "node scripts/check-release-env.js",
+    "check:env": "./scripts/check-release-env.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build": "eas env:exec production 'eas-release build testflight' --non-interactive",
