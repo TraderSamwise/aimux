@@ -52,10 +52,13 @@ cp -R bin dist dist-ui scripts "$PKG_DIR/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 
 artifact_mtime_ms() {
+  [ -f "$1" ] || { printf 'Missing build artifact: %s\n' "$1" >&2; exit 1; }
   case "$(uname -s)" in
-    Darwin) printf '%s000' "$(stat -f %m "$1")" ;;
-    *) printf '%s000' "$(stat -c %Y "$1")" ;;
+    Darwin) timestamp="$(stat -f %m "$1")" ;;
+    *) timestamp="$(stat -c %Y "$1")" ;;
   esac
+  [ -n "$timestamp" ] || { printf 'Failed to stat build artifact: %s\n' "$1" >&2; exit 1; }
+  printf '%s000' "$timestamp"
 }
 
 MAIN_ARTIFACT="$PKG_DIR/dist/main".js
