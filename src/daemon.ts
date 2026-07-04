@@ -25,6 +25,7 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   type CoreDaemonStatusTextPayload,
   type CoreHostStatusTextPayload,
@@ -703,6 +704,17 @@ export class AimuxDaemon {
           contentType: "text/plain; charset=utf-8",
         };
       }
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.projectEnsureText) {
+      const projectParam = routeUrl.searchParams.get("project");
+      if (!projectParam) {
+        return { status: 400, body: "project query is required\n", contentType: "text/plain; charset=utf-8" };
+      }
+      const projectRoot = this.resolveProjectRoot(projectParam);
+      const project = await this.ensureProject(projectRoot);
+      const payload = { project };
+      return this.textOrJsonLines(routeUrl, payload, renderCoreProjectEnsureLines(payload));
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.daemonStatusText) {
