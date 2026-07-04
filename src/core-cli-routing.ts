@@ -24,6 +24,21 @@ export function coreCommandArgs(argvOrRawArgs: string[]): string[] {
   return result;
 }
 
+export function hasCoreGlobalLoggingArgs(argvOrRawArgs: string[]): boolean {
+  const executable = argvOrRawArgs[0] ?? "";
+  const isProcessArgv = /(?:^|[/\\])node(?:\.exe)?$/.test(executable) && argvOrRawArgs.length >= 2;
+  const args = isProcessArgv ? argvOrRawArgs.slice(2) : argvOrRawArgs;
+  return args.some(
+    (arg) =>
+      arg === "--debug" ||
+      arg === "--trace" ||
+      arg === "--log-level" ||
+      arg === "--log-category" ||
+      arg.startsWith("--log-level=") ||
+      arg.startsWith("--log-category="),
+  );
+}
+
 function hasHelp(args: string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
@@ -67,6 +82,10 @@ export function parseCoreProjectEnsureArgs(args: string[]): CoreProjectEnsureArg
 
 export function isValidCoreProjectEnsureArgs(args: string[]): boolean {
   return parseCoreProjectEnsureArgs(args) !== null;
+}
+
+export function isCoreProjectEnsureCommand(args: string[]): boolean {
+  return args[0] === "daemon" && args[1] === "project-ensure";
 }
 
 export function isCoreCliCommand(args: string[]): boolean {

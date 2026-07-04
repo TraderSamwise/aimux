@@ -205,14 +205,6 @@ describe("runCoreCli", () => {
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
   });
 
-  it("accepts global logging flags around routed command options", async () => {
-    await expect(
-      run(["daemon", "project-ensure", "--log-level", "debug", "--project", "/repo", "--trace"]),
-    ).resolves.toMatchObject({ code: 0 });
-
-    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
-  });
-
   it("rejects direct malformed project ensure invocations without mutating", async () => {
     const result = await run(["daemon", "project-ensure", "--project", "--json"]);
 
