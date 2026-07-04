@@ -133,6 +133,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.handoffAcceptText,
   CORE_API_ROUTES.handoffCompleteText,
   CORE_API_ROUTES.handoffSendText,
+  CORE_API_ROUTES.hostAgentReadText,
   CORE_API_ROUTES.lifecycleForkText,
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
@@ -639,6 +640,26 @@ export class AimuxDaemon {
     if (!Array.isArray(worktrees)) return worktrees;
     const payload: CoreWorktreeSummaryTextPayload = { worktrees };
     return this.textOrJsonLines(routeUrl, worktrees, renderCoreWorktreeListLines(payload));
+  }
+
+  private async hostAgentReadTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const startLineRaw = this.stringParam(routeUrl, body, "startLine") ?? "-120";
+    const startLine = Number.parseInt(startLineRaw, 10);
+    if (Number.isNaN(startLine)) return this.textError(400, "Error: --start-line must be an integer");
+
+    const params = new URLSearchParams({ sessionId, startLine: String(startLine) });
+    const result = await this.getProjectServiceJson(project, `${PROJECT_API_ROUTES.livePane.output}?${params}`);
+    if (!result.ok) return result.response;
+    const output = typeof result.json.output === "string" ? result.json.output : "";
+    return {
+      status: 200,
+      body: output.length > 0 && !output.endsWith("\n") ? `${output}\n` : output,
+      contentType: "text/plain; charset=utf-8",
+    };
   }
 
   private async worktreeCreateTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -1761,6 +1782,10 @@ export class AimuxDaemon {
       ensureProjectPaths(project);
       const { payload, knownProject } = this.hostStatusPayload(project, new Date().toISOString());
       return this.textOrJsonLines(routeUrl, payload, renderCoreHostStatusLines(payload, knownProject));
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.hostAgentReadText) {
+      return this.hostAgentReadTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {

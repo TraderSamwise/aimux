@@ -524,6 +524,32 @@ describe("daemon supervision", () => {
     expect(response.body).toBe("project query is required\n");
   });
 
+  it("serves host agent-read text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string) => {
+      if (url.includes(PROJECT_API_ROUTES.livePane.output)) {
+        expect(url).toContain("sessionId=claude-1");
+        expect(url).toContain("startLine=-80");
+        return { status: 200, json: { ok: true, output: "pane output" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.hostAgentReadText}?project=${encodeURIComponent(
+        projectRoot,
+      )}&sessionId=claude-1&startLine=-80`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toBe("pane output\n");
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+  });
+
   it("serves project ensure text for the installed shell shim", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

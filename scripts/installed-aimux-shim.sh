@@ -288,6 +288,30 @@ aimux_curl_project_arg_text_route() {
     "http://127.0.0.1:$port$path" 2>/dev/null || return 1
 }
 
+aimux_try_host_agent_read() {
+  shift 2
+  [ "$#" -gt 0 ] || return 1
+  session_id="$1"
+  case "$session_id" in -*) return 1 ;; esac
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  start_line="-120"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --start-line) shift; aimux_require_inline_value "${1:-}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
+      --start-line=*) aimux_require_inline_value "${1#--start-line=}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  aimux_get_query_text_route "/core/host-agent-read-text" 10 \
+    --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
+    --data-urlencode "startLine=$start_line"
+}
+
 aimux_resolve_project_arg() {
   project_arg="$1"
   if [ -d "$project_arg" ]; then
@@ -1363,6 +1387,16 @@ case "${1:-} ${2:-}" in
     fi
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_project_text_route "/core/host-status-text?json=1"; then
       exit 0
+    fi
+    ;;
+  "host agent-read")
+    if aimux_try_host_agent_read "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
     fi
     ;;
   "daemon ensure")
