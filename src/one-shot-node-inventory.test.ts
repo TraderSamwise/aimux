@@ -24,6 +24,7 @@ const runtimeNodeLaunchPatterns = [
   { id: "node-eval", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-e\b/ },
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
   { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-\s*(?:[^\n<]*\s)?<</ },
+  { id: "node-child-process-command", pattern: /\b(?:execFile|execSync|spawn|spawnSync)\(\s*["'`]node["'`]/ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
@@ -40,6 +41,21 @@ const processInspectionPatterns = [
 
 const allowedRuntimePatternMatches = new Set<string>();
 const allowedProcessExecPathFiles = new Set(["src/cli-launcher.ts"]);
+const allowedChildProcessFiles = new Set([
+  "src/context/compactor.ts",
+  "src/daemon-supervisor.ts",
+  "src/default-plugins/gh-pr-context.ts",
+  "src/desktop-notifier.ts",
+  "src/local-ui-server.ts",
+  "src/login-flow.ts",
+  "src/multiplexer/dashboard-interaction.ts",
+  "src/multiplexer/persistence-methods.ts",
+  "src/paths.ts",
+  "src/process-inspector.ts",
+  "src/tmux/doctor.ts",
+  "src/tmux/runtime-manager.ts",
+  "src/worktree.ts",
+]);
 const allowedProcessInspectionFiles = new Set(["src/process-inspector.ts"]);
 const allowedCommandArgMatchFiles = new Set(["src/process-args.ts", "src/process-inspector.ts"]);
 const allowedRetiredMainEntrypoints = [
@@ -157,6 +173,17 @@ describe("one-shot Node runtime inventory", () => {
         }
       }
     }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps child process launch sites explicit", () => {
+    const childProcessImportPattern =
+      /(?:from\s+["'](?:node:)?child_process["']|import\(\s*["'](?:node:)?child_process["']\s*\)|require\(\s*["'](?:node:)?child_process["']\s*\))/;
+    const violations = scanRoots
+      .flatMap((root) => listSourceFiles(root))
+      .filter((file) => childProcessImportPattern.test(readFileSync(join(process.cwd(), file), "utf8")))
+      .filter((file) => !allowedChildProcessFiles.has(file));
 
     expect(violations).toEqual([]);
   });
