@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_VERSION="$(awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' "$ROOT_DIR/package.json")"
+printf '%s\n' "$PACKAGE_VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' \
+  || { printf 'Failed to read package version from package.json\n' >&2; exit 1; }
 VERSION="${AIMUX_RELEASE_VERSION:-$PACKAGE_VERSION}"
 
 detect_platform() {
