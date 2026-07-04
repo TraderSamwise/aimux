@@ -11,7 +11,11 @@ const scanRoots = ["bin", "scripts", "src"] as const;
 const skippedDirectories = new Set([".git", "coverage", "dist", "dist-ui", "node_modules", "release"]);
 const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/];
 const skippedDeclarationFiles = [/\.d\.ts$/];
-const retiredMainEntrypoint = "dist/" + "main.js";
+const retiredMainSlashPath = "dist/" + "main.js";
+const retiredMainPatterns = [
+  { id: "slash-path", pattern: new RegExp(retiredMainSlashPath.replace("/", "\\/")) },
+  { id: "path-join", pattern: /["'`]dist["'`]\s*,\s*["'`]main\.js["'`]/ },
+] as const;
 
 const runtimeNodeLaunchPatterns = [
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
@@ -22,13 +26,15 @@ const runtimeNodeLaunchPatterns = [
 ] as const;
 
 const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);
-const allowedRetiredMainEntrypointFiles = new Set([
-  "src/daemon.test.ts",
-  "src/project-takeover.test.ts",
-  "src/runtime-coherence.test.ts",
-  "src/runtime-coherence.ts",
-  "src/runtime-restart.test.ts",
-]);
+const allowedRetiredMainEntrypoints = [
+  { file: "src/dashboard/command-spec.ts", id: "path-join", lineIncludes: 'join(installRoot, "dist", "main.js")' },
+  { file: "src/daemon.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+  { file: "src/project-takeover.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+  { file: "src/runtime-coherence.test.ts", id: "slash-path", lineIncludes: "/opt/aimux/native/local-old/dist/main.js" },
+  { file: "src/runtime-coherence.ts", id: "slash-path", lineIncludes: '"/dist/main.js"' },
+  { file: "src/runtime-restart.test.ts", id: "slash-path", lineIncludes: "/old/dist/main.js" },
+  { file: "src/runtime-restart.test.ts", id: "slash-path", lineIncludes: "node /opt/aimux/dist/main.js" },
+] as const;
 
 const launchContractUsage = [
   {
@@ -97,10 +103,21 @@ describe("one-shot Node runtime inventory", () => {
   });
 
   it("keeps the retired main entrypoint quarantined", () => {
-    const violations = scanRoots
-      .flatMap((root) => listSourceFiles(root, { includeTests: true }))
-      .filter((file) => readFileSync(join(process.cwd(), file), "utf8").includes(retiredMainEntrypoint))
-      .filter((file) => !allowedRetiredMainEntrypointFiles.has(file));
+    const violations: string[] = [];
+    for (const file of scanRoots.flatMap((root) => listSourceFiles(root, { includeTests: true }))) {
+      if (file === "src/one-shot-node-inventory.test.ts") continue;
+      const lines = readFileSync(join(process.cwd(), file), "utf8").split("\n");
+      lines.forEach((line, index) => {
+        for (const entry of retiredMainPatterns) {
+          if (!entry.pattern.test(line)) continue;
+          const allowed = allowedRetiredMainEntrypoints.some(
+            (candidate) =>
+              candidate.file === file && candidate.id === entry.id && line.includes(candidate.lineIncludes),
+          );
+          if (!allowed) violations.push(`${file}:${index + 1}:${entry.id}`);
+        }
+      });
+    }
 
     expect(violations).toEqual([]);
   });
