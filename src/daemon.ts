@@ -39,15 +39,30 @@ import {
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
   renderCoreSecurityUnlockLines,
+  renderCoreGraveyardAgentLines,
+  renderCoreGraveyardCleanupLines,
+  renderCoreGraveyardLines,
+  renderCoreWorktreeCreateLines,
+  renderCoreWorktreeDeleteGraveyardLines,
+  renderCoreWorktreeGraveyardLines,
+  renderCoreWorktreeListLines,
+  renderCoreWorktreeRemoveLines,
+  renderCoreWorktreeResurrectLines,
   renderCoreWhoamiLines,
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
+  type CoreGraveyardAgentTextPayload,
+  type CoreGraveyardCleanupTextPayload,
+  type CoreGraveyardTextPayload,
   type CoreHostStatusTextPayload,
   type CoreLifecycleForkTextPayload,
   type CoreLifecycleKillTextPayload,
   type CoreLifecycleSpawnTextPayload,
   type CoreLifecycleStopTextPayload,
   type CoreRemoteStatusTextPayload,
+  type CoreWorktreeCreateTextPayload,
+  type CoreWorktreePathTextPayload,
+  type CoreWorktreeSummaryTextPayload,
   type CoreWhoamiTextPayload,
 } from "./core-text.js";
 import { runLoginFlow } from "./login-flow.js";
@@ -74,6 +89,7 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
+const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
 const LOCAL_AUTH_ROUTES = new Set<string>([
@@ -84,11 +100,21 @@ const LOCAL_AUTH_ROUTES = new Set<string>([
   CORE_API_ROUTES.securityUnlockWaitText,
   CORE_API_ROUTES.securityUnlockText,
 ]);
-const LOCAL_LIFECYCLE_TEXT_ROUTES = new Set<string>([
+const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
+  CORE_API_ROUTES.graveyardCleanupText,
+  CORE_API_ROUTES.graveyardListText,
+  CORE_API_ROUTES.graveyardResurrectText,
+  CORE_API_ROUTES.graveyardSendText,
   CORE_API_ROUTES.lifecycleForkText,
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
   CORE_API_ROUTES.lifecycleStopText,
+  CORE_API_ROUTES.worktreeCreateText,
+  CORE_API_ROUTES.worktreeDeleteGraveyardText,
+  CORE_API_ROUTES.worktreeGraveyardText,
+  CORE_API_ROUTES.worktreeListText,
+  CORE_API_ROUTES.worktreeRemoveText,
+  CORE_API_ROUTES.worktreeResurrectText,
 ]);
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
@@ -115,6 +141,9 @@ interface DaemonRouteResponse {
 }
 
 type ProjectServiceJson = Record<string, unknown> & { ok?: boolean; error?: unknown };
+type ProjectServiceJsonResult =
+  | { ok: true; projectRoot: string; json: ProjectServiceJson }
+  | { ok: false; response: DaemonRouteResponse };
 
 type AuthAction = "security-unlock" | undefined;
 
@@ -459,14 +488,38 @@ export class AimuxDaemon {
     return this.textError(502, `Error: project service returned invalid ${action} response: ${field} is required`);
   }
 
+  private requiredProjectServiceArray(
+    json: ProjectServiceJson,
+    action: string,
+    field: string,
+  ): unknown[] | DaemonRouteResponse {
+    const value = json[field];
+    if (Array.isArray(value)) return value;
+    return this.textError(502, `Error: project service returned invalid ${action} response: ${field} is required`);
+  }
+
+  private async getProjectServiceJson(
+    projectRoot: string,
+    routePath: string,
+    opts: { ensureProject?: boolean } = {},
+  ): Promise<ProjectServiceJsonResult> {
+    return await this.requestProjectServiceJson(projectRoot, routePath, opts);
+  }
+
   private async postProjectServiceJson(
     projectRoot: string,
     routePath: string,
     body: Record<string, unknown>,
-    opts: { ensureProject?: boolean } = {},
-  ): Promise<
-    { ok: true; projectRoot: string; json: ProjectServiceJson } | { ok: false; response: DaemonRouteResponse }
-  > {
+    opts: { ensureProject?: boolean; timeoutMs?: number } = {},
+  ): Promise<ProjectServiceJsonResult> {
+    return await this.requestProjectServiceJson(projectRoot, routePath, { ...opts, method: "POST", body });
+  }
+
+  private async requestProjectServiceJson(
+    projectRoot: string,
+    routePath: string,
+    opts: { ensureProject?: boolean; method?: string; body?: Record<string, unknown>; timeoutMs?: number } = {},
+  ): Promise<ProjectServiceJsonResult> {
     const resolvedRoot = this.resolveProjectRoot(projectRoot);
     try {
       if (opts.ensureProject !== false) await this.ensureProject(resolvedRoot);
@@ -477,10 +530,9 @@ export class AimuxDaemon {
       const { status, json } = await requestJson<ProjectServiceJson>(
         `http://${endpoint.host}:${endpoint.port}${routePath}`,
         {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-          timeoutMs: PROXY_TIMEOUT_MS,
+          ...(opts.method ? { method: opts.method } : {}),
+          ...(opts.body ? { headers: { "content-type": "application/json" }, body: opts.body } : {}),
+          timeoutMs: opts.timeoutMs ?? PROXY_TIMEOUT_MS,
         },
       );
       if (status < 200 || status >= 300 || json?.ok === false) {
@@ -499,6 +551,146 @@ export class AimuxDaemon {
         response: this.textError(502, `Error: ${error instanceof Error ? error.message : String(error)}`),
       };
     }
+  }
+
+  private resolveProjectRelativePath(projectRoot: string, targetPath: string): string {
+    return targetPath.startsWith("/") ? pathResolve(targetPath) : pathResolve(projectRoot, targetPath);
+  }
+
+  private async worktreeListTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const result = await this.getProjectServiceJson(project, PROJECT_API_ROUTES.worktrees);
+    if (!result.ok) return result.response;
+    const worktrees = this.requiredProjectServiceArray(result.json, "worktree list", "worktrees");
+    if (!Array.isArray(worktrees)) return worktrees;
+    const payload: CoreWorktreeSummaryTextPayload = { worktrees };
+    return this.textOrJsonLines(routeUrl, worktrees, renderCoreWorktreeListLines(payload));
+  }
+
+  private async worktreeCreateTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const name = this.requiredParam(routeUrl, body, "name");
+    if (typeof name !== "string") return name;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.worktreeActions.create, { name });
+    if (!result.ok) return result.response;
+    const path = this.requiredProjectServiceString(result.json, "worktree create", "path");
+    if (typeof path !== "string") return path;
+    const payload: CoreWorktreeCreateTextPayload = {
+      ok: true,
+      name,
+      path,
+      status: result.json.status === "creating" ? "creating" : "created",
+      projectRoot: result.projectRoot,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreWorktreeCreateLines(payload));
+  }
+
+  private async worktreePathTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: { action: string; routePath: string; render: (payload: CoreWorktreePathTextPayload) => string[] },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const targetPath = this.requiredParam(routeUrl, body, "path");
+    if (typeof targetPath !== "string") return targetPath;
+    const projectRoot = this.resolveProjectRoot(project);
+    const resolvedPath = this.resolveProjectRelativePath(projectRoot, targetPath);
+    const result = await this.postProjectServiceJson(
+      projectRoot,
+      input.routePath,
+      { path: resolvedPath },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const returnedPath = this.requiredProjectServiceString(result.json, input.action, "path");
+    if (typeof returnedPath !== "string") return returnedPath;
+    const status = this.requiredProjectServiceString(result.json, input.action, "status");
+    if (typeof status !== "string") return status;
+    const payload: CoreWorktreePathTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      path: returnedPath,
+      status,
+    };
+    return this.textOrJsonLines(routeUrl, payload, input.render(payload));
+  }
+
+  private async graveyardListTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const result = await this.getProjectServiceJson(project, PROJECT_API_ROUTES.graveyard);
+    if (!result.ok) return result.response;
+    const entries = this.requiredProjectServiceArray(result.json, "graveyard list", "entries");
+    if (!Array.isArray(entries)) return entries;
+    const worktrees = Array.isArray(result.json.worktrees) ? result.json.worktrees : [];
+    const payload: CoreGraveyardTextPayload = { entries, worktrees };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreGraveyardLines(payload));
+  }
+
+  private async graveyardAgentTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: { action: "graveyard send" | "graveyard resurrect"; routePath: string; statusFallback?: string },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const result = await this.postProjectServiceJson(
+      project,
+      input.routePath,
+      { sessionId },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, input.action, "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const status = typeof result.json.status === "string" ? result.json.status : input.statusFallback;
+    if (!status)
+      return this.textError(
+        502,
+        `Error: project service returned invalid ${input.action} response: status is required`,
+      );
+    const payload: CoreGraveyardAgentTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      status,
+      ...(typeof result.json.previousStatus === "string" ? { previousStatus: result.json.previousStatus } : {}),
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreGraveyardAgentLines(payload));
+  }
+
+  private async graveyardCleanupTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const dryRun = this.booleanParam(routeUrl, body, "dryRun", false);
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.graveyardActions.cleanup,
+      { dryRun },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const cleanupResult = result.json.result ?? result.json;
+    if (!cleanupResult || typeof cleanupResult !== "object") {
+      return this.textError(
+        502,
+        "Error: project service returned invalid graveyard cleanup response: result is required",
+      );
+    }
+    const payload: CoreGraveyardCleanupTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      result: cleanupResult,
+    };
+    if (routeUrl.searchParams.get("json") === "1") {
+      return this.textOrJsonLines(routeUrl, { ok: true, projectRoot: result.projectRoot, ...cleanupResult }, []);
+    }
+    return this.textOrJsonLines(routeUrl, payload, renderCoreGraveyardCleanupLines(payload));
   }
 
   private async lifecycleSpawnTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -1037,17 +1229,17 @@ export class AimuxDaemon {
     if (method === "POST" && LOCAL_AUTH_ROUTES.has(pathname) && actor) {
       return { status: 403, body: "auth routes are loopback-only\n", contentType: "text/plain; charset=utf-8" };
     }
-    if (method === "POST" && LOCAL_LIFECYCLE_TEXT_ROUTES.has(pathname) && actor) {
+    if (LOCAL_CLI_TEXT_ROUTES.has(pathname) && actor) {
       return {
         status: 403,
-        body: "lifecycle text routes are loopback-only\n",
+        body: "core text routes are loopback-only\n",
         contentType: "text/plain; charset=utf-8",
       };
     }
-    if (method === "POST" && LOCAL_LIFECYCLE_TEXT_ROUTES.has(pathname) && (headers?.origin || headers?.Origin)) {
+    if (LOCAL_CLI_TEXT_ROUTES.has(pathname) && (headers?.origin || headers?.Origin)) {
       return {
         status: 403,
-        body: "lifecycle text routes are cli-only\n",
+        body: "core text routes are cli-only\n",
         contentType: "text/plain; charset=utf-8",
       };
     }
@@ -1128,6 +1320,69 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleForkText) {
       return this.lifecycleForkTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.worktreeListText) {
+      return this.worktreeListTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.worktreeCreateText) {
+      return this.worktreeCreateTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.worktreeRemoveText) {
+      return this.worktreePathTextRoute(routeUrl, body, {
+        action: "worktree remove",
+        routePath: PROJECT_API_ROUTES.worktreeActions.remove,
+        render: renderCoreWorktreeRemoveLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.worktreeGraveyardText) {
+      return this.worktreePathTextRoute(routeUrl, body, {
+        action: "worktree graveyard",
+        routePath: PROJECT_API_ROUTES.worktreeActions.graveyard,
+        render: renderCoreWorktreeGraveyardLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.worktreeResurrectText) {
+      return this.worktreePathTextRoute(routeUrl, body, {
+        action: "worktree resurrect",
+        routePath: PROJECT_API_ROUTES.graveyardActions.resurrectWorktree,
+        render: renderCoreWorktreeResurrectLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.worktreeDeleteGraveyardText) {
+      return this.worktreePathTextRoute(routeUrl, body, {
+        action: "worktree delete graveyard",
+        routePath: PROJECT_API_ROUTES.graveyardActions.deleteWorktree,
+        render: renderCoreWorktreeDeleteGraveyardLines,
+      });
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.graveyardListText) {
+      return this.graveyardListTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.graveyardSendText) {
+      return this.graveyardAgentTextRoute(routeUrl, body, {
+        action: "graveyard send",
+        routePath: PROJECT_API_ROUTES.agents.kill,
+        statusFallback: "graveyarded",
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.graveyardResurrectText) {
+      return this.graveyardAgentTextRoute(routeUrl, body, {
+        action: "graveyard resurrect",
+        routePath: PROJECT_API_ROUTES.graveyardActions.resurrectAgent,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.graveyardCleanupText) {
+      return this.graveyardCleanupTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.daemonStatusText) {
