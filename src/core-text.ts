@@ -1,4 +1,4 @@
-import type { CoreRelaySnapshot, CoreStatusProject } from "./core-command-contract.js";
+import type { CoreProjectServiceState, CoreRelaySnapshot, CoreStatusProject } from "./core-command-contract.js";
 
 export interface CoreDaemonStatusTextPayload {
   daemon: { pid?: number; port?: number; serviceInfo?: unknown } | null;
@@ -14,6 +14,10 @@ export interface CoreHostStatusTextPayload {
   serviceAlive: boolean;
   metadataEndpoint: unknown;
   expectedServiceManifest: unknown;
+}
+
+export interface CoreProjectEnsureTextPayload {
+  project: CoreProjectServiceState;
 }
 
 function coreProjectServicePid(projectService: unknown): number | null {
@@ -48,6 +52,10 @@ export function renderCoreHostStatusLines(payload: CoreHostStatusTextPayload, kn
   lines.push(`Expected manifest: ${JSON.stringify(payload.expectedServiceManifest)}`);
   lines.push(`Tmux session: ${payload.sessionName}`);
   return lines;
+}
+
+export function renderCoreProjectEnsureLines(payload: CoreProjectEnsureTextPayload): string[] {
+  return [`Ensured project service for ${payload.project.projectRoot} (pid ${payload.project.pid})`];
 }
 
 export function renderCoreDaemonProjectsLines(projects: CoreStatusProject[]): string[] {

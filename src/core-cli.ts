@@ -5,6 +5,7 @@ import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
   renderCoreHostStatusLines,
+  renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   type CoreDaemonStatusTextPayload,
 } from "./core-text.js";
@@ -134,11 +135,12 @@ async function runDaemonProjectEnsure(args: string[], io: Required<CoreCliIo>): 
   }
   const projectRoot = resolveProjectRoot(pathResolve(parsedArgs.project));
   const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+  const payload = { project: result.project };
   if (parsedArgs.json) {
-    io.stdout(JSON.stringify({ project: result.project }, null, 2));
+    io.stdout(JSON.stringify(payload, null, 2));
     return 0;
   }
-  io.stdout(`Ensured project service for ${projectRoot} (pid ${result.project.pid})`);
+  renderCoreProjectEnsureLines(payload).forEach(io.stdout);
   return 0;
 }
 

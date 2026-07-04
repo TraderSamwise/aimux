@@ -106,6 +106,58 @@ aimux_curl_project_text_route() {
     "http://127.0.0.1:$port$path" 2>/dev/null || return 1
 }
 
+aimux_curl_project_arg_text_route() {
+  path="$1"
+  project_root="$2"
+  port="$(aimux_matching_daemon_port)" || return 1
+  curl -fsS --max-time 60 -X POST --get --data-urlencode "project=$project_root" \
+    "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+}
+
+aimux_resolve_project_arg() {
+  project_arg="$1"
+  if [ -d "$project_arg" ]; then
+    (cd "$project_arg" && pwd -P) || return 1
+    return 0
+  fi
+  case "$project_arg" in
+    /*) printf '%s\n' "$project_arg" ;;
+    *) printf '%s/%s\n' "$(pwd -P)" "$project_arg" ;;
+  esac
+}
+
+aimux_try_daemon_project_ensure() {
+  shift 2
+  project_root=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json)
+        json=1
+        ;;
+      --project)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        project_root="$1"
+        ;;
+      --project=*)
+        project_root="${1#--project=}"
+        [ -n "$project_root" ] || return 1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  [ -n "$project_root" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/project-ensure-text"
+  [ "$json" -eq 1 ] && path="/core/project-ensure-text?json=1"
+  aimux_curl_project_arg_text_route "$path" "$project_root"
+}
+
 case "${1:-} ${2:-}" in
   "host status")
     if [ "$#" -eq 2 ] && aimux_curl_project_text_route "/core/host-status-text"; then
@@ -120,6 +172,11 @@ case "${1:-} ${2:-}" in
       exit 0
     fi
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-ensure-text?json=1"; then
+      exit 0
+    fi
+    ;;
+  "daemon project-ensure")
+    if aimux_try_daemon_project_ensure "$@"; then
       exit 0
     fi
     ;;
