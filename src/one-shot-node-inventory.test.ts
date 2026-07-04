@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { childProcessImportPattern } from "./source-inventory-test-utils.js";
 
 const cliBootstrapInventory = [
   { id: "bin-shim", path: "bin/aimux", pattern: /node/ },
@@ -24,6 +25,9 @@ const runtimeNodeLaunchPatterns = [
   { id: "node-eval", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-e\b/ },
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
   { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-\s*(?:[^\n<]*\s)?<</ },
+  { id: "node-child-process-file-command", pattern: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*["'`]node["'`]/ },
+  { id: "node-child-process-shell-command", pattern: /\b(?:exec|execSync)\(\s*["'`]node\b/ },
+  { id: "node-child-process-fork-command", pattern: /\b(?:[A-Za-z_$][\w$]*\.)?fork\(/ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
@@ -40,6 +44,21 @@ const processInspectionPatterns = [
 
 const allowedRuntimePatternMatches = new Set<string>();
 const allowedProcessExecPathFiles = new Set(["src/cli-launcher.ts"]);
+const allowedChildProcessFiles = new Set([
+  "src/context/compactor.ts",
+  "src/daemon-supervisor.ts",
+  "src/default-plugins/gh-pr-context.ts",
+  "src/desktop-notifier.ts",
+  "src/local-ui-server.ts",
+  "src/login-flow.ts",
+  "src/multiplexer/dashboard-interaction.ts",
+  "src/multiplexer/persistence-methods.ts",
+  "src/paths.ts",
+  "src/process-inspector.ts",
+  "src/tmux/doctor.ts",
+  "src/tmux/runtime-manager.ts",
+  "src/worktree.ts",
+]);
 const allowedProcessInspectionFiles = new Set(["src/process-inspector.ts"]);
 const allowedCommandArgMatchFiles = new Set(["src/process-args.ts", "src/process-inspector.ts"]);
 const allowedRetiredMainEntrypoints = [
@@ -161,11 +180,33 @@ describe("one-shot Node runtime inventory", () => {
     expect(violations).toEqual([]);
   });
 
+  it("keeps child process launch sites explicit", () => {
+    const violations = scanRoots
+      .flatMap((root) => listSourceFiles(root))
+      .filter((file) => childProcessImportPattern.test(readFileSync(join(process.cwd(), file), "utf8")))
+      .filter((file) => !allowedChildProcessFiles.has(file));
+
+    expect(violations).toEqual([]);
+  });
+
   it("recognizes node heredoc variants", () => {
     const dashHeredoc = runtimeNodeLaunchPatterns.find((entry) => entry.id === "node-dash-heredoc");
 
     expect(dashHeredoc?.pattern.test("node - <<'NODE'\n")).toBe(true);
     expect(dashHeredoc?.pattern.test('AIMUX_INPUT="$value" node - "$arg" <<\'NODE\'\n')).toBe(true);
+  });
+
+  it("recognizes child-process node command variants", () => {
+    const fileCommand = runtimeNodeLaunchPatterns.find((entry) => entry.id === "node-child-process-file-command");
+    const shellCommand = runtimeNodeLaunchPatterns.find((entry) => entry.id === "node-child-process-shell-command");
+    const forkCommand = runtimeNodeLaunchPatterns.find((entry) => entry.id === "node-child-process-fork-command");
+
+    expect(fileCommand?.pattern.test('spawn("node", ["script.js"])')).toBe(true);
+    expect(fileCommand?.pattern.test('execFileSync("node", ["script.js"])')).toBe(true);
+    expect(shellCommand?.pattern.test('execSync("node scripts/tool.js")')).toBe(true);
+    expect(forkCommand?.pattern.test('fork("scripts/tool.js")')).toBe(true);
+    expect(forkCommand?.pattern.test("fork(scriptPath)")).toBe(true);
+    expect(forkCommand?.pattern.test("cp.fork(join(root, 'script.js'))")).toBe(true);
   });
 
   it("keeps the retired main entrypoint quarantined", () => {
