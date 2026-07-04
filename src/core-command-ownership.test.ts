@@ -22,6 +22,14 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "graveyard send <id>", shimNeedle: "/core/graveyard/send-text" },
   { command: "graveyard resurrect <id>", shimNeedle: "/core/graveyard/resurrect-text" },
   { command: "graveyard cleanup", shimNeedle: "/core/graveyard/cleanup-text" },
+  { command: "threads", shimNeedle: "/core/threads/list-text" },
+  { command: "thread list", shimNeedle: "/core/thread/list-text" },
+  { command: "thread show <threadId>", shimNeedle: "/core/thread/show-text" },
+  { command: "thread open", shimNeedle: "/core/thread/open-text" },
+  { command: "thread send <threadId> <body>", shimNeedle: "/core/thread/send-text" },
+  { command: "thread mark-seen <threadId>", shimNeedle: "/core/thread/mark-seen-text" },
+  { command: "thread status <threadId>", shimNeedle: "/core/thread/status-text" },
+  { command: "message send <body>", shimNeedle: "/core/message/send-text" },
 ];
 
 const coreCommandDispositions: Array<{
