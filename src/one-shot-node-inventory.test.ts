@@ -115,6 +115,10 @@ describe("one-shot Node runtime inventory", () => {
     expect(localNodeToolPattern.test("node scripts/tool.js")).toBe(true);
     expect(localNodeToolPattern.test("node ./scripts/tool.js")).toBe(true);
     expect(violations).toEqual([]);
+
+    for (const file of ["scripts/audit-agent-output-parser.mjs", "app/scripts/check-release-env.js"]) {
+      expect(readFileSync(join(process.cwd(), file), "utf8"), file).not.toMatch(localNodeToolPattern);
+    }
   });
 
   it("keeps the Node CLI bootstrap explicit", () => {
