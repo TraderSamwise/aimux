@@ -20,6 +20,7 @@ const retiredMainPatterns = [
 ] as const;
 
 const runtimeNodeLaunchPatterns = [
+  { id: "direct-node-launcher", pattern: /\bnode\s+dist\/launcher-bin\.js\b/ },
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
   { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*node\s+-\s*<</ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
