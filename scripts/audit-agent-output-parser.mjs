@@ -8,7 +8,7 @@ import {
 
 const usage = `Usage:
   yarn build
-  node scripts/audit-agent-output-parser.mjs [--history <dir>] [--context <dir>] [--max <n>] [--flag <flag>] [--json] [--fail-on-findings]
+  ./scripts/audit-agent-output-parser.mjs [--history <dir>] [--context <dir>] [--max <n>] [--flag <flag>] [--json] [--fail-on-findings]
 
 Defaults:
   --history .aimux/history
