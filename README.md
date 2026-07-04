@@ -76,7 +76,7 @@ That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` inste
 
 For development, remember the distinction:
 
-- `yarn build` updates this checkout's `dist/`, so `node dist/launcher-bin.js ...` sees source changes.
+- `yarn build` updates this checkout's `dist/`, so `./bin/aimux ...` sees source changes through the same package shim.
 - Plain `aimux ...` runs the installed bundle behind `~/.local/bin/aimux`, so it will not see source changes until you build and install a local release archive.
 - Reinstalling a local release archive automatically runs the safe `aimux restart` repair. Set `AIMUX_SKIP_POST_INSTALL_RESTART=1` only when testing the installer itself.
 
