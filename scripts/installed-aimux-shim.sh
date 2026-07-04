@@ -956,6 +956,283 @@ aimux_try_message() {
   aimux_post_query_text_route "$path" 120 "$@"
 }
 
+aimux_try_handoff() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    send)
+      shift
+      [ "$#" -gt 0 ] || return 1
+      body="$1"
+      case "$body" in -*) return 1 ;; esac
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      from="user"
+      to=""
+      assignee=""
+      tool=""
+      worktree=""
+      title=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --to) shift; aimux_require_arg_value "$@" || return 1; to="$AIMUX_ARG_VALUE" ;;
+          --to=*) aimux_require_inline_value "${1#--to=}" || return 1; to="$AIMUX_ARG_VALUE" ;;
+          --assignee) shift; aimux_require_arg_value "$@" || return 1; assignee="$AIMUX_ARG_VALUE" ;;
+          --assignee=*) aimux_require_inline_value "${1#--assignee=}" || return 1; assignee="$AIMUX_ARG_VALUE" ;;
+          --tool) shift; aimux_require_arg_value "$@" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+          --tool=*) aimux_require_inline_value "${1#--tool=}" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+          --worktree) shift; aimux_require_arg_value "$@" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
+          --worktree=*) aimux_require_inline_value "${1#--worktree=}" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
+          --title) shift; aimux_require_arg_value "$@" || return 1; title="$AIMUX_ARG_VALUE" ;;
+          --title=*) aimux_require_inline_value "${1#--title=}" || return 1; title="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      set -- --data-urlencode "project=$project_root" --data-urlencode "body=$body" --data-urlencode "from=$from"
+      [ -n "$to" ] && set -- "$@" --data-urlencode "to=$to"
+      [ -n "$assignee" ] && set -- "$@" --data-urlencode "assignee=$assignee"
+      [ -n "$tool" ] && set -- "$@" --data-urlencode "tool=$tool"
+      [ -n "$worktree" ] && set -- "$@" --data-urlencode "worktree=$worktree"
+      [ -n "$title" ] && set -- "$@" --data-urlencode "title=$title"
+      path="/core/handoff/send-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    accept|complete)
+      action="$subcommand"
+      shift
+      aimux_parse_thread_action_args "$@" || return 1
+      case "$action" in
+        accept) path="/core/handoff/accept-text" ;;
+        complete) path="/core/handoff/complete-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="$path?json=1"
+      set -- --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "threadId=$AIMUX_PARSED_THREAD" \
+        --data-urlencode "from=$AIMUX_PARSED_FROM"
+      [ -n "$AIMUX_PARSED_BODY" ] && set -- "$@" --data-urlencode "body=$AIMUX_PARSED_BODY"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+aimux_parse_thread_action_args() {
+  [ "$#" -gt 0 ] || return 1
+  thread_id="$1"
+  case "$thread_id" in -*) return 1 ;; esac
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  from="user"
+  body=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+      --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+      --body) shift; aimux_require_arg_value "$@" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --body=*) aimux_require_inline_value "${1#--body=}" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --json) json=1 ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  AIMUX_PARSED_PROJECT="$project_root"
+  AIMUX_PARSED_THREAD="$thread_id"
+  AIMUX_PARSED_FROM="$from"
+  AIMUX_PARSED_BODY="$body"
+  AIMUX_PARSED_JSON="$json"
+}
+
+aimux_try_task() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    list)
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      session=""
+      status=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --session) shift; aimux_require_arg_value "$@" || return 1; session="$AIMUX_ARG_VALUE" ;;
+          --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session="$AIMUX_ARG_VALUE" ;;
+          --status) shift; aimux_require_arg_value "$@" || return 1; status="$AIMUX_ARG_VALUE" ;;
+          --status=*) aimux_require_inline_value "${1#--status=}" || return 1; status="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      path="/core/task/list-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      set -- --data-urlencode "project=$project_root"
+      [ -n "$session" ] && set -- "$@" --data-urlencode "session=$session"
+      [ -n "$status" ] && set -- "$@" --data-urlencode "status=$status"
+      aimux_get_query_text_route "$path" 60 "$@"
+      ;;
+    show)
+      shift
+      [ "$#" -gt 0 ] || return 1
+      task_id="$1"
+      case "$task_id" in -*) return 1 ;; esac
+      shift
+      aimux_parse_project_json_args "$@" || return 1
+      path="/core/task/show-text"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="$path?json=1"
+      aimux_get_query_text_route "$path" 60 \
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "taskId=$task_id"
+      ;;
+    assign)
+      shift
+      [ "$#" -gt 0 ] || return 1
+      description="$1"
+      case "$description" in -*) return 1 ;; esac
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      from="user"
+      to=""
+      assignee=""
+      tool=""
+      prompt=""
+      type="task"
+      diff=""
+      worktree=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --to) shift; aimux_require_arg_value "$@" || return 1; to="$AIMUX_ARG_VALUE" ;;
+          --to=*) aimux_require_inline_value "${1#--to=}" || return 1; to="$AIMUX_ARG_VALUE" ;;
+          --assignee) shift; aimux_require_arg_value "$@" || return 1; assignee="$AIMUX_ARG_VALUE" ;;
+          --assignee=*) aimux_require_inline_value "${1#--assignee=}" || return 1; assignee="$AIMUX_ARG_VALUE" ;;
+          --tool) shift; aimux_require_arg_value "$@" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+          --tool=*) aimux_require_inline_value "${1#--tool=}" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+          --prompt) shift; aimux_require_arg_value "$@" || return 1; prompt="$AIMUX_ARG_VALUE" ;;
+          --prompt=*) aimux_require_inline_value "${1#--prompt=}" || return 1; prompt="$AIMUX_ARG_VALUE" ;;
+          --type) shift; aimux_require_arg_value "$@" || return 1; type="$AIMUX_ARG_VALUE" ;;
+          --type=*) aimux_require_inline_value "${1#--type=}" || return 1; type="$AIMUX_ARG_VALUE" ;;
+          --diff) shift; aimux_require_arg_value "$@" || return 1; diff="$AIMUX_ARG_VALUE" ;;
+          --diff=*) aimux_require_inline_value "${1#--diff=}" || return 1; diff="$AIMUX_ARG_VALUE" ;;
+          --worktree) shift; aimux_require_arg_value "$@" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
+          --worktree=*) aimux_require_inline_value "${1#--worktree=}" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      set -- --data-urlencode "project=$project_root" --data-urlencode "description=$description" \
+        --data-urlencode "from=$from" --data-urlencode "type=$type"
+      [ -n "$to" ] && set -- "$@" --data-urlencode "to=$to"
+      [ -n "$assignee" ] && set -- "$@" --data-urlencode "assignee=$assignee"
+      [ -n "$tool" ] && set -- "$@" --data-urlencode "tool=$tool"
+      [ -n "$prompt" ] && set -- "$@" --data-urlencode "prompt=$prompt"
+      [ -n "$diff" ] && set -- "$@" --data-urlencode "diff=$diff"
+      [ -n "$worktree" ] && set -- "$@" --data-urlencode "worktree=$worktree"
+      path="/core/task/assign-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    accept|block|complete|reopen)
+      action="$subcommand"
+      shift
+      aimux_parse_task_action_args "$@" || return 1
+      case "$action" in
+        accept) path="/core/task/accept-text" ;;
+        block) path="/core/task/block-text" ;;
+        complete) path="/core/task/complete-text" ;;
+        reopen) path="/core/task/reopen-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="$path?json=1"
+      aimux_post_task_action "$path"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+aimux_parse_task_action_args() {
+  [ "$#" -gt 0 ] || return 1
+  task_id="$1"
+  case "$task_id" in -*) return 1 ;; esac
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  from="user"
+  body=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+      --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+      --body) shift; aimux_require_arg_value "$@" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --body=*) aimux_require_inline_value "${1#--body=}" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --json) json=1 ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  AIMUX_PARSED_PROJECT="$project_root"
+  AIMUX_PARSED_TASK="$task_id"
+  AIMUX_PARSED_FROM="$from"
+  AIMUX_PARSED_BODY="$body"
+  AIMUX_PARSED_JSON="$json"
+}
+
+aimux_post_task_action() {
+  route_path="$1"
+  set -- --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "taskId=$AIMUX_PARSED_TASK" \
+    --data-urlencode "from=$AIMUX_PARSED_FROM"
+  [ -n "$AIMUX_PARSED_BODY" ] && set -- "$@" --data-urlencode "body=$AIMUX_PARSED_BODY"
+  aimux_post_query_text_route "$route_path" 120 "$@"
+}
+
+aimux_try_review() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    approve|request-changes)
+      shift
+      aimux_parse_task_action_args "$@" || return 1
+      case "$subcommand" in
+        approve) path="/core/review/approve-text" ;;
+        request-changes) path="/core/review/request-changes-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="$path?json=1"
+      aimux_post_task_action "$path"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 case "${1:-}" in
   threads)
     if aimux_try_threads "$@"; then
@@ -979,6 +1256,36 @@ case "${1:-}" in
     ;;
   message)
     if aimux_try_message "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  handoff)
+    if aimux_try_handoff "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  task)
+    if aimux_try_task "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  review)
+    if aimux_try_review "$@"; then
       exit 0
     else
       code="$?"

@@ -30,6 +30,18 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "thread mark-seen <threadId>", shimNeedle: "/core/thread/mark-seen-text" },
   { command: "thread status <threadId>", shimNeedle: "/core/thread/status-text" },
   { command: "message send <body>", shimNeedle: "/core/message/send-text" },
+  { command: "handoff send <body>", shimNeedle: "/core/handoff/send-text" },
+  { command: "handoff accept <threadId>", shimNeedle: "/core/handoff/accept-text" },
+  { command: "handoff complete <threadId>", shimNeedle: "/core/handoff/complete-text" },
+  { command: "task list", shimNeedle: "/core/task/list-text" },
+  { command: "task show <taskId>", shimNeedle: "/core/task/show-text" },
+  { command: "task assign <description>", shimNeedle: "/core/task/assign-text" },
+  { command: "task accept <taskId>", shimNeedle: "/core/task/accept-text" },
+  { command: "task block <taskId>", shimNeedle: "/core/task/block-text" },
+  { command: "task complete <taskId>", shimNeedle: "/core/task/complete-text" },
+  { command: "task reopen <taskId>", shimNeedle: "/core/task/reopen-text" },
+  { command: "review approve <taskId>", shimNeedle: "/core/review/approve-text" },
+  { command: "review request-changes <taskId>", shimNeedle: "/core/review/request-changes-text" },
 ];
 
 const coreCommandDispositions: Array<{

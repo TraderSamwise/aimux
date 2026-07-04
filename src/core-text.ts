@@ -130,6 +130,32 @@ export interface CoreMessageSendTextPayload {
   deliveredTo?: unknown;
 }
 
+export type CoreHandoffSendTextPayload = CoreMessageSendTextPayload;
+
+export interface CoreHandoffMutationTextPayload {
+  thread: unknown;
+  message: unknown;
+}
+
+export interface CoreTaskListTextPayload {
+  tasks: unknown[];
+}
+
+export interface CoreTaskShowTextPayload {
+  task: unknown;
+  thread?: unknown;
+  messages: unknown[];
+}
+
+export interface CoreTaskMutationTextPayload {
+  task: unknown;
+  thread?: unknown;
+}
+
+export interface CoreReviewRequestChangesTextPayload extends CoreTaskMutationTextPayload {
+  followUpTask?: unknown;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -440,6 +466,70 @@ export function renderCoreMessageSendLines(payload: CoreMessageSendTextPayload):
   if (Array.isArray(payload.deliveredTo) && payload.deliveredTo.length > 0) {
     lines.push(`delivered ${payload.deliveredTo.join(",")}`);
   }
+  return lines;
+}
+
+export function renderCoreHandoffSendLines(payload: CoreHandoffSendTextPayload): string[] {
+  return renderCoreMessageSendLines(payload);
+}
+
+export function renderCoreHandoffMutationLines(payload: CoreHandoffMutationTextPayload): string[] {
+  const thread = payload.thread as Record<string, unknown>;
+  const message = payload.message as Record<string, unknown>;
+  return [`thread ${String(thread.id)}`, `message ${String(message.id)}`];
+}
+
+export function renderCoreTaskListLines(payload: CoreTaskListTextPayload): string[] {
+  const tasks = payload.tasks.filter((entry) => entry && typeof entry === "object") as Array<Record<string, unknown>>;
+  if (tasks.length === 0) return ["No tasks found."];
+  const lines: string[] = [];
+  for (const task of tasks) {
+    const target = task.assignedTo ?? task.assignee ?? task.tool ?? "unassigned";
+    const thread = task.threadId ? ` thread=${String(task.threadId)}` : "";
+    lines.push(
+      `${String(task.id)}  ${String(task.type ?? "task")}  ${String(task.status)}  target=${String(target)}${thread}`,
+    );
+    lines.push(`  ${String(task.description ?? "")}`);
+  }
+  return lines;
+}
+
+export function renderCoreTaskShowLines(payload: CoreTaskShowTextPayload): string[] {
+  const task = payload.task as Record<string, unknown>;
+  const lines = [
+    `${String(task.description ?? "")} (${String(task.type ?? "task")})`,
+    `id: ${String(task.id)}`,
+    `status: ${String(task.status)}`,
+    `assignedBy: ${String(task.assignedBy)}`,
+  ];
+  if (task.assignedTo) lines.push(`assignedTo: ${String(task.assignedTo)}`);
+  if (task.assignee) lines.push(`assignee: ${String(task.assignee)}`);
+  if (task.tool) lines.push(`tool: ${String(task.tool)}`);
+  if (task.threadId) lines.push(`thread: ${String(task.threadId)}`);
+  if (task.reviewStatus) lines.push(`reviewStatus: ${String(task.reviewStatus)}`);
+  if (task.reviewFeedback) lines.push(`reviewFeedback: ${String(task.reviewFeedback)}`);
+  if (task.result) lines.push(`result: ${String(task.result)}`);
+  if (task.error) lines.push(`error: ${String(task.error)}`);
+  lines.push("", String(task.prompt ?? ""));
+  return lines;
+}
+
+export function renderCoreTaskMutationLines(payload: CoreTaskMutationTextPayload): string[] {
+  const task = payload.task as Record<string, unknown>;
+  const thread =
+    payload.thread && typeof payload.thread === "object" ? (payload.thread as Record<string, unknown>) : null;
+  const lines = [`task ${String(task.id)}`];
+  if (thread?.id) lines.push(`thread ${String(thread.id)}`);
+  return lines;
+}
+
+export function renderCoreReviewRequestChangesLines(payload: CoreReviewRequestChangesTextPayload): string[] {
+  const lines = renderCoreTaskMutationLines(payload);
+  const followUpTask =
+    payload.followUpTask && typeof payload.followUpTask === "object"
+      ? (payload.followUpTask as Record<string, unknown>)
+      : null;
+  if (followUpTask?.id) lines.splice(1, 0, `follow-up ${String(followUpTask.id)}`);
   return lines;
 }
 

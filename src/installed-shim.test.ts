@@ -84,7 +84,7 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*)
+	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     if [ -n "$output_file" ]; then
       cat "$TEXT_ROUTE_FILE" > "$output_file"
@@ -739,6 +739,132 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
       `${fixture.aimuxRoot}/dist/launcher-bin.js message send body --to claude-1\n`,
     );
+  });
+
+  it("serves workflow commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "task task-1\nthread thread-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(
+      fixture.run(["task", "list", "--session", "claude-1", "--status=todo", "--json"], {}, { cwd: projectDir }).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(fixture.run(["task", "show", "task-1", "--project", "/repo", "--json"]).stdout).toBe(
+      "task task-1\nthread thread-1\n",
+    );
+    expect(
+      fixture.run([
+        "task",
+        "assign",
+        "Ship it",
+        "--from=user",
+        "--to=claude-1",
+        "--assignee=coder",
+        "--tool=claude",
+        "--prompt=Implement",
+        "--type=review",
+        "--diff=diff",
+        "--worktree=feature",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(fixture.run(["task", "accept", "task-1", "--from", "claude-1", "--body=ok", "--project=/repo"]).stdout).toBe(
+      "task task-1\nthread thread-1\n",
+    );
+    expect(
+      fixture.run(["task", "block", "task-1", "--from=claude-1", "--body", "blocked", "--project=/repo"]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(
+      fixture.run(["task", "complete", "task-1", "--from=claude-1", "--body=done", "--project=/repo"]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(fixture.run(["task", "reopen", "task-1", "--from=claude-1", "--body=again", "--project=/repo"]).stdout).toBe(
+      "task task-1\nthread thread-1\n",
+    );
+    expect(
+      fixture.run([
+        "handoff",
+        "send",
+        "Please take over",
+        "--from=user",
+        "--to=claude-1",
+        "--assignee=coder",
+        "--tool=claude",
+        "--worktree=feature",
+        "--title=Takeover",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(
+      fixture.run(["handoff", "accept", "thread-1", "--from=claude-1", "--body=ok", "--project=/repo"]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(
+      fixture.run(["handoff", "complete", "thread-1", "--from=claude-1", "--body=done", "--project=/repo"]).stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+    expect(fixture.run(["review", "approve", "task-1", "--from=reviewer", "--body=ok", "--project=/repo"]).stdout).toBe(
+      "task task-1\nthread thread-1\n",
+    );
+    expect(
+      fixture.run(["review", "request-changes", "task-1", "--from=reviewer", "--body=fix", "--project=/repo", "--json"])
+        .stdout,
+    ).toBe("task task-1\nthread thread-1\n");
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(curlLog).toContain("project=/repo\n");
+    expect(curlLog).toContain("session=claude-1\n");
+    expect(curlLog).toContain("status=todo\n");
+    expect(curlLog).toContain("taskId=task-1\n");
+    expect(curlLog).toContain("threadId=thread-1\n");
+    expect(curlLog).toContain("description=Ship it\n");
+    expect(curlLog).toContain("body=Please take over\n");
+    expect(curlLog).toContain("/core/task/list-text?json=1");
+    expect(curlLog).toContain("/core/task/assign-text?json=1");
+    expect(curlLog).toContain("/core/handoff/send-text?json=1");
+    expect(curlLog).toContain("/core/review/request-changes-text?json=1");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for invalid workflow fast-path arguments", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "task task-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const task = fixture.run(["task", "assign", "Ship", "--to="], { NODE_EXIT: "49" });
+    const handoff = fixture.run(["handoff", "accept", "thread-1", "--body"], { NODE_EXIT: "50" });
+    const review = fixture.run(["review", "approve", "task-1", "--from", "--body=ok"], { NODE_EXIT: "51" });
+
+    expect(task.status).toBe(49);
+    expect(handoff.status).toBe(50);
+    expect(review.status).toBe(51);
+    const nodeLog = readFileSync(fixture.nodeLog, "utf8");
+    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js task assign Ship --to=\n`);
+    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js handoff accept thread-1 --body\n`);
+    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js review approve task-1 --from --body=ok\n`);
+  });
+
+  it("falls back to the Node launcher for workflow commands when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "task task-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const task = fixture.run(["task", "complete", "task-1", "--from", "claude-1"], { NODE_EXIT: "52" });
+    const handoff = fixture.run(["handoff", "send", "body", "--to", "claude-1"], { NODE_EXIT: "53" });
+    const review = fixture.run(["review", "request-changes", "task-1", "--body", "fix"], { NODE_EXIT: "54" });
+
+    expect(task.status).toBe(52);
+    expect(handoff.status).toBe(53);
+    expect(review.status).toBe(54);
+    const nodeLog = readFileSync(fixture.nodeLog, "utf8");
+    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js task complete task-1 --from claude-1\n`);
+    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js handoff send body --to claude-1\n`);
+    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js review request-changes task-1 --body fix\n`);
   });
 
   it("serves project list commands from a matching daemon without launching Node", () => {
