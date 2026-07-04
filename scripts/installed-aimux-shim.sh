@@ -141,7 +141,7 @@ aimux_post_query_text_route() {
   trap 'rm -f "$body_file"' EXIT
   trap 'rm -f "$body_file"; exit 130' INT TERM
   status="$(
-    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST --get "$@" \
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST "$@" \
       "http://127.0.0.1:$port$path" 2>/dev/null || true
   )"
   case "$status" in
@@ -339,9 +339,6 @@ aimux_try_lifecycle_spawn() {
   done
   [ -n "$tool" ] || return 1
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-  if [ -n "$worktree_path" ]; then
-    worktree_path="$(aimux_resolve_project_arg "$worktree_path")" || return 1
-  fi
   path="/core/lifecycle/spawn-text"
   [ "$json" -eq 1 ] && path="/core/lifecycle/spawn-text?json=1"
   set -- --data-urlencode "project=$project_root" --data-urlencode "tool=$tool" --data-urlencode "open=$open"
@@ -491,9 +488,6 @@ aimux_try_lifecycle_fork() {
   [ -n "$source_session_id" ] || return 1
   [ -n "$tool" ] || return 1
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-  if [ -n "$worktree_path" ]; then
-    worktree_path="$(aimux_resolve_project_arg "$worktree_path")" || return 1
-  fi
   path="/core/lifecycle/fork-text"
   [ "$json" -eq 1 ] && path="/core/lifecycle/fork-text?json=1"
   set -- --data-urlencode "project=$project_root" --data-urlencode "sourceSessionId=$source_session_id" \
