@@ -21,8 +21,9 @@ const retiredMainPatterns = [
 
 const runtimeNodeLaunchPatterns = [
   { id: "direct-node-launcher", pattern: /\bnode\s+dist\/launcher-bin\.js\b/ },
+  { id: "node-eval", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-e\b/ },
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
-  { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*node\s+-\s*<</ },
+  { id: "node-dash-heredoc", pattern: /(?:^|\n)\s*[^#\n]*\bnode\s+-\s*(?:[^\n<]*\s)?<</ },
   { id: "spawn-process-execpath", pattern: /\bspawn(?:Sync)?\(\s*process\.execPath/ },
   { id: "exec-process-execpath", pattern: /\bexecFile(?:Sync)?\(\s*process\.execPath/ },
   { id: "project-restart-cli", pattern: /["'`]restart["'`][\s\S]{0,160}["'`]--project["'`]/ },
@@ -128,6 +129,13 @@ describe("one-shot Node runtime inventory", () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it("recognizes node heredoc variants", () => {
+    const dashHeredoc = runtimeNodeLaunchPatterns.find((entry) => entry.id === "node-dash-heredoc");
+
+    expect(dashHeredoc?.pattern.test("node - <<'NODE'\n")).toBe(true);
+    expect(dashHeredoc?.pattern.test('AIMUX_INPUT="$value" node - "$arg" <<\'NODE\'\n')).toBe(true);
   });
 
   it("keeps the retired main entrypoint quarantined", () => {
