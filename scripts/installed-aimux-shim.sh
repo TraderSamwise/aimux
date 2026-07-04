@@ -43,7 +43,7 @@ aimux_print_daemon_ensure() {
   printf 'aimux daemon: pid %s on http://127.0.0.1:%s\n' "$pid" "$port"
 }
 
-aimux_try_daemon_ensure() {
+aimux_matching_daemon_port() {
   command -v curl >/dev/null 2>&1 || return 1
   [ -f "$AIMUX_ROOT/BUILD_STAMP" ] || return 1
   expected_build="$(sed -n '1p' "$AIMUX_ROOT/BUILD_STAMP")"
@@ -55,19 +55,55 @@ aimux_try_daemon_ensure() {
   [ -n "$port" ] || return 1
 
   json="$(aimux_health_json "$port")"
-  if aimux_health_matches "$json" "$expected_build"; then
-    live_pid="$(printf '%s' "$json" | aimux_json_number pid)"
-    [ "$live_pid" = "$stored_pid" ] || return 1
-    aimux_print_daemon_ensure "$json" "$port"
-    return 0
-  fi
-  return 1
+  aimux_health_matches "$json" "$expected_build" || return 1
+  live_pid="$(printf '%s' "$json" | aimux_json_number pid)"
+  [ "$live_pid" = "$stored_pid" ] || return 1
+  printf '%s\n' "$port"
+}
+
+aimux_try_daemon_ensure() {
+  port="$(aimux_matching_daemon_port)" || return 1
+  json="$(aimux_health_json "$port")"
+  aimux_print_daemon_ensure "$json" "$port"
+}
+
+aimux_try_restart() {
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-restart.XXXXXX")" || return 1
+  status="$(
+    curl -sS --max-time 300 -o "$body_file" -w '%{http_code}' -X POST \
+      "http://127.0.0.1:$port/core/restart-text" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      return 1
+      ;;
+  esac
+  cat "$body_file"
+  rm -f "$body_file"
+  case "$status" in
+    2*) return 0 ;;
+    *) return 2 ;;
+  esac
 }
 
 case "${1:-} ${2:-}" in
   "daemon ensure")
     if [ "$#" -eq 2 ] && aimux_try_daemon_ensure; then
       exit 0
+    fi
+    ;;
+  "restart ")
+    if [ "$#" -eq 1 ]; then
+      if aimux_try_restart; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
     fi
     ;;
 esac

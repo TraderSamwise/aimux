@@ -3,6 +3,7 @@ import type { RuntimeRestartResult } from "./runtime-restart.js";
 
 export const CORE_API_ROUTES = {
   commands: "/core/commands",
+  restartText: "/core/restart-text",
 } as const;
 
 export const CORE_COMMAND_NAMES = {

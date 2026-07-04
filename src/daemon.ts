@@ -60,6 +60,12 @@ type ProjectsRouteProject = ReturnType<typeof listRegisteredDesktopProjects>[num
   serviceEndpoint: ReturnType<typeof loadMetadataEndpointByProjectId>;
 };
 
+interface DaemonRouteResponse {
+  status: number;
+  body: unknown;
+  contentType?: string;
+}
+
 async function readJson(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -69,11 +75,11 @@ async function readJson(req: IncomingMessage): Promise<any> {
   return body ? JSON.parse(body) : {};
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(res: ServerResponse, status: number, body: unknown, contentType = "application/json"): void {
   if (res.headersSent || res.writableEnded) return;
-  const payload = JSON.stringify(body);
+  const payload = contentType.startsWith("text/") ? String(body) : JSON.stringify(body);
   res.statusCode = status;
-  res.setHeader("content-type", "application/json");
+  res.setHeader("content-type", contentType);
   res.setHeader("content-length", Buffer.byteLength(payload));
   res.setHeader("connection", "close");
   res.end(payload);
@@ -564,7 +570,7 @@ export class AimuxDaemon {
     path: string,
     body?: unknown,
     headers?: Record<string, string>,
-  ): Promise<{ status: number; body: unknown }> {
+  ): Promise<DaemonRouteResponse> {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
@@ -589,6 +595,16 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.commands) {
       return this.routeCoreCommand(body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {
+      const issuedAt = new Date().toISOString();
+      const result = await this.restartControlPlane(issuedAt);
+      return {
+        status: result.restart.summary.failures > 0 ? 500 : 200,
+        body: `${result.text}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
     }
 
     if (method === "GET" && pathname === "/relay/status") {
@@ -712,8 +728,9 @@ export class AimuxDaemon {
     }
 
     const url = new URL(req.url ?? "/", getDaemonBaseUrl());
-    const body = req.method === "POST" ? await readJson(req) : undefined;
+    const body =
+      req.method === "POST" && url.pathname !== CORE_API_ROUTES.restartText ? await readJson(req) : undefined;
     const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
-    send(res, result.status, result.body);
+    send(res, result.status, result.body, result.contentType);
   }
 }
