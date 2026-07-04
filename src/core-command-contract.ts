@@ -3,6 +3,9 @@ import type { RuntimeRestartResult } from "./runtime-restart.js";
 
 export const CORE_API_ROUTES = {
   commands: "/core/commands",
+  daemonProjectsText: "/core/daemon-projects-text",
+  daemonStatusText: "/core/daemon-status-text",
+  projectsListText: "/core/projects-list-text",
   restartText: "/core/restart-text",
 } as const;
 

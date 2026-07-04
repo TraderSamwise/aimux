@@ -421,6 +421,50 @@ describe("daemon supervision", () => {
     expect(response.body).toBe("aimux restart is already running\n");
   });
 
+  it("serves daemon status text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
+      projectId: `proj-${basename(projectRoot)}`,
+      projectRoot,
+      pid: process.pid,
+      startedAt: STALE_SERVICE_TIMESTAMP,
+      updatedAt: STALE_SERVICE_TIMESTAMP,
+    };
+
+    const response = await daemon.routeRequest("GET", CORE_API_ROUTES.daemonStatusText);
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toContain(`Daemon pid=${process.pid} port=43190`);
+    expect(response.body).toContain("Known projects: 1");
+    expect(response.body).toContain("Relay: off");
+  });
+
+  it("preserves daemon status JSON shape for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("GET", `${CORE_API_ROUTES.daemonStatusText}?json=1`);
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(JSON.parse(response.body as string).daemon.serviceInfo).toEqual(getProjectServiceManifest());
+  });
+
+  it("serves project list text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const daemonProjects = await daemon.routeRequest("GET", CORE_API_ROUTES.daemonProjectsText);
+    const projectsList = await daemon.routeRequest("GET", CORE_API_ROUTES.projectsListText);
+
+    expect(daemonProjects.status).toBe(200);
+    expect(daemonProjects.body).toBe(`${basename(projectRoot)}  idle  ${projectRoot}\n`);
+    expect(projectsList.status).toBe(200);
+    expect(projectsList.body).toBe(`${basename(projectRoot)}  idle  ${projectRoot}\n`);
+  });
+
   it("clears stale metadata endpoints when core stops a legacy project service", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 

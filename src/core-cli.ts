@@ -1,6 +1,12 @@
 import { resolve as pathResolve } from "node:path";
 import { coreCommandArgs, isCoreCliCommand, parseCoreProjectEnsureArgs } from "./core-cli-routing.js";
 import { CORE_COMMAND_NAMES, type CoreRelaySnapshot, type CoreStatusProject } from "./core-command-contract.js";
+import {
+  renderCoreDaemonProjectsLines,
+  renderCoreDaemonStatusLines,
+  renderCoreProjectsListLines,
+  type CoreDaemonStatusTextPayload,
+} from "./core-text.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
@@ -95,11 +101,7 @@ async function runDaemonEnsure(args: string[], io: Required<CoreCliIo>): Promise
 async function runDaemonStatus(args: string[], io: Required<CoreCliIo>): Promise<number> {
   const info = loadDaemonInfo();
   const state = loadDaemonState();
-  let payload: {
-    daemon: unknown;
-    projects: unknown[];
-    relay: CoreRelaySnapshot;
-  };
+  let payload: CoreDaemonStatusTextPayload;
   try {
     const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.status, undefined, {
       ensureDaemon: false,
@@ -125,21 +127,7 @@ async function runDaemonStatus(args: string[], io: Required<CoreCliIo>): Promise
     io.stdout(JSON.stringify(payload, null, 2));
     return 0;
   }
-  const daemon = payload.daemon as { pid?: number; port?: number } | null;
-  if (!daemon) {
-    io.stdout("aimux daemon is not running.");
-    return 0;
-  }
-  io.stdout(`Daemon pid=${daemon.pid} port=${daemon.port}`);
-  const projects = payload.projects as Array<{ serviceAlive?: boolean }>;
-  io.stdout(`Known projects: ${projects.length}`);
-  io.stdout(`Live project services: ${projects.filter((project) => project.serviceAlive).length}`);
-  const r = payload.relay;
-  if (r.status && r.status !== "off") {
-    io.stdout(`Relay: ${r.status}${r.relayUrl ? ` (${r.relayUrl})` : ""}`);
-  } else {
-    io.stdout("Relay: off");
-  }
+  renderCoreDaemonStatusLines(payload).forEach(io.stdout);
   return 0;
 }
 
@@ -149,10 +137,7 @@ async function runDaemonProjects(args: string[], io: Required<CoreCliIo>): Promi
     io.stdout(JSON.stringify({ projects: result.projects }, null, 2));
     return 0;
   }
-  for (const project of result.projects) {
-    const badge = project.serviceAlive ? "service" : "idle";
-    io.stdout(`${project.name}  ${badge}  ${project.path}`);
-  }
+  renderCoreDaemonProjectsLines(result.projects).forEach(io.stdout);
   return 0;
 }
 
@@ -179,14 +164,7 @@ async function runProjectsList(args: string[], io: Required<CoreCliIo>): Promise
     io.stdout(JSON.stringify({ projects }, null, 2));
     return 0;
   }
-  if (projects.length === 0) {
-    io.stdout("No aimux projects found.");
-    return 0;
-  }
-  for (const project of projects) {
-    const liveBadge = project.serviceAlive ? "live" : "idle";
-    io.stdout(`${project.name}  ${liveBadge}  ${project.path}`);
-  }
+  renderCoreProjectsListLines(projects).forEach(io.stdout);
   return 0;
 }
 
