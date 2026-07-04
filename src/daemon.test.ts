@@ -24,6 +24,10 @@ const coreActorMock = vi.hoisted(() => ({
   failStartFor: new Set<string>(),
   instances: [] as Array<{ projectRoot: string; running: boolean }>,
 }));
+const runtimeRestartMock = vi.hoisted(() => ({
+  restartAimuxControlPlane: vi.fn(),
+  renderRuntimeRestartResult: vi.fn(),
+}));
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -95,6 +99,11 @@ vi.mock("./core-project-actor.js", () => ({
   },
 }));
 
+vi.mock("./runtime-restart.js", () => ({
+  restartAimuxControlPlane: runtimeRestartMock.restartAimuxControlPlane,
+  renderRuntimeRestartResult: runtimeRestartMock.renderRuntimeRestartResult,
+}));
+
 function listMockDesktopProjects() {
   return [
     {
@@ -151,6 +160,25 @@ function staleDaemonHealth(pid: number, port = 43190) {
   };
 }
 
+function fakeRestartResult(current: unknown) {
+  return {
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: "2026-01-01T00:00:01.000Z",
+    before: { projects: [] },
+    verification: { status: "skipped", after: null, error: null },
+    daemon: { previous: null, current },
+    projects: [],
+    summary: {
+      projects: 0,
+      servicesEnsured: 0,
+      runtimeRepairs: 0,
+      dashboardsReloaded: 0,
+      runtimeRebuildRequired: 0,
+      failures: 0,
+    },
+  };
+}
+
 function currentProjectServiceArgs(root: string): string {
   return `node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id ${getProjectIdFor(
     root,
@@ -202,6 +230,9 @@ describe("daemon supervision", () => {
     coreActorMock.kills.mockReset();
     coreActorMock.failStartFor.clear();
     coreActorMock.instances.length = 0;
+    runtimeRestartMock.restartAimuxControlPlane.mockReset();
+    runtimeRestartMock.renderRuntimeRestartResult.mockReset();
+    runtimeRestartMock.renderRuntimeRestartResult.mockReturnValue("Aimux Restart\n  failures: 0");
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
@@ -316,6 +347,41 @@ describe("daemon supervision", () => {
     expect(body.result.project?.projectRoot).toBe(projectRoot);
     expect(coreActorMock.kills).toHaveBeenCalledWith(projectRoot);
     expect(coreActorMock.stops).not.toHaveBeenCalled();
+  });
+
+  it("runs control-plane restart through daemon-owned project actors", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    runtimeRestartMock.restartAimuxControlPlane.mockImplementationOnce(async (options: any) => {
+      expect(await options.stopDaemon()).toBeNull();
+      expect(options.isAimuxProjectServiceProcess(41_000, { projectRoot })).toBe(false);
+      const current = await options.ensureDaemonRunning();
+      await options.ensureProjectService(projectRoot);
+      await options.stopProjectService(projectRoot);
+      return fakeRestartResult(current);
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "restart-control-plane",
+      command: CORE_COMMAND_NAMES.restart,
+      payload: { projectRoot },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.restart>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.text).toBe("Aimux Restart\n  failures: 0");
+    expect(body.result.restart.daemon.current.pid).toBe(process.pid);
+    expect(runtimeRestartMock.restartAimuxControlPlane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRoot,
+        stopDaemon: expect.any(Function),
+        ensureDaemonRunning: expect.any(Function),
+      }),
+    );
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("clears stale metadata endpoints when core stops a legacy project service", async () => {

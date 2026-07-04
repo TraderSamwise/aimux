@@ -1,4 +1,5 @@
 import type { RelayStatusSnapshot } from "./relay-client.js";
+import type { RuntimeRestartResult } from "./runtime-restart.js";
 
 export const CORE_API_ROUTES = {
   commands: "/core/commands",
@@ -11,6 +12,7 @@ export const CORE_COMMAND_NAMES = {
   projectEnsure: "core.project.ensure",
   projectStop: "core.project.stop",
   projectKill: "core.project.kill",
+  restart: "core.restart",
   relayStatus: "core.relay.status",
   relayEnable: "core.relay.enable",
   relayDisable: "core.relay.disable",
@@ -57,6 +59,10 @@ export interface CoreProjectPayload {
   projectRoot: string;
 }
 
+export interface CoreRestartPayload {
+  projectRoot?: string;
+}
+
 export interface CoreProjectServiceState {
   projectId: string;
   projectRoot: string;
@@ -83,6 +89,11 @@ export interface CoreRelayResult {
   relay: CoreRelaySnapshot;
 }
 
+export interface CoreRestartResult {
+  restart: RuntimeRestartResult;
+  text: string;
+}
+
 export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.ping]: undefined;
   [CORE_COMMAND_NAMES.status]: undefined;
@@ -90,6 +101,7 @@ export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectPayload;
+  [CORE_COMMAND_NAMES.restart]: CoreRestartPayload | undefined;
   [CORE_COMMAND_NAMES.relayStatus]: undefined;
   [CORE_COMMAND_NAMES.relayEnable]: undefined;
   [CORE_COMMAND_NAMES.relayDisable]: undefined;
@@ -102,6 +114,7 @@ export interface CoreCommandResultByName {
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectEnsureResult;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectStopResult;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectKillResult;
+  [CORE_COMMAND_NAMES.restart]: CoreRestartResult;
   [CORE_COMMAND_NAMES.relayStatus]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayEnable]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayDisable]: CoreRelayResult;
