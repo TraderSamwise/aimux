@@ -103,6 +103,33 @@ export interface CoreGraveyardCleanupTextPayload {
   result: unknown;
 }
 
+export interface CoreThreadListTextPayload {
+  summaries: unknown[];
+}
+
+export interface CoreThreadShowTextPayload {
+  thread: unknown;
+  messages: unknown[];
+}
+
+export interface CoreThreadOpenTextPayload {
+  thread: unknown;
+}
+
+export interface CoreThreadSendTextPayload {
+  message: unknown;
+}
+
+export interface CoreThreadStatusTextPayload {
+  thread: unknown;
+}
+
+export interface CoreMessageSendTextPayload {
+  thread: unknown;
+  message: unknown;
+  deliveredTo?: unknown;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -329,6 +356,89 @@ export function renderCoreGraveyardCleanupLines(payload: CoreGraveyardCleanupTex
   for (const item of records) {
     const status = item.status === "failed" ? `failed: ${String(item.error ?? "")}` : String(item.status ?? "?");
     lines.push(`${String(item.kind ?? "?")} ${String(item.id ?? "?")}: ${status}`);
+  }
+  return lines;
+}
+
+export function renderCoreThreadListLines(payload: CoreThreadListTextPayload): string[] {
+  const summaries = payload.summaries.filter((entry) => entry && typeof entry === "object") as Array<
+    Record<string, unknown>
+  >;
+  if (summaries.length === 0) return ["No threads found."];
+  const lines: string[] = [];
+  for (const summary of summaries) {
+    const thread =
+      summary.thread && typeof summary.thread === "object" ? (summary.thread as Record<string, unknown>) : {};
+    const latestMessage =
+      summary.latestMessage && typeof summary.latestMessage === "object"
+        ? (summary.latestMessage as Record<string, unknown>)
+        : null;
+    const unreadBy = Array.isArray(thread.unreadBy) ? thread.unreadBy : [];
+    const waitingOn = Array.isArray(thread.waitingOn) ? thread.waitingOn : [];
+    const unread = unreadBy.length ? ` unread=${unreadBy.length}` : "";
+    const waiting = waitingOn.length ? ` waiting=${waitingOn.join(",")}` : "";
+    lines.push(
+      `${String(thread.id ?? "?")}  ${String(thread.kind ?? "?")}  ${String(thread.status ?? "?")}${unread}${waiting}`,
+    );
+    lines.push(`  ${String(thread.title ?? "")}`);
+    if (latestMessage) {
+      lines.push(
+        `  latest: ${String(latestMessage.from ?? "?")} [${String(latestMessage.kind ?? "?")}] ${String(
+          latestMessage.body ?? "",
+        )}`,
+      );
+    }
+  }
+  return lines;
+}
+
+export function renderCoreThreadShowLines(payload: CoreThreadShowTextPayload): string[] {
+  const thread =
+    payload.thread && typeof payload.thread === "object" ? (payload.thread as Record<string, unknown>) : {};
+  const messages = payload.messages.filter((entry) => entry && typeof entry === "object") as Array<
+    Record<string, unknown>
+  >;
+  const participants = Array.isArray(thread.participants) ? thread.participants : [];
+  const waitingOn = Array.isArray(thread.waitingOn) ? thread.waitingOn : [];
+  const lines = [
+    `${String(thread.title ?? "")} (${String(thread.kind ?? "?")})`,
+    `id: ${String(thread.id ?? "?")}`,
+    `status: ${String(thread.status ?? "?")}`,
+    `participants: ${participants.join(", ")}`,
+  ];
+  if (thread.owner) lines.push(`owner: ${String(thread.owner)}`);
+  if (waitingOn.length) lines.push(`waitingOn: ${waitingOn.join(", ")}`);
+  lines.push("");
+  for (const message of messages) {
+    lines.push(`${String(message.ts ?? "?")}  ${String(message.from ?? "?")} [${String(message.kind ?? "?")}]`);
+    lines.push(`  ${String(message.body ?? "")}`);
+  }
+  return lines;
+}
+
+export function renderCoreThreadOpenLines(payload: CoreThreadOpenTextPayload): string[] {
+  return [String((payload.thread as Record<string, unknown>).id)];
+}
+
+export function renderCoreThreadSendLines(payload: CoreThreadSendTextPayload): string[] {
+  return [String((payload.message as Record<string, unknown>).id)];
+}
+
+export function renderCoreThreadMarkSeenLines(): string[] {
+  return ["ok"];
+}
+
+export function renderCoreThreadStatusLines(payload: CoreThreadStatusTextPayload): string[] {
+  const thread = payload.thread as Record<string, unknown>;
+  return [`thread ${String(thread.id)}`, `status ${String(thread.status)}`];
+}
+
+export function renderCoreMessageSendLines(payload: CoreMessageSendTextPayload): string[] {
+  const thread = payload.thread as Record<string, unknown>;
+  const message = payload.message as Record<string, unknown>;
+  const lines = [`thread ${String(thread.id)}`, `message ${String(message.id)}`];
+  if (Array.isArray(payload.deliveredTo) && payload.deliveredTo.length > 0) {
+    lines.push(`delivered ${payload.deliveredTo.join(",")}`);
   }
   return lines;
 }
