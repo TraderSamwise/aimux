@@ -31,6 +31,11 @@ export interface CoreWhoamiTextPayload {
 
 export type CoreLogoutTextResult = "cleared" | "none" | "failed";
 
+export interface CoreLoginTextPayload {
+  userId: string;
+  relay: CoreRelaySnapshot;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -139,4 +144,20 @@ export function renderCoreLogoutLines(result: CoreLogoutTextResult): string[] {
   if (result === "cleared") return ["✓ Logged out. Remote access disabled."];
   if (result === "none") return ["Not logged in."];
   return ["Failed to remove credentials file — check permissions."];
+}
+
+export function renderCoreLoginLines(payload: CoreLoginTextPayload): string[] {
+  const lines = ["", `✓ Logged in as ${payload.userId}`];
+  lines.push(`Remote access is enabled (connection: ${payload.relay.status ?? "unknown"}).`);
+  const lastError = relayLastError(payload.relay);
+  if (lastError) lines.push(`Last error: ${lastError}`);
+  return lines;
+}
+
+export function renderCoreSecurityUnlockLines(payload: CoreLoginTextPayload): string[] {
+  const lines = ["", `✓ Security unlocked for ${payload.userId}`];
+  lines.push(`Remote access is enabled (connection: ${payload.relay.status ?? "unknown"}).`);
+  const lastError = relayLastError(payload.relay);
+  if (lastError) lines.push(`Last error: ${lastError}`);
+  return lines;
 }

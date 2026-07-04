@@ -7,6 +7,7 @@ export const CORE_API_ROUTES = {
   daemonProjectsText: "/core/daemon-projects-text",
   daemonStatusText: "/core/daemon-status-text",
   hostStatusText: "/core/host-status-text",
+  loginText: "/core/login-text",
   logoutText: "/core/logout-text",
   projectEnsureText: "/core/project-ensure-text",
   projectsListText: "/core/projects-list-text",
@@ -14,6 +15,7 @@ export const CORE_API_ROUTES = {
   remoteEnableText: "/core/remote-enable-text",
   remoteStatusText: "/core/remote-status-text",
   restartText: "/core/restart-text",
+  securityUnlockText: "/core/security-unlock-text",
   whoamiText: "/core/whoami-text",
 } as const;
 
