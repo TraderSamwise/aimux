@@ -21,6 +21,8 @@ function makeFixture() {
   const healthFile = join(root, "health.json");
   const restartFile = join(root, "restart.txt");
   const textRouteFile = join(root, "text-route.txt");
+  const authStartFile = join(root, "auth-start.txt");
+  const authWaitFile = join(root, "auth-wait.txt");
   const daemonInfoPath = join(home, "daemon", "daemon.json");
   const nodeLog = join(root, "node.log");
   const curlLog = join(root, "curl.log");
@@ -61,6 +63,26 @@ while [ "$#" -gt 0 ]; do
   shift
 done
   case "$url" in
+  */core/login-start-text*|*/core/security-unlock-start-text*)
+    [ -f "$AUTH_START_FILE" ] || exit 22
+    if [ -n "$output_file" ]; then
+      cat "$AUTH_START_FILE" > "$output_file"
+    else
+      cat "$AUTH_START_FILE"
+    fi
+    [ -n "$write_status" ] && printf '%s' "\${AUTH_START_STATUS:-200}"
+    exit 0
+    ;;
+  */core/login-wait-text*|*/core/security-unlock-wait-text*)
+    [ -f "$AUTH_WAIT_FILE" ] || exit 22
+    if [ -n "$output_file" ]; then
+      cat "$AUTH_WAIT_FILE" > "$output_file"
+    else
+      cat "$AUTH_WAIT_FILE"
+    fi
+    [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
+    exit 0
+    ;;
   */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     if [ -n "$output_file" ]; then
@@ -108,6 +130,8 @@ exit "\${NODE_EXIT:-7}"
     HEALTH_FILE: healthFile,
     RESTART_FILE: restartFile,
     TEXT_ROUTE_FILE: textRouteFile,
+    AUTH_START_FILE: authStartFile,
+    AUTH_WAIT_FILE: authWaitFile,
     NODE_LOG: nodeLog,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
   };
@@ -118,7 +142,19 @@ exit "\${NODE_EXIT:-7}"
       cwd: options.cwd,
     });
 
-  return { aimuxRoot, curlLog, daemonInfoPath, healthFile, restartFile, textRouteFile, nodeLog, root, run };
+  return {
+    aimuxRoot,
+    authStartFile,
+    authWaitFile,
+    curlLog,
+    daemonInfoPath,
+    healthFile,
+    restartFile,
+    textRouteFile,
+    nodeLog,
+    root,
+    run,
+  };
 }
 
 function health(buildStamp: string, pid = 123, port = 45678): string {
@@ -524,28 +560,32 @@ describe("installed aimux shim", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(
-      fixture.textRouteFile,
-      "\n✓ Logged in as user-1\nRemote access is enabled (connection: connected).\n",
+      fixture.authStartFile,
+      "auth-session: abc123\nOpening your browser to sign in...\n  https://aimux.app/cli-auth\n",
     );
+    writeFileSync(fixture.authWaitFile, "\n✓ Logged in as user-1\nRemote access is enabled (connection: connected).\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["login"]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("\n✓ Logged in as user-1\nRemote access is enabled (connection: connected).\n");
+    expect(result.stdout).toBe(
+      "Opening your browser to sign in...\n  https://aimux.app/cli-auth\n\n✓ Logged in as user-1\nRemote access is enabled (connection: connected).\n",
+    );
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
   it("returns login daemon errors without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.textRouteFile, "Login failed: denied\n");
+    writeFileSync(fixture.authStartFile, "auth-session: abc123\nOpening your browser to sign in...\n");
+    writeFileSync(fixture.authWaitFile, "Login failed: denied\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["login"], { TEXT_ROUTE_STATUS: "500" });
+    const result = fixture.run(["login"], { AUTH_WAIT_STATUS: "500" });
 
     expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
+    expect(result.stdout).toBe("Opening your browser to sign in...\n");
     expect(result.stderr).toBe("Login failed: denied\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
@@ -554,7 +594,11 @@ describe("installed aimux shim", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(
-      fixture.textRouteFile,
+      fixture.authStartFile,
+      "auth-session: abc123\nOpening your browser to sign in...\n  https://aimux.app/cli-auth\n",
+    );
+    writeFileSync(
+      fixture.authWaitFile,
       "\n✓ Security unlocked for user-1\nRemote access is enabled (connection: connected).\n",
     );
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
@@ -562,7 +606,9 @@ describe("installed aimux shim", () => {
     const result = fixture.run(["security", "unlock"]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("\n✓ Security unlocked for user-1\nRemote access is enabled (connection: connected).\n");
+    expect(result.stdout).toBe(
+      "Opening your browser to sign in...\n  https://aimux.app/cli-auth\n\n✓ Security unlocked for user-1\nRemote access is enabled (connection: connected).\n",
+    );
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 

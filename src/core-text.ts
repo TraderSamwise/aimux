@@ -148,7 +148,11 @@ export function renderCoreLogoutLines(result: CoreLogoutTextResult): string[] {
 
 export function renderCoreLoginLines(payload: CoreLoginTextPayload): string[] {
   const lines = ["", `✓ Logged in as ${payload.userId}`];
-  lines.push(`Remote access is enabled (connection: ${payload.relay.status ?? "unknown"}).`);
+  if (payload.relay.status === "off") {
+    lines.push("Remote access is enabled. The daemon will connect on next start.");
+  } else {
+    lines.push(`Remote access is enabled (connection: ${payload.relay.status ?? "unknown"}).`);
+  }
   const lastError = relayLastError(payload.relay);
   if (lastError) lines.push(`Last error: ${lastError}`);
   return lines;
@@ -156,7 +160,11 @@ export function renderCoreLoginLines(payload: CoreLoginTextPayload): string[] {
 
 export function renderCoreSecurityUnlockLines(payload: CoreLoginTextPayload): string[] {
   const lines = ["", `✓ Security unlocked for ${payload.userId}`];
-  lines.push(`Remote access is enabled (connection: ${payload.relay.status ?? "unknown"}).`);
+  if (payload.relay.status === "off") {
+    lines.push("Remote access is enabled. The daemon will connect on next start.");
+  } else {
+    lines.push(`Remote access is enabled (connection: ${payload.relay.status ?? "unknown"}).`);
+  }
   const lastError = relayLastError(payload.relay);
   if (lastError) lines.push(`Last error: ${lastError}`);
   return lines;

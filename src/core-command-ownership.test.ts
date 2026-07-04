@@ -133,13 +133,13 @@ const coreCommandDispositions: Array<{
     command: "login",
     args: ["login"],
     disposition: "shim-fast-path",
-    shimNeedle: "/core/login-text",
+    shimNeedle: "/core/login-start-text",
   },
   {
     command: "security unlock",
     args: ["security", "unlock"],
     disposition: "shim-fast-path",
-    shimNeedle: "/core/security-unlock-text",
+    shimNeedle: "/core/security-unlock-start-text",
   },
 ];
 
