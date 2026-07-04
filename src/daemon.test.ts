@@ -1269,6 +1269,12 @@ describe("daemon supervision", () => {
       worktree: "feature",
       title: "Ask",
     });
+    const emptyParticipants = await daemon.routeRequest("POST", CORE_API_ROUTES.threadOpenText, {
+      project: projectRoot,
+      title: "Empty",
+      from: "user",
+      participants: " , ",
+    });
 
     expect(listed.body).toContain("thread-1  conversation  open unread=1 waiting=claude-1");
     expect(JSON.parse(String(listedJson.body))).toHaveLength(1);
@@ -1278,6 +1284,8 @@ describe("daemon supervision", () => {
     expect(seen.body).toBe("ok\n");
     expect(status.body).toBe("thread thread-1\nstatus waiting\n");
     expect(message.body).toBe("thread thread-3\nmessage msg-3\ndelivered claude-1\n");
+    expect(emptyParticipants.status).toBe(400);
+    expect(emptyParticipants.body).toBe("participants is required\n");
   });
 
   it("serves remote enable text and rejects missing credentials for the installed shell shim", async () => {

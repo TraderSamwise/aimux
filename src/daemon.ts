@@ -789,7 +789,7 @@ export class AimuxDaemon {
     const from = this.requiredParam(routeUrl, body, "from");
     if (typeof from !== "string") return from;
     const participants = this.csvParam(routeUrl, body, "participants");
-    if (!participants) return this.textError(400, "participants is required");
+    if (!participants || participants.length === 0) return this.textError(400, "participants is required");
     const kind = this.stringParam(routeUrl, body, "kind") || "conversation";
     const result = await this.postProjectServiceJson(
       project,

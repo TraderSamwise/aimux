@@ -43,6 +43,18 @@ aimux_print_daemon_ensure() {
   printf 'aimux daemon: pid %s on http://127.0.0.1:%s\n' "$pid" "$port"
 }
 
+aimux_require_arg_value() {
+  [ "$#" -gt 0 ] || return 1
+  [ -n "$1" ] || return 1
+  case "$1" in -*) return 1 ;; esac
+  AIMUX_ARG_VALUE="$1"
+}
+
+aimux_require_inline_value() {
+  [ -n "$1" ] || return 1
+  AIMUX_ARG_VALUE="$1"
+}
+
 aimux_matching_daemon_port() {
   command -v curl >/dev/null 2>&1 || return 1
   [ -f "$AIMUX_ROOT/BUILD_STAMP" ] || return 1
@@ -754,18 +766,20 @@ aimux_try_thread() {
       from=""
       participants=""
       kind="conversation"
+      json=0
       while [ "$#" -gt 0 ]; do
         case "$1" in
-          --project) shift; [ "$#" -gt 0 ] || return 1; project_root="$1" ;;
-          --project=*) project_root="${1#--project=}" ;;
-          --title) shift; [ "$#" -gt 0 ] || return 1; title="$1" ;;
-          --title=*) title="${1#--title=}" ;;
-          --from) shift; [ "$#" -gt 0 ] || return 1; from="$1" ;;
-          --from=*) from="${1#--from=}" ;;
-          --participants) shift; [ "$#" -gt 0 ] || return 1; participants="$1" ;;
-          --participants=*) participants="${1#--participants=}" ;;
-          --kind) shift; [ "$#" -gt 0 ] || return 1; kind="$1" ;;
-          --kind=*) kind="${1#--kind=}" ;;
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --title) shift; aimux_require_arg_value "$@" || return 1; title="$AIMUX_ARG_VALUE" ;;
+          --title=*) aimux_require_inline_value "${1#--title=}" || return 1; title="$AIMUX_ARG_VALUE" ;;
+          --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --participants) shift; aimux_require_arg_value "$@" || return 1; participants="$AIMUX_ARG_VALUE" ;;
+          --participants=*) aimux_require_inline_value "${1#--participants=}" || return 1; participants="$AIMUX_ARG_VALUE" ;;
+          --kind) shift; aimux_require_arg_value "$@" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+          --kind=*) aimux_require_inline_value "${1#--kind=}" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
           *) return 1 ;;
         esac
         shift
@@ -774,7 +788,9 @@ aimux_try_thread() {
       [ -n "$from" ] || return 1
       [ -n "$participants" ] || return 1
       project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-      aimux_post_query_text_route "/core/thread/open-text" 120 \
+      path="/core/thread/open-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 \
         --data-urlencode "project=$project_root" --data-urlencode "title=$title" \
         --data-urlencode "from=$from" --data-urlencode "participants=$participants" --data-urlencode "kind=$kind"
       ;;
@@ -789,16 +805,18 @@ aimux_try_thread() {
       from=""
       to=""
       kind="note"
+      json=0
       while [ "$#" -gt 0 ]; do
         case "$1" in
-          --project) shift; [ "$#" -gt 0 ] || return 1; project_root="$1" ;;
-          --project=*) project_root="${1#--project=}" ;;
-          --from) shift; [ "$#" -gt 0 ] || return 1; from="$1" ;;
-          --from=*) from="${1#--from=}" ;;
-          --to) shift; [ "$#" -gt 0 ] || return 1; to="$1" ;;
-          --to=*) to="${1#--to=}" ;;
-          --kind) shift; [ "$#" -gt 0 ] || return 1; kind="$1" ;;
-          --kind=*) kind="${1#--kind=}" ;;
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+          --to) shift; aimux_require_arg_value "$@" || return 1; to="$AIMUX_ARG_VALUE" ;;
+          --to=*) aimux_require_inline_value "${1#--to=}" || return 1; to="$AIMUX_ARG_VALUE" ;;
+          --kind) shift; aimux_require_arg_value "$@" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+          --kind=*) aimux_require_inline_value "${1#--kind=}" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
           *) return 1 ;;
         esac
         shift
@@ -808,7 +826,9 @@ aimux_try_thread() {
       set -- --data-urlencode "project=$project_root" --data-urlencode "threadId=$thread_id" \
         --data-urlencode "body=$body" --data-urlencode "from=$from" --data-urlencode "kind=$kind"
       [ -n "$to" ] && set -- "$@" --data-urlencode "to=$to"
-      aimux_post_query_text_route "/core/thread/send-text" 120 "$@"
+      path="/core/thread/send-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 "$@"
       ;;
     mark-seen)
       shift
@@ -818,19 +838,23 @@ aimux_try_thread() {
       shift
       project_root="$(pwd -P 2>/dev/null)" || return 1
       session=""
+      json=0
       while [ "$#" -gt 0 ]; do
         case "$1" in
-          --project) shift; [ "$#" -gt 0 ] || return 1; project_root="$1" ;;
-          --project=*) project_root="${1#--project=}" ;;
-          --session) shift; [ "$#" -gt 0 ] || return 1; session="$1" ;;
-          --session=*) session="${1#--session=}" ;;
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --session) shift; aimux_require_arg_value "$@" || return 1; session="$AIMUX_ARG_VALUE" ;;
+          --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
           *) return 1 ;;
         esac
         shift
       done
       [ -n "$session" ] || return 1
       project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-      aimux_post_query_text_route "/core/thread/mark-seen-text" 120 \
+      path="/core/thread/mark-seen-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 \
         --data-urlencode "project=$project_root" --data-urlencode "threadId=$thread_id" --data-urlencode "session=$session"
       ;;
     status)
@@ -843,16 +867,18 @@ aimux_try_thread() {
       status=""
       owner=""
       waiting_on=""
+      json=0
       while [ "$#" -gt 0 ]; do
         case "$1" in
-          --project) shift; [ "$#" -gt 0 ] || return 1; project_root="$1" ;;
-          --project=*) project_root="${1#--project=}" ;;
-          --status) shift; [ "$#" -gt 0 ] || return 1; status="$1" ;;
-          --status=*) status="${1#--status=}" ;;
-          --owner) shift; [ "$#" -gt 0 ] || return 1; owner="$1" ;;
-          --owner=*) owner="${1#--owner=}" ;;
-          --waiting-on) shift; [ "$#" -gt 0 ] || return 1; waiting_on="$1" ;;
-          --waiting-on=*) waiting_on="${1#--waiting-on=}" ;;
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --status) shift; aimux_require_arg_value "$@" || return 1; status="$AIMUX_ARG_VALUE" ;;
+          --status=*) aimux_require_inline_value "${1#--status=}" || return 1; status="$AIMUX_ARG_VALUE" ;;
+          --owner) shift; aimux_require_arg_value "$@" || return 1; owner="$AIMUX_ARG_VALUE" ;;
+          --owner=*) aimux_require_inline_value "${1#--owner=}" || return 1; owner="$AIMUX_ARG_VALUE" ;;
+          --waiting-on) shift; aimux_require_arg_value "$@" || return 1; waiting_on="$AIMUX_ARG_VALUE" ;;
+          --waiting-on=*) aimux_require_inline_value "${1#--waiting-on=}" || return 1; waiting_on="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
           *) return 1 ;;
         esac
         shift
@@ -863,7 +889,9 @@ aimux_try_thread() {
         --data-urlencode "status=$status"
       [ -n "$owner" ] && set -- "$@" --data-urlencode "owner=$owner"
       [ -n "$waiting_on" ] && set -- "$@" --data-urlencode "waitingOn=$waiting_on"
-      aimux_post_query_text_route "/core/thread/status-text" 120 "$@"
+      path="/core/thread/status-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 "$@"
       ;;
     *)
       return 1
@@ -888,26 +916,28 @@ aimux_try_message() {
   title=""
   kind="request"
   thread=""
+  json=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --project) shift; [ "$#" -gt 0 ] || return 1; project_root="$1" ;;
-      --project=*) project_root="${1#--project=}" ;;
-      --to) shift; [ "$#" -gt 0 ] || return 1; to="$1" ;;
-      --to=*) to="${1#--to=}" ;;
-      --assignee) shift; [ "$#" -gt 0 ] || return 1; assignee="$1" ;;
-      --assignee=*) assignee="${1#--assignee=}" ;;
-      --tool) shift; [ "$#" -gt 0 ] || return 1; tool="$1" ;;
-      --tool=*) tool="${1#--tool=}" ;;
-      --worktree) shift; [ "$#" -gt 0 ] || return 1; worktree="$1" ;;
-      --worktree=*) worktree="${1#--worktree=}" ;;
-      --from) shift; [ "$#" -gt 0 ] || return 1; from="$1" ;;
-      --from=*) from="${1#--from=}" ;;
-      --title) shift; [ "$#" -gt 0 ] || return 1; title="$1" ;;
-      --title=*) title="${1#--title=}" ;;
-      --kind) shift; [ "$#" -gt 0 ] || return 1; kind="$1" ;;
-      --kind=*) kind="${1#--kind=}" ;;
-      --thread) shift; [ "$#" -gt 0 ] || return 1; thread="$1" ;;
-      --thread=*) thread="${1#--thread=}" ;;
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --to) shift; aimux_require_arg_value "$@" || return 1; to="$AIMUX_ARG_VALUE" ;;
+      --to=*) aimux_require_inline_value "${1#--to=}" || return 1; to="$AIMUX_ARG_VALUE" ;;
+      --assignee) shift; aimux_require_arg_value "$@" || return 1; assignee="$AIMUX_ARG_VALUE" ;;
+      --assignee=*) aimux_require_inline_value "${1#--assignee=}" || return 1; assignee="$AIMUX_ARG_VALUE" ;;
+      --tool) shift; aimux_require_arg_value "$@" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+      --tool=*) aimux_require_inline_value "${1#--tool=}" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+      --worktree) shift; aimux_require_arg_value "$@" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
+      --worktree=*) aimux_require_inline_value "${1#--worktree=}" || return 1; worktree="$AIMUX_ARG_VALUE" ;;
+      --from) shift; aimux_require_arg_value "$@" || return 1; from="$AIMUX_ARG_VALUE" ;;
+      --from=*) aimux_require_inline_value "${1#--from=}" || return 1; from="$AIMUX_ARG_VALUE" ;;
+      --title) shift; aimux_require_arg_value "$@" || return 1; title="$AIMUX_ARG_VALUE" ;;
+      --title=*) aimux_require_inline_value "${1#--title=}" || return 1; title="$AIMUX_ARG_VALUE" ;;
+      --kind) shift; aimux_require_arg_value "$@" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+      --kind=*) aimux_require_inline_value "${1#--kind=}" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+      --thread) shift; aimux_require_arg_value "$@" || return 1; thread="$AIMUX_ARG_VALUE" ;;
+      --thread=*) aimux_require_inline_value "${1#--thread=}" || return 1; thread="$AIMUX_ARG_VALUE" ;;
+      --json) json=1 ;;
       *) return 1 ;;
     esac
     shift
@@ -921,7 +951,9 @@ aimux_try_message() {
   [ -n "$worktree" ] && set -- "$@" --data-urlencode "worktree=$worktree"
   [ -n "$title" ] && set -- "$@" --data-urlencode "title=$title"
   [ -n "$thread" ] && set -- "$@" --data-urlencode "thread=$thread"
-  aimux_post_query_text_route "/core/message/send-text" 120 "$@"
+  path="/core/message/send-text"
+  [ "$json" -eq 1 ] && path="$path?json=1"
+  aimux_post_query_text_route "$path" 120 "$@"
 }
 
 case "${1:-}" in
