@@ -242,13 +242,7 @@ export function renderCoreWorktreeListLines(payload: CoreWorktreeSummaryTextPayl
     Record<string, unknown>
   >;
   if (worktrees.length === 0) return ["No worktrees found."];
-  const lines = ["Name".padEnd(30) + "Branch".padEnd(35) + "Path", "-".repeat(95)];
-  for (const worktree of worktrees) {
-    lines.push(
-      String(worktree.name ?? "").padEnd(30) + String(worktree.branch ?? "").padEnd(35) + String(worktree.path ?? ""),
-    );
-  }
-  return lines;
+  return renderWorktreeTableLines(worktrees, "");
 }
 
 export function renderCoreWorktreeCreateLines(payload: CoreWorktreeCreateTextPayload): string[] {
@@ -284,14 +278,7 @@ export function renderCoreGraveyardLines(payload: CoreGraveyardTextPayload): str
   if (entries.length === 0 && worktrees.length === 0) return ["Graveyard is empty."];
   const lines: string[] = [];
   if (worktrees.length > 0) {
-    lines.push("Worktrees", "Name".padEnd(30) + "Branch".padEnd(35) + "Path", "-".repeat(95));
-    for (const worktree of worktrees) {
-      lines.push(
-        String(worktree.name ?? "?").padEnd(30) +
-          String(worktree.branch ?? "").padEnd(35) +
-          String(worktree.path ?? "?"),
-      );
-    }
+    lines.push("Worktrees", ...renderWorktreeTableLines(worktrees, "?"));
   }
   if (entries.length > 0) {
     if (worktrees.length > 0) lines.push("");
@@ -308,7 +295,20 @@ export function renderCoreGraveyardLines(payload: CoreGraveyardTextPayload): str
 }
 
 export function renderCoreGraveyardAgentLines(payload: CoreGraveyardAgentTextPayload): string[] {
-  return [`${payload.status === "graveyarded" ? "graveyarded" : "resurrected"} ${payload.sessionId}`];
+  const action = payload.status === "graveyard" || payload.status === "graveyarded" ? "graveyarded" : "resurrected";
+  return [`${action} ${payload.sessionId}`];
+}
+
+function renderWorktreeTableLines(worktrees: Array<Record<string, unknown>>, fallback: string): string[] {
+  const lines = ["Name".padEnd(30) + "Branch".padEnd(35) + "Path", "-".repeat(95)];
+  for (const worktree of worktrees) {
+    lines.push(
+      String(worktree.name ?? fallback).padEnd(30) +
+        String(worktree.branch ?? "").padEnd(35) +
+        String(worktree.path ?? fallback),
+    );
+  }
+  return lines;
 }
 
 export function renderCoreGraveyardCleanupLines(payload: CoreGraveyardCleanupTextPayload): string[] {

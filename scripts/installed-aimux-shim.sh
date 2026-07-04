@@ -263,7 +263,8 @@ aimux_auth_text_route() {
 
 aimux_curl_project_text_route() {
   path="$1"
-  project_root="$(pwd -P 2>/dev/null)" || return 1
+  project_root="${2:-}"
+  [ -n "$project_root" ] || project_root="$(pwd -P 2>/dev/null)" || return 1
   aimux_get_query_text_route "$path" 5 --data-urlencode "project=$project_root"
 }
 
@@ -541,6 +542,8 @@ aimux_try_lifecycle_fork() {
 aimux_parse_project_json_args() {
   project_root="$(pwd -P 2>/dev/null)" || return 1
   json=0
+  dry_run=0
+  allow_dry_run="${AIMUX_PARSE_ALLOW_DRY_RUN:-0}"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --project)
@@ -556,6 +559,10 @@ aimux_parse_project_json_args() {
       --json)
         json=1
         ;;
+      --dry-run)
+        [ "$allow_dry_run" -eq 1 ] || return 1
+        dry_run=1
+        ;;
       *)
         return 1
         ;;
@@ -565,6 +572,7 @@ aimux_parse_project_json_args() {
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
   AIMUX_PARSED_PROJECT="$project_root"
   AIMUX_PARSED_JSON="$json"
+  AIMUX_PARSED_DRY_RUN="$dry_run"
 }
 
 aimux_try_worktree() {
@@ -578,7 +586,7 @@ aimux_try_worktree() {
       aimux_parse_project_json_args "$@" || return 1
       path="/core/worktree/list-text"
       [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/worktree/list-text?json=1"
-      aimux_get_query_text_route "$path" 5 --data-urlencode "project=$AIMUX_PARSED_PROJECT"
+      aimux_curl_project_text_route "$path" "$AIMUX_PARSED_PROJECT"
       ;;
     create)
       shift
@@ -626,7 +634,7 @@ aimux_try_graveyard() {
       aimux_parse_project_json_args "$@" || return 1
       path="/core/graveyard/list-text"
       [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/graveyard/list-text?json=1"
-      aimux_get_query_text_route "$path" 5 --data-urlencode "project=$AIMUX_PARSED_PROJECT"
+      aimux_curl_project_text_route "$path" "$AIMUX_PARSED_PROJECT"
       ;;
     send|resurrect)
       action="$subcommand"
@@ -646,38 +654,16 @@ aimux_try_graveyard() {
       ;;
     cleanup)
       shift
-      project_root="$(pwd -P 2>/dev/null)" || return 1
-      json=0
-      dry_run=0
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          --project)
-            shift
-            [ "$#" -gt 0 ] || return 1
-            case "$1" in -*) return 1 ;; esac
-            project_root="$1"
-            ;;
-          --project=*)
-            project_root="${1#--project=}"
-            [ -n "$project_root" ] || return 1
-            ;;
-          --json)
-            json=1
-            ;;
-          --dry-run)
-            dry_run=1
-            ;;
-          *)
-            return 1
-            ;;
-        esac
-        shift
-      done
-      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      AIMUX_PARSE_ALLOW_DRY_RUN=1
+      aimux_parse_project_json_args "$@" || {
+        AIMUX_PARSE_ALLOW_DRY_RUN=0
+        return 1
+      }
+      AIMUX_PARSE_ALLOW_DRY_RUN=0
       path="/core/graveyard/cleanup-text"
-      [ "$json" -eq 1 ] && path="/core/graveyard/cleanup-text?json=1"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/graveyard/cleanup-text?json=1"
       aimux_post_query_text_route "$path" 120 \
-        --data-urlencode "project=$project_root" --data-urlencode "dryRun=$dry_run"
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "dryRun=$AIMUX_PARSED_DRY_RUN"
       ;;
     *)
       return 1

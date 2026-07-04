@@ -141,6 +141,9 @@ interface DaemonRouteResponse {
 }
 
 type ProjectServiceJson = Record<string, unknown> & { ok?: boolean; error?: unknown };
+type ProjectServiceJsonResult =
+  | { ok: true; projectRoot: string; json: ProjectServiceJson }
+  | { ok: false; response: DaemonRouteResponse };
 
 type AuthAction = "security-unlock" | undefined;
 
@@ -499,36 +502,8 @@ export class AimuxDaemon {
     projectRoot: string,
     routePath: string,
     opts: { ensureProject?: boolean } = {},
-  ): Promise<
-    { ok: true; projectRoot: string; json: ProjectServiceJson } | { ok: false; response: DaemonRouteResponse }
-  > {
-    const resolvedRoot = this.resolveProjectRoot(projectRoot);
-    try {
-      if (opts.ensureProject !== false) await this.ensureProject(resolvedRoot);
-      const endpoint = loadMetadataEndpointByProjectId(getProjectIdFor(resolvedRoot));
-      if (!endpoint) {
-        return { ok: false, response: this.textError(503, `Error: project service unavailable for ${resolvedRoot}`) };
-      }
-      const { status, json } = await requestJson<ProjectServiceJson>(
-        `http://${endpoint.host}:${endpoint.port}${routePath}`,
-        { timeoutMs: PROXY_TIMEOUT_MS },
-      );
-      if (status < 200 || status >= 300 || json?.ok === false) {
-        return {
-          ok: false,
-          response: this.textError(
-            status || 502,
-            `Error: ${json?.error ? String(json.error) : `project service returned ${status}`}`,
-          ),
-        };
-      }
-      return { ok: true, projectRoot: resolvedRoot, json };
-    } catch (error) {
-      return {
-        ok: false,
-        response: this.textError(502, `Error: ${error instanceof Error ? error.message : String(error)}`),
-      };
-    }
+  ): Promise<ProjectServiceJsonResult> {
+    return await this.requestProjectServiceJson(projectRoot, routePath, opts);
   }
 
   private async postProjectServiceJson(
@@ -536,9 +511,15 @@ export class AimuxDaemon {
     routePath: string,
     body: Record<string, unknown>,
     opts: { ensureProject?: boolean; timeoutMs?: number } = {},
-  ): Promise<
-    { ok: true; projectRoot: string; json: ProjectServiceJson } | { ok: false; response: DaemonRouteResponse }
-  > {
+  ): Promise<ProjectServiceJsonResult> {
+    return await this.requestProjectServiceJson(projectRoot, routePath, { ...opts, method: "POST", body });
+  }
+
+  private async requestProjectServiceJson(
+    projectRoot: string,
+    routePath: string,
+    opts: { ensureProject?: boolean; method?: string; body?: Record<string, unknown>; timeoutMs?: number } = {},
+  ): Promise<ProjectServiceJsonResult> {
     const resolvedRoot = this.resolveProjectRoot(projectRoot);
     try {
       if (opts.ensureProject !== false) await this.ensureProject(resolvedRoot);
@@ -549,9 +530,8 @@ export class AimuxDaemon {
       const { status, json } = await requestJson<ProjectServiceJson>(
         `http://${endpoint.host}:${endpoint.port}${routePath}`,
         {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
+          ...(opts.method ? { method: opts.method } : {}),
+          ...(opts.body ? { headers: { "content-type": "application/json" }, body: opts.body } : {}),
           timeoutMs: opts.timeoutMs ?? PROXY_TIMEOUT_MS,
         },
       );
