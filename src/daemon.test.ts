@@ -150,6 +150,12 @@ function staleDaemonHealth(pid: number, port = 43190) {
   };
 }
 
+function currentProjectServiceArgs(root: string): string {
+  return `node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id proj-${basename(
+    root,
+  )} --project-root ${root}`;
+}
+
 function readMetadataEndpointPid(): number {
   const raw = readFileSync(
     join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"),
@@ -198,9 +204,7 @@ describe("daemon supervision", () => {
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
-      return `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
-        projectRoot,
-      )} --project-root ${projectRoot}`;
+      return currentProjectServiceArgs(projectRoot);
     });
     vi.mocked(requestJson).mockReset();
     mockHealthyRequests();
@@ -995,11 +999,7 @@ describe("daemon supervision", () => {
     mkdirSync(join(tmpRoot, ".aimux", "daemon"), { recursive: true });
     livePids.add(50_001);
     livePids.add(50_002);
-    execFileSyncMock.mockReturnValue(
-      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
-        projectRoot,
-      )} --project-root ${projectRoot}-old`,
-    );
+    execFileSyncMock.mockReturnValue(`${currentProjectServiceArgs(projectRoot)}-old`);
     writeFileSync(
       join(tmpRoot, ".aimux", "daemon", "daemon.json"),
       JSON.stringify({ pid: 50_001, port: 43190, startedAt: "then", updatedAt: "then" }),
@@ -1351,11 +1351,7 @@ describe("daemon routing (relay + proxy)", () => {
     livePids.add(retainedPid);
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(retainedPid);
-    execFileSyncMock.mockReturnValue(
-      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
-        projectRoot,
-      )} --project-root ${projectRoot}`,
-    );
+    execFileSyncMock.mockReturnValue(currentProjectServiceArgs(projectRoot));
     (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
       projectId: `proj-${basename(projectRoot)}`,
       projectRoot,
@@ -1379,11 +1375,7 @@ describe("daemon routing (relay + proxy)", () => {
     livePids.add(retainedPid);
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(retainedPid);
-    execFileSyncMock.mockReturnValue(
-      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
-        projectRoot,
-      )} --project-root ${projectRoot}`,
-    );
+    execFileSyncMock.mockReturnValue(currentProjectServiceArgs(projectRoot));
     (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
       projectId: `proj-${basename(projectRoot)}`,
       projectRoot,
@@ -1407,11 +1399,7 @@ describe("daemon routing (relay + proxy)", () => {
     livePids.add(retainedPid);
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeMetadataEndpointFor(retainedPid);
-    execFileSyncMock.mockReturnValue(
-      `node /opt/aimux/dist/main.js __project-service-internal --project-id proj-${basename(
-        projectRoot,
-      )} --project-root ${projectRoot}`,
-    );
+    execFileSyncMock.mockReturnValue(currentProjectServiceArgs(projectRoot));
     (daemon as any).state.projects[`proj-${basename(projectRoot)}`] = {
       projectId: `proj-${basename(projectRoot)}`,
       projectRoot,

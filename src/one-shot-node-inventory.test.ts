@@ -10,6 +10,8 @@ const cliBootstrapInventory = [
 const scanRoots = ["bin", "scripts", "src"] as const;
 const skippedDirectories = new Set([".git", "coverage", "dist", "dist-ui", "node_modules", "release"]);
 const skippedFiles = [/\.test\.[cm]?[jt]sx?$/, /\.d\.ts$/];
+const skippedDeclarationFiles = [/\.d\.ts$/];
+const retiredMainEntrypoint = "dist/" + "main.js";
 
 const runtimeNodeLaunchPatterns = [
   { id: "node-heredoc", pattern: /(?:^|\n)\s*node\s+<</ },
@@ -20,6 +22,13 @@ const runtimeNodeLaunchPatterns = [
 ] as const;
 
 const allowedRuntimePatternMatches = new Set(["scripts/build-local-ui.sh:node-heredoc"]);
+const allowedRetiredMainEntrypointFiles = new Set([
+  "src/daemon.test.ts",
+  "src/project-takeover.test.ts",
+  "src/runtime-coherence.test.ts",
+  "src/runtime-coherence.ts",
+  "src/runtime-restart.test.ts",
+]);
 
 const launchContractUsage = [
   {
@@ -36,9 +45,10 @@ const launchContractUsage = [
   },
 ] as const;
 
-function listSourceFiles(root: string): string[] {
+function listSourceFiles(root: string, options: { includeTests?: boolean } = {}): string[] {
   const absoluteRoot = join(process.cwd(), root);
   const files: string[] = [];
+  const skipPatterns = options.includeTests ? skippedDeclarationFiles : skippedFiles;
   const visit = (path: string) => {
     const relativePath = relative(process.cwd(), path);
     const stat = statSync(path);
@@ -48,7 +58,7 @@ function listSourceFiles(root: string): string[] {
       return;
     }
     if (!stat.isFile()) return;
-    if (skippedFiles.some((pattern) => pattern.test(relativePath))) return;
+    if (skipPatterns.some((pattern) => pattern.test(relativePath))) return;
     files.push(relativePath);
   };
   visit(absoluteRoot);
@@ -82,6 +92,15 @@ describe("one-shot Node runtime inventory", () => {
         }
       }
     }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps the retired main entrypoint quarantined", () => {
+    const violations = scanRoots
+      .flatMap((root) => listSourceFiles(root, { includeTests: true }))
+      .filter((file) => readFileSync(join(process.cwd(), file), "utf8").includes(retiredMainEntrypoint))
+      .filter((file) => !allowedRetiredMainEntrypointFiles.has(file));
 
     expect(violations).toEqual([]);
   });
