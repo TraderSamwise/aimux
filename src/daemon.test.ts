@@ -1022,27 +1022,37 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     writeMetadataEndpointFor(process.pid);
-    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown } = {}) => {
-      if (url.endsWith(PROJECT_API_ROUTES.worktrees)) {
-        return {
-          status: 200,
-          json: { ok: true, worktrees: [{ name: "main", branch: "master", path: projectRoot }] },
-        };
-      }
-      if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.create)) {
-        expect(opts.body).toEqual({ name: "feature" });
-        return { status: 200, json: { ok: true, path: `${projectRoot}/.aimux/worktrees/feature`, status: "created" } };
-      }
-      if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.remove)) {
-        expect(opts.body).toEqual({ path: `${projectRoot}/relative` });
-        return { status: 200, json: { ok: true, path: `${projectRoot}/relative`, status: "removed" } };
-      }
-      return { status: 200, json: projectServiceHealth(process.pid) };
-    });
+    vi.mocked(requestJson).mockImplementation(
+      async (url: string, opts: { body?: unknown; timeoutMs?: number } = {}) => {
+        if (url.endsWith(PROJECT_API_ROUTES.worktrees)) {
+          return {
+            status: 200,
+            json: { ok: true, worktrees: [{ name: "main", branch: "master", path: projectRoot }] },
+          };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.create)) {
+          expect(opts.body).toEqual({ name: "feature" });
+          return {
+            status: 200,
+            json: { ok: true, path: `${projectRoot}/.aimux/worktrees/feature`, status: "created" },
+          };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.worktreeActions.remove)) {
+          expect(opts.body).toEqual({ path: `${projectRoot}/relative` });
+          expect(opts.timeoutMs).toBe(120_000);
+          return { status: 200, json: { ok: true, path: `${projectRoot}/relative`, status: "removed" } };
+        }
+        return { status: 200, json: projectServiceHealth(process.pid) };
+      },
+    );
 
     const listed = await daemon.routeRequest(
       "GET",
       `${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const listedJson = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}&json=1`,
     );
     const created = await daemon.routeRequest(
       "POST",
@@ -1054,6 +1064,7 @@ describe("daemon supervision", () => {
     });
 
     expect(listed.body).toContain("main");
+    expect(JSON.parse(String(listedJson.body))).toEqual([{ name: "main", branch: "master", path: projectRoot }]);
     expect(created.body).toBe(`Created worktree "feature" at ${projectRoot}/.aimux/worktrees/feature\n`);
     expect(removed.body).toBe(`removed ${projectRoot}/relative\n`);
   });
@@ -1062,28 +1073,32 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
     writeMetadataEndpointFor(process.pid);
-    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown } = {}) => {
-      if (url.endsWith(PROJECT_API_ROUTES.graveyard)) {
-        return { status: 200, json: { ok: true, entries: [{ id: "claude-1", tool: "claude" }], worktrees: [] } };
-      }
-      if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.resurrectAgent)) {
-        expect(opts.body).toEqual({ sessionId: "claude-1" });
-        return { status: 200, json: { ok: true, sessionId: "claude-1", status: "offline" } };
-      }
-      if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.cleanup)) {
-        expect(opts.body).toEqual({ dryRun: true });
-        return {
-          status: 200,
-          json: {
-            ok: true,
-            dryRun: true,
-            plan: { enabled: true, retentionDays: 30 },
-            results: [{ kind: "agent", id: "claude-old", status: "dry-run" }],
-          },
-        };
-      }
-      return { status: 200, json: projectServiceHealth(process.pid) };
-    });
+    vi.mocked(requestJson).mockImplementation(
+      async (url: string, opts: { body?: unknown; timeoutMs?: number } = {}) => {
+        if (url.endsWith(PROJECT_API_ROUTES.graveyard)) {
+          return { status: 200, json: { ok: true, entries: [{ id: "claude-1", tool: "claude" }], worktrees: [] } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.resurrectAgent)) {
+          expect(opts.body).toEqual({ sessionId: "claude-1" });
+          expect(opts.timeoutMs).toBe(120_000);
+          return { status: 200, json: { ok: true, sessionId: "claude-1", status: "offline" } };
+        }
+        if (url.endsWith(PROJECT_API_ROUTES.graveyardActions.cleanup)) {
+          expect(opts.body).toEqual({ dryRun: true });
+          expect(opts.timeoutMs).toBe(120_000);
+          return {
+            status: 200,
+            json: {
+              ok: true,
+              dryRun: true,
+              plan: { enabled: true, retentionDays: 30 },
+              results: [{ kind: "agent", id: "claude-old", status: "dry-run" }],
+            },
+          };
+        }
+        return { status: 200, json: projectServiceHealth(process.pid) };
+      },
+    );
 
     const listed = await daemon.routeRequest(
       "GET",

@@ -89,6 +89,7 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
+const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
 const LOCAL_AUTH_ROUTES = new Set<string>([
@@ -534,7 +535,7 @@ export class AimuxDaemon {
     projectRoot: string,
     routePath: string,
     body: Record<string, unknown>,
-    opts: { ensureProject?: boolean } = {},
+    opts: { ensureProject?: boolean; timeoutMs?: number } = {},
   ): Promise<
     { ok: true; projectRoot: string; json: ProjectServiceJson } | { ok: false; response: DaemonRouteResponse }
   > {
@@ -551,7 +552,7 @@ export class AimuxDaemon {
           method: "POST",
           headers: { "content-type": "application/json" },
           body,
-          timeoutMs: PROXY_TIMEOUT_MS,
+          timeoutMs: opts.timeoutMs ?? PROXY_TIMEOUT_MS,
         },
       );
       if (status < 200 || status >= 300 || json?.ok === false) {
@@ -584,7 +585,7 @@ export class AimuxDaemon {
     const worktrees = this.requiredProjectServiceArray(result.json, "worktree list", "worktrees");
     if (!Array.isArray(worktrees)) return worktrees;
     const payload: CoreWorktreeSummaryTextPayload = { worktrees };
-    return this.textOrJsonLines(routeUrl, payload, renderCoreWorktreeListLines(payload));
+    return this.textOrJsonLines(routeUrl, worktrees, renderCoreWorktreeListLines(payload));
   }
 
   private async worktreeCreateTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -617,7 +618,12 @@ export class AimuxDaemon {
     if (typeof targetPath !== "string") return targetPath;
     const projectRoot = this.resolveProjectRoot(project);
     const resolvedPath = this.resolveProjectRelativePath(projectRoot, targetPath);
-    const result = await this.postProjectServiceJson(projectRoot, input.routePath, { path: resolvedPath });
+    const result = await this.postProjectServiceJson(
+      projectRoot,
+      input.routePath,
+      { path: resolvedPath },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
     if (!result.ok) return result.response;
     const returnedPath = this.requiredProjectServiceString(result.json, input.action, "path");
     if (typeof returnedPath !== "string") return returnedPath;
@@ -657,7 +663,7 @@ export class AimuxDaemon {
       project,
       input.routePath,
       { sessionId },
-      { ensureProject: input.routePath !== PROJECT_API_ROUTES.agents.kill },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
     );
     if (!result.ok) return result.response;
     const returnedSessionId = this.requiredProjectServiceString(result.json, input.action, "sessionId");
@@ -682,7 +688,12 @@ export class AimuxDaemon {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
     const dryRun = this.booleanParam(routeUrl, body, "dryRun", false);
-    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.graveyardActions.cleanup, { dryRun });
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.graveyardActions.cleanup,
+      { dryRun },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
     if (!result.ok) return result.response;
     const cleanupResult = result.json.result ?? result.json;
     if (!cleanupResult || typeof cleanupResult !== "object") {
