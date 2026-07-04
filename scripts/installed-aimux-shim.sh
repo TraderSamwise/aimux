@@ -103,6 +103,8 @@ aimux_post_text_route() {
   timeout="${2:-60}"
   port="$(aimux_matching_daemon_port)" || return 1
   body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-core-post.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
   status="$(
     curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST \
       "http://127.0.0.1:$port$path" 2>/dev/null || true
@@ -110,6 +112,7 @@ aimux_post_text_route() {
   case "$status" in
     '' | 000)
       rm -f "$body_file"
+      trap - EXIT INT TERM
       return 1
       ;;
   esac
@@ -117,11 +120,13 @@ aimux_post_text_route() {
     2*)
       cat "$body_file"
       rm -f "$body_file"
+      trap - EXIT INT TERM
       return 0
       ;;
     *)
       cat "$body_file" >&2
       rm -f "$body_file"
+      trap - EXIT INT TERM
       return 2
       ;;
   esac
