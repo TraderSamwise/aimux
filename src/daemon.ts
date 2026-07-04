@@ -27,8 +27,12 @@ import {
   renderCoreHostStatusLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
+  renderCoreRemoteDisableLines,
+  renderCoreRemoteEnableLines,
+  renderCoreRemoteStatusLines,
   type CoreDaemonStatusTextPayload,
   type CoreHostStatusTextPayload,
+  type CoreRemoteStatusTextPayload,
 } from "./core-text.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
@@ -283,6 +287,14 @@ export class AimuxDaemon {
   private daemonEnsurePayload(issuedAt: string): { daemon: AimuxDaemonInfo & { serviceInfo: unknown } } {
     return {
       daemon: { ...this.currentDaemonInfo(issuedAt), serviceInfo: getProjectServiceManifest() },
+    };
+  }
+
+  private remoteStatusTextPayload(): CoreRemoteStatusTextPayload {
+    const credentials = loadCredentials();
+    return {
+      credentials: credentials ? { relayUrl: credentials.relayUrl, remoteEnabled: credentials.remoteEnabled } : null,
+      relay: this.getRelayStatus(),
     };
   }
 
@@ -731,6 +743,29 @@ export class AimuxDaemon {
     if (method === "GET" && pathname === CORE_API_ROUTES.projectsListText) {
       const projects = this.listProjectsForRoute();
       return this.textOrJsonLines(routeUrl, { projects }, renderCoreProjectsListLines(projects));
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.remoteStatusText) {
+      const payload = this.remoteStatusTextPayload();
+      const json = { loggedIn: Boolean(payload.credentials), relay: payload.relay };
+      return this.textOrJsonLines(routeUrl, json, renderCoreRemoteStatusLines(payload));
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.remoteEnableText) {
+      if (!loadCredentials()) {
+        return {
+          status: 401,
+          body: "Not logged in. Run `aimux login` first.\n",
+          contentType: "text/plain; charset=utf-8",
+        };
+      }
+      const relay = this.enableRelay();
+      return this.textOrJsonLines(routeUrl, { relay }, renderCoreRemoteEnableLines(relay));
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.remoteDisableText) {
+      this.disableRelay();
+      return this.textOrJsonLines(routeUrl, { relay: { status: "off" } }, renderCoreRemoteDisableLines(true));
     }
 
     if (method === "GET" && pathname === "/relay/status") {

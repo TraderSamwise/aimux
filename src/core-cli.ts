@@ -7,6 +7,9 @@ import {
   renderCoreHostStatusLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
+  renderCoreRemoteDisableLines,
+  renderCoreRemoteEnableLines,
+  renderCoreRemoteStatusLines,
   type CoreDaemonStatusTextPayload,
 } from "./core-text.js";
 import { requestCoreCommand } from "./core-command-client.js";
@@ -46,10 +49,6 @@ function resolveProjectRoot(cwd: string): string {
 function findCoreProject(projects: CoreStatusProject[], projectRoot: string): CoreStatusProject | null {
   const resolvedRoot = pathResolve(projectRoot);
   return projects.find((project) => pathResolve(project.path) === resolvedRoot) ?? null;
-}
-
-function relayLastError(relay: CoreRelaySnapshot): string | null {
-  return "lastError" in relay ? relay.lastError : null;
 }
 
 async function runHostStatus(args: string[], io: Required<CoreCliIo>): Promise<number> {
@@ -173,15 +172,10 @@ async function runRemoteStatus(args: string[], io: Required<CoreCliIo>): Promise
     io.stdout(JSON.stringify({ loggedIn: Boolean(creds), relay }, null, 2));
     return 0;
   }
-  if (!creds) {
-    io.stdout("Not logged in. Run `aimux login` to enable remote access.");
-    return 0;
-  }
-  io.stdout(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
-  io.stdout(`Relay: ${creds.relayUrl}`);
-  io.stdout(`Connection: ${relay.status ?? "unknown"}`);
-  const lastError = relayLastError(relay);
-  if (lastError) io.stdout(`Last error: ${lastError}`);
+  renderCoreRemoteStatusLines({
+    credentials: creds ? { relayUrl: creds.relayUrl, remoteEnabled: creds.remoteEnabled } : null,
+    relay,
+  }).forEach(io.stdout);
   return 0;
 }
 
@@ -191,19 +185,18 @@ async function runRemoteEnable(io: Required<CoreCliIo>): Promise<number> {
     return 1;
   }
   const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.relayEnable);
-  const r = result.relay;
-  io.stdout(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
+  renderCoreRemoteEnableLines(result.relay).forEach(io.stdout);
   return 0;
 }
 
 async function runRemoteDisable(io: Required<CoreCliIo>): Promise<number> {
   if (loadDaemonInfo()) {
     await requestCoreCommand(CORE_COMMAND_NAMES.relayDisable, undefined, { ensureDaemon: false, timeoutMs: 1000 });
-    io.stdout("✓ Remote access disabled. Daemon disconnected from relay.");
+    renderCoreRemoteDisableLines(true).forEach(io.stdout);
     return 0;
   }
   setRemoteEnabled(false);
-  io.stdout("✓ Remote access disabled.");
+  renderCoreRemoteDisableLines(false).forEach(io.stdout);
   return 0;
 }
 
