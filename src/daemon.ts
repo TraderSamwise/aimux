@@ -1,6 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve as pathResolve } from "node:path";
-import { execFileSync } from "node:child_process";
 import { getProjectIdFor } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
@@ -21,7 +20,7 @@ import {
   type CoreCommandResponse,
 } from "./core-command-contract.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
-import { commandArgValueMatches } from "./process-args.js";
+import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 import { CoreProjectActor } from "./core-project-actor.js";
 import {
   clearDaemonInfo,
@@ -59,55 +58,6 @@ type ProjectsRouteProject = ReturnType<typeof listRegisteredDesktopProjects>[num
   serviceAlive: boolean;
   serviceEndpoint: ReturnType<typeof loadMetadataEndpointByProjectId>;
 };
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function readProcessCwd(pid: number): string | null {
-  try {
-    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const cwd = output
-      .split("\n")
-      .find((line) => line.startsWith("n"))
-      ?.slice(1)
-      .trim();
-    return cwd || null;
-  } catch {
-    return null;
-  }
-}
-
-interface ProjectServiceProcessIdentity {
-  projectId?: string;
-  projectRoot?: string;
-}
-
-function isAimuxProjectServiceProcess(pid: number, expected: ProjectServiceProcessIdentity = {}): boolean {
-  try {
-    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (!args.includes("__project-service-internal")) return false;
-    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
-      return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
-    }
-    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
-    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function readJson(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];

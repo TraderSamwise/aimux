@@ -1,12 +1,11 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
-import { commandArgValueMatches } from "./process-args.js";
+import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 
 interface OtherOwner {
   home: string;
@@ -20,15 +19,6 @@ interface DaemonInfo {
 
 interface DaemonState {
   projects?: Record<string, { pid?: number; projectId?: string; projectRoot?: string }>;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function knownOwners(): OtherOwner[] {
@@ -46,44 +36,6 @@ function readJson<T>(path: string): T | null {
 
 function writeJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
-}
-
-function readProcessCwd(pid: number): string | null {
-  try {
-    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const cwd = output
-      .split("\n")
-      .find((line) => line.startsWith("n"))
-      ?.slice(1)
-      .trim();
-    return cwd || null;
-  } catch {
-    return null;
-  }
-}
-
-function isAimuxProjectServiceProcess(
-  pid: number,
-  expected: { projectId?: string; projectRoot?: string } = {},
-): boolean {
-  try {
-    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (!args.includes("__project-service-internal")) return false;
-    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
-      return resolve(readProcessCwd(pid) ?? "") === resolve(expected.projectRoot);
-    }
-    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
-    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function requestOtherOwnerStop(owner: OtherOwner, projectRoot: string): Promise<boolean> {

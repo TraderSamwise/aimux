@@ -18,6 +18,7 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { TmuxRuntimeManager, type TmuxClientInfo } from "../tmux/runtime-manager.js";
 import { openManagedServiceWindow, openManagedSessionWindow, type TmuxServiceTarget } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
+import { isPidAlive } from "../process-inspector.js";
 import { restartAimuxControlPlane, type RuntimeRestartResult } from "../runtime-restart.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
@@ -308,15 +309,6 @@ function runtimeGuardRepairLockPath(): string {
 
 function runtimeGuardRepairStealLockPath(): string {
   return join(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair.steal");
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function readRuntimeGuardRepairLockPid(lockPath: string): number | null {

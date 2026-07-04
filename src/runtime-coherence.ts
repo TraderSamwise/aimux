@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { loadDaemonInfo, loadDaemonState, type AimuxDaemonInfo, type ProjectServiceState } from "./daemon-state.js";
 import { requestJson } from "./http-client.js";
@@ -16,6 +15,11 @@ import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tm
 import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import { AIMUX_VERSION } from "./version.js";
 import { getAimuxCurrentCliIdentity, type AimuxCliLaunchCommand } from "./cli-launcher.js";
+import {
+  listProcessArgs as defaultListProcessArgs,
+  readProcessArgs as defaultReadProcessArgs,
+  type ProcessArgsEntry,
+} from "./process-inspector.js";
 
 export type RuntimeCoherenceStatus = "ok" | "missing" | "mismatch" | "unreachable";
 export type RuntimeCoherenceProjectStatus = "ok" | "needs-restart";
@@ -127,7 +131,7 @@ export interface BuildRuntimeCoherenceReportOptions {
   loadMetadataEndpoint?: (projectRoot?: string) => MetadataApiEndpoint | null;
   requestJson?: typeof requestJson;
   readProcessArgs?: (pid: number) => string | null;
-  listProcessArgs?: () => Array<{ pid: number; args: string }>;
+  listProcessArgs?: () => ProcessArgsEntry[];
   getAimuxCurrentCliIdentity?: typeof getAimuxCurrentCliIdentity;
   getDashboardBuildStamp?: (projectRoot: string) => string;
   getProjectServiceManifest?: () => ProjectServiceManifest;
@@ -439,36 +443,8 @@ function buildProcessReport(input: {
   };
 }
 
-function defaultReadProcessArgs(pid: number): string | null {
-  try {
-    return execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
-function defaultListProcessArgs(): Array<{ pid: number; args: string }> {
-  try {
-    const raw = execFileSync("ps", ["-axo", "pid=,args="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return raw
-      .split("\n")
-      .map((line) => line.match(/^\s*(\d+)\s+(.+)$/))
-      .filter((match): match is RegExpMatchArray => Boolean(match))
-      .map((match) => ({ pid: Number(match[1]), args: match[2] ?? "" }))
-      .filter((entry) => Number.isInteger(entry.pid) && entry.pid > 0 && entry.args.trim());
-  } catch {
-    return [];
-  }
-}
-
 function listStaleHookProcesses(input: {
-  listProcessArgs: () => Array<{ pid: number; args: string }>;
+  listProcessArgs: () => ProcessArgsEntry[];
   cliLaunch: AimuxCliLaunchCommand;
 }): RuntimeCoherenceProcessReport[] {
   const reports: RuntimeCoherenceProcessReport[] = [];
