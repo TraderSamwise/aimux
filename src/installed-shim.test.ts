@@ -62,6 +62,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+printf 'URL=%s\n' "$url" >> "$CURL_LOG"
   case "$url" in
   */core/login-start-text*|*/core/security-unlock-start-text*)
     [ -f "$AUTH_START_FILE" ] || exit 22
@@ -83,7 +84,7 @@ done
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     if [ -n "$output_file" ]; then
       cat "$TEXT_ROUTE_FILE" > "$output_file"
@@ -607,6 +608,136 @@ describe("installed aimux shim", () => {
     );
     expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
       `${fixture.aimuxRoot}/dist/launcher-bin.js graveyard resurrect claude-1\n`,
+    );
+  });
+
+  it("serves thread and message commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "thread thread-1\nstatus waiting\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["threads", "--session", "claude-1", "--json"], {}, { cwd: projectDir }).stdout).toBe(
+      "thread thread-1\nstatus waiting\n",
+    );
+    expect(fixture.run(["thread", "list", "--project", "/repo"]).stdout).toBe("thread thread-1\nstatus waiting\n");
+    expect(fixture.run(["thread", "show", "thread-1", "--project=/repo", "--json"]).stdout).toBe(
+      "thread thread-1\nstatus waiting\n",
+    );
+    expect(
+      fixture.run([
+        "thread",
+        "open",
+        "--title",
+        "Hello",
+        "--from",
+        "user",
+        "--participants",
+        "claude-1,codex-1",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
+    ).toBe("thread thread-1\nstatus waiting\n");
+    expect(
+      fixture.run([
+        "thread",
+        "send",
+        "thread-1",
+        "ping please",
+        "--from",
+        "user",
+        "--to=claude-1",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
+    ).toBe("thread thread-1\nstatus waiting\n");
+    expect(
+      fixture.run(["thread", "mark-seen", "thread-1", "--session", "user", "--project=/repo", "--json"]).stdout,
+    ).toBe("thread thread-1\nstatus waiting\n");
+    expect(
+      fixture.run([
+        "thread",
+        "status",
+        "thread-1",
+        "--status",
+        "waiting",
+        "--owner=user",
+        "--waiting-on=claude-1",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
+    ).toBe("thread thread-1\nstatus waiting\n");
+    expect(
+      fixture.run([
+        "message",
+        "send",
+        "please help",
+        "--to=claude-1",
+        "--assignee=coder",
+        "--tool=claude",
+        "--worktree=feature",
+        "--title=Ask",
+        "--project=/repo",
+        "--json",
+      ]).stdout,
+    ).toBe("thread thread-1\nstatus waiting\n");
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(curlLog).toContain("project=/repo\n");
+    expect(curlLog).toContain("session=claude-1\n");
+    expect(curlLog).toContain("threadId=thread-1\n");
+    expect(curlLog).toContain("participants=claude-1,codex-1\n");
+    expect(curlLog).toContain("body=ping please\n");
+    expect(curlLog).toContain("body=please help\n");
+    expect(curlLog).toContain("waitingOn=claude-1\n");
+    expect(curlLog).toContain("/core/thread/open-text?json=1");
+    expect(curlLog).toContain("/core/thread/send-text?json=1");
+    expect(curlLog).toContain("/core/thread/mark-seen-text?json=1");
+    expect(curlLog).toContain("/core/thread/status-text?json=1");
+    expect(curlLog).toContain("/core/message/send-text?json=1");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for invalid thread and message fast-path arguments", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "thread thread-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const thread = fixture.run(["thread", "open", "--title", "--from", "user", "--participants", "claude-1"], {
+      NODE_EXIT: "47",
+    });
+    const message = fixture.run(["message", "send", "body", "--to="], { NODE_EXIT: "48" });
+
+    expect(thread.status).toBe(47);
+    expect(message.status).toBe(48);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js thread open --title --from user --participants claude-1\n`,
+    );
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js message send body --to=\n`,
+    );
+  });
+
+  it("falls back to the Node launcher for thread and message commands when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "thread thread-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const thread = fixture.run(["thread", "send", "thread-1", "body", "--from", "user"], { NODE_EXIT: "45" });
+    const message = fixture.run(["message", "send", "body", "--to", "claude-1"], { NODE_EXIT: "46" });
+
+    expect(thread.status).toBe(45);
+    expect(message.status).toBe(46);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js thread send thread-1 body --from user\n`,
+    );
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js message send body --to claude-1\n`,
     );
   });
 
