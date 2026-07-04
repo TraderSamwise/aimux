@@ -1,13 +1,13 @@
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve as pathResolve } from "node:path";
-import { execFileSync, spawn, type ChildProcess, type StdioOptions } from "node:child_process";
-import { commandArgValueMatches } from "./process-args.js";
+import { dirname, join } from "node:path";
+import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { getDaemonStdioLogPath, getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { getProjectServiceManifest, manifestsMatch } from "./project-service-manifest.js";
 import { getAimuxDaemonLaunchCommand } from "./cli-launcher.js";
 import { requestDaemonJson } from "./daemon-client.js";
+import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -58,15 +58,6 @@ function loggingChildStdio(path: string): { stdio: StdioOptions; close: () => vo
     return { stdio: ["ignore", stdout, stderr], close };
   } catch {
     return { stdio: "ignore", close: () => {} };
-  }
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -156,46 +147,6 @@ async function probeDefaultDaemon(options: EnsureDaemonRunningOptions): Promise<
     });
   }
   return null;
-}
-
-function readProcessCwd(pid: number): string | null {
-  try {
-    const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const cwd = output
-      .split("\n")
-      .find((line) => line.startsWith("n"))
-      ?.slice(1)
-      .trim();
-    return cwd || null;
-  } catch {
-    return null;
-  }
-}
-
-interface ProjectServiceProcessIdentity {
-  projectId?: string;
-  projectRoot?: string;
-}
-
-function isAimuxProjectServiceProcess(pid: number, expected: ProjectServiceProcessIdentity = {}): boolean {
-  try {
-    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (!args.includes("__project-service-internal")) return false;
-    if (!args.includes("--project-id") && !args.includes("--project-root") && expected.projectRoot) {
-      return pathResolve(readProcessCwd(pid) ?? "") === pathResolve(expected.projectRoot);
-    }
-    if (expected.projectId && !commandArgValueMatches(args, "--project-id", expected.projectId)) return false;
-    if (expected.projectRoot && !commandArgValueMatches(args, "--project-root", expected.projectRoot)) return false;
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {

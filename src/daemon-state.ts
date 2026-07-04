@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { getDaemonInfoPath, getDaemonStatePath } from "./paths.js";
+import { isPidAlive } from "./process-inspector.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -82,15 +83,6 @@ function loadJson<T>(path: string, fallback: T): T {
     return JSON.parse(readFileSync(path, "utf-8")) as T;
   } catch {
     return fallback;
-  }
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
 }
 
