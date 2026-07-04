@@ -1,8 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { getAimuxDashboardLaunchCommand } from "../cli-launcher.js";
+import { DEFAULT_DAEMON_PORT, DEFAULT_ENV, DEFAULT_HOME, DEFAULT_WEB_APP_URL } from "../launcher-env.js";
 import type { TmuxCommandSpec } from "../tmux/runtime-manager.js";
 
 function shellQuote(value: string): string {
@@ -25,8 +26,10 @@ const DASHBOARD_ENV_KEYS = [
   "AIMUX_INSTALL_ROOT",
 ] as const;
 const DASHBOARD_ENV_STAMP_DEFAULTS: Partial<Record<(typeof DASHBOARD_ENV_KEYS)[number], string>> = {
-  AIMUX_ENV: "production",
-  AIMUX_WEB_APP_URL: "https://aimux.app",
+  AIMUX_HOME: DEFAULT_HOME,
+  AIMUX_DAEMON_PORT: DEFAULT_DAEMON_PORT,
+  AIMUX_ENV: DEFAULT_ENV,
+  AIMUX_WEB_APP_URL: DEFAULT_WEB_APP_URL,
 };
 const STABLE_SHIM_ENV_KEYS = ["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"] as const;
 
@@ -47,6 +50,18 @@ function resolveDashboardImplementationPath(): string {
     fileURLToPath(new URL("../main.js", import.meta.url)),
     fileURLToPath(new URL("../main.ts", import.meta.url)),
   );
+}
+
+function resolveStableShimArtifactPaths(stableShimPath: string): string[] | null {
+  try {
+    const realShimPath = realpathSync(stableShimPath);
+    if (basename(realShimPath) !== "aimux" || basename(dirname(realShimPath)) !== "bin") return null;
+    const installRoot = dirname(dirname(realShimPath));
+    const artifactPaths = [join(installRoot, "dist", "launcher-bin.js"), join(installRoot, "dist", "main.js")];
+    return artifactPaths.every((path) => existsSync(path)) ? artifactPaths : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildDashboardEnvCommandPrefix(
@@ -83,8 +98,11 @@ export function getDashboardCommandSpec(
   env: NodeJS.ProcessEnv = process.env,
 ): DashboardCommandSpec {
   const scriptPath = resolveDashboardScriptPath();
-  const implementationPath = resolveDashboardImplementationPath();
   const launch = getAimuxDashboardLaunchCommand({ env, currentArgvEntry: scriptPath });
+  const artifactPaths =
+    launch.source === "stable-shim"
+      ? (resolveStableShimArtifactPaths(launch.stableShimPath) ?? [scriptPath, resolveDashboardImplementationPath()])
+      : [scriptPath, resolveDashboardImplementationPath()];
   const aimuxCommand = [launch.command, ...launch.args].map(shellQuote).join(" ");
   const dashboardEnv = dashboardEnvForLaunch(env, launch.source);
   const unsetKeys = launch.source === "current-entry" ? STABLE_SHIM_ENV_KEYS : [];
@@ -197,7 +215,7 @@ export function getDashboardCommandSpec(
   const stampCommand = wrappedDashboardCommand.replace(dashboardEntrypoint, dashboardStampEntrypoint);
   return {
     scriptPath,
-    dashboardBuildStamp: buildDashboardStamp([scriptPath, implementationPath], stampCommand),
+    dashboardBuildStamp: buildDashboardStamp(artifactPaths, stampCommand),
     dashboardCommand: {
       cwd: projectRoot,
       command: "bash",
