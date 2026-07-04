@@ -50,7 +50,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
   case "$url" in
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/projects-list-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     cat "$TEXT_ROUTE_FILE"
     ;;
@@ -287,6 +287,60 @@ describe("installed aimux shim", () => {
 
     expect(result.status).toBe(34);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js host status\n`);
+  });
+
+  it("serves daemon project-ensure from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Ensured project service for /repo (pid 88)\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "project-ensure", "--project", "/repo"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Ensured project service for /repo (pid 88)\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves daemon project-ensure JSON from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "project": {"projectRoot": "/repo"}\n}\n');
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "project-ensure", "--project=/repo", "--json"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('{\n  "project": {"projectRoot": "/repo"}\n}\n');
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for daemon project-ensure when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Ensured project service for /repo (pid 88)\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "project-ensure", "--project", "/repo"], { NODE_EXIT: "36" });
+
+    expect(result.status).toBe(36);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js daemon project-ensure --project /repo\n`,
+    );
+  });
+
+  it("falls back to the Node launcher for invalid daemon project-ensure arguments", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Ensured project service for /repo (pid 88)\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["daemon", "project-ensure", "--project", "/repo", "--dry-run"], { NODE_EXIT: "37" });
+
+    expect(result.status).toBe(37);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js daemon project-ensure --project /repo --dry-run\n`,
+    );
   });
 
   it("serves project list commands from a matching daemon without launching Node", () => {

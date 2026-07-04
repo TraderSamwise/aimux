@@ -78,12 +78,14 @@ const coreCommandDispositions: Array<{
   {
     command: "daemon project-ensure",
     args: ["daemon", "project-ensure", "--project", "/tmp/project"],
-    disposition: "node-core-fallback",
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-ensure-text",
   },
   {
     command: "daemon project-ensure --json",
     args: ["daemon", "project-ensure", "--project", "/tmp/project", "--json"],
-    disposition: "node-core-fallback",
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-ensure-text?json=1",
   },
   { command: "remote status", args: ["remote", "status"], disposition: "node-core-fallback" },
   { command: "remote status --json", args: ["remote", "status", "--json"], disposition: "node-core-fallback" },
@@ -121,7 +123,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(10);
+    expect(fastPaths).toHaveLength(12);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
@@ -133,13 +135,6 @@ describe("core command ownership inventory", () => {
       .filter((entry) => entry.disposition === "node-core-fallback")
       .map((entry) => entry.command);
 
-    expect(backlog).toEqual([
-      "daemon project-ensure",
-      "daemon project-ensure --json",
-      "remote status",
-      "remote status --json",
-      "remote enable",
-      "remote disable",
-    ]);
+    expect(backlog).toEqual(["remote status", "remote status --json", "remote enable", "remote disable"]);
   });
 });
