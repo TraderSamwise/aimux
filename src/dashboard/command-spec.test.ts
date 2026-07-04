@@ -1,7 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { prepareStableCliEnv } from "../launcher-env.js";
 import { getDashboardCommandSpec } from "./command-spec.js";
 
 describe("getDashboardCommandSpec", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "aimux-dashboard-spec-"));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
   it("uses the CLI entrypoint and dashboard internal flag", () => {
     const spec = getDashboardCommandSpec("/tmp/repo");
     expect(spec.scriptPath).toMatch(/\/(dist|src)\/launcher-bin\.(js|ts)$/);
@@ -59,6 +73,13 @@ describe("getDashboardCommandSpec", () => {
     expect(explicit.dashboardBuildStamp).toBe(implicit.dashboardBuildStamp);
   });
 
+  it("does not change the dashboard build stamp after launcher default env preparation", () => {
+    const implicit = getDashboardCommandSpec("/tmp/repo", {} as NodeJS.ProcessEnv);
+    const prepared = {} as NodeJS.ProcessEnv;
+    prepareStableCliEnv(prepared);
+    expect(getDashboardCommandSpec("/tmp/repo", prepared).dashboardBuildStamp).toBe(implicit.dashboardBuildStamp);
+  });
+
   it("changes the dashboard build stamp for non-default web app env", () => {
     const production = getDashboardCommandSpec("/tmp/repo", {
       AIMUX_ENV: "production",
@@ -70,4 +91,38 @@ describe("getDashboardCommandSpec", () => {
     } as NodeJS.ProcessEnv);
     expect(development.dashboardBuildStamp).not.toBe(production.dashboardBuildStamp);
   });
+
+  it("stamps stable-shim dashboard launches from the shim install root", () => {
+    const shim = join(tempDir, "bin", "aimux");
+    const firstInstall = createNativeInstall("first", 1_700_000_000);
+    const secondInstall = createNativeInstall("second", 1_800_000_000);
+    mkdirSync(dirname(shim), { recursive: true });
+    symlinkSync(join(firstInstall, "bin", "aimux"), shim);
+
+    const env = {
+      AIMUX_CLI_BIN: shim,
+      AIMUX_INSTALL_ROOT: join(process.cwd(), "src"),
+    } as NodeJS.ProcessEnv;
+    const first = getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp;
+    unlinkSync(shim);
+    symlinkSync(join(secondInstall, "bin", "aimux"), shim);
+
+    expect(getDashboardCommandSpec("/tmp/repo", env).dashboardBuildStamp).not.toBe(first);
+  });
+
+  function createNativeInstall(label: string, mtimeMs: number): string {
+    const root = join(tempDir, "native", label);
+    const bin = join(root, "bin");
+    const dist = join(root, "dist");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(bin, "aimux"), "#!/usr/bin/env sh\n");
+    for (const file of ["launcher-bin.js", "main.js"]) {
+      const path = join(dist, file);
+      writeFileSync(path, `${label}:${file}`);
+      const seconds = mtimeMs / 1000;
+      utimesSync(path, seconds, seconds);
+    }
+    return root;
+  }
 });
