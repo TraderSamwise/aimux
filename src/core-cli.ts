@@ -4,6 +4,7 @@ import { CORE_COMMAND_NAMES, type CoreRelaySnapshot, type CoreStatusProject } fr
 import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
+  renderCoreHostStatusLines,
   renderCoreProjectsListLines,
   type CoreDaemonStatusTextPayload,
 } from "./core-text.js";
@@ -46,13 +47,6 @@ function findCoreProject(projects: CoreStatusProject[], projectRoot: string): Co
   return projects.find((project) => pathResolve(project.path) === resolvedRoot) ?? null;
 }
 
-function coreProjectServicePid(project: CoreStatusProject | null): number | null {
-  const service = project?.service;
-  return service && typeof service === "object" && typeof (service as { pid?: unknown }).pid === "number"
-    ? (service as { pid: number }).pid
-    : null;
-}
-
 function relayLastError(relay: CoreRelaySnapshot): string | null {
   return "lastError" in relay ? relay.lastError : null;
 }
@@ -75,16 +69,7 @@ async function runHostStatus(args: string[], io: Required<CoreCliIo>): Promise<n
     io.stdout(JSON.stringify(payload, null, 2));
     return 0;
   }
-  if (!project) {
-    io.stdout(`No known control service for ${projectRoot}`);
-    return 0;
-  }
-  io.stdout(`Service: ${project.serviceAlive ? "live" : "idle"}`);
-  const pid = coreProjectServicePid(project);
-  if (pid !== null) io.stdout(`Service pid=${pid}`);
-  io.stdout(`Metadata: ${project.serviceEndpoint ? JSON.stringify(project.serviceEndpoint) : "not running"}`);
-  io.stdout(`Expected manifest: ${JSON.stringify(response.result.daemon.serviceInfo)}`);
-  io.stdout(`Tmux session: ${project.dashboardSessionName}`);
+  renderCoreHostStatusLines(payload, Boolean(project)).forEach(io.stdout);
   return 0;
 }
 
