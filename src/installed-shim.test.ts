@@ -766,7 +766,8 @@ describe("installed aimux shim", () => {
         "--tool=claude",
         "--prompt=Implement",
         "--type=review",
-        "--diff=diff",
+        "--diff",
+        "--- before\n+++ after",
         "--worktree=feature",
         "--project=/repo",
         "--json",
@@ -821,6 +822,7 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("taskId=task-1\n");
     expect(curlLog).toContain("threadId=thread-1\n");
     expect(curlLog).toContain("description=Ship it\n");
+    expect(curlLog).toContain("diff=--- before\n+++ after\n");
     expect(curlLog).toContain("body=Please take over\n");
     expect(curlLog).toContain("/core/task/list-text?json=1");
     expect(curlLog).toContain("/core/task/assign-text?json=1");
