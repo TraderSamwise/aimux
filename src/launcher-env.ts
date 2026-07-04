@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { coreCommandArgs, isCoreCliCommand } from "./core-cli-routing.js";
 
 const DEFAULT_HOME = join(homedir(), ".aimux");
 const DEFAULT_DAEMON_PORT = "43190";
@@ -20,38 +21,8 @@ export function prepareStableCliEnv(env: MutableEnv = process.env): void {
 
 export type CliEntry = "core" | "main";
 
-function commandArgs(argv: string[]): string[] {
-  const args = argv.slice(2);
-  const result: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if ((arg === "--debug" || arg === "--trace") && result.length === 0) continue;
-    if ((arg === "--log-level" || arg === "--log-category") && result.length === 0) {
-      index += 1;
-      continue;
-    }
-    if ((arg.startsWith("--log-level=") || arg.startsWith("--log-category=")) && result.length === 0) continue;
-    result.push(arg);
-  }
-  return result;
-}
-
-function isCoreCliCommand(args: string[]): boolean {
-  if (args.includes("--help") || args.includes("-h")) return false;
-  const [command, subcommand] = args;
-  if (command === "host" && subcommand === "status") return true;
-  if (command === "daemon") {
-    return ["ensure", "status", "projects", "project-ensure"].includes(subcommand ?? "");
-  }
-  if (command === "projects" && subcommand === "list") return true;
-  if (command === "remote") {
-    return ["status", "enable", "disable"].includes(subcommand ?? "");
-  }
-  return false;
-}
-
 export function cliEntryFor(argv: string[]): CliEntry {
-  return isCoreCliCommand(commandArgs(argv)) ? "core" : "main";
+  return isCoreCliCommand(coreCommandArgs(argv)) ? "core" : "main";
 }
 
 export function runRoutedCli(): void {
