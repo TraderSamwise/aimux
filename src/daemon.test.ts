@@ -408,6 +408,18 @@ describe("daemon supervision", () => {
     expect(response.body).toBe("Aimux Restart\n  failures: 1\n");
   });
 
+  it("keeps restart text errors as text/plain for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    runtimeRestartMock.restartAimuxControlPlane.mockRejectedValueOnce(new Error("aimux restart is already running"));
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.restartText);
+
+    expect(response.status).toBe(500);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toBe("aimux restart is already running\n");
+  });
+
   it("clears stale metadata endpoints when core stops a legacy project service", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
