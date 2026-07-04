@@ -61,9 +61,15 @@ while [ "$#" -gt 0 ]; do
   shift
 done
   case "$url" in
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
-    cat "$TEXT_ROUTE_FILE"
+    if [ -n "$output_file" ]; then
+      cat "$TEXT_ROUTE_FILE" > "$output_file"
+    else
+      cat "$TEXT_ROUTE_FILE"
+    fi
+    [ -n "$write_status" ] && printf '%s' "\${TEXT_ROUTE_STATUS:-200}"
+    exit 0
     ;;
   */core/restart-text)
     [ -f "$RESTART_FILE" ] || exit 22
@@ -380,6 +386,73 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["daemon", "projects"]).stdout).toBe("repo  live  /repo\n");
     expect(fixture.run(["projects", "list"]).stdout).toBe("repo  live  /repo\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves remote status from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Remote access: enabled\nRelay: wss://relay.example\nConnection: connected\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["remote", "status"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Remote access: enabled\nRelay: wss://relay.example\nConnection: connected\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves remote status JSON from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "loggedIn": true,\n  "relay": {"status": "connected"}\n}\n');
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["remote", "status", "--json"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('{\n  "loggedIn": true,\n  "relay": {"status": "connected"}\n}\n');
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves remote enable and disable from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    writeFileSync(fixture.textRouteFile, "✓ Remote access enabled (connection: connecting)\n");
+    expect(fixture.run(["remote", "enable"]).stdout).toBe("✓ Remote access enabled (connection: connecting)\n");
+
+    writeFileSync(fixture.textRouteFile, "✓ Remote access disabled. Daemon disconnected from relay.\n");
+    expect(fixture.run(["remote", "disable"]).stdout).toBe(
+      "✓ Remote access disabled. Daemon disconnected from relay.\n",
+    );
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("returns remote enable daemon errors without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Not logged in. Run `aimux login` first.\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["remote", "enable"], { TEXT_ROUTE_STATUS: "401" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("Not logged in. Run `aimux login` first.\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for remote commands when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Remote access: enabled\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["remote", "status"], { NODE_EXIT: "38" });
+
+    expect(result.status).toBe(38);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js remote status\n`);
   });
 
   it("falls back to the Node launcher for text fast paths when the daemon build is stale", () => {

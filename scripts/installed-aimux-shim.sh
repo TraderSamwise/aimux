@@ -98,6 +98,40 @@ aimux_curl_text_route() {
   curl -fsS --max-time 5 "http://127.0.0.1:$port$path" 2>/dev/null || return 1
 }
 
+aimux_post_text_route() {
+  path="$1"
+  timeout="${2:-60}"
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-core-post.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST \
+      "http://127.0.0.1:$port$path" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*)
+      cat "$body_file"
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 0
+      ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+}
+
 aimux_curl_project_text_route() {
   path="$1"
   project_root="$(pwd -P 2>/dev/null)" || return 1
@@ -202,6 +236,38 @@ case "${1:-} ${2:-}" in
     fi
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/projects-list-text?json=1"; then
       exit 0
+    fi
+    ;;
+  "remote status")
+    if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/remote-status-text"; then
+      exit 0
+    fi
+    if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/remote-status-text?json=1"; then
+      exit 0
+    fi
+    ;;
+  "remote enable")
+    if [ "$#" -eq 2 ]; then
+      if aimux_post_text_route "/core/remote-enable-text"; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
+    fi
+    ;;
+  "remote disable")
+    if [ "$#" -eq 2 ]; then
+      if aimux_post_text_route "/core/remote-disable-text"; then
+        exit 0
+      else
+        code="$?"
+        if [ "$code" -eq 2 ]; then
+          exit 1
+        fi
+      fi
     fi
     ;;
   "restart ")
