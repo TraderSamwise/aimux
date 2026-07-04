@@ -28,6 +28,7 @@ const runtimeRestartMock = vi.hoisted(() => ({
   restartAimuxControlPlane: vi.fn(),
   renderRuntimeRestartResult: vi.fn(),
 }));
+const ensureProjectPathsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -44,6 +45,7 @@ vi.mock("./paths.js", () => ({
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
+  ensureProjectPaths: ensureProjectPathsMock,
 }));
 
 vi.mock("./project-scanner.js", () => ({
@@ -233,6 +235,7 @@ describe("daemon supervision", () => {
     runtimeRestartMock.restartAimuxControlPlane.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReturnValue("Aimux Restart\n  failures: 0");
+    ensureProjectPathsMock.mockReset();
     execFileSyncMock.mockReset();
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "lsof") return `p${args[2]}\nfcwd\nn${projectRoot}\n`;
@@ -458,6 +461,58 @@ describe("daemon supervision", () => {
         serviceInfo: getProjectServiceManifest(),
       },
     });
+  });
+
+  it("serves host status text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+
+    const response = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.hostStatusText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toContain("Service: live");
+    expect(response.body).toContain(`Service pid=${process.pid}`);
+    expect(response.body).toContain("Metadata: not running");
+    expect(response.body).toContain("Tmux session: aimux-test");
+    expect(ensureProjectPathsMock).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("serves host status JSON for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.hostStatusText}?json=1&project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(JSON.parse(response.body as string)).toMatchObject({
+      projectRoot,
+      sessionName: "aimux-test",
+      serviceAlive: false,
+      metadataEndpoint: null,
+      expectedServiceManifest: getProjectServiceManifest(),
+    });
+  });
+
+  it("requires a project query for host status text", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("GET", CORE_API_ROUTES.hostStatusText);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toBe("project query is required\n");
   });
 
   it("preserves daemon status JSON shape for the installed shell shim", async () => {

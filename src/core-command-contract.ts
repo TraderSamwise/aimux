@@ -6,6 +6,7 @@ export const CORE_API_ROUTES = {
   daemonEnsureText: "/core/daemon-ensure-text",
   daemonProjectsText: "/core/daemon-projects-text",
   daemonStatusText: "/core/daemon-status-text",
+  hostStatusText: "/core/host-status-text",
   projectsListText: "/core/projects-list-text",
   restartText: "/core/restart-text",
 } as const;

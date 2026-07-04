@@ -50,7 +50,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
   case "$url" in
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/projects-list-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/projects-list-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     cat "$TEXT_ROUTE_FILE"
     ;;
@@ -249,6 +249,44 @@ describe("installed aimux shim", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('{\n  "daemon": {"pid": 321}\n}\n');
     expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves host status from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Service: live\nTmux session: aimux-test\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "status"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Service: live\nTmux session: aimux-test\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves host status JSON from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, '{\n  "projectRoot": "/repo"\n}\n');
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "status", "--json"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('{\n  "projectRoot": "/repo"\n}\n');
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for host status when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Service: live\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "status"], { NODE_EXIT: "34" });
+
+    expect(result.status).toBe(34);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js host status\n`);
   });
 
   it("serves project list commands from a matching daemon without launching Node", () => {

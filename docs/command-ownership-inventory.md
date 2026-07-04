@@ -28,6 +28,7 @@ Node launcher when a matching daemon is already running:
 | `aimux daemon ensure [--json]`   | `CUT`  | daemon | Reads daemon health directly or uses `/core/daemon-ensure-text`.                                |
 | `aimux daemon status [--json]`   | `CUT`  | daemon | Uses `/core/daemon-status-text`.                                                                |
 | `aimux daemon projects [--json]` | `CUT`  | daemon | Uses `/core/daemon-projects-text`.                                                              |
+| `aimux host status [--json]`     | `CUT`  | daemon | Uses `/core/host-status-text` with the current directory as project context.                    |
 | `aimux projects list [--json]`   | `CUT`  | daemon | Uses `/core/projects-list-text`.                                                                |
 
 ## Core-Routable But Not Yet Shim-Fast
@@ -36,13 +37,12 @@ These commands already have a core CLI path, but the installed command still
 spawns Node before reaching it. Each should either become a shell fast path or be
 reclassified with a documented reason.
 
-| Command                                                 | Status    | Target Owner | Next Cut                                                                                        |
-| ------------------------------------------------------- | --------- | ------------ | ----------------------------------------------------------------------------------------------- |
-| `aimux host status [--json]`                            | `SIDEcar` | daemon       | Add a daemon text/JSON route that resolves the current project without shell JSON construction. |
-| `aimux daemon project-ensure --project <path> [--json]` | `SIDEcar` | daemon       | Add a safe installed transport for project path payloads.                                       |
-| `aimux remote status [--json]`                          | `SIDEcar` | daemon       | Move credential/relay summary behind a daemon-owned status route.                               |
-| `aimux remote enable`                                   | `SIDEcar` | daemon       | Move credential mutation and relay connect orchestration behind a daemon command route.         |
-| `aimux remote disable`                                  | `SIDEcar` | daemon       | Move credential mutation and relay disconnect orchestration behind a daemon command route.      |
+| Command                                                 | Status    | Target Owner | Next Cut                                                                                   |
+| ------------------------------------------------------- | --------- | ------------ | ------------------------------------------------------------------------------------------ |
+| `aimux daemon project-ensure --project <path> [--json]` | `SIDEcar` | daemon       | Add a safe installed transport for project path payloads.                                  |
+| `aimux remote status [--json]`                          | `SIDEcar` | daemon       | Move credential/relay summary behind a daemon-owned status route.                          |
+| `aimux remote enable`                                   | `SIDEcar` | daemon       | Move credential mutation and relay connect orchestration behind a daemon command route.    |
+| `aimux remote disable`                                  | `SIDEcar` | daemon       | Move credential mutation and relay disconnect orchestration behind a daemon command route. |
 
 ## Normal User Command Families
 
