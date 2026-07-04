@@ -515,6 +515,52 @@ describe("daemon supervision", () => {
     expect(response.body).toBe("project query is required\n");
   });
 
+  it("serves project ensure text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectEnsureText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toBe(`Ensured project service for ${projectRoot} (pid ${process.pid})\n`);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("serves project ensure JSON for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectEnsureText}?json=1&project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(JSON.parse(response.body as string)).toMatchObject({
+      project: {
+        projectId: `proj-${basename(projectRoot)}`,
+        projectRoot,
+        pid: process.pid,
+      },
+    });
+  });
+
+  it("requires a project query for project ensure text", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.projectEnsureText);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toBe("project query is required\n");
+    expect(coreActorMock.starts).not.toHaveBeenCalled();
+  });
+
   it("preserves daemon status JSON shape for the installed shell shim", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
