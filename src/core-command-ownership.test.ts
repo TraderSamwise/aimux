@@ -112,12 +112,6 @@ const coreCommandDispositions: Array<{
     shimNeedle: "/core/host-status-text?json=1",
   },
   {
-    command: "host agent-read",
-    args: ["host", "agent-read", "claude-1", "--project", "/tmp/project"],
-    disposition: "shim-fast-path",
-    shimNeedle: "/core/host-agent-read-text",
-  },
-  {
     command: "daemon project-ensure",
     args: ["daemon", "project-ensure", "--project", "/tmp/project"],
     disposition: "shim-fast-path",
@@ -198,7 +192,6 @@ describe("core command ownership inventory", () => {
       "projects list --json",
       "host status",
       "host status --json",
-      "host agent-read",
       "daemon project-ensure",
       "daemon project-ensure --json",
       "remote status",
@@ -221,7 +214,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(22);
+    expect(fastPaths).toHaveLength(21);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);

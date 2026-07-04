@@ -363,6 +363,20 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("falls back to the Node launcher for host agent-read when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "pane output\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-read", "claude-1", "--project", "/repo"], { NODE_EXIT: "35" });
+
+    expect(result.status).toBe(35);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js host agent-read claude-1 --project /repo\n`,
+    );
+  });
+
   it("serves daemon project-ensure from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
