@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
-import { ensureDaemonRunning, ensureProjectService, stopDaemon, stopProjectService } from "./daemon-supervisor.js";
-import { type AimuxDaemonInfo, type ProjectServiceState } from "./daemon-state.js";
+import { type AimuxDaemonInfo, type ProjectServiceState, type StoppedDaemonInfo } from "./daemon-state.js";
 import { resolveDashboardTarget } from "./dashboard/targets.js";
 import {
   buildRuntimeCoherenceReport,
@@ -62,6 +61,7 @@ export interface RuntimeRestartResult {
   daemon: {
     previous: AimuxDaemonInfo | null;
     current: AimuxDaemonInfo;
+    retained?: boolean;
   };
   projects: RuntimeRestartProjectResult[];
   summary: {
@@ -104,10 +104,10 @@ export interface RestartAimuxControlPlaneOptions {
   now?: () => Date;
   coherence?: BuildRuntimeCoherenceReportOptions;
   buildRuntimeCoherenceReport?: typeof buildRuntimeCoherenceReport;
-  stopDaemon?: typeof stopDaemon;
-  ensureDaemonRunning?: typeof ensureDaemonRunning;
-  ensureProjectService?: typeof ensureProjectService;
-  stopProjectService?: typeof stopProjectService;
+  stopDaemon?: StopDaemonFn;
+  ensureDaemonRunning?: EnsureDaemonRunningFn;
+  ensureProjectService?: EnsureProjectServiceFn;
+  stopProjectService?: StopProjectServiceFn;
   createTmux?: () => RuntimeRestartTmux;
   resolveDashboardTarget?: (
     projectRoot: string,
@@ -127,8 +127,14 @@ export interface RestartAimuxControlPlaneOptions {
   repairNotifier?: RepairNotifier | null;
   reloadDashboards?: boolean;
   verifyDashboards?: boolean;
+  retainDaemon?: boolean;
   abortSignal?: AbortSignal;
 }
+
+type StopDaemonFn = () => Promise<StoppedDaemonInfo | null>;
+type EnsureDaemonRunningFn = () => Promise<AimuxDaemonInfo>;
+type EnsureProjectServiceFn = (projectRoot: string) => Promise<ProjectServiceState>;
+type StopProjectServiceFn = (projectRoot: string) => Promise<ProjectServiceState | null>;
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -140,6 +146,26 @@ function errorMessage(error: unknown): string {
 
 function restartAbortError(): Error {
   return new Error("aimux restart aborted");
+}
+
+async function defaultStopDaemon(): Promise<StoppedDaemonInfo | null> {
+  const { stopDaemon } = await import("./daemon-supervisor.js");
+  return stopDaemon();
+}
+
+async function defaultEnsureDaemonRunning(): Promise<AimuxDaemonInfo> {
+  const { ensureDaemonRunning } = await import("./daemon-supervisor.js");
+  return ensureDaemonRunning();
+}
+
+async function defaultEnsureProjectService(projectRoot: string): Promise<ProjectServiceState> {
+  const { ensureProjectService } = await import("./daemon-supervisor.js");
+  return ensureProjectService(projectRoot);
+}
+
+async function defaultStopProjectService(projectRoot: string): Promise<ProjectServiceState | null> {
+  const { stopProjectService } = await import("./daemon-supervisor.js");
+  return stopProjectService(projectRoot);
 }
 
 function throwIfRestartAborted(signal: AbortSignal | undefined): void {
@@ -529,7 +555,7 @@ async function waitForPidsExit(input: {
 async function verifyPostRestartCoherence(input: {
   buildRuntimeCoherenceReport: typeof buildRuntimeCoherenceReport;
   coherence: BuildRuntimeCoherenceReportOptions | undefined;
-  ensureProjectService?: typeof ensureProjectService;
+  ensureProjectService?: EnsureProjectServiceFn;
   projectRoots: Set<string>;
   verifyDashboards: boolean;
   sleep: (ms: number) => Promise<void>;
@@ -629,7 +655,7 @@ async function restartAimuxControlPlaneUnlocked(
     ];
   });
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
-  const previousDaemon = await (options.stopDaemon ?? stopDaemon)();
+  const previousDaemon = await (options.stopDaemon ?? defaultStopDaemon)();
   throwIfRestartAborted(options.abortSignal);
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isAimuxProjectServiceProcess = options.isAimuxProjectServiceProcess ?? defaultIsAimuxProjectServiceProcess;
@@ -667,11 +693,11 @@ async function restartAimuxControlPlaneUnlocked(
     sleep,
     killPid,
   });
-  const currentDaemon = await (options.ensureDaemonRunning ?? ensureDaemonRunning)();
+  const currentDaemon = await (options.ensureDaemonRunning ?? defaultEnsureDaemonRunning)();
   throwIfRestartAborted(options.abortSignal);
-  const ensureService = options.ensureProjectService ?? ensureProjectService;
+  const ensureService = options.ensureProjectService ?? defaultEnsureProjectService;
   const stopService =
-    options.stopProjectService ?? (options.ensureProjectService ? async () => null : stopProjectService);
+    options.stopProjectService ?? (options.ensureProjectService ? async () => null : defaultStopProjectService);
   const resolveDashboard =
     options.resolveDashboardTarget ??
     ((projectRoot, tmux, resolveOptions) =>
@@ -774,6 +800,7 @@ async function restartAimuxControlPlaneUnlocked(
     daemon: {
       previous: previousDaemon,
       current: currentDaemon,
+      retained: options.retainDaemon === true,
     },
     projects,
     summary: {
@@ -815,7 +842,11 @@ function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
       ts: result.finishedAt,
       projectRoot: project.projectRoot,
       action: "control-plane-restart",
-      reason: result.daemon.previous ? "daemon restarted" : "daemon started",
+      reason: result.daemon.retained
+        ? "daemon retained"
+        : result.daemon.previous
+          ? "daemon restarted"
+          : "daemon started",
       status: controlStatus,
       details: {
         previousDaemonPid: result.daemon.previous?.pid ?? null,
@@ -866,9 +897,14 @@ function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
 }
 
 export function renderRuntimeRestartResult(result: RuntimeRestartResult): string {
+  const daemonStatus = result.daemon.retained
+    ? `retained pid=${result.daemon.current.pid}`
+    : `${result.daemon.previous ? `restarted pid=${result.daemon.previous.pid}` : "started"} -> pid=${
+        result.daemon.current.pid
+      }`;
   const lines = [
     "Aimux Restart",
-    `  daemon: ${result.daemon.previous ? `restarted pid=${result.daemon.previous.pid}` : "started"} -> pid=${result.daemon.current.pid}`,
+    `  daemon: ${daemonStatus}`,
     `  projects: ${result.summary.projects}`,
     `  services ensured: ${result.summary.servicesEnsured}`,
     `  runtime repaired: ${result.summary.runtimeRepairs}`,

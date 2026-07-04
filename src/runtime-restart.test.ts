@@ -1983,7 +1983,7 @@ describe("restartAimuxControlPlane", () => {
     const isPidAlive = vi.fn(() => false);
     const killPid = vi.fn();
 
-    await restartAimuxControlPlane({
+    const result = await restartAimuxControlPlane({
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
       stopDaemon: vi.fn(async () => null),
@@ -2003,12 +2003,15 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive,
       isAimuxProjectServiceProcess: vi.fn(() => true),
       killPid,
+      retainDaemon: true,
     });
 
     expect(killPid).toHaveBeenCalledWith(1001, "SIGTERM");
     expect(killPid).toHaveBeenCalledWith(1002, "SIGTERM");
     expect(isPidAlive).toHaveBeenCalledWith(1001);
     expect(isPidAlive).toHaveBeenCalledWith(1002);
+    expect(result.daemon.retained).toBe(true);
+    expect(renderRuntimeRestartResult(result)).toContain("daemon: retained pid=9002");
   });
 
   it("cleans up legacy project service pids when cwd matches the pre-restart report", async () => {

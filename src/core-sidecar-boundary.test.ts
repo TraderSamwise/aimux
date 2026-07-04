@@ -66,7 +66,13 @@ describe("core sidecar module boundary", () => {
   });
 
   it("keeps ordinary clients out of daemon supervisor lifecycle code", () => {
-    const allowed = new Set(["core-command-client.ts", "daemon-supervisor.ts", "main.ts", "runtime-restart.ts"]);
+    const allowed = new Set([
+      "control-plane-restart-client.ts",
+      "core-command-client.ts",
+      "daemon-supervisor.ts",
+      "main.ts",
+      "runtime-restart.ts",
+    ]);
     const offenders = listSourceFiles(".").filter((path) => {
       if (allowed.has(path)) return false;
       return source(`./${path}`).includes("daemon-supervisor.js");
