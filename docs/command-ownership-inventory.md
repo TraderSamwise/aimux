@@ -59,7 +59,7 @@ No commands currently live in this category.
 | `aimux worktree ...`                                      | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service APIs.                                |
 | `aimux graveyard ...`                                     | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service APIs.                                |
 | `aimux thread ...`, `aimux message ...`                   | `CUT`       | project service | Exchange/thread commands use daemon text routes to project-service APIs in the healthy installed path. |
-| `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `LEGACY`    | project service | Workflow mutations should have one exchange-backed API contract.                                       |
+| `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `CUT`       | project service | Workflow commands use daemon text routes to project-service APIs in the healthy installed path.        |
 | `aimux whoami`, `aimux logout`                            | `CUT`       | daemon          | Installed shim uses daemon text routes; stale daemon falls back to the core CLI.                       |
 | `aimux login`, `aimux security unlock`                    | `CUT`       | daemon          | Plain auth commands use daemon text routes; custom auth flags remain bootstrap cleanup.                |
 | `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                                  |

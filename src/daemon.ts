@@ -33,13 +33,19 @@ import {
   renderCoreLifecycleStopLines,
   renderCoreLoginLines,
   renderCoreLogoutLines,
+  renderCoreHandoffMutationLines,
+  renderCoreHandoffSendLines,
   renderCoreMessageSendLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
+  renderCoreReviewRequestChangesLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
   renderCoreRemoteStatusLines,
   renderCoreSecurityUnlockLines,
+  renderCoreTaskListLines,
+  renderCoreTaskMutationLines,
+  renderCoreTaskShowLines,
   renderCoreThreadListLines,
   renderCoreThreadMarkSeenLines,
   renderCoreThreadOpenLines,
@@ -61,6 +67,8 @@ import {
   type CoreGraveyardAgentTextPayload,
   type CoreGraveyardCleanupTextPayload,
   type CoreGraveyardTextPayload,
+  type CoreHandoffMutationTextPayload,
+  type CoreHandoffSendTextPayload,
   type CoreHostStatusTextPayload,
   type CoreLifecycleForkTextPayload,
   type CoreLifecycleKillTextPayload,
@@ -68,6 +76,10 @@ import {
   type CoreLifecycleStopTextPayload,
   type CoreMessageSendTextPayload,
   type CoreRemoteStatusTextPayload,
+  type CoreReviewRequestChangesTextPayload,
+  type CoreTaskListTextPayload,
+  type CoreTaskMutationTextPayload,
+  type CoreTaskShowTextPayload,
   type CoreThreadListTextPayload,
   type CoreThreadOpenTextPayload,
   type CoreThreadSendTextPayload,
@@ -118,11 +130,23 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.graveyardListText,
   CORE_API_ROUTES.graveyardResurrectText,
   CORE_API_ROUTES.graveyardSendText,
+  CORE_API_ROUTES.handoffAcceptText,
+  CORE_API_ROUTES.handoffCompleteText,
+  CORE_API_ROUTES.handoffSendText,
   CORE_API_ROUTES.lifecycleForkText,
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
   CORE_API_ROUTES.lifecycleStopText,
   CORE_API_ROUTES.messageSendText,
+  CORE_API_ROUTES.reviewApproveText,
+  CORE_API_ROUTES.reviewRequestChangesText,
+  CORE_API_ROUTES.taskAcceptText,
+  CORE_API_ROUTES.taskAssignText,
+  CORE_API_ROUTES.taskBlockText,
+  CORE_API_ROUTES.taskCompleteText,
+  CORE_API_ROUTES.taskListText,
+  CORE_API_ROUTES.taskReopenText,
+  CORE_API_ROUTES.taskShowText,
   CORE_API_ROUTES.threadListText,
   CORE_API_ROUTES.threadMarkSeenText,
   CORE_API_ROUTES.threadOpenText,
@@ -933,6 +957,228 @@ export class AimuxDaemon {
     );
   }
 
+  private async handoffSendTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const messageBody = this.requiredParam(routeUrl, body, "body");
+    if (typeof messageBody !== "string") return messageBody;
+    const to = this.csvParam(routeUrl, body, "to");
+    const assignee = this.stringParam(routeUrl, body, "assignee") || undefined;
+    const tool = this.stringParam(routeUrl, body, "tool") || undefined;
+    const title = this.stringParam(routeUrl, body, "title") || undefined;
+    const worktreePath = this.stringParam(routeUrl, body, "worktree") || undefined;
+    if ((!to || to.length === 0) && !assignee && !tool) {
+      return this.textError(400, "aimux: handoff send requires --to, --assignee, or --tool");
+    }
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.handoff.send,
+      {
+        from: this.stringParam(routeUrl, body, "from") || "user",
+        ...(to ? { to } : {}),
+        ...(assignee ? { assignee } : {}),
+        ...(tool ? { tool } : {}),
+        body: messageBody,
+        ...(title ? { title } : {}),
+        ...(worktreePath ? { worktreePath } : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const thread = this.requiredProjectServiceObject(result.json, "handoff send", "thread");
+    if (this.isRouteResponse(thread)) return thread;
+    const message = this.requiredProjectServiceObject(result.json, "handoff send", "message");
+    if (this.isRouteResponse(message)) return message;
+    if (typeof thread.id !== "string" || typeof message.id !== "string") {
+      return this.textError(
+        502,
+        "Error: project service returned invalid handoff send response: thread.id and message.id are required",
+      );
+    }
+    const payload: CoreHandoffSendTextPayload = { thread, message, deliveredTo: result.json.deliveredTo };
+    return this.textOrJsonLines(routeUrl, result.json, renderCoreHandoffSendLines(payload));
+  }
+
+  private async handoffMutationTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: { action: string; routePath: string },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const threadId = this.requiredParam(routeUrl, body, "threadId");
+    if (typeof threadId !== "string") return threadId;
+    const bodyText = this.stringParam(routeUrl, body, "body") || undefined;
+    const result = await this.postProjectServiceJson(
+      project,
+      input.routePath,
+      {
+        threadId,
+        from: this.stringParam(routeUrl, body, "from") || "user",
+        ...(bodyText ? { body: bodyText } : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    const thread = this.requiredProjectServiceObject(result.json, input.action, "thread");
+    if (this.isRouteResponse(thread)) return thread;
+    const message = this.requiredProjectServiceObject(result.json, input.action, "message");
+    if (this.isRouteResponse(message)) return message;
+    if (typeof thread.id !== "string" || typeof message.id !== "string") {
+      return this.textError(
+        502,
+        `Error: project service returned invalid ${input.action} response: thread.id and message.id are required`,
+      );
+    }
+    const payload: CoreHandoffMutationTextPayload = { thread, message };
+    return this.textOrJsonLines(routeUrl, result.json, renderCoreHandoffMutationLines(payload));
+  }
+
+  private async taskListTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const params = new URLSearchParams();
+    const session = this.stringParam(routeUrl, body, "session")?.trim();
+    const status = this.stringParam(routeUrl, body, "status")?.trim();
+    if (session) params.set("session", session);
+    if (status) params.set("status", status);
+    const query = params.toString();
+    const result = await this.getProjectServiceJson(
+      project,
+      `${PROJECT_API_ROUTES.tasks.list}${query ? `?${query}` : ""}`,
+    );
+    if (!result.ok) return result.response;
+    const tasks = this.requiredProjectServiceArray(result.json, "task list", "tasks");
+    if (!Array.isArray(tasks)) return tasks;
+    const payload: CoreTaskListTextPayload = { tasks };
+    return this.textOrJsonLines(routeUrl, { tasks }, renderCoreTaskListLines(payload));
+  }
+
+  private async taskShowTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const taskId = this.requiredParam(routeUrl, body, "taskId");
+    if (typeof taskId !== "string") return taskId;
+    const result = await this.getProjectServiceJson(
+      project,
+      `${PROJECT_API_ROUTES.tasks.list}/${encodeURIComponent(taskId)}`,
+    );
+    if (!result.ok) {
+      if (result.response.status === 404) return this.textError(404, `aimux: task not found: ${taskId}`);
+      return result.response;
+    }
+    const task = this.requiredProjectServiceObject(result.json, "task show", "task");
+    if (this.isRouteResponse(task)) return task;
+    if (typeof task.id !== "string")
+      return this.textError(502, "Error: project service returned invalid task show response: task.id is required");
+    const messages = this.requiredProjectServiceArray(result.json, "task show", "messages");
+    if (!Array.isArray(messages)) return messages;
+    const payload: CoreTaskShowTextPayload = { task, thread: result.json.thread, messages };
+    return this.textOrJsonLines(
+      routeUrl,
+      { task, thread: result.json.thread, messages },
+      renderCoreTaskShowLines(payload),
+    );
+  }
+
+  private async taskAssignTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const description = this.requiredParam(routeUrl, body, "description");
+    if (typeof description !== "string") return description;
+    const assignee = this.stringParam(routeUrl, body, "assignee") || undefined;
+    const diff = this.stringParam(routeUrl, body, "diff") || undefined;
+    const prompt = this.stringParam(routeUrl, body, "prompt") || undefined;
+    const to = this.stringParam(routeUrl, body, "to") || undefined;
+    const tool = this.stringParam(routeUrl, body, "tool") || undefined;
+    const worktreePath = this.stringParam(routeUrl, body, "worktree") || undefined;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.tasks.assign,
+      {
+        from: this.stringParam(routeUrl, body, "from") || "user",
+        ...(to ? { to } : {}),
+        ...(assignee ? { assignee } : {}),
+        ...(tool ? { tool } : {}),
+        description,
+        ...(prompt ? { prompt } : {}),
+        type: this.stringParam(routeUrl, body, "type") || "task",
+        ...(diff ? { diff } : {}),
+        ...(worktreePath ? { worktreePath } : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    return this.taskMutationResponse(routeUrl, result.json, "task assign", renderCoreTaskMutationLines);
+  }
+
+  private async taskMutationTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: { action: string; routePath: string },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const taskId = this.requiredParam(routeUrl, body, "taskId");
+    if (typeof taskId !== "string") return taskId;
+    const bodyText = this.stringParam(routeUrl, body, "body") || undefined;
+    const result = await this.postProjectServiceJson(
+      project,
+      input.routePath,
+      {
+        taskId,
+        from: this.stringParam(routeUrl, body, "from") || "user",
+        ...(bodyText ? { body: bodyText } : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    return this.taskMutationResponse(routeUrl, result.json, input.action, renderCoreTaskMutationLines);
+  }
+
+  private async reviewRequestChangesTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const taskId = this.requiredParam(routeUrl, body, "taskId");
+    if (typeof taskId !== "string") return taskId;
+    const bodyText = this.stringParam(routeUrl, body, "body") || undefined;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.reviews.requestChanges,
+      {
+        taskId,
+        from: this.stringParam(routeUrl, body, "from") || "user",
+        ...(bodyText ? { body: bodyText } : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    return this.taskMutationResponse(
+      routeUrl,
+      result.json,
+      "review request changes",
+      renderCoreReviewRequestChangesLines,
+    );
+  }
+
+  private taskMutationResponse(
+    routeUrl: URL,
+    json: ProjectServiceJson,
+    action: string,
+    render: (payload: CoreTaskMutationTextPayload | CoreReviewRequestChangesTextPayload) => string[],
+  ): DaemonRouteResponse {
+    const task = this.requiredProjectServiceObject(json, action, "task");
+    if (this.isRouteResponse(task)) return task;
+    if (typeof task.id !== "string")
+      return this.textError(502, `Error: project service returned invalid ${action} response: task.id is required`);
+    const payload: CoreReviewRequestChangesTextPayload = {
+      task,
+      ...(json.thread && typeof json.thread === "object" ? { thread: json.thread } : {}),
+      ...(json.followUpTask && typeof json.followUpTask === "object" ? { followUpTask: json.followUpTask } : {}),
+    };
+    return this.textOrJsonLines(routeUrl, json, render(payload));
+  }
+
   private async lifecycleSpawnTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
@@ -1654,6 +1900,75 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.messageSendText) {
       return this.messageSendTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.handoffSendText) {
+      return this.handoffSendTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.handoffAcceptText) {
+      return this.handoffMutationTextRoute(routeUrl, body, {
+        action: "handoff accept",
+        routePath: PROJECT_API_ROUTES.handoff.accept,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.handoffCompleteText) {
+      return this.handoffMutationTextRoute(routeUrl, body, {
+        action: "handoff complete",
+        routePath: PROJECT_API_ROUTES.handoff.complete,
+      });
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.taskListText) {
+      return this.taskListTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.taskShowText) {
+      return this.taskShowTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.taskAssignText) {
+      return this.taskAssignTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.taskAcceptText) {
+      return this.taskMutationTextRoute(routeUrl, body, {
+        action: "task accept",
+        routePath: PROJECT_API_ROUTES.tasks.accept,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.taskBlockText) {
+      return this.taskMutationTextRoute(routeUrl, body, {
+        action: "task block",
+        routePath: PROJECT_API_ROUTES.tasks.block,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.taskCompleteText) {
+      return this.taskMutationTextRoute(routeUrl, body, {
+        action: "task complete",
+        routePath: PROJECT_API_ROUTES.tasks.complete,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.taskReopenText) {
+      return this.taskMutationTextRoute(routeUrl, body, {
+        action: "task reopen",
+        routePath: PROJECT_API_ROUTES.tasks.reopen,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.reviewApproveText) {
+      return this.taskMutationTextRoute(routeUrl, body, {
+        action: "review approve",
+        routePath: PROJECT_API_ROUTES.reviews.approve,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.reviewRequestChangesText) {
+      return this.reviewRequestChangesTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.daemonStatusText) {
