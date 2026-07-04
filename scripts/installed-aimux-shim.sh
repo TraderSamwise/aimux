@@ -167,6 +167,41 @@ aimux_post_query_text_route() {
   esac
 }
 
+aimux_get_query_text_route() {
+  path="$1"
+  timeout="${2:-60}"
+  shift 2
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-core-query-get.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' --get "$@" \
+      "http://127.0.0.1:$port$path" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*)
+      cat "$body_file"
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 0
+      ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+}
+
 aimux_auth_text_route() {
   start_path="$1"
   wait_path="$2"
@@ -228,10 +263,9 @@ aimux_auth_text_route() {
 
 aimux_curl_project_text_route() {
   path="$1"
-  project_root="$(pwd -P 2>/dev/null)" || return 1
-  port="$(aimux_matching_daemon_port)" || return 1
-  curl -fsS --max-time 5 --get --data-urlencode "project=$project_root" \
-    "http://127.0.0.1:$port$path" 2>/dev/null || return 1
+  project_root="${2:-}"
+  [ -n "$project_root" ] || project_root="$(pwd -P 2>/dev/null)" || return 1
+  aimux_get_query_text_route "$path" 5 --data-urlencode "project=$project_root"
 }
 
 aimux_curl_project_arg_text_route() {
@@ -251,6 +285,14 @@ aimux_resolve_project_arg() {
   case "$project_arg" in
     /*) printf '%s\n' "$project_arg" ;;
     *) printf '%s/%s\n' "$(pwd -P)" "$project_arg" ;;
+  esac
+}
+
+aimux_resolve_path_arg() {
+  path_arg="$1"
+  case "$path_arg" in
+    /*) printf '%s\n' "$path_arg" ;;
+    *) printf '%s/%s\n' "$(pwd -P)" "$path_arg" ;;
   esac
 }
 
@@ -497,6 +539,138 @@ aimux_try_lifecycle_fork() {
   aimux_post_query_text_route "$path" 120 "$@"
 }
 
+aimux_parse_project_json_args() {
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  json=0
+  dry_run=0
+  allow_dry_run="${AIMUX_PARSE_ALLOW_DRY_RUN:-0}"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        case "$1" in -*) return 1 ;; esac
+        project_root="$1"
+        ;;
+      --project=*)
+        project_root="${1#--project=}"
+        [ -n "$project_root" ] || return 1
+        ;;
+      --json)
+        json=1
+        ;;
+      --dry-run)
+        [ "$allow_dry_run" -eq 1 ] || return 1
+        dry_run=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  AIMUX_PARSED_PROJECT="$project_root"
+  AIMUX_PARSED_JSON="$json"
+  AIMUX_PARSED_DRY_RUN="$dry_run"
+}
+
+aimux_try_worktree() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    ""|list)
+      if [ "$subcommand" = "list" ]; then
+        shift
+      fi
+      aimux_parse_project_json_args "$@" || return 1
+      path="/core/worktree/list-text"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/worktree/list-text?json=1"
+      aimux_curl_project_text_route "$path" "$AIMUX_PARSED_PROJECT"
+      ;;
+    create)
+      shift
+      [ "$#" -gt 0 ] || return 1
+      name="$1"
+      case "$name" in -*) return 1 ;; esac
+      shift
+      aimux_parse_project_json_args "$@" || return 1
+      path="/core/worktree/create-text"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/worktree/create-text?json=1"
+      aimux_post_query_text_route "$path" 120 \
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "name=$name"
+      ;;
+    remove|graveyard|resurrect|delete-graveyard)
+      action="$subcommand"
+      shift
+      [ "$#" -gt 0 ] || return 1
+      target_path="$1"
+      case "$target_path" in -*) return 1 ;; esac
+      target_path="$(aimux_resolve_path_arg "$target_path")" || return 1
+      shift
+      aimux_parse_project_json_args "$@" || return 1
+      case "$action" in
+        remove) path="/core/worktree/remove-text" ;;
+        graveyard) path="/core/worktree/graveyard-text" ;;
+        resurrect) path="/core/worktree/resurrect-text" ;;
+        delete-graveyard) path="/core/worktree/delete-graveyard-text" ;;
+      esac
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 \
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "path=$target_path"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+aimux_try_graveyard() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    list)
+      shift
+      aimux_parse_project_json_args "$@" || return 1
+      path="/core/graveyard/list-text"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/graveyard/list-text?json=1"
+      aimux_curl_project_text_route "$path" "$AIMUX_PARSED_PROJECT"
+      ;;
+    send|resurrect)
+      action="$subcommand"
+      shift
+      [ "$#" -gt 0 ] || return 1
+      session_id="$1"
+      case "$session_id" in -*) return 1 ;; esac
+      shift
+      aimux_parse_project_json_args "$@" || return 1
+      case "$action" in
+        send) path="/core/graveyard/send-text" ;;
+        resurrect) path="/core/graveyard/resurrect-text" ;;
+      esac
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 \
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "sessionId=$session_id"
+      ;;
+    cleanup)
+      shift
+      AIMUX_PARSE_ALLOW_DRY_RUN=1
+      aimux_parse_project_json_args "$@" || {
+        AIMUX_PARSE_ALLOW_DRY_RUN=0
+        return 1
+      }
+      AIMUX_PARSE_ALLOW_DRY_RUN=0
+      path="/core/graveyard/cleanup-text"
+      [ "$AIMUX_PARSED_JSON" -eq 1 ] && path="/core/graveyard/cleanup-text?json=1"
+      aimux_post_query_text_route "$path" 120 \
+        --data-urlencode "project=$AIMUX_PARSED_PROJECT" --data-urlencode "dryRun=$AIMUX_PARSED_DRY_RUN"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 case "${1:-}" in
   spawn)
     if aimux_try_lifecycle_spawn "$@"; then
@@ -530,6 +704,26 @@ case "${1:-}" in
     ;;
   fork)
     if aimux_try_lifecycle_fork "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  worktree)
+    if aimux_try_worktree "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  graveyard)
+    if aimux_try_graveyard "$@"; then
       exit 0
     else
       code="$?"

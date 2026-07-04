@@ -25,6 +25,16 @@ export const CORE_API_ROUTES = {
   securityUnlockText: "/core/security-unlock-text",
   securityUnlockWaitText: "/core/security-unlock-wait-text",
   whoamiText: "/core/whoami-text",
+  graveyardCleanupText: "/core/graveyard/cleanup-text",
+  graveyardListText: "/core/graveyard/list-text",
+  graveyardResurrectText: "/core/graveyard/resurrect-text",
+  graveyardSendText: "/core/graveyard/send-text",
+  worktreeCreateText: "/core/worktree/create-text",
+  worktreeDeleteGraveyardText: "/core/worktree/delete-graveyard-text",
+  worktreeGraveyardText: "/core/worktree/graveyard-text",
+  worktreeListText: "/core/worktree/list-text",
+  worktreeRemoveText: "/core/worktree/remove-text",
+  worktreeResurrectText: "/core/worktree/resurrect-text",
 } as const;
 
 export const CORE_COMMAND_NAMES = {

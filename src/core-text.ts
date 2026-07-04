@@ -65,6 +65,44 @@ export interface CoreLifecycleForkTextPayload extends CoreLifecycleSpawnTextPayl
   threadId: unknown;
 }
 
+export interface CoreWorktreeSummaryTextPayload {
+  worktrees: unknown[];
+}
+
+export interface CoreWorktreeCreateTextPayload {
+  ok: true;
+  name: string;
+  path: string;
+  status: "creating" | "created";
+  projectRoot: string;
+}
+
+export interface CoreWorktreePathTextPayload {
+  ok: true;
+  projectRoot: string;
+  path: string;
+  status: string;
+}
+
+export interface CoreGraveyardTextPayload {
+  entries: unknown[];
+  worktrees: unknown[];
+}
+
+export interface CoreGraveyardAgentTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: string;
+  status: string;
+  previousStatus?: string;
+}
+
+export interface CoreGraveyardCleanupTextPayload {
+  ok: true;
+  projectRoot: string;
+  result: unknown;
+}
+
 function coreProjectServicePid(projectService: unknown): number | null {
   return projectService &&
     typeof projectService === "object" &&
@@ -197,6 +235,102 @@ export function renderCoreLifecycleKillLines(payload: CoreLifecycleKillTextPaylo
 
 export function renderCoreLifecycleForkLines(payload: CoreLifecycleForkTextPayload): string[] {
   return [`forked ${String(payload.sessionId)}`, `thread ${String(payload.threadId)}`];
+}
+
+export function renderCoreWorktreeListLines(payload: CoreWorktreeSummaryTextPayload): string[] {
+  const worktrees = payload.worktrees.filter((entry) => entry && typeof entry === "object") as Array<
+    Record<string, unknown>
+  >;
+  if (worktrees.length === 0) return ["No worktrees found."];
+  return renderWorktreeTableLines(worktrees, "");
+}
+
+export function renderCoreWorktreeCreateLines(payload: CoreWorktreeCreateTextPayload): string[] {
+  if (payload.status === "creating") {
+    return [`Creating worktree "${payload.name}"${payload.path ? ` (${payload.path})` : ""}.`];
+  }
+  return [`Created worktree "${payload.name}" at ${payload.path}`];
+}
+
+export function renderCoreWorktreeRemoveLines(payload: CoreWorktreePathTextPayload): string[] {
+  return [`${payload.status === "removing" ? "removing" : "removed"} ${payload.path}`];
+}
+
+export function renderCoreWorktreeGraveyardLines(payload: CoreWorktreePathTextPayload): string[] {
+  return [`graveyarded ${payload.path}`];
+}
+
+export function renderCoreWorktreeResurrectLines(payload: CoreWorktreePathTextPayload): string[] {
+  return [`resurrected ${payload.path}`];
+}
+
+export function renderCoreWorktreeDeleteGraveyardLines(payload: CoreWorktreePathTextPayload): string[] {
+  return [`deleted ${payload.path}`];
+}
+
+export function renderCoreGraveyardLines(payload: CoreGraveyardTextPayload): string[] {
+  const entries = payload.entries.filter((entry) => entry && typeof entry === "object") as Array<
+    Record<string, unknown>
+  >;
+  const worktrees = payload.worktrees.filter((entry) => entry && typeof entry === "object") as Array<
+    Record<string, unknown>
+  >;
+  if (entries.length === 0 && worktrees.length === 0) return ["Graveyard is empty."];
+  const lines: string[] = [];
+  if (worktrees.length > 0) {
+    lines.push("Worktrees", ...renderWorktreeTableLines(worktrees, "?"));
+  }
+  if (entries.length > 0) {
+    if (worktrees.length > 0) lines.push("");
+    lines.push("Agents", "ID".padEnd(25) + "Tool".padEnd(15) + "Backend Session ID", "-".repeat(70));
+    for (const session of entries) {
+      lines.push(
+        String(session.id ?? "?").padEnd(25) +
+          String(session.command ?? session.tool ?? "?").padEnd(15) +
+          String(session.backendSessionId ?? "(none)"),
+      );
+    }
+  }
+  return lines;
+}
+
+export function renderCoreGraveyardAgentLines(payload: CoreGraveyardAgentTextPayload): string[] {
+  const action = payload.status === "graveyard" || payload.status === "graveyarded" ? "graveyarded" : "resurrected";
+  return [`${action} ${payload.sessionId}`];
+}
+
+function renderWorktreeTableLines(worktrees: Array<Record<string, unknown>>, fallback: string): string[] {
+  const lines = ["Name".padEnd(30) + "Branch".padEnd(35) + "Path", "-".repeat(95)];
+  for (const worktree of worktrees) {
+    lines.push(
+      String(worktree.name ?? fallback).padEnd(30) +
+        String(worktree.branch ?? "").padEnd(35) +
+        String(worktree.path ?? fallback),
+    );
+  }
+  return lines;
+}
+
+export function renderCoreGraveyardCleanupLines(payload: CoreGraveyardCleanupTextPayload): string[] {
+  const result =
+    payload.result && typeof payload.result === "object" ? (payload.result as Record<string, unknown>) : {};
+  const plan = result.plan && typeof result.plan === "object" ? (result.plan as Record<string, unknown>) : {};
+  if (plan.enabled === false) return ["Graveyard cleanup is disabled."];
+  const items = Array.isArray(result.results) ? result.results.filter((item) => item && typeof item === "object") : [];
+  const records = items as Array<Record<string, unknown>>;
+  const removed = records.filter((item) => item.status === "removed").length;
+  const dryRun = records.filter((item) => item.status === "dry-run").length;
+  const failed = records.filter((item) => item.status === "failed").length;
+  const action = result.dryRun ? "would remove" : "removed";
+  const retentionDays = plan.retentionDays ?? "?";
+  const lines = [
+    `Graveyard cleanup ${action} ${result.dryRun ? dryRun : removed} item(s); ${failed} failed. Retention: ${retentionDays} day(s).`,
+  ];
+  for (const item of records) {
+    const status = item.status === "failed" ? `failed: ${String(item.error ?? "")}` : String(item.status ?? "?");
+    lines.push(`${String(item.kind ?? "?")} ${String(item.id ?? "?")}: ${status}`);
+  }
+  return lines;
 }
 
 function renderRelayAuthLines(relay: CoreRelaySnapshot): string[] {

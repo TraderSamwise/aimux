@@ -83,7 +83,7 @@ done
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*)
+  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     if [ -n "$output_file" ]; then
       cat "$TEXT_ROUTE_FILE" > "$output_file"
@@ -519,6 +519,95 @@ describe("installed aimux shim", () => {
 
     expect(result.status).toBe(42);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js stop\n`);
+  });
+
+  it("serves worktree commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "removed /repo/wt\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["worktree"], {}, { cwd: projectDir }).stdout).toBe("removed /repo/wt\n");
+    expect(fixture.run(["worktree", "list", "--project", "/repo", "--json"]).stdout).toBe("removed /repo/wt\n");
+    expect(fixture.run(["worktree", "create", "next", "--project", "/repo", "--json"]).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(fixture.run(["worktree", "remove", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(fixture.run(["worktree", "graveyard", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(fixture.run(["worktree", "resurrect", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout).toBe(
+      "removed /repo/wt\n",
+    );
+    expect(
+      fixture.run(["worktree", "delete-graveyard", "../wt", "--project=/repo"], {}, { cwd: projectDir }).stdout,
+    ).toBe("removed /repo/wt\n");
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(curlLog).toContain("project=/repo\n");
+    expect(curlLog).toContain("name=next\n");
+    expect(curlLog).toContain(`path=${realpathSync(projectDir)}/../wt\n`);
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("prints daemon errors for worktree list without falling back to Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Error: project service unavailable\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["worktree", "list", "--project", "/repo"], { TEXT_ROUTE_STATUS: "503" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("Error: project service unavailable\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves graveyard commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "resurrected claude-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["graveyard", "list", "--project", "/repo", "--json"]).stdout).toBe("resurrected claude-1\n");
+    expect(fixture.run(["graveyard", "send", "claude-1", "--project=/repo"]).stdout).toBe("resurrected claude-1\n");
+    expect(fixture.run(["graveyard", "resurrect", "claude-1", "--project=/repo"]).stdout).toBe(
+      "resurrected claude-1\n",
+    );
+    expect(fixture.run(["graveyard", "cleanup", "--dry-run", "--project=/repo", "--json"]).stdout).toBe(
+      "resurrected claude-1\n",
+    );
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("project=/repo\n");
+    expect(curlLog).toContain("sessionId=claude-1\n");
+    expect(curlLog).toContain("dryRun=1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for worktree and graveyard commands when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "resurrected claude-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const worktree = fixture.run(["worktree", "create", "next"], { NODE_EXIT: "43" });
+    const graveyard = fixture.run(["graveyard", "resurrect", "claude-1"], { NODE_EXIT: "44" });
+
+    expect(worktree.status).toBe(43);
+    expect(graveyard.status).toBe(44);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js worktree create next\n`,
+    );
+    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js graveyard resurrect claude-1\n`,
+    );
   });
 
   it("serves project list commands from a matching daemon without launching Node", () => {

@@ -29,6 +29,8 @@ Node launcher when a matching daemon is already running:
 | `aimux stop <sessionId> ...`                            | `CUT`  | daemon + project service | Uses `/core/lifecycle/stop-text`; bare `aimux stop` remains project-runtime bootstrap plumbing.        |
 | `aimux kill <sessionId> ...`                            | `CUT`  | daemon + project service | Uses `/core/lifecycle/kill-text`; sends agent lifecycle mutation to the project service.               |
 | `aimux fork <sourceSessionId> --tool <tool> ...`        | `CUT`  | daemon + project service | Uses `/core/lifecycle/fork-text`; daemon keeps shell transport thin.                                   |
+| `aimux worktree ...`                                    | `CUT`  | daemon + project service | Uses `/core/worktree/*-text`; daemon forwards to project-service worktree APIs.                       |
+| `aimux graveyard ...`                                   | `CUT`  | daemon + project service | Uses `/core/graveyard/*-text`; daemon forwards to project-service graveyard APIs.                     |
 | `aimux daemon ensure [--json]`                          | `CUT`  | daemon                   | Reads daemon health directly or uses `/core/daemon-ensure-text`.                                       |
 | `aimux daemon status [--json]`                          | `CUT`  | daemon                   | Uses `/core/daemon-status-text`.                                                                       |
 | `aimux daemon projects [--json]`                        | `CUT`  | daemon                   | Uses `/core/daemon-projects-text`.                                                                     |
@@ -54,8 +56,8 @@ No commands currently live in this category.
 | `aimux` dashboard entry                                   | `BOOTSTRAP` | daemon + tmux   | May bootstrap/repair, then should attach to tmux-managed dashboard.                                    |
 | `aimux init`                                              | `BOOTSTRAP` | daemon          | Project registration/setup path; allowed to start the control plane.                                   |
 | `aimux spawn`, `aimux stop`, `aimux kill`, `aimux fork`   | `CUT`       | project service | Agent lifecycle commands use daemon text routes to project-service APIs in the healthy installed path. |
-| `aimux worktree ...`                                      | `LEGACY`    | project service | Worktree and graveyard state should be project-service/API-owned.                                      |
-| `aimux graveyard ...`                                     | `LEGACY`    | project service | Resurrection/cleanup should use topology-backed project-service routes.                                |
+| `aimux worktree ...`                                      | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service APIs.                                |
+| `aimux graveyard ...`                                     | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service APIs.                                |
 | `aimux thread ...`, `aimux message ...`                   | `LEGACY`    | project service | Exchange/thread workflows should route through project-service contracts.                              |
 | `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `LEGACY`    | project service | Workflow mutations should have one exchange-backed API contract.                                       |
 | `aimux whoami`, `aimux logout`                            | `CUT`       | daemon          | Installed shim uses daemon text routes; stale daemon falls back to the core CLI.                       |
