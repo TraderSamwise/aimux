@@ -38,6 +38,18 @@ export interface CoreProjectRestartTextPayload {
   dashboardTarget?: CoreTmuxTarget;
 }
 
+export interface CoreDashboardReloadTextPayload {
+  ok: true;
+  projectRoot: string;
+  dashboardSessionName: string;
+  dashboardTarget: CoreTmuxTarget;
+}
+
+export interface CoreRuntimeRestartTextPayload extends CoreDashboardReloadTextPayload {
+  project: CoreProjectServiceState;
+  tmuxSessionsKilled: string[];
+}
+
 export interface CoreRemoteStatusTextPayload {
   credentials: { relayUrl: string; remoteEnabled: boolean } | null;
   relay: CoreRelaySnapshot;
@@ -301,6 +313,17 @@ export function renderCoreProjectKillLines(payload: CoreProjectServiceMutationTe
 export function renderCoreProjectRestartLines(payload: CoreProjectRestartTextPayload): string[] {
   if (payload.dashboardSessionName) return [`Restarted project service for ${payload.dashboardSessionName}`];
   return [`Restarted project service for ${payload.projectRoot}`];
+}
+
+export function renderCoreDashboardReloadLines(payload: CoreDashboardReloadTextPayload): string[] {
+  return [`Reloaded dashboard for ${payload.dashboardSessionName}`];
+}
+
+export function renderCoreRuntimeRestartLines(payload: CoreRuntimeRestartTextPayload): string[] {
+  return [
+    `Restarted project runtime for ${payload.projectRoot}`,
+    `Dashboard: ${payload.dashboardSessionName}:${payload.dashboardTarget.windowIndex}`,
+  ];
 }
 
 export function renderCoreDaemonProjectsLines(projects: CoreStatusProject[]): string[] {
