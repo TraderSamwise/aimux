@@ -1916,24 +1916,28 @@ program
   .description("Send text into a running agent session as a new turn")
   .argument("<sessionId>", "Target agent session id")
   .argument("<text...>", "Text to deliver (submitted as a prompt)")
-  .action(async (sessionId: string, text: string[]) => {
-    await initPaths();
+  .option("--project <path>", "Project path")
+  .action(async (sessionId: string, text: string[], opts: { project?: string }) => {
+    const projectRoot = opts.project ? await prepareProjectContext(opts.project) : undefined;
+    if (!projectRoot) await initPaths();
     const body = text.join(" ");
     if (!body.trim()) {
       console.error("aimux: input requires non-empty text");
       process.exit(1);
     }
-    await postProjectServiceJson("/agents/input", { sessionId, text: body });
+    await postProjectServiceJson("/agents/input", { sessionId, text: body }, projectRoot ? { projectRoot } : undefined);
     console.log(`delivered to ${sessionId}`);
   });
 
 program
   .command("ps")
   .description("Show all agents in this project (across worktrees) with activity and loop state")
+  .option("--project <path>", "Project path")
   .option("--json", "Emit JSON")
-  .action(async (opts: { json?: boolean }) => {
-    await initPaths();
-    const result = await getProjectServiceJson("/agents");
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    const projectRoot = opts.project ? await prepareProjectContext(opts.project) : undefined;
+    if (!projectRoot) await initPaths();
+    const result = await getProjectServiceJson("/agents", projectRoot ? { projectRoot } : undefined);
     const agents: Array<{
       id: string;
       tool?: string;

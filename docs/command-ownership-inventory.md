@@ -24,6 +24,10 @@ Node launcher when a matching daemon is already running:
 | Command                                                 | Status | Owner                    | Notes                                                                                                  |
 | ------------------------------------------------------- | ------ | ------------------------ | ------------------------------------------------------------------------------------------------------ |
 | `aimux restart`                                         | `CUT`  | daemon                   | Uses `/core/restart-text`; orchestrates daemon, services, runtime repair, and dashboard reload.        |
+| `aimux input <sessionId> <text...>`                     | `CUT`  | daemon + project service | Uses `/core/agents/input-text`; sends agent input through the project-service agent API.               |
+| `aimux ps [--json]`                                     | `CUT`  | daemon + project service | Uses `/core/agents/ps-text`; lists agents from the project service without a fresh Node process.       |
+| `aimux rename <sessionId> --label <label>`              | `CUT`  | daemon + project service | Uses `/core/agents/rename-text`; label mutation stays project-service owned.                           |
+| `aimux migrate <sessionId> --worktree <path>`           | `CUT`  | daemon + project service | Uses `/core/agents/migrate-text`; worktree migration stays project-service owned.                      |
 | `aimux spawn --tool <tool> ...`                         | `CUT`  | daemon + project service | Uses `/core/lifecycle/spawn-text`; daemon ensures the project service, which owns the mutation.        |
 | `aimux stop <sessionId> ...`                            | `CUT`  | daemon + project service | Uses `/core/lifecycle/stop-text`; bare `aimux stop` remains project-runtime bootstrap plumbing.        |
 | `aimux kill <sessionId> ...`                            | `CUT`  | daemon + project service | Uses `/core/lifecycle/kill-text`; sends agent lifecycle mutation to the project service.               |
@@ -61,6 +65,7 @@ No commands currently live in this category.
 | --------------------------------------------------------- | ----------- | --------------- | ------------------------------------------------------------------------------------------------------ |
 | `aimux` dashboard entry                                   | `BOOTSTRAP` | daemon + tmux   | May bootstrap/repair, then should attach to tmux-managed dashboard.                                    |
 | `aimux init`                                              | `BOOTSTRAP` | daemon          | Project registration/setup path; allowed to start the control plane.                                   |
+| `aimux input`, `aimux ps`, `aimux rename`, `aimux migrate` | `CUT`       | project service | Agent utility commands use daemon text routes to project-service APIs in the healthy installed path.   |
 | `aimux spawn`, `aimux stop`, `aimux kill`, `aimux fork`   | `CUT`       | project service | Agent lifecycle commands use daemon text routes to project-service APIs in the healthy installed path. |
 | `aimux worktree ...`                                      | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service APIs.                                |
 | `aimux graveyard ...`                                     | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service APIs.                                |

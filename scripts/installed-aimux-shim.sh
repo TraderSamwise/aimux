@@ -891,6 +891,181 @@ aimux_try_lifecycle_fork() {
   aimux_post_query_text_route "$path" 120 "$@"
 }
 
+aimux_try_agent_input() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  session_id=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        aimux_require_inline_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        session_id="$1"
+        shift
+        break
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        session_id="$1"
+        shift
+        break
+        ;;
+    esac
+    shift
+  done
+  [ -n "$session_id" ] || return 1
+  [ "$#" -gt 0 ] || return 1
+  text="$*"
+  [ -n "$text" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  aimux_post_query_text_route "/core/agents/input-text" 120 \
+    --data-urlencode "project=$project_root" \
+    --data-urlencode "sessionId=$session_id" \
+    --data-urlencode "text=$text"
+}
+
+aimux_try_agent_ps() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        aimux_require_inline_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --json)
+        json=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/agents/ps-text"
+  [ "$json" -eq 1 ] && path="/core/agents/ps-text?json=1"
+  aimux_get_query_text_route "$path" 60 --data-urlencode "project=$project_root"
+}
+
+aimux_try_agent_rename() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  session_id=""
+  label=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        aimux_require_inline_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --label)
+        shift
+        aimux_require_any_arg_value "$@" || return 1
+        label="$AIMUX_ARG_VALUE"
+        ;;
+      --label=*)
+        aimux_require_inline_value "${1#--label=}" || return 1
+        label="$AIMUX_ARG_VALUE"
+        ;;
+      --json)
+        json=1
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        [ -z "$session_id" ] || return 1
+        session_id="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$session_id" ] || return 1
+  [ -n "$label" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/agents/rename-text"
+  [ "$json" -eq 1 ] && path="/core/agents/rename-text?json=1"
+  aimux_post_query_text_route "$path" 120 \
+    --data-urlencode "project=$project_root" \
+    --data-urlencode "sessionId=$session_id" \
+    --data-urlencode "label=$label"
+}
+
+aimux_try_agent_migrate() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  session_id=""
+  worktree_path=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        aimux_require_inline_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --worktree)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        worktree_path="$AIMUX_ARG_VALUE"
+        ;;
+      --worktree=*)
+        aimux_require_inline_value "${1#--worktree=}" || return 1
+        worktree_path="$AIMUX_ARG_VALUE"
+        ;;
+      --json)
+        json=1
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        [ -z "$session_id" ] || return 1
+        session_id="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$session_id" ] || return 1
+  [ -n "$worktree_path" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  worktree_path="$(aimux_resolve_path_arg "$worktree_path")" || return 1
+  path="/core/agents/migrate-text"
+  [ "$json" -eq 1 ] && path="/core/agents/migrate-text?json=1"
+  aimux_post_query_text_route "$path" 120 \
+    --data-urlencode "project=$project_root" \
+    --data-urlencode "sessionId=$session_id" \
+    --data-urlencode "worktreePath=$worktree_path"
+}
+
 aimux_try_loop() {
   shift
   subcommand="${1:-}"
@@ -1990,6 +2165,34 @@ case "${1:-}" in
     ;;
   fork)
     if aimux_try_lifecycle_fork "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  input)
+    if aimux_try_agent_input "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  ps)
+    if aimux_try_agent_ps "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  rename)
+    if aimux_try_agent_rename "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  migrate)
+    if aimux_try_agent_migrate "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"
