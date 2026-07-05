@@ -59,6 +59,25 @@ function hasOnlyAllowedFlags(args: string[], allowed: Set<string>): boolean {
   return args.every((arg) => allowed.has(arg));
 }
 
+function hasRestartFlags(args: string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") continue;
+    if (arg === "--project") {
+      const consumed = consumeRequiredValue(args, index);
+      if (!consumed || consumed.value.startsWith("-")) return false;
+      index = consumed.nextIndex;
+      continue;
+    }
+    if (arg.startsWith("--project=")) {
+      if (!arg.slice("--project=".length)) return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 function consumeRequiredValue(args: string[], index: number): { nextIndex: number; value: string } | null {
   const value = args[index + 1];
   if (value === undefined || value === "") return null;
@@ -146,10 +165,17 @@ export function isCoreProjectEnsureCommand(args: string[]): boolean {
 export function isCoreCliCommand(args: string[]): boolean {
   if (hasHelp(args)) return false;
   const [command, subcommand] = args;
+  if (command === "restart") return hasRestartFlags(args.slice(1));
+  if (command === "serve") return args.length === 1;
   if (command === "host" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
+  if (command === "host" && ["stop", "kill"].includes(subcommand ?? "")) return args.length === 2;
+  if (command === "host" && subcommand === "restart") {
+    return hasOnlyAllowedFlags(args.slice(2), new Set(["--serve"]));
+  }
   if (command === "daemon" && ["ensure", "status", "projects"].includes(subcommand ?? "")) {
     return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   }
+  if (command === "daemon" && subcommand === "restart") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "daemon" && subcommand === "project-ensure") return true;
   if (command === "logs") return parseCoreLogsArgs(args) !== null;
   if (command === "projects" && subcommand === "list") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
