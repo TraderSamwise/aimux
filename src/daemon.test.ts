@@ -744,6 +744,7 @@ describe("daemon supervision", () => {
         updatedAt: expect.any(String),
       },
       tmuxSessionsKilled: ["aimux-test-client-feedbeef", "aimux-test"],
+      dashboardSession: "aimux-test",
       dashboardSessionName: "aimux-test",
       dashboardTarget: { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
     });

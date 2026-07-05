@@ -746,6 +746,7 @@ export class AimuxDaemon {
       const payload: CoreRuntimeRestartTextPayload = {
         ok: true,
         projectRoot,
+        dashboardSession: dashboardSession.sessionName,
         project,
         tmuxSessionsKilled,
         dashboardSessionName: dashboardSession.sessionName,
