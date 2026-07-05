@@ -801,7 +801,7 @@ aimux_try_host_service() {
     if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
       current_client_session="$(tmux display-message -p "#{client_session}" 2>/dev/null || true)"
       client_tty="$(tmux display-message -p "#{client_tty}" 2>/dev/null || true)"
-      if [ -n "$current_client_session" ] || [ -n "$client_tty" ]; then
+      if [ "$serve" -eq 0 ] && { [ -n "$current_client_session" ] || [ -n "$client_tty" ]; }; then
         set -- "$@" --data-urlencode "open=1"
         [ -n "$current_client_session" ] && set -- "$@" --data-urlencode "currentClientSession=$current_client_session"
         [ -n "$client_tty" ] && set -- "$@" --data-urlencode "clientTty=$client_tty"
@@ -809,10 +809,8 @@ aimux_try_host_service() {
         return $?
       fi
     fi
-    if [ "$serve" -eq 0 ]; then
-      aimux_post_project_restart_open 120 "$@"
-      return $?
-    fi
+    aimux_post_project_restart_open 120 "$@"
+    return $?
   fi
   aimux_post_query_text_route "$path" 120 "$@"
 }
