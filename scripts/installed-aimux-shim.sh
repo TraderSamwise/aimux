@@ -55,6 +55,12 @@ aimux_require_inline_value() {
   AIMUX_ARG_VALUE="$1"
 }
 
+aimux_require_any_arg_value() {
+  [ "$#" -gt 0 ] || return 1
+  [ -n "$1" ] || return 1
+  AIMUX_ARG_VALUE="$1"
+}
+
 aimux_matching_daemon_port() {
   command -v curl >/dev/null 2>&1 || return 1
   [ -f "$AIMUX_ROOT/BUILD_STAMP" ] || return 1
@@ -376,7 +382,7 @@ aimux_try_logs() {
         ;;
       --project)
         shift
-        aimux_require_arg_value "$@" || return 1
+        aimux_require_any_arg_value "$@" || return 1
         project_root="$AIMUX_ARG_VALUE"
         ;;
       --project=*)
@@ -386,7 +392,7 @@ aimux_try_logs() {
       -n|--lines)
         [ "$subcommand" = "tail" ] || return 1
         shift
-        aimux_require_arg_value "$@" || return 1
+        aimux_require_any_arg_value "$@" || return 1
         lines="$AIMUX_ARG_VALUE"
         ;;
       --lines=*)

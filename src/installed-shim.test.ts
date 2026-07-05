@@ -413,30 +413,36 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["logs", "tail", "--project", "/repo", "-n", "100"]).stdout).toBe("logs ok\n");
     expect(fixture.run(["logs", "path", "--daemon"]).stdout).toBe("logs ok\n");
     expect(fixture.run(["logs", "clear", "--daemon"]).stdout).toBe("logs ok\n");
+    expect(fixture.run(["logs", "path", "--project", "-foo"], {}, { cwd: projectDir }).stdout).toBe("logs ok\n");
+    expect(fixture.run(["logs", "tail", "-n", "-5"], {}, { cwd: projectDir }).stdout).toBe("logs ok\n");
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
     expect(curlLog).toContain("/core/logs/path-text");
     expect(curlLog).toContain("/core/logs/tail-text");
     expect(curlLog).toContain("/core/logs/clear-text");
     expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
+    expect(curlLog).toContain(`project=${realpathSync(projectDir)}/-foo\n`);
     expect(curlLog).toContain("project=/repo\n");
     expect(curlLog).toContain("lines=100\n");
+    expect(curlLog).toContain("lines=-5\n");
     expect(curlLog).toContain("daemon=1\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
-  it("falls back to the Node launcher for logs commands when daemon health is stale", () => {
+  it.each([
+    { args: ["logs", "path", "--project", "/repo"], exit: "37" },
+    { args: ["logs", "tail", "--project", "/repo", "--lines", "50"], exit: "38" },
+    { args: ["logs", "clear", "--daemon"], exit: "39" },
+  ])("falls back to the Node launcher for stale daemon health: $args", ({ args, exit }) => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
     writeFileSync(fixture.textRouteFile, "logs ok\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["logs", "tail", "--project", "/repo", "--lines", "50"], { NODE_EXIT: "37" });
+    const result = fixture.run(args, { NODE_EXIT: exit });
 
-    expect(result.status).toBe(37);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js logs tail --project /repo --lines 50\n`,
-    );
+    expect(result.status).toBe(Number(exit));
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js ${args.join(" ")}\n`);
   });
 
   it("returns logs daemon errors without launching Node", () => {

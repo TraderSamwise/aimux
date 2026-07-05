@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
   },
   findMainRepo: vi.fn(),
   initPaths: vi.fn(),
+  clearLogFile: vi.fn(),
+  parseLineCount: vi.fn(),
+  readLastLogLines: vi.fn(),
+  selectedLogPath: vi.fn(),
   requestCoreCommand: vi.fn(),
   setRemoteEnabled: vi.fn(),
   clearCredentials: vi.fn(),
@@ -44,6 +48,13 @@ vi.mock("./daemon-state.js", () => ({
 
 vi.mock("./login-flow.js", () => ({
   runLoginFlow: mocks.runLoginFlow,
+}));
+
+vi.mock("./logs.js", () => ({
+  clearLogFile: mocks.clearLogFile,
+  parseLineCount: mocks.parseLineCount,
+  readLastLogLines: mocks.readLastLogLines,
+  selectedLogPath: mocks.selectedLogPath,
 }));
 
 vi.mock("./paths.js", () => ({
@@ -117,6 +128,20 @@ describe("runCoreCli", () => {
     mocks.findMainRepo.mockReset();
     mocks.findMainRepo.mockImplementation((cwd: string) => cwd);
     mocks.initPaths.mockReset();
+    mocks.clearLogFile.mockReset();
+    mocks.parseLineCount.mockReset();
+    mocks.parseLineCount.mockImplementation((value: string | undefined) => {
+      const parsed = Number.parseInt(value ?? "80", 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 80;
+    });
+    mocks.readLastLogLines.mockReset();
+    mocks.readLastLogLines.mockReturnValue("line one\nline two");
+    mocks.selectedLogPath.mockReset();
+    mocks.selectedLogPath.mockImplementation((opts: { daemon?: boolean; project?: string }) => {
+      if (opts.daemon) return "/logs/daemon.jsonl";
+      if (opts.project) return `/logs/project:${opts.project}`;
+      return "/logs/current-project.jsonl";
+    });
     mocks.requestCoreCommand.mockReset();
     mocks.requestCoreCommand.mockImplementation(async (command: CoreCommandName, payload: unknown) => {
       if (command === CORE_COMMAND_NAMES.status) return commandOk(command, statusResult());
@@ -214,6 +239,43 @@ describe("runCoreCli", () => {
     ).resolves.toMatchObject({ code: 0 });
 
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
+  });
+
+  it("runs logs diagnostics through the core fallback", async () => {
+    await expect(run(["logs", "path", "--daemon"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["/logs/daemon.jsonl"],
+    });
+
+    await expect(run(["logs", "tail", "--project", "-foo", "-n", "-5"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["line one\nline two"],
+    });
+
+    await expect(run(["logs", "clear", "--project=/repo"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Cleared /logs/project:/repo"],
+    });
+
+    expect(mocks.parseLineCount).toHaveBeenCalledWith("-5");
+    expect(mocks.readLastLogLines).toHaveBeenCalledWith("/logs/project:-foo", 80);
+    expect(mocks.clearLogFile).toHaveBeenCalledWith("/logs/project:/repo");
+    expect(mocks.initPaths).not.toHaveBeenCalled();
+  });
+
+  it("initializes project paths for current-project logs fallback", async () => {
+    const result = await run(["logs", "path"], "/repo/subdir");
+
+    expect(result).toMatchObject({ code: 0, stdout: ["/logs/current-project.jsonl"] });
+    expect(mocks.initPaths).toHaveBeenCalledWith("/repo/subdir");
+  });
+
+  it("returns empty log tails as core fallback errors", async () => {
+    mocks.readLastLogLines.mockReturnValueOnce("");
+
+    const result = await run(["logs", "tail", "--daemon"]);
+
+    expect(result).toMatchObject({ code: 1, stdout: [], stderr: ["No log entries at /logs/daemon.jsonl"] });
   });
 
   it("rejects direct malformed project ensure invocations without mutating", async () => {
