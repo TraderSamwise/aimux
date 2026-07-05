@@ -9,6 +9,10 @@ const inventoryPath = join(process.cwd(), "docs", "command-ownership-inventory.m
 const allowedInventoryStatuses = new Set(["CUT", "SIDECAR", "BOOTSTRAP", "TMUX", "INTERNAL"]);
 
 const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
+  { command: "input <sessionId> <text>", shimNeedle: "/core/agents/input-text" },
+  { command: "ps", shimNeedle: "/core/agents/ps-text" },
+  { command: "rename <sessionId>", shimNeedle: "/core/agents/rename-text" },
+  { command: "migrate <sessionId>", shimNeedle: "/core/agents/migrate-text" },
   { command: "spawn", shimNeedle: "/core/lifecycle/spawn-text" },
   { command: "stop <sessionId>", shimNeedle: "/core/lifecycle/stop-text" },
   { command: "kill <sessionId>", shimNeedle: "/core/lifecycle/kill-text" },
