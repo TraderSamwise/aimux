@@ -47,6 +47,10 @@ export const CORE_API_ROUTES = {
   metadataText: "/core/metadata-text",
   logoutText: "/core/logout-text",
   projectEnsureText: "/core/project-ensure-text",
+  projectKillText: "/core/project-kill-text",
+  projectRestartText: "/core/project-restart-text",
+  projectServeText: "/core/project-serve-text",
+  projectStopText: "/core/project-stop-text",
   projectsListText: "/core/projects-list-text",
   remoteDisableText: "/core/remote-disable-text",
   remoteEnableText: "/core/remote-enable-text",
@@ -92,6 +96,7 @@ export const CORE_COMMAND_NAMES = {
   projectEnsure: "core.project.ensure",
   projectStop: "core.project.stop",
   projectKill: "core.project.kill",
+  projectRestart: "core.project.restart",
   restart: "core.restart",
   relayStatus: "core.relay.status",
   relayEnable: "core.relay.enable",
@@ -139,6 +144,10 @@ export interface CoreProjectPayload {
   projectRoot: string;
 }
 
+export interface CoreProjectRestartPayload extends CoreProjectPayload {
+  serve?: boolean;
+}
+
 export interface CoreRestartPayload {
   projectRoot?: string;
 }
@@ -149,6 +158,13 @@ export interface CoreProjectServiceState {
   pid: number;
   startedAt: string;
   updatedAt: string;
+}
+
+export interface CoreTmuxTarget {
+  sessionName: string;
+  windowId: string;
+  windowIndex: number;
+  windowName: string;
 }
 
 export interface CoreProjectsListResult {
@@ -164,6 +180,12 @@ export interface CoreProjectStopResult {
 }
 
 export type CoreProjectKillResult = CoreProjectStopResult;
+
+export interface CoreProjectRestartResult {
+  project: CoreProjectServiceState;
+  dashboardSessionName?: string;
+  dashboardTarget?: CoreTmuxTarget;
+}
 
 export interface CoreRelayResult {
   relay: CoreRelaySnapshot;
@@ -181,6 +203,7 @@ export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectPayload;
+  [CORE_COMMAND_NAMES.projectRestart]: CoreProjectRestartPayload;
   [CORE_COMMAND_NAMES.restart]: CoreRestartPayload | undefined;
   [CORE_COMMAND_NAMES.relayStatus]: undefined;
   [CORE_COMMAND_NAMES.relayEnable]: undefined;
@@ -194,6 +217,7 @@ export interface CoreCommandResultByName {
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectEnsureResult;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectStopResult;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectKillResult;
+  [CORE_COMMAND_NAMES.projectRestart]: CoreProjectRestartResult;
   [CORE_COMMAND_NAMES.restart]: CoreRestartResult;
   [CORE_COMMAND_NAMES.relayStatus]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayEnable]: CoreRelayResult;

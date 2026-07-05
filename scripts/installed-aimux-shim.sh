@@ -113,13 +113,53 @@ aimux_try_daemon_ensure() {
 }
 
 aimux_try_restart() {
+  allow_project=0
+  if [ "${1:-}" = "restart" ]; then
+    allow_project=1
+    shift
+  elif [ "${1:-}" = "daemon" ] && [ "${2:-}" = "restart" ]; then
+    shift 2
+  else
+    return 1
+  fi
+  project_root=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json)
+        json=1
+        ;;
+      --project)
+        [ "$allow_project" -eq 1 ] || return 1
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        [ "$allow_project" -eq 1 ] || return 1
+        aimux_require_inline_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  if [ -n "$project_root" ]; then
+    project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  fi
+  path="/core/restart-text"
+  [ "$json" -eq 1 ] && path="/core/restart-text?json=1"
   port="$(aimux_matching_daemon_port)" || return 1
   body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-restart.XXXXXX")" || return 1
   trap 'rm -f "$body_file"' EXIT
   trap 'rm -f "$body_file"; exit 130' INT TERM
+  set --
+  [ -n "$project_root" ] && set -- --get --data-urlencode "project=$project_root"
   status="$(
-    curl -sS --max-time 300 -o "$body_file" -w '%{http_code}' -X POST \
-      "http://127.0.0.1:$port/core/restart-text" 2>/dev/null || true
+    curl -sS --max-time 300 -o "$body_file" -w '%{http_code}' -X POST "$@" \
+      "http://127.0.0.1:$port$path" 2>/dev/null || true
   )"
   case "$status" in
     '' | 000)
@@ -210,6 +250,61 @@ aimux_post_query_text_route() {
       return 2
       ;;
   esac
+}
+
+aimux_post_project_restart_open() {
+  timeout="${1:-120}"
+  shift
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-project-restart-open.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST "$@" \
+      "http://127.0.0.1:$port/core/project-restart-text?json=1" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*) ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+
+  dashboard_session_name="$(sed -n 's/.*"dashboardSessionName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  project_root="$(sed -n 's/.*"projectRoot"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  session_name="$(sed -n 's/.*"sessionName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  window_id="$(sed -n 's/.*"windowId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  window_index="$(sed -n 's/.*"windowIndex"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$body_file" | sed -n '1p')"
+  [ -n "$window_index" ] || window_index=0
+  if [ -n "$dashboard_session_name" ]; then
+    printf 'Restarted project service for %s\n' "$dashboard_session_name"
+  else
+    printf 'Restarted project service for %s\n' "$project_root"
+  fi
+  rm -f "$body_file"
+  trap - EXIT INT TERM
+  if [ -z "$session_name" ]; then
+    printf 'Error: restarted project service, but no dashboard target was available to open\n' >&2
+    return 2
+  fi
+  if ! command -v tmux >/dev/null 2>&1; then
+    printf 'Error: restarted project service, but tmux is not available to open dashboard %s:%s\n' "$session_name" "$window_index" >&2
+    return 2
+  fi
+  if ! tmux attach-session -t "$session_name:$window_index"; then
+    printf 'Error: restarted project service, but failed to open dashboard %s:%s\n' "$session_name" "$window_index" >&2
+    return 2
+  fi
 }
 
 aimux_post_get_query_text_route() {
@@ -656,6 +751,68 @@ aimux_try_daemon_project_ensure() {
   path="/core/project-ensure-text"
   [ "$json" -eq 1 ] && path="/core/project-ensure-text?json=1"
   aimux_curl_project_arg_text_route "$path" "$project_root"
+}
+
+aimux_try_project_serve() {
+  shift
+  [ "$#" -eq 0 ] || return 1
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  aimux_post_query_text_route "/core/project-serve-text" 120 --data-urlencode "project=$project_root"
+}
+
+aimux_try_host_service() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    stop|kill|restart) ;;
+    *) return 1 ;;
+  esac
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  serve=0
+  open=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --serve)
+        [ "$subcommand" = "restart" ] || return 1
+        serve=1
+        ;;
+      --open)
+        [ "$subcommand" = "restart" ] || return 1
+        open=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  case "$subcommand" in
+    stop) path="/core/project-stop-text" ;;
+    kill) path="/core/project-kill-text" ;;
+    restart) path="/core/project-restart-text" ;;
+    *) return 1 ;;
+  esac
+  set -- --data-urlencode "project=$project_root"
+  [ "$serve" -eq 1 ] && set -- "$@" --data-urlencode "serve=1"
+  if [ "$open" -eq 1 ]; then
+    if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+      current_client_session="$(tmux display-message -p "#{client_session}" 2>/dev/null || true)"
+      client_tty="$(tmux display-message -p "#{client_tty}" 2>/dev/null || true)"
+      if [ "$serve" -eq 0 ] && { [ -n "$current_client_session" ] || [ -n "$client_tty" ]; }; then
+        set -- "$@" --data-urlencode "open=1"
+        [ -n "$current_client_session" ] && set -- "$@" --data-urlencode "currentClientSession=$current_client_session"
+        [ -n "$client_tty" ] && set -- "$@" --data-urlencode "clientTty=$client_tty"
+        aimux_post_query_text_route "$path" 120 "$@"
+        return $?
+      fi
+    fi
+    aimux_post_project_restart_open 120 "$@"
+    return $?
+  fi
+  aimux_post_query_text_route "$path" 120 "$@"
 }
 
 aimux_try_lifecycle_spawn() {
@@ -2154,6 +2311,13 @@ case "${1:-}" in
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
+  serve)
+    if aimux_try_project_serve "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
   stop)
     if aimux_try_lifecycle_stop "$@"; then
       exit 0
@@ -2253,6 +2417,13 @@ case "${1:-} ${2:-}" in
     fi
     aimux_handle_fast_path_failure "$*" 1
     ;;
+  "host stop" | "host kill" | "host restart")
+    if aimux_try_host_service "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
   "host agent-read")
     if aimux_try_host_agent_read "$@"; then
       exit 0
@@ -2297,6 +2468,13 @@ case "${1:-} ${2:-}" in
       exit 0
     fi
     aimux_handle_fast_path_failure "$*" "$?"
+    ;;
+  "daemon restart")
+    if aimux_try_restart "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
     ;;
   "daemon status")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-status-text"; then
@@ -2407,15 +2585,12 @@ case "${1:-} ${2:-}" in
       aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
-  "restart ")
-    if [ "$#" -eq 1 ]; then
-      if aimux_try_restart; then
-        exit 0
-      else
-        aimux_handle_fast_path_failure "$*" "$?"
-      fi
+  "restart " | "restart --"*)
+    if aimux_try_restart "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
-    aimux_handle_fast_path_failure "$*" 1
     ;;
 esac
 
