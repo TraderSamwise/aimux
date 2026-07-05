@@ -45,6 +45,14 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "status", "--json"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "projects"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "/p"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart", "--json"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "serve"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "stop"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "kill"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "restart"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "restart", "--serve"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "restart", "--open"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "projects", "list"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "status"])).toBe("core");
     expect(cliEntryFor(["/Users/sam/.nvm/versions/node/v24.16.0/bin/node", "/p/bin/aimux", "remote", "status"])).toBe(
@@ -73,7 +81,9 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "spawn"])).toBe("main");
-    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart", "--project", "/p"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "serve", "--json"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "host", "stop", "--open"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "agent-stream", "claude-1"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "unlock"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "--help"])).toBe("main");

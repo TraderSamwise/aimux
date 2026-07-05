@@ -55,8 +55,44 @@ export interface CoreLogsArgs {
   subcommand: "clear" | "path" | "tail";
 }
 
+export interface CoreRestartArgs {
+  json: boolean;
+  project?: string;
+}
+
+export interface CoreHostRestartArgs {
+  open: boolean;
+  serve: boolean;
+}
+
 function hasOnlyAllowedFlags(args: string[], allowed: Set<string>): boolean {
   return args.every((arg) => allowed.has(arg));
+}
+
+function parseRestartFlags(args: string[]): CoreRestartArgs | null {
+  const parsed: CoreRestartArgs = { json: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      parsed.json = true;
+      continue;
+    }
+    if (arg === "--project") {
+      const consumed = consumeRequiredValue(args, index);
+      if (!consumed || consumed.value.startsWith("-")) return null;
+      parsed.project = consumed.value;
+      index = consumed.nextIndex;
+      continue;
+    }
+    if (arg.startsWith("--project=")) {
+      const value = arg.slice("--project=".length);
+      if (!value) return null;
+      parsed.project = value;
+      continue;
+    }
+    return null;
+  }
+  return parsed;
 }
 
 function consumeRequiredValue(args: string[], index: number): { nextIndex: number; value: string } | null {
@@ -135,6 +171,34 @@ export function parseCoreProjectEnsureArgs(args: string[]): CoreProjectEnsureArg
   return project ? { project, json } : null;
 }
 
+export function parseCoreRestartArgs(args: string[]): CoreRestartArgs | null {
+  if (args[0] !== "restart") return null;
+  return parseRestartFlags(args.slice(1));
+}
+
+export function parseCoreDaemonRestartArgs(args: string[]): Pick<CoreRestartArgs, "json"> | null {
+  if (args[0] !== "daemon" || args[1] !== "restart") return null;
+  const parsed = parseRestartFlags(args.slice(2));
+  return parsed && !parsed.project ? { json: parsed.json } : null;
+}
+
+export function parseCoreHostRestartArgs(args: string[]): CoreHostRestartArgs | null {
+  if (args[0] !== "host" || args[1] !== "restart") return null;
+  const parsed: CoreHostRestartArgs = { open: false, serve: false };
+  for (const arg of args.slice(2)) {
+    if (arg === "--open") {
+      parsed.open = true;
+      continue;
+    }
+    if (arg === "--serve") {
+      parsed.serve = true;
+      continue;
+    }
+    return null;
+  }
+  return parsed;
+}
+
 export function isValidCoreProjectEnsureArgs(args: string[]): boolean {
   return parseCoreProjectEnsureArgs(args) !== null;
 }
@@ -146,10 +210,15 @@ export function isCoreProjectEnsureCommand(args: string[]): boolean {
 export function isCoreCliCommand(args: string[]): boolean {
   if (hasHelp(args)) return false;
   const [command, subcommand] = args;
+  if (command === "restart") return parseCoreRestartArgs(args) !== null;
+  if (command === "serve") return args.length === 1;
   if (command === "host" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
+  if (command === "host" && ["stop", "kill"].includes(subcommand ?? "")) return args.length === 2;
+  if (command === "host" && subcommand === "restart") return parseCoreHostRestartArgs(args) !== null;
   if (command === "daemon" && ["ensure", "status", "projects"].includes(subcommand ?? "")) {
     return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   }
+  if (command === "daemon" && subcommand === "restart") return parseCoreDaemonRestartArgs(args) !== null;
   if (command === "daemon" && subcommand === "project-ensure") return true;
   if (command === "logs") return parseCoreLogsArgs(args) !== null;
   if (command === "projects" && subcommand === "list") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));

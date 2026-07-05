@@ -39,12 +39,15 @@ Node launcher when a matching daemon is already running:
 | `aimux doctor versions`, `aimux doctor tmux`            | `CUT`  | daemon                   | Uses `/core/doctor/*-text`; diagnostics are computed by the long-lived daemon in the healthy path.     |
 | `aimux logs path`, `tail`, `clear`                      | `CUT`  | daemon/filesystem        | Uses `/core/logs/*-text`; diagnostic log access stays local but no longer starts a fresh Node process. |
 | `aimux repair ...`                                      | `CUT`  | daemon + tmux            | Uses `/core/repair-text`; explicit repair runs inside the daemon and may focus tmux with `--open`.     |
+| `aimux serve`                                           | `CUT`  | daemon                   | Uses `/core/project-serve-text`; ensures the current project service without a fresh Node process.     |
+| `aimux host stop`, `host kill`, `host restart [--serve|--open]` | `CUT`  | daemon + caller tmux     | Uses `/core/project-*-text`; daemon owns service lifecycle, caller supplies `--open` focus context.    |
 | `aimux worktree ...`                                    | `CUT`  | daemon + project service | Uses `/core/worktree/*-text`; daemon forwards to project-service worktree APIs.                       |
 | `aimux graveyard ...`                                   | `CUT`  | daemon + project service | Uses `/core/graveyard/*-text`; daemon forwards to project-service graveyard APIs.                     |
 | `aimux daemon ensure [--json]`                          | `CUT`  | daemon                   | Reads daemon health directly or uses `/core/daemon-ensure-text`.                                       |
 | `aimux daemon status [--json]`                          | `CUT`  | daemon                   | Uses `/core/daemon-status-text`.                                                                       |
 | `aimux daemon projects [--json]`                        | `CUT`  | daemon                   | Uses `/core/daemon-projects-text`.                                                                     |
 | `aimux daemon project-ensure --project <path> [--json]` | `CUT`  | daemon                   | Uses `/core/project-ensure-text` with an explicit project payload.                                     |
+| `aimux daemon restart [--json]`                         | `CUT`  | daemon                   | Uses `/core/restart-text` as the compatibility alias for `aimux restart`.                              |
 | `aimux host status [--json]`                            | `CUT`  | daemon                   | Uses `/core/host-status-text` with the current directory as project context.                           |
 | `aimux projects list [--json]`                          | `CUT`  | daemon                   | Uses `/core/projects-list-text`.                                                                       |
 | `aimux remote status [--json]`                          | `CUT`  | daemon                   | Uses `/core/remote-status-text`; status JSON never includes credential tokens.                         |
@@ -79,6 +82,7 @@ No commands currently live in this category.
 | `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                                  |
 | `aimux doctor versions`, `aimux doctor tmux`, `aimux repair` | `CUT`       | daemon + tmux   | Healthy installed diagnostics/repair run inside the daemon; stale daemon falls back to bootstrap.      |
 | `aimux logs path`, `tail`, `clear`                        | `CUT`       | daemon/filesystem | Healthy installed diagnostic log access uses daemon text routes; stale daemon falls back to bootstrap. |
+| `aimux serve`, `aimux host stop/kill/restart`              | `CUT`       | daemon          | Project-service management uses daemon text routes in the healthy installed path.                      |
 
 ## Local Runtime And Developer Plumbing
 
@@ -87,7 +91,8 @@ No commands currently live in this category.
 | `aimux dashboard-reload`                                                | `BOOTSTRAP` | daemon + tmux          | Advanced recovery command; normal users should use `aimux restart`.                  |
 | `aimux restart-runtime`                                                 | `BOOTSTRAP` | daemon + tmux          | Advanced runtime repair; normal restart should decide when this is needed.           |
 | `aimux repair`                                                          | `CUT`       | daemon + tmux          | Explicit advanced repair uses `/core/repair-text`; stale daemon fallback may bootstrap.               |
-| `aimux host ui`, `host serve`, `host stop`, `host kill`, `host restart` | `INTERNAL`  | daemon                 | Host/service management plumbing.                                                    |
+| `aimux host ui`, `host serve`                                           | `INTERNAL`  | daemon                 | Developer service entrypoints; not normal user recovery commands.                    |
+| `aimux host stop`, `host kill`, `host restart [--serve|--open]`          | `CUT`       | daemon + caller tmux   | Healthy installed path uses `/core/project-*-text`; `--open` sends caller tmux context to the daemon. |
 | `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
 | `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |

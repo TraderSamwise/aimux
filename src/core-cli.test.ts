@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   readLastLogLines: vi.fn(),
   selectedLogPath: vi.fn(),
   requestCoreCommand: vi.fn(),
+  tmuxIsInsideTmux: vi.fn(),
+  tmuxOpenTarget: vi.fn(),
   setRemoteEnabled: vi.fn(),
   clearCredentials: vi.fn(),
   runLoginFlow: vi.fn(),
@@ -59,6 +61,18 @@ vi.mock("./logs.js", () => ({
 
 vi.mock("./paths.js", () => ({
   initPaths: mocks.initPaths,
+}));
+
+vi.mock("./tmux/runtime-manager.js", () => ({
+  TmuxRuntimeManager: class {
+    isInsideTmux() {
+      return mocks.tmuxIsInsideTmux();
+    }
+
+    openTarget(...args: unknown[]) {
+      return mocks.tmuxOpenTarget(...args);
+    }
+  },
 }));
 
 vi.mock("./worktree.js", () => ({
@@ -106,6 +120,15 @@ function commandOk(command: CoreCommandName, result: unknown) {
     command,
     issuedAt: iso,
     result,
+  };
+}
+
+function runtimeRestartResult(failures = 0) {
+  return {
+    daemon: { status: "restarted", previous: null, current: { pid: 123, port: 43190 } },
+    summary: { projects: 0, servicesEnsured: 0, dashboardsReloaded: 0, failures },
+    projects: [],
+    verification: { ok: failures === 0, error: failures > 0 ? "verification failed" : null },
   };
 }
 
@@ -157,6 +180,38 @@ describe("runCoreCli", () => {
           },
         });
       }
+      if (command === CORE_COMMAND_NAMES.projectStop || command === CORE_COMMAND_NAMES.projectKill) {
+        return commandOk(command, {
+          project: {
+            projectId: "repo-1",
+            projectRoot: (payload as { projectRoot: string }).projectRoot,
+            pid: 88,
+            startedAt: iso,
+            updatedAt: iso,
+          },
+        });
+      }
+      if (command === CORE_COMMAND_NAMES.projectRestart) {
+        return commandOk(command, {
+          project: {
+            projectId: "repo-1",
+            projectRoot: (payload as { projectRoot: string }).projectRoot,
+            pid: 89,
+            startedAt: iso,
+            updatedAt: iso,
+          },
+          dashboardSessionName: (payload as { serve?: boolean }).serve ? undefined : "aimux-repo",
+          dashboardTarget: (payload as { serve?: boolean }).serve
+            ? undefined
+            : { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+        });
+      }
+      if (command === CORE_COMMAND_NAMES.restart) {
+        return commandOk(command, {
+          restart: runtimeRestartResult(),
+          text: "Aimux Restart\nfailures: 0",
+        });
+      }
       if (command === CORE_COMMAND_NAMES.relayStatus || command === CORE_COMMAND_NAMES.relayEnable) {
         return commandOk(command, {
           relay: {
@@ -175,6 +230,9 @@ describe("runCoreCli", () => {
     mocks.clearCredentials.mockReturnValue("cleared");
     mocks.runLoginFlow.mockReset();
     mocks.runLoginFlow.mockResolvedValue({ userId: "user-1" });
+    mocks.tmuxIsInsideTmux.mockReset();
+    mocks.tmuxIsInsideTmux.mockReturnValue(true);
+    mocks.tmuxOpenTarget.mockReset();
   });
 
   it("renders host status from the core sidecar", async () => {
@@ -239,6 +297,98 @@ describe("runCoreCli", () => {
     ).resolves.toMatchObject({ code: 0 });
 
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
+  });
+
+  it("serves the current project through the sidecar command transport", async () => {
+    const result = await run(["serve"]);
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: ["aimux serve: daemon managing /repo (service pid 88)"],
+    });
+    expect(mocks.initPaths).toHaveBeenCalledWith("/repo");
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, { projectRoot: "/repo" });
+  });
+
+  it("runs host service mutations through the sidecar command transport", async () => {
+    await expect(run(["host", "stop"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Stopped project service pid 88"],
+    });
+    await expect(run(["host", "kill"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Killed project service pid 88"],
+    });
+    await expect(run(["host", "restart"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Restarted project service for aimux-repo"],
+    });
+    await expect(run(["host", "restart", "--serve"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Restarted project service for /repo"],
+    });
+    await expect(run(["host", "restart", "--open"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Restarted project service for aimux-repo"],
+    });
+    await expect(run(["host", "restart", "--serve", "--open"])).resolves.toMatchObject({
+      code: 1,
+      stdout: ["Restarted project service for /repo"],
+      stderr: ["error: restarted project service, but no dashboard target was available to open"],
+    });
+
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, { projectRoot: "/repo" });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectKill, { projectRoot: "/repo" });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
+      projectRoot: "/repo",
+      serve: false,
+    });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
+      projectRoot: "/repo",
+      serve: true,
+    });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
+      projectRoot: "/repo",
+      serve: false,
+    });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
+      projectRoot: "/repo",
+      serve: true,
+    });
+    expect(mocks.tmuxOpenTarget).toHaveBeenCalledTimes(1);
+    expect(mocks.tmuxOpenTarget).toHaveBeenCalledWith(
+      { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: true, alreadyResolved: true },
+    );
+  });
+
+  it("runs global and daemon restart through the sidecar command transport", async () => {
+    await expect(run(["restart", "--project", "/repo", "--json"])).resolves.toMatchObject({
+      code: 0,
+    });
+    expect(JSON.parse((await run(["daemon", "restart", "--json"])).stdout.join("\n"))).toMatchObject({
+      summary: { failures: 0 },
+    });
+    await expect(run(["restart"])).resolves.toMatchObject({
+      code: 0,
+      stdout: ["Aimux Restart\nfailures: 0"],
+    });
+
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.restart, { projectRoot: "/repo" });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.restart, undefined);
+  });
+
+  it("returns restart failures as a non-zero core CLI exit", async () => {
+    mocks.requestCoreCommand.mockImplementationOnce(async (command: CoreCommandName) =>
+      commandOk(command, {
+        restart: runtimeRestartResult(1),
+        text: "Aimux Restart\nfailures: 1",
+      }),
+    );
+
+    const result = await run(["restart"]);
+
+    expect(result).toMatchObject({ code: 1, stdout: ["Aimux Restart\nfailures: 1"] });
   });
 
   it("runs logs diagnostics through the core fallback", async () => {
