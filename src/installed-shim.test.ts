@@ -508,6 +508,36 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("reports outside-tmux dashboard attach failures after host restart without falling through to Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(
+      fixture.textRouteFile,
+      JSON.stringify(
+        {
+          projectRoot: realpathSync(projectDir),
+          project: { projectId: "repo", projectRoot: realpathSync(projectDir), pid: 89 },
+          dashboardSessionName: "aimux-repo",
+          dashboardTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "restart", "--open"], { TMUX_EXIT: "42" }, { cwd: projectDir });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("Restarted project service for aimux-repo\n");
+    expect(result.stderr).toContain("failed to open dashboard aimux-repo:0");
+    expect(result.stderr).not.toContain("invalid or unsupported arguments");
+    expect(readFileSync(fixture.tmuxLog, "utf8")).toBe("attach-session -t aimux-repo:0\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
   it("falls back to the Node launcher for stale project host management daemon health", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
