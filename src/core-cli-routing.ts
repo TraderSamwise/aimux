@@ -48,45 +48,63 @@ export interface CoreProjectEnsureArgs {
   json: boolean;
 }
 
+export interface CoreLogsArgs {
+  daemon: boolean;
+  lines?: string;
+  project?: string;
+  subcommand: "clear" | "path" | "tail";
+}
+
 function hasOnlyAllowedFlags(args: string[], allowed: Set<string>): boolean {
   return args.every((arg) => allowed.has(arg));
 }
 
-function consumeFlagValue(args: string[], index: number): number | null {
-  const value = args[index + 1] ?? "";
-  if (!value || value.startsWith("-")) return null;
-  return index + 1;
+function consumeRequiredValue(args: string[], index: number): { nextIndex: number; value: string } | null {
+  const value = args[index + 1];
+  if (value === undefined || value === "") return null;
+  return { nextIndex: index + 1, value };
 }
 
-function isCoreLogsCommand(args: string[]): boolean {
+export function parseCoreLogsArgs(args: string[]): CoreLogsArgs | null {
+  if (args[0] !== "logs") return null;
   const subcommand = args[1] ?? "";
-  if (!["path", "tail", "clear"].includes(subcommand)) return false;
+  if (!["path", "tail", "clear"].includes(subcommand)) return null;
+  const parsed: CoreLogsArgs = { daemon: false, subcommand: subcommand as CoreLogsArgs["subcommand"] };
   for (let index = 2; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--daemon") continue;
+    if (arg === "--daemon") {
+      parsed.daemon = true;
+      continue;
+    }
     if (arg === "--project") {
-      const consumed = consumeFlagValue(args, index);
-      if (consumed === null) return false;
-      index = consumed;
+      const consumed = consumeRequiredValue(args, index);
+      if (!consumed) return null;
+      parsed.project = consumed.value;
+      index = consumed.nextIndex;
       continue;
     }
     if (arg.startsWith("--project=")) {
-      if (!arg.slice("--project=".length)) return false;
+      const value = arg.slice("--project=".length);
+      if (!value) return null;
+      parsed.project = value;
       continue;
     }
     if (subcommand === "tail" && (arg === "-n" || arg === "--lines")) {
-      const consumed = consumeFlagValue(args, index);
-      if (consumed === null) return false;
-      index = consumed;
+      const consumed = consumeRequiredValue(args, index);
+      if (!consumed) return null;
+      parsed.lines = consumed.value;
+      index = consumed.nextIndex;
       continue;
     }
     if (subcommand === "tail" && arg.startsWith("--lines=")) {
-      if (!arg.slice("--lines=".length)) return false;
+      const value = arg.slice("--lines=".length);
+      if (!value) return null;
+      parsed.lines = value;
       continue;
     }
-    return false;
+    return null;
   }
-  return true;
+  return parsed;
 }
 
 export function parseCoreProjectEnsureArgs(args: string[]): CoreProjectEnsureArgs | null {
@@ -133,7 +151,7 @@ export function isCoreCliCommand(args: string[]): boolean {
     return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   }
   if (command === "daemon" && subcommand === "project-ensure") return true;
-  if (command === "logs") return isCoreLogsCommand(args);
+  if (command === "logs") return parseCoreLogsArgs(args) !== null;
   if (command === "projects" && subcommand === "list") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "remote" && subcommand === "status") return hasOnlyAllowedFlags(args.slice(2), new Set(["--json"]));
   if (command === "remote" && ["enable", "disable"].includes(subcommand ?? "")) return args.length === 2;
