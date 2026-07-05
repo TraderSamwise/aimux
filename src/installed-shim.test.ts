@@ -608,6 +608,35 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("reports missing dashboard targets for host restart serve open without falling through to Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(
+      fixture.textRouteFile,
+      JSON.stringify(
+        {
+          projectRoot: realpathSync(projectDir),
+          project: { projectId: "repo", projectRoot: realpathSync(projectDir), pid: 89 },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "restart", "--serve", "--open"], { TMUX: "/tmp/tmux-1" }, { cwd: projectDir });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe(`Restarted project service for ${realpathSync(projectDir)}\n`);
+    expect(result.stderr).toContain("no dashboard target was available to open");
+    expect(result.stderr).not.toContain("invalid or unsupported arguments");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("serve=1\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/project-restart-text?json=1");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
   it("falls back to the Node launcher for stale project host management daemon health", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
