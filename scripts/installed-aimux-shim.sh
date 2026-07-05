@@ -1587,9 +1587,15 @@ aimux_try_notifications_mutation() {
   shift
   project_root="$(pwd -P 2>/dev/null)" || return 1
   session_id=""
+  notification_id=""
+  notification_ids=""
   json=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --id) shift; aimux_require_arg_value "$@" || return 1; notification_id="$AIMUX_ARG_VALUE" ;;
+      --id=*) aimux_require_inline_value "${1#--id=}" || return 1; notification_id="$AIMUX_ARG_VALUE" ;;
+      --ids) shift; aimux_require_arg_value "$@" || return 1; notification_ids="$AIMUX_ARG_VALUE" ;;
+      --ids=*) aimux_require_inline_value "${1#--ids=}" || return 1; notification_ids="$AIMUX_ARG_VALUE" ;;
       --session) shift; aimux_require_arg_value "$@" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
       --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
       --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
@@ -1607,6 +1613,8 @@ aimux_try_notifications_mutation() {
   esac
   [ "$json" -eq 1 ] && path="$path?json=1"
   set -- --data-urlencode "project=$project_root"
+  [ -n "$notification_id" ] && set -- "$@" --data-urlencode "id=$notification_id"
+  [ -n "$notification_ids" ] && set -- "$@" --data-urlencode "ids=$notification_ids"
   [ -n "$session_id" ] && set -- "$@" --data-urlencode "sessionId=$session_id"
   aimux_post_query_text_route "$path" 60 "$@"
 }

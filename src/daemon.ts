@@ -627,6 +627,42 @@ export class AimuxDaemon {
       .filter(Boolean);
   }
 
+  private notificationIdsParam(routeUrl: URL, body: unknown): string[] | DaemonRouteResponse | undefined {
+    const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    if (Object.prototype.hasOwnProperty.call(record, "ids")) {
+      const value = record.ids;
+      if (Array.isArray(value) && value.every((id) => typeof id === "string")) {
+        return value.map((id) => id.trim()).filter(Boolean);
+      }
+      if (typeof value === "string")
+        return value
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean);
+      return this.textError(400, "ids must be an array of strings");
+    }
+    const queryValues = routeUrl.searchParams.getAll("ids");
+    if (queryValues.length === 0) return undefined;
+    return queryValues.flatMap((value) =>
+      value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    );
+  }
+
+  private notificationMutationPayload(routeUrl: URL, body: unknown): Record<string, unknown> | DaemonRouteResponse {
+    const payload: Record<string, unknown> = {};
+    const id = this.stringParam(routeUrl, body, "id")?.trim();
+    const ids = this.notificationIdsParam(routeUrl, body);
+    if (this.isRouteResponse(ids)) return ids;
+    const sessionId = this.stringParam(routeUrl, body, "sessionId")?.trim();
+    if (id) payload.id = id;
+    if (ids !== undefined) payload.ids = ids;
+    if (sessionId) payload.sessionId = sessionId;
+    return payload;
+  }
+
   private async getProjectServiceJson(
     projectRoot: string,
     routePath: string,
@@ -1640,35 +1676,33 @@ export class AimuxDaemon {
   private async notificationReadTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
-    const result = await this.postProjectServiceJson(
-      project,
-      PROJECT_API_ROUTES.notifications.read,
-      { sessionId: this.stringParam(routeUrl, body, "sessionId")?.trim() || undefined },
-      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
-    );
+    const mutationPayload = this.notificationMutationPayload(routeUrl, body);
+    if (this.isRouteResponse(mutationPayload)) return mutationPayload;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.notifications.read, mutationPayload, {
+      timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS,
+    });
     if (!result.ok) return result.response;
-    const payload: CoreNotificationReadTextPayload = {
+    const responsePayload: CoreNotificationReadTextPayload = {
       ok: true,
       updated: typeof result.json.updated === "number" ? result.json.updated : 0,
     };
-    return this.textOrJsonLines(routeUrl, payload, renderCoreNotificationReadLines(payload));
+    return this.textOrJsonLines(routeUrl, responsePayload, renderCoreNotificationReadLines(responsePayload));
   }
 
   private async notificationClearTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
-    const result = await this.postProjectServiceJson(
-      project,
-      PROJECT_API_ROUTES.notifications.clear,
-      { sessionId: this.stringParam(routeUrl, body, "sessionId")?.trim() || undefined },
-      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
-    );
+    const mutationPayload = this.notificationMutationPayload(routeUrl, body);
+    if (this.isRouteResponse(mutationPayload)) return mutationPayload;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.notifications.clear, mutationPayload, {
+      timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS,
+    });
     if (!result.ok) return result.response;
-    const payload: CoreNotificationClearTextPayload = {
+    const responsePayload: CoreNotificationClearTextPayload = {
       ok: true,
       cleared: typeof result.json.cleared === "number" ? result.json.cleared : 0,
     };
-    return this.textOrJsonLines(routeUrl, payload, renderCoreNotificationClearLines(payload));
+    return this.textOrJsonLines(routeUrl, responsePayload, renderCoreNotificationClearLines(responsePayload));
   }
 
   private teamPayloadFromResult(

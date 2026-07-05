@@ -415,6 +415,20 @@ function notificationQuery(opts: { unread?: boolean; session?: string }): string
   return rendered ? `?${rendered}` : "";
 }
 
+function notificationMutationInput(opts: { id?: string; ids?: string; session?: string }): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  const id = opts.id?.trim();
+  const ids = opts.ids
+    ?.split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const sessionId = opts.session?.trim();
+  if (id) payload.id = id;
+  if (ids && ids.length > 0) payload.ids = ids;
+  if (sessionId) payload.sessionId = sessionId;
+  return payload;
+}
+
 function exitAfterOpen(): never {
   process.exit(0);
 }
@@ -3313,6 +3327,7 @@ program
   .option("--body <body>", "Notification body")
   .option("--session <sessionId>", "Related session id")
   .option("--kind <kind>", "Notification kind", "notification")
+  .option("--project <path>", "Project root")
   .option("--json", "Emit JSON output")
   .action(
     async (opts: {
@@ -3321,19 +3336,26 @@ program
       body?: string;
       session?: string;
       kind?: string;
+      project?: string;
       json?: boolean;
     }) => {
-      await initPaths();
+      const projectRoot = opts.project ? resolveProjectRoot(opts.project) : undefined;
+      await initPaths(projectRoot);
       const title = opts.title.trim();
       const body = opts.body?.trim() || title;
-      const result = await postProjectServiceJson("/notify", {
-        title,
-        subtitle: opts.subtitle?.trim() || undefined,
-        message: body,
-        sessionId: opts.session?.trim() || undefined,
-        kind: opts.kind?.trim() || "notification",
-        force: true,
-      });
+      const projectOptions = projectRoot ? { projectRoot } : undefined;
+      const result = await postProjectServiceJson(
+        "/notify",
+        {
+          title,
+          subtitle: opts.subtitle?.trim() || undefined,
+          message: body,
+          sessionId: opts.session?.trim() || undefined,
+          kind: opts.kind?.trim() || "notification",
+          force: true,
+        },
+        projectOptions,
+      );
       if (opts.json) {
         console.log(JSON.stringify(result));
         return;
@@ -3347,10 +3369,15 @@ program
   .description("List project notifications")
   .option("--unread", "Show only unread notifications")
   .option("--session <sessionId>", "Filter by session id")
+  .option("--project <path>", "Project root")
   .option("--json", "Emit JSON output")
-  .action(async (opts: { unread?: boolean; session?: string; json?: boolean }) => {
-    await initPaths();
-    const result = await getProjectServiceJson(`/notifications${notificationQuery(opts)}`);
+  .action(async (opts: { unread?: boolean; session?: string; project?: string; json?: boolean }) => {
+    const projectRoot = opts.project ? resolveProjectRoot(opts.project) : undefined;
+    await initPaths(projectRoot);
+    const result = await getProjectServiceJson(
+      `/notifications${notificationQuery(opts)}`,
+      projectRoot ? { projectRoot } : undefined,
+    );
     const notifications = Array.isArray(result.notifications) ? result.notifications : [];
     const unreadCount = typeof result.unreadCount === "number" ? result.unreadCount : 0;
     if (opts.json) {
@@ -3371,13 +3398,19 @@ program
 program
   .command("clear-notifications")
   .description("Clear project notifications")
+  .option("--id <notificationId>", "Clear one notification")
+  .option("--ids <notificationIds>", "Comma-separated notification ids")
   .option("--session <sessionId>", "Clear only notifications for a session")
+  .option("--project <path>", "Project root")
   .option("--json", "Emit JSON output")
-  .action(async (opts: { session?: string; json?: boolean }) => {
-    await initPaths();
-    const result = await postProjectServiceJson("/notifications/clear", {
-      sessionId: opts.session?.trim() || undefined,
-    });
+  .action(async (opts: { id?: string; ids?: string; session?: string; project?: string; json?: boolean }) => {
+    const projectRoot = opts.project ? resolveProjectRoot(opts.project) : undefined;
+    await initPaths(projectRoot);
+    const result = await postProjectServiceJson(
+      "/notifications/clear",
+      notificationMutationInput(opts),
+      projectRoot ? { projectRoot } : undefined,
+    );
     const cleared = typeof result.cleared === "number" ? result.cleared : 0;
     if (opts.json) {
       console.log(JSON.stringify({ ok: true, cleared }));
@@ -3389,13 +3422,19 @@ program
 program
   .command("read-notifications")
   .description("Mark project notifications as read")
+  .option("--id <notificationId>", "Mark one notification as read")
+  .option("--ids <notificationIds>", "Comma-separated notification ids")
   .option("--session <sessionId>", "Mark only notifications for a session as read")
+  .option("--project <path>", "Project root")
   .option("--json", "Emit JSON output")
-  .action(async (opts: { session?: string; json?: boolean }) => {
-    await initPaths();
-    const result = await postProjectServiceJson("/notifications/read", {
-      sessionId: opts.session?.trim() || undefined,
-    });
+  .action(async (opts: { id?: string; ids?: string; session?: string; project?: string; json?: boolean }) => {
+    const projectRoot = opts.project ? resolveProjectRoot(opts.project) : undefined;
+    await initPaths(projectRoot);
+    const result = await postProjectServiceJson(
+      "/notifications/read",
+      notificationMutationInput(opts),
+      projectRoot ? { projectRoot } : undefined,
+    );
     const updated = typeof result.updated === "number" ? result.updated : 0;
     if (opts.json) {
       console.log(JSON.stringify({ ok: true, updated }));
