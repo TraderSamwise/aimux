@@ -335,9 +335,15 @@ aimux_try_host_agent_stream() {
   done
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
   port="$(aimux_matching_daemon_port)" || return 1
-  curl -sS -N --get --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
+  if curl -fsS -N --get --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
     --data-urlencode "startLine=$start_line" --data-urlencode "intervalMs=$interval_ms" \
-    "http://127.0.0.1:$port/core/host-agent-stream-text" 2>/dev/null || return 1
+    "http://127.0.0.1:$port/core/host-agent-stream-text" 2>/dev/null; then
+    return 0
+  else
+    code="$?"
+  fi
+  [ "$code" -eq 22 ] && return 2
+  return 1
 }
 
 aimux_resolve_project_arg() {

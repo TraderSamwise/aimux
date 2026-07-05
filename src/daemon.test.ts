@@ -647,6 +647,84 @@ describe("daemon supervision", () => {
     }
   });
 
+  it("aborts the upstream host agent stream when the client disconnects", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    let closeUpstream: (() => void) | null = null;
+    const upstreamClosed = new Promise<void>((resolve) => {
+      closeUpstream = resolve;
+    });
+    const streamServer = createServer((req, res) => {
+      req.on("close", () => closeUpstream?.());
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write('event: output\ndata: {"output":"one"}\n\n');
+    });
+    const servicePort = await listenOnLoopback(streamServer);
+    const daemonPort = "49198";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid, servicePort);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=-80&intervalMs=250`,
+      );
+      expect(response.status).toBe(200);
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const firstChunk = await reader!.read();
+      expect(new TextDecoder().decode(firstChunk.value)).toBe("one\n");
+      await reader!.cancel();
+      await Promise.race([
+        upstreamClosed,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("upstream stream stayed open")), 2_000)),
+      ]);
+    } finally {
+      daemon.stop();
+      await closeServer(streamServer);
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
+  it("returns text errors when the host agent stream endpoint is unreachable", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const closedServer = createServer();
+    const servicePort = await listenOnLoopback(closedServer);
+    await closeServer(closedServer);
+    const daemonPort = "49199";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid, servicePort);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=-80&intervalMs=250`,
+      );
+
+      expect(response.status).toBe(502);
+      expect(response.headers.get("content-type")).toContain("text/plain");
+      expect(await response.text()).toContain("fetch failed");
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
   it("rejects malformed host agent-stream parameters before opening the project stream", async () => {
     const originalPort = process.env.AIMUX_DAEMON_PORT;
     const daemonPort = "49196";

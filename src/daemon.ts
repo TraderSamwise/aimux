@@ -737,32 +737,47 @@ export class AimuxDaemon {
   }
 
   private async pipeHostAgentStreamText(upstreamUrl: string, sessionId: string, res: ServerResponse): Promise<void> {
-    const upstream = await fetch(upstreamUrl, { headers: { accept: "text/event-stream" } });
-    if (!upstream.ok || !upstream.body) {
-      const text = await upstream.text().catch(() => "");
-      const message = text.trim() || `request failed: ${upstream.status}`;
-      send(res, upstream.status || 502, `${message}\n`, "text/plain; charset=utf-8");
-      return;
-    }
-
-    res.statusCode = 200;
-    res.setHeader("content-type", "text/plain; charset=utf-8");
-    res.setHeader("connection", "close");
-    const decoder = new TextDecoder();
-    const textHandler = createAgentOutputSseTextHandler(sessionId, (text) => {
-      if (!res.writableEnded) res.write(text);
-    });
+    const controller = new AbortController();
+    let downstreamClosed = false;
+    const abortUpstream = () => {
+      downstreamClosed = true;
+      controller.abort();
+    };
+    res.once("close", abortUpstream);
+    res.once("error", abortUpstream);
     try {
+      const upstream = await fetch(upstreamUrl, {
+        headers: { accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+      if (!upstream.ok || !upstream.body) {
+        const text = await upstream.text().catch(() => "");
+        const message = text.trim() || `request failed: ${upstream.status}`;
+        send(res, upstream.status || 502, `${message}\n`, "text/plain; charset=utf-8");
+        return;
+      }
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      res.setHeader("connection", "close");
+      const decoder = new TextDecoder();
+      const textHandler = createAgentOutputSseTextHandler(sessionId, (text) => {
+        if (!res.writableEnded) res.write(text);
+      });
       for await (const chunk of upstream.body) {
         textHandler.pushChunkText(decoder.decode(chunk, { stream: true }));
       }
-      res.end();
+      if (!res.writableEnded) res.end();
     } catch (error) {
+      if (downstreamClosed || (error instanceof Error && error.name === "AbortError")) return;
       if (!res.headersSent) {
         send(res, 502, `${error instanceof Error ? error.message : String(error)}\n`, "text/plain; charset=utf-8");
         return;
       }
       res.destroy(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      res.off("close", abortUpstream);
+      res.off("error", abortUpstream);
     }
   }
 
