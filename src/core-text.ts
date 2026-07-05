@@ -66,6 +66,35 @@ export interface CoreLifecycleForkTextPayload extends CoreLifecycleSpawnTextPayl
   threadId: unknown;
 }
 
+export interface CoreAgentSummaryTextPayload {
+  agents: Array<{
+    id?: unknown;
+    tool?: unknown;
+    role?: unknown;
+    status?: unknown;
+    worktreePath?: unknown;
+    activity?: unknown;
+    attention?: unknown;
+    loop?: unknown;
+    overseer?: unknown;
+    task?: unknown;
+  }>;
+}
+
+export interface CoreAgentInputTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: string;
+}
+
+export interface CoreAgentRenameTextPayload extends CoreAgentInputTextPayload {
+  label?: string;
+}
+
+export interface CoreAgentMigrateTextPayload extends CoreAgentInputTextPayload {
+  worktreePath: string;
+}
+
 export interface CoreLoopTextPayload {
   ok: true;
   projectRoot: string;
@@ -332,6 +361,53 @@ export function renderCoreLifecycleKillLines(payload: CoreLifecycleKillTextPaylo
 
 export function renderCoreLifecycleForkLines(payload: CoreLifecycleForkTextPayload): string[] {
   return [`forked ${String(payload.sessionId)}`, `thread ${String(payload.threadId)}`];
+}
+
+export function renderCoreAgentPsLines(payload: CoreAgentSummaryTextPayload): string[] {
+  if (payload.agents.length === 0) return ["no agents"];
+  return payload.agents.flatMap((agent) => {
+    const id = typeof agent.id === "string" ? agent.id : "?";
+    const tool = typeof agent.tool === "string" ? agent.tool : "?";
+    const role = typeof agent.role === "string" ? agent.role : "";
+    const status = typeof agent.status === "string" ? agent.status : "?";
+    const activity = typeof agent.activity === "string" ? agent.activity : "";
+    const attention = typeof agent.attention === "string" ? agent.attention : "";
+    const loop =
+      agent.loop && typeof agent.loop === "object" && !Array.isArray(agent.loop)
+        ? (agent.loop as { active?: unknown; goal?: unknown })
+        : undefined;
+    const task =
+      agent.task && typeof agent.task === "object" && !Array.isArray(agent.task)
+        ? (agent.task as { description?: unknown; status?: unknown })
+        : undefined;
+    const tags = [
+      agent.overseer === true ? "overseer" : null,
+      loop?.active === true ? `loop${typeof loop.goal === "string" ? `:${loop.goal}` : ""}` : null,
+    ].filter(Boolean);
+    const state = [activity, attention].filter(Boolean).join("/");
+    const lines = [
+      `${id}  [${tool}${role ? `:${role}` : ""}]  ${status}${state ? `  ${state}` : ""}${
+        tags.length ? `  {${tags.join(" ")}}` : ""
+      }`,
+    ];
+    if (typeof agent.worktreePath === "string") lines.push(`    worktree: ${agent.worktreePath}`);
+    if (task && typeof task.description === "string" && typeof task.status === "string") {
+      lines.push(`    task: ${task.description} (${task.status})`);
+    }
+    return lines;
+  });
+}
+
+export function renderCoreAgentInputLines(payload: CoreAgentInputTextPayload): string[] {
+  return [`delivered to ${payload.sessionId}`];
+}
+
+export function renderCoreAgentRenameLines(payload: CoreAgentRenameTextPayload): string[] {
+  return [`renamed ${payload.sessionId} -> ${payload.label ?? ""}`.trim()];
+}
+
+export function renderCoreAgentMigrateLines(payload: CoreAgentMigrateTextPayload): string[] {
+  return [`migrated ${payload.sessionId} -> ${payload.worktreePath}`];
 }
 
 export function renderCoreLoopAddLines(payload: CoreLoopTextPayload): string[] {
