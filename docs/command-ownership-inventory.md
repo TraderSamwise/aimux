@@ -33,6 +33,7 @@ Node launcher when a matching daemon is already running:
 | `aimux notify`, `list/read/clear-notifications`         | `CUT`  | daemon + project service | Uses `/core/notifications/*-text`; project service owns notification reads and mutations.              |
 | `aimux team ...`                                        | `CUT`  | daemon + project service | Uses `/core/team/*-text`; project service owns role config reads and writes.                           |
 | `aimux doctor versions`, `aimux doctor tmux`            | `CUT`  | daemon                   | Uses `/core/doctor/*-text`; diagnostics are computed by the long-lived daemon in the healthy path.     |
+| `aimux logs path`, `tail`, `clear`                      | `CUT`  | daemon/filesystem        | Uses `/core/logs/*-text`; diagnostic log access stays local but no longer starts a fresh Node process. |
 | `aimux repair ...`                                      | `CUT`  | daemon + tmux            | Uses `/core/repair-text`; explicit repair runs inside the daemon and may focus tmux with `--open`.     |
 | `aimux worktree ...`                                    | `CUT`  | daemon + project service | Uses `/core/worktree/*-text`; daemon forwards to project-service worktree APIs.                       |
 | `aimux graveyard ...`                                   | `CUT`  | daemon + project service | Uses `/core/graveyard/*-text`; daemon forwards to project-service graveyard APIs.                     |
@@ -72,6 +73,7 @@ No commands currently live in this category.
 | `aimux login`, `aimux security unlock`                    | `CUT`       | daemon          | Plain auth commands use daemon text routes; custom auth flags remain bootstrap cleanup.                |
 | `aimux remote ...`                                        | `CUT`       | daemon          | Status/enable/disable use daemon text routes from the installed shim.                                  |
 | `aimux doctor versions`, `aimux doctor tmux`, `aimux repair` | `CUT`       | daemon + tmux   | Healthy installed diagnostics/repair run inside the daemon; stale daemon falls back to bootstrap.      |
+| `aimux logs path`, `tail`, `clear`                        | `CUT`       | daemon/filesystem | Healthy installed diagnostic log access uses daemon text routes; stale daemon falls back to bootstrap. |
 
 ## Local Runtime And Developer Plumbing
 
@@ -87,7 +89,7 @@ No commands currently live in this category.
 | `aimux doctor versions`, `aimux doctor tmux`                            | `CUT`       | daemon/project service | Healthy installed diagnostics use daemon text routes instead of local CLI recompute. |
 | `aimux doctor notifications`                                            | `INTERNAL`  | desktop notifier        | Desktop notification diagnostic remains local debug plumbing.                        |
 | `aimux notifications test`                                              | `INTERNAL`  | desktop notifier        | Desktop delivery diagnostic; not a normal project-state command.                    |
-| `aimux logs ...`                                                        | `INTERNAL`  | daemon/filesystem      | Debug log access; may stay explicitly internal.                                      |
+| `aimux logs ...`                                                        | `CUT`       | daemon/filesystem      | Healthy installed diagnostic log access uses `/core/logs/*-text`.                    |
 | `aimux metadata ...`                                                    | `INTERNAL`  | project service        | Agent/runtime integration plumbing, not a user-facing state authority.               |
 
 ## Enforcement Rules
