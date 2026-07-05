@@ -1514,7 +1514,142 @@ aimux_try_review() {
   esac
 }
 
+aimux_try_notify() {
+  [ "${1:-}" = "notify" ] || return 1
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  title=""
+  subtitle=""
+  body=""
+  session_id=""
+  kind="notification"
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --title) shift; aimux_require_arg_value "$@" || return 1; title="$AIMUX_ARG_VALUE" ;;
+      --title=*) aimux_require_inline_value "${1#--title=}" || return 1; title="$AIMUX_ARG_VALUE" ;;
+      --subtitle) shift; aimux_require_arg_value "$@" || return 1; subtitle="$AIMUX_ARG_VALUE" ;;
+      --subtitle=*) aimux_require_inline_value "${1#--subtitle=}" || return 1; subtitle="$AIMUX_ARG_VALUE" ;;
+      --body) shift; aimux_require_arg_value "$@" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --body=*) aimux_require_inline_value "${1#--body=}" || return 1; body="$AIMUX_ARG_VALUE" ;;
+      --session) shift; aimux_require_arg_value "$@" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+      --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+      --kind) shift; aimux_require_arg_value "$@" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+      --kind=*) aimux_require_inline_value "${1#--kind=}" || return 1; kind="$AIMUX_ARG_VALUE" ;;
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --json) json=1 ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  [ -n "$title" ] || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/notifications/send-text"
+  [ "$json" -eq 1 ] && path="$path?json=1"
+  set -- --data-urlencode "project=$project_root" --data-urlencode "title=$title" --data-urlencode "kind=$kind"
+  [ -n "$subtitle" ] && set -- "$@" --data-urlencode "subtitle=$subtitle"
+  [ -n "$body" ] && set -- "$@" --data-urlencode "body=$body"
+  [ -n "$session_id" ] && set -- "$@" --data-urlencode "sessionId=$session_id"
+  aimux_post_query_text_route "$path" 60 "$@"
+}
+
+aimux_try_list_notifications() {
+  [ "${1:-}" = "list-notifications" ] || return 1
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  unread=0
+  session_id=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --unread) unread=1 ;;
+      --session) shift; aimux_require_arg_value "$@" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+      --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --json) json=1 ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/notifications/list-text"
+  [ "$json" -eq 1 ] && path="$path?json=1"
+  set -- --data-urlencode "project=$project_root"
+  [ "$unread" -eq 1 ] && set -- "$@" --data-urlencode "unread=1"
+  [ -n "$session_id" ] && set -- "$@" --data-urlencode "sessionId=$session_id"
+  aimux_get_query_text_route "$path" 60 "$@"
+}
+
+aimux_try_notifications_mutation() {
+  command="$1"
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  session_id=""
+  notification_id=""
+  notification_ids=""
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --id) shift; aimux_require_arg_value "$@" || return 1; notification_id="$AIMUX_ARG_VALUE" ;;
+      --id=*) aimux_require_inline_value "${1#--id=}" || return 1; notification_id="$AIMUX_ARG_VALUE" ;;
+      --ids) shift; aimux_require_arg_value "$@" || return 1; notification_ids="$AIMUX_ARG_VALUE" ;;
+      --ids=*) aimux_require_inline_value "${1#--ids=}" || return 1; notification_ids="$AIMUX_ARG_VALUE" ;;
+      --session) shift; aimux_require_arg_value "$@" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+      --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --json) json=1 ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  case "$command" in
+    read-notifications) path="/core/notifications/read-text" ;;
+    clear-notifications) path="/core/notifications/clear-text" ;;
+    *) return 1 ;;
+  esac
+  [ "$json" -eq 1 ] && path="$path?json=1"
+  set -- --data-urlencode "project=$project_root"
+  [ -n "$notification_id" ] && set -- "$@" --data-urlencode "id=$notification_id"
+  [ -n "$notification_ids" ] && set -- "$@" --data-urlencode "ids=$notification_ids"
+  [ -n "$session_id" ] && set -- "$@" --data-urlencode "sessionId=$session_id"
+  aimux_post_query_text_route "$path" 60 "$@"
+}
+
 case "${1:-}" in
+  notify)
+    if aimux_try_notify "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  list-notifications)
+    if aimux_try_list_notifications "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  read-notifications|clear-notifications)
+    if aimux_try_notifications_mutation "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
   threads)
     if aimux_try_threads "$@"; then
       exit 0
