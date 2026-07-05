@@ -616,6 +616,28 @@ aimux_try_lifecycle_stop() {
   aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
 }
 
+aimux_is_project_runtime_stop_args() {
+  [ "${1:-}" = "stop" ] || return 1
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        ;;
+      --project=*)
+        aimux_require_inline_value "${1#--project=}" || return 1
+        ;;
+      --json)
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+}
+
 aimux_try_lifecycle_kill() {
   shift
   project_root="$(pwd -P 2>/dev/null)" || return 1
@@ -1814,7 +1836,10 @@ case "${1:-}" in
     if aimux_try_lifecycle_stop "$@"; then
       exit 0
     else
-      aimux_handle_fast_path_failure "$*" "$?"
+      code="$?"
+      if ! aimux_is_project_runtime_stop_args "$@"; then
+        aimux_handle_fast_path_failure "$*" "$code"
+      fi
     fi
     ;;
   kill)
