@@ -3532,6 +3532,11 @@ metadataCmd
 
 const teamCmd = program.command("team").description("Manage agent team roles");
 
+interface TeamCommandOptions {
+  project?: string;
+  json?: boolean;
+}
+
 function printTeamShow(config: TeamConfig): void {
   console.log("Team Roles:");
   for (const [name, role] of Object.entries(config.roles)) {
@@ -3554,8 +3559,15 @@ function printTeamInit(config: TeamConfig): void {
 teamCmd
   .command("show")
   .description("Show current team config")
-  .action(async () => {
-    const result = await getProjectServiceJson(PROJECT_API_ROUTES.team.config);
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await getProjectServiceJson(PROJECT_API_ROUTES.team.config, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     printTeamShow(result.config);
   });
 
@@ -3565,37 +3577,74 @@ teamCmd
   .option("-d, --description <desc>", "Role description")
   .option("--reviewed-by <role>", "Role that reviews this role's work")
   .option("--can-edit", "Whether this role can edit code directly")
-  .action(async (role: string, options: { description?: string; reviewedBy?: string; canEdit?: boolean }) => {
-    await postProjectServiceJson(PROJECT_API_ROUTES.team.addRole, {
-      role,
-      ...(options.description ? { description: options.description } : {}),
-      ...(options.reviewedBy ? { reviewedBy: options.reviewedBy } : {}),
-      ...(options.canEdit ? { canEdit: true } : {}),
-    });
-    console.log(`Role "${role}" saved.`);
-  });
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(
+    async (
+      role: string,
+      options: TeamCommandOptions & { description?: string; reviewedBy?: string; canEdit?: boolean },
+    ) => {
+      const projectRoot = await prepareProjectContext(options.project);
+      const result = await postProjectServiceJson(
+        PROJECT_API_ROUTES.team.addRole,
+        {
+          role,
+          ...(options.description ? { description: options.description } : {}),
+          ...(options.reviewedBy ? { reviewedBy: options.reviewedBy } : {}),
+          ...(options.canEdit ? { canEdit: true } : {}),
+        },
+        { projectRoot },
+      );
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(`Role "${role}" saved.`);
+    },
+  );
 
 teamCmd
   .command("remove <role>")
   .description("Remove a role")
-  .action(async (role: string) => {
-    await postProjectServiceJson(PROJECT_API_ROUTES.team.removeRole, { role });
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (role: string, options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.removeRole, { role }, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`Role "${role}" removed.`);
   });
 
 teamCmd
   .command("default <role>")
   .description("Set the default role for new agents")
-  .action(async (role: string) => {
-    await postProjectServiceJson(PROJECT_API_ROUTES.team.defaultRole, { role });
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (role: string, options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.defaultRole, { role }, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     console.log(`Default role set to "${role}".`);
   });
 
 teamCmd
   .command("init")
   .description("Initialize project with default team structure")
-  .action(async () => {
-    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.init, {});
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.init, {}, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     printTeamInit(result.config);
   });
 

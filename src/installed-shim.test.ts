@@ -742,6 +742,36 @@ describe("installed aimux shim", () => {
     );
   });
 
+  it("falls back to the Node launcher for stale team daemon health with matching flags", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "team ok\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["team", "show", "--project=/repo", "--json"], { NODE_EXIT: "43" }).status).toBe(43);
+    expect(
+      fixture.run(
+        [
+          "team",
+          "add",
+          "planner",
+          "-d",
+          "Plans work",
+          "--reviewed-by",
+          "reviewer",
+          "--can-edit",
+          "--project=/repo",
+          "--json",
+        ],
+        { NODE_EXIT: "44" },
+      ).status,
+    ).toBe(44);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js team show --project=/repo --json\n` +
+        `${fixture.aimuxRoot}/dist/launcher-bin.js team add planner -d Plans work --reviewed-by reviewer --can-edit --project=/repo --json\n`,
+    );
+  });
+
   it("falls back to the Node launcher for invalid loop and overseer arguments", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
