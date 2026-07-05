@@ -1316,7 +1316,7 @@ describe("daemon supervision", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toBe("delivered to claude-1\n");
-    expect(coreActorMock.starts).not.toHaveBeenCalled();
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
   });
 
   it("serves agent ps text and JSON through the project service", async () => {
@@ -1360,7 +1360,7 @@ describe("daemon supervision", () => {
         "    task: Fix bug (open)\n",
     );
     expect(JSON.parse(jsonResponse.body as string)).toEqual(agents);
-    expect(coreActorMock.starts).not.toHaveBeenCalled();
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
   });
 
   it("serves agent rename and migrate JSON through the project service", async () => {
@@ -1404,7 +1404,29 @@ describe("daemon supervision", () => {
       sessionId: "claude-1",
       worktreePath: join(projectRoot, "work"),
     });
-    expect(coreActorMock.starts).not.toHaveBeenCalled();
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("serves agent rename text when the project service clears the label", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.rename)) {
+        expect(opts.body).toEqual({ sessionId: "claude-1", label: "" });
+        return { status: 200, json: { ok: true, sessionId: "claude-1" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.agentRenameText, {
+      project: projectRoot,
+      sessionId: "claude-1",
+      label: "",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("renamed claude-1 ->\n");
   });
 
   it("returns project-service lifecycle errors as text without proxying through Node", async () => {

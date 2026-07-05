@@ -88,7 +88,7 @@ export interface CoreAgentInputTextPayload {
 }
 
 export interface CoreAgentRenameTextPayload extends CoreAgentInputTextPayload {
-  label: string;
+  label?: string;
 }
 
 export interface CoreAgentMigrateTextPayload extends CoreAgentInputTextPayload {
@@ -403,7 +403,7 @@ export function renderCoreAgentInputLines(payload: CoreAgentInputTextPayload): s
 }
 
 export function renderCoreAgentRenameLines(payload: CoreAgentRenameTextPayload): string[] {
-  return [`renamed ${payload.sessionId} -> ${payload.label}`.trim()];
+  return [`renamed ${payload.sessionId} -> ${payload.label ?? ""}`.trim()];
 }
 
 export function renderCoreAgentMigrateLines(payload: CoreAgentMigrateTextPayload): string[] {
