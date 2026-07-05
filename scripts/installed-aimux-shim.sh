@@ -335,15 +335,16 @@ aimux_try_host_agent_stream() {
   done
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
   port="$(aimux_matching_daemon_port)" || return 1
+  trap 'trap - INT TERM; exit 130' INT
+  trap 'trap - INT TERM; exit 143' TERM
   if curl -fsS -N --get --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
     --data-urlencode "startLine=$start_line" --data-urlencode "intervalMs=$interval_ms" \
     "http://127.0.0.1:$port/core/host-agent-stream-text" 2>/dev/null; then
+    trap - INT TERM
     return 0
-  else
-    code="$?"
   fi
-  [ "$code" -eq 22 ] && return 2
-  return 1
+  trap - INT TERM
+  return 2
 }
 
 aimux_resolve_project_arg() {
