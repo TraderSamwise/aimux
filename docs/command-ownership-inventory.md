@@ -40,7 +40,7 @@ Node launcher when a matching daemon is already running:
 | `aimux logs path`, `tail`, `clear`                      | `CUT`  | daemon/filesystem        | Uses `/core/logs/*-text`; diagnostic log access stays local but no longer starts a fresh Node process. |
 | `aimux repair ...`                                      | `CUT`  | daemon + tmux            | Uses `/core/repair-text`; explicit repair runs inside the daemon and may focus tmux with `--open`.     |
 | `aimux dashboard-reload [--open]`                       | `CUT`  | daemon + caller tmux     | Uses `/core/dashboard-reload-text`; stale daemon fallback may bootstrap, healthy reload stays daemon-owned. |
-| `aimux restart-runtime [--project-root <path>]`          | `CUT`  | daemon + tmux            | Uses `/core/runtime-restart-text`; advanced runtime repair is daemon-owned in the healthy path.        |
+| `aimux restart-runtime [--project-root <path>]`          | `CUT`  | daemon + tmux            | Uses `/core/runtime-restart-text`; stale daemon fallback may bootstrap, healthy repair stays daemon-owned. |
 | `aimux serve`                                           | `CUT`  | daemon                   | Uses `/core/project-serve-text`; ensures the current project service without a fresh Node process.     |
 | `aimux host stop`, `host kill`, `host restart [--serve|--open]` | `CUT`  | daemon + caller tmux     | Uses `/core/project-*-text`; daemon owns service lifecycle, caller supplies `--open` focus context.    |
 | `aimux worktree ...`                                    | `CUT`  | daemon + project service | Uses `/core/worktree/*-text`; daemon forwards to project-service worktree APIs.                       |

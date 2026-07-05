@@ -633,8 +633,9 @@ export class AimuxDaemon {
   }
 
   private explicitProjectRootTextParam(routeUrl: URL, body: unknown): string | DaemonRouteResponse {
-    const projectRoot = this.stringParam(routeUrl, body, "projectRoot") ?? this.stringParam(routeUrl, body, "project");
-    if (!projectRoot?.trim()) return this.textError(400, "projectRoot query is required");
+    const projectRoot =
+      this.stringParam(routeUrl, body, "projectRoot")?.trim() || this.stringParam(routeUrl, body, "project")?.trim();
+    if (!projectRoot) return this.textError(400, "projectRoot query is required");
     return this.resolveProjectRoot(projectRoot);
   }
 
@@ -705,9 +706,9 @@ export class AimuxDaemon {
     try {
       await initPaths(projectRoot);
       await this.ensureProject(projectRoot);
-      invalidateTmuxStatuslineArtifacts(projectRoot);
       const tmux = new TmuxRuntimeManager();
       if (!tmux.isAvailable()) return this.textError(500, "Error: tmux is not installed or not available in PATH");
+      invalidateTmuxStatuslineArtifacts(projectRoot);
       const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, {
         forceReload: true,
         openInHostSession: true,
@@ -745,6 +746,14 @@ export class AimuxDaemon {
       const tmuxSessionsKilled = stopProjectTmuxRuntime(tmux, projectRoot);
       const project = await this.ensureProject(projectRoot);
       const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      invalidateTmuxStatuslineArtifacts(projectRoot);
+      await this.postProjectServiceJson(
+        projectRoot,
+        PROJECT_API_ROUTES.statuslineRefresh,
+        { force: true },
+        { timeoutMs: 1500 },
+      ).catch(() => null);
+      rewriteDashboardStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
       if (this.booleanParam(routeUrl, body, "open", false)) {
         this.openDashboardTargetForCaller(tmux, dashboardTarget, routeUrl, body);
       }

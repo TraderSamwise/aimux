@@ -348,7 +348,6 @@ aimux_post_dashboard_open_route() {
       ;;
     runtime-restart)
       printf 'Restarted project runtime for %s\n' "$project_root"
-      printf 'Dashboard: %s:%s\n' "$dashboard_session_name" "$window_index"
       ;;
     *)
       cat "$body_file"
@@ -359,6 +358,9 @@ aimux_post_dashboard_open_route() {
   if [ -z "$session_name" ]; then
     printf 'Error: command completed, but no dashboard target was available to open\n' >&2
     return 2
+  fi
+  if [ "$success_kind" = "runtime-restart" ]; then
+    printf 'Dashboard: %s:%s\n' "$dashboard_session_name" "$window_index"
   fi
   if ! command -v tmux >/dev/null 2>&1; then
     printf 'Error: command completed, but tmux is not available to open dashboard %s:%s\n' "$session_name" "$window_index" >&2
