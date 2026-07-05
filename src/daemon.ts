@@ -2078,8 +2078,12 @@ export class AimuxDaemon {
   }
 
   private async doctorVersionsTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
-    const report = await buildRuntimeCoherenceReport();
-    return this.textOrJsonLines(routeUrl, report, renderRuntimeCoherenceReport(report).split("\n"));
+    try {
+      const report = await buildRuntimeCoherenceReport();
+      return this.textOrJsonLines(routeUrl, report, renderRuntimeCoherenceReport(report).split("\n"));
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async doctorTmuxTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
@@ -2088,14 +2092,18 @@ export class AimuxDaemon {
       return this.textError(400, "projectRoot query is required");
     }
     const projectRoot = this.resolveProjectRoot(pathResolve(projectParam));
-    await initPaths(projectRoot);
-    const tmux = new TmuxRuntimeManager();
-    const report = buildTmuxDoctorReport(tmux, {
-      projectRoot,
-      sessionName: routeUrl.searchParams.get("session") ?? undefined,
-      windowId: routeUrl.searchParams.get("windowId") ?? undefined,
-    });
-    return this.textOrJsonLines(routeUrl, report, renderTmuxDoctorReport(report).split("\n"));
+    try {
+      await initPaths(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      const report = buildTmuxDoctorReport(tmux, {
+        projectRoot,
+        sessionName: routeUrl.searchParams.get("session") ?? undefined,
+        windowId: routeUrl.searchParams.get("windowId") ?? undefined,
+      });
+      return this.textOrJsonLines(routeUrl, report, renderTmuxDoctorReport(report).split("\n"));
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async repairTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -2104,23 +2112,27 @@ export class AimuxDaemon {
       return this.textError(400, "projectRoot query is required");
     }
     const projectRoot = this.resolveProjectRoot(pathResolve(projectParam));
-    await initPaths(projectRoot);
-    await this.ensureProject(projectRoot);
-    const tmux = new TmuxRuntimeManager();
-    const result = repairTmuxRuntime(tmux, { projectRoot });
-    const backendReconcile = reconcileOfflineBackendSessionIds(projectRoot);
-    if (this.booleanParam(routeUrl, body, "open", false)) {
-      const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
-      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
-    }
-    const lines = renderTmuxRepairResult(result).split("\n");
-    if (backendReconcile.reconciled.length > 0) {
-      lines.push(`Recovered backend session id for ${backendReconcile.reconciled.length} offline agent(s):`);
-      for (const entry of backendReconcile.reconciled) {
-        lines.push(`  ${entry.id} -> ${entry.backendSessionId}`);
+    try {
+      await initPaths(projectRoot);
+      await this.ensureProject(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      const result = repairTmuxRuntime(tmux, { projectRoot });
+      const backendReconcile = reconcileOfflineBackendSessionIds(projectRoot);
+      if (this.booleanParam(routeUrl, body, "open", false)) {
+        const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
+        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
       }
+      const lines = renderTmuxRepairResult(result).split("\n");
+      if (backendReconcile.reconciled.length > 0) {
+        lines.push(`Recovered backend session id for ${backendReconcile.reconciled.length} offline agent(s):`);
+        for (const entry of backendReconcile.reconciled) {
+          lines.push(`  ${entry.id} -> ${entry.backendSessionId}`);
+        }
+      }
+      return this.textOrJsonLines(routeUrl, { ...result, backendReconcile }, lines);
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
     }
-    return this.textOrJsonLines(routeUrl, { ...result, backendReconcile }, lines);
   }
 
   private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {

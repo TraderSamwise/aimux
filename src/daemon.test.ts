@@ -655,6 +655,41 @@ describe("daemon supervision", () => {
     expect(initPathsMock).not.toHaveBeenCalled();
   });
 
+  it("keeps doctor and repair route failures as text/plain", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    runtimeCoherenceMock.buildRuntimeCoherenceReport.mockRejectedValueOnce(new Error("versions failed"));
+    tmuxDoctorMock.buildTmuxDoctorReport.mockImplementationOnce(() => {
+      throw new Error("tmux failed");
+    });
+    tmuxDoctorMock.repairTmuxRuntime.mockImplementationOnce(() => {
+      throw new Error("repair failed");
+    });
+
+    const versions = await daemon.routeRequest("GET", CORE_API_ROUTES.doctorVersionsText);
+    const tmux = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.doctorTmuxText}?projectRoot=${encodeURIComponent(projectRoot)}`,
+    );
+    const repair = await daemon.routeRequest("POST", CORE_API_ROUTES.repairText, { projectRoot });
+
+    expect(versions).toMatchObject({
+      status: 500,
+      contentType: "text/plain; charset=utf-8",
+      body: "Error: versions failed\n",
+    });
+    expect(tmux).toMatchObject({
+      status: 500,
+      contentType: "text/plain; charset=utf-8",
+      body: "Error: tmux failed\n",
+    });
+    expect(repair).toMatchObject({
+      status: 500,
+      contentType: "text/plain; charset=utf-8",
+      body: "Error: repair failed\n",
+    });
+  });
+
   it("serves daemon status text for the installed shell shim", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
