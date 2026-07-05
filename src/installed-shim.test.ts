@@ -178,6 +178,15 @@ function health(buildStamp: string, pid = 123, port = 45678): string {
   });
 }
 
+function expectInvalidNoNode(fixture: ReturnType<typeof makeFixture>, args: string[]) {
+  const result = fixture.run(args, { NODE_EXIT: "99" });
+
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("invalid or unsupported arguments");
+  expect(existsSync(fixture.nodeLog)).toBe(false);
+}
+
 describe("installed aimux shim", () => {
   it("serves daemon ensure from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
@@ -554,18 +563,15 @@ describe("installed aimux shim", () => {
     );
   });
 
-  it("falls back to the Node launcher for invalid daemon project-ensure arguments", () => {
+  it("rejects invalid daemon command arguments without launching Node when the daemon is healthy", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.textRouteFile, "Ensured project service for /repo (pid 88)\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["daemon", "project-ensure", "--project", "/repo", "--dry-run"], { NODE_EXIT: "37" });
-
-    expect(result.status).toBe(37);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js daemon project-ensure --project /repo --dry-run\n`,
-    );
+    expectInvalidNoNode(fixture, ["daemon", "project-ensure", "--project", "/repo", "--dry-run"]);
+    expectInvalidNoNode(fixture, ["daemon", "status", "--verbose"]);
+    expectInvalidNoNode(fixture, ["projects", "list", "--verbose"]);
   });
 
   it("serves spawn from a matching daemon without launching Node", () => {
@@ -664,16 +670,14 @@ describe("installed aimux shim", () => {
     );
   });
 
-  it("falls back to the Node launcher for invalid lifecycle arguments", () => {
+  it("rejects invalid lifecycle arguments without launching Node when the daemon is healthy", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.textRouteFile, "stopped claude-1\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["stop"], { NODE_EXIT: "42" });
-
-    expect(result.status).toBe(42);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js stop\n`);
+    expectInvalidNoNode(fixture, ["stop"]);
+    expectInvalidNoNode(fixture, ["spawn", "--tool"]);
   });
 
   it("serves loop commands from a matching daemon without launching Node", () => {
@@ -884,20 +888,15 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.curlLog, "utf8")).toContain("/health");
   });
 
-  it("falls back to the Node launcher for invalid loop and overseer arguments", () => {
+  it("rejects invalid loop and overseer arguments without launching Node when the daemon is healthy", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.textRouteFile, "loop ok\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    expect(fixture.run(["loop", "done"], { NODE_EXIT: "45" }).status).toBe(45);
-    expect(fixture.run(["overseer", "clear"], { NODE_EXIT: "46" }).status).toBe(46);
-    expect(fixture.run(["loop", "remove", "claude-1", "--goal", "invalid"], { NODE_EXIT: "47" }).status).toBe(47);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js loop done\n` +
-        `${fixture.aimuxRoot}/dist/launcher-bin.js overseer clear\n` +
-        `${fixture.aimuxRoot}/dist/launcher-bin.js loop remove claude-1 --goal invalid\n`,
-    );
+    expectInvalidNoNode(fixture, ["loop", "done"]);
+    expectInvalidNoNode(fixture, ["overseer", "clear"]);
+    expectInvalidNoNode(fixture, ["loop", "remove", "claude-1", "--goal", "invalid"]);
   });
 
   it("serves worktree commands from a matching daemon without launching Node", () => {
@@ -1079,25 +1078,14 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
-  it("falls back to the Node launcher for invalid thread and message fast-path arguments", () => {
+  it("rejects invalid thread and message fast-path arguments without launching Node when the daemon is healthy", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.textRouteFile, "thread thread-1\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const thread = fixture.run(["thread", "open", "--title", "--from", "user", "--participants", "claude-1"], {
-      NODE_EXIT: "47",
-    });
-    const message = fixture.run(["message", "send", "body", "--to="], { NODE_EXIT: "48" });
-
-    expect(thread.status).toBe(47);
-    expect(message.status).toBe(48);
-    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js thread open --title --from user --participants claude-1\n`,
-    );
-    expect(readFileSync(fixture.nodeLog, "utf8")).toContain(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js message send body --to=\n`,
-    );
+    expectInvalidNoNode(fixture, ["thread", "open", "--title", "--from", "user", "--participants", "claude-1"]);
+    expectInvalidNoNode(fixture, ["message", "send", "body", "--to="]);
   });
 
   it("falls back to the Node launcher for thread and message commands when daemon health is stale", () => {
@@ -1209,23 +1197,15 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
-  it("falls back to the Node launcher for invalid workflow fast-path arguments", () => {
+  it("rejects invalid workflow fast-path arguments without launching Node when the daemon is healthy", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.textRouteFile, "task task-1\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const task = fixture.run(["task", "assign", "Ship", "--to="], { NODE_EXIT: "49" });
-    const handoff = fixture.run(["handoff", "accept", "thread-1", "--body"], { NODE_EXIT: "50" });
-    const review = fixture.run(["review", "approve", "task-1", "--from", "--body=ok"], { NODE_EXIT: "51" });
-
-    expect(task.status).toBe(49);
-    expect(handoff.status).toBe(50);
-    expect(review.status).toBe(51);
-    const nodeLog = readFileSync(fixture.nodeLog, "utf8");
-    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js task assign Ship --to=\n`);
-    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js handoff accept thread-1 --body\n`);
-    expect(nodeLog).toContain(`${fixture.aimuxRoot}/dist/launcher-bin.js review approve task-1 --from --body=ok\n`);
+    expectInvalidNoNode(fixture, ["task", "assign", "Ship", "--to="]);
+    expectInvalidNoNode(fixture, ["handoff", "accept", "thread-1", "--body"]);
+    expectInvalidNoNode(fixture, ["review", "approve", "task-1", "--from", "--body=ok"]);
   });
 
   it("falls back to the Node launcher for workflow commands when daemon health is stale", () => {

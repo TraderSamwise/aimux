@@ -73,6 +73,16 @@ aimux_matching_daemon_port() {
   printf '%s\n' "$port"
 }
 
+aimux_handle_fast_path_failure() {
+  command_name="$1"
+  code="$2"
+  [ "$code" -eq 2 ] && exit 1
+  if aimux_matching_daemon_port >/dev/null 2>&1; then
+    printf 'Error: invalid or unsupported arguments for `aimux %s`.\n' "$command_name" >&2
+    exit 1
+  fi
+}
+
 aimux_try_daemon_ensure() {
   port="$(aimux_matching_daemon_port)" || return 1
   json="$(aimux_health_json "$port")"
@@ -1734,180 +1744,126 @@ case "${1:-}" in
     if aimux_try_notify "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   list-notifications)
     if aimux_try_list_notifications "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   read-notifications|clear-notifications)
     if aimux_try_notifications_mutation "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   threads)
     if aimux_try_threads "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   thread)
     if aimux_try_thread "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   message)
     if aimux_try_message "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   handoff)
     if aimux_try_handoff "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   task)
     if aimux_try_task "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   review)
     if aimux_try_review "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   spawn)
     if aimux_try_lifecycle_spawn "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   stop)
     if aimux_try_lifecycle_stop "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   kill)
     if aimux_try_lifecycle_kill "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   fork)
     if aimux_try_lifecycle_fork "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   loop)
     if aimux_try_loop "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   overseer)
     if aimux_try_overseer "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   team)
     if aimux_try_team "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   worktree)
     if aimux_try_worktree "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   graveyard)
     if aimux_try_graveyard "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
 esac
@@ -1920,25 +1876,20 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_project_text_route "/core/host-status-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "host agent-read")
     if aimux_try_host_agent_read "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   "host agent-stream")
     if aimux_try_host_agent_stream "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   "daemon ensure")
@@ -1948,11 +1899,13 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-ensure-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "daemon project-ensure")
     if aimux_try_daemon_project_ensure "$@"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" "$?"
     ;;
   "daemon status")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-status-text"; then
@@ -1961,6 +1914,7 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-status-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "daemon projects")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-projects-text"; then
@@ -1969,6 +1923,7 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/daemon-projects-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "projects list")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/projects-list-text"; then
@@ -1977,6 +1932,7 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/projects-list-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "remote status")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/remote-status-text"; then
@@ -1985,30 +1941,27 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 3 ] && [ "${3:-}" = "--json" ] && aimux_curl_text_route "/core/remote-status-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "remote enable")
     if [ "$#" -eq 2 ]; then
       if aimux_post_text_route "/core/remote-enable-text"; then
         exit 0
       else
-        code="$?"
-        if [ "$code" -eq 2 ]; then
-          exit 1
-        fi
+        aimux_handle_fast_path_failure "$*" "$?"
       fi
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "remote disable")
     if [ "$#" -eq 2 ]; then
       if aimux_post_text_route "/core/remote-disable-text"; then
         exit 0
       else
-        code="$?"
-        if [ "$code" -eq 2 ]; then
-          exit 1
-        fi
+        aimux_handle_fast_path_failure "$*" "$?"
       fi
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "whoami " | "whoami --json")
     if [ "$#" -eq 1 ] && aimux_curl_text_route "/core/whoami-text"; then
@@ -2017,61 +1970,50 @@ case "${1:-} ${2:-}" in
     if [ "$#" -eq 2 ] && [ "${2:-}" = "--json" ] && aimux_curl_text_route "/core/whoami-text?json=1"; then
       exit 0
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "logout ")
     if [ "$#" -eq 1 ]; then
       if aimux_post_text_route "/core/logout-text"; then
         exit 0
       else
-        code="$?"
-        if [ "$code" -eq 2 ]; then
-          exit 1
-        fi
+        aimux_handle_fast_path_failure "$*" "$?"
       fi
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "login ")
     if [ "$#" -eq 1 ]; then
       if aimux_auth_text_route "/core/login-start-text" "/core/login-wait-text" 360; then
         exit 0
       else
-        code="$?"
-        if [ "$code" -eq 2 ]; then
-          exit 1
-        fi
+        aimux_handle_fast_path_failure "$*" "$?"
       fi
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "security unlock")
     if [ "$#" -eq 2 ]; then
       if aimux_auth_text_route "/core/security-unlock-start-text" "/core/security-unlock-wait-text" 360; then
         exit 0
       else
-        code="$?"
-        if [ "$code" -eq 2 ]; then
-          exit 1
-        fi
+        aimux_handle_fast_path_failure "$*" "$?"
       fi
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
   "doctor versions" | "doctor tmux")
     if aimux_try_doctor "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   "repair " | "repair --"*)
     if aimux_try_repair "$@"; then
       exit 0
     else
-      code="$?"
-      if [ "$code" -eq 2 ]; then
-        exit 1
-      fi
+      aimux_handle_fast_path_failure "$*" "$?"
     fi
     ;;
   "restart ")
@@ -2079,12 +2021,10 @@ case "${1:-} ${2:-}" in
       if aimux_try_restart; then
         exit 0
       else
-        code="$?"
-        if [ "$code" -eq 2 ]; then
-          exit 1
-        fi
+        aimux_handle_fast_path_failure "$*" "$?"
       fi
     fi
+    aimux_handle_fast_path_failure "$*" 1
     ;;
 esac
 
