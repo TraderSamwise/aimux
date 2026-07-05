@@ -36,6 +36,7 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "metadata ...", shimNeedle: "/core/metadata-text" },
   { command: "repair", shimNeedle: "/core/repair-text" },
   { command: "restart", shimNeedle: "/core/restart-text" },
+  { command: "serve", shimNeedle: "/core/project-serve-text" },
   { command: "worktree", shimNeedle: "/core/worktree/list-text" },
   { command: "worktree list", shimNeedle: "/core/worktree/list-text" },
   { command: "worktree create <name>", shimNeedle: "/core/worktree/create-text" },
@@ -73,6 +74,9 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "review request-changes <taskId>", shimNeedle: "/core/review/request-changes-text" },
   { command: "host agent-read <sessionId>", shimNeedle: "/core/host-agent-read-text" },
   { command: "host agent-stream <sessionId>", shimNeedle: "/core/host-agent-stream-text" },
+  { command: "host stop", shimNeedle: "/core/project-stop-text" },
+  { command: "host kill", shimNeedle: "/core/project-kill-text" },
+  { command: "host restart", shimNeedle: "/core/project-restart-text" },
 ];
 
 const coreCommandDispositions: Array<{
@@ -172,6 +176,48 @@ const coreCommandDispositions: Array<{
     shimNeedle: "/core/project-ensure-text?json=1",
   },
   {
+    command: "daemon restart",
+    args: ["daemon", "restart"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/restart-text",
+  },
+  {
+    command: "daemon restart --json",
+    args: ["daemon", "restart", "--json"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/restart-text?json=1",
+  },
+  {
+    command: "serve",
+    args: ["serve"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-serve-text",
+  },
+  {
+    command: "host stop",
+    args: ["host", "stop"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-stop-text",
+  },
+  {
+    command: "host kill",
+    args: ["host", "kill"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-kill-text",
+  },
+  {
+    command: "host restart",
+    args: ["host", "restart"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-restart-text",
+  },
+  {
+    command: "host restart --serve",
+    args: ["host", "restart", "--serve"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-restart-text",
+  },
+  {
     command: "remote status",
     args: ["remote", "status"],
     disposition: "shim-fast-path",
@@ -260,6 +306,13 @@ describe("core command ownership inventory", () => {
       "logs clear",
       "daemon project-ensure",
       "daemon project-ensure --json",
+      "daemon restart",
+      "daemon restart --json",
+      "serve",
+      "host stop",
+      "host kill",
+      "host restart",
+      "host restart --serve",
       "remote status",
       "remote status --json",
       "remote enable",
@@ -280,7 +333,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(24);
+    expect(fastPaths).toHaveLength(31);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);

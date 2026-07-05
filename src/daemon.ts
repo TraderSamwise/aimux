@@ -52,6 +52,10 @@ import {
   renderCoreOverseerClearLines,
   renderCoreOverseerStartLines,
   renderCoreProjectEnsureLines,
+  renderCoreProjectKillLines,
+  renderCoreProjectRestartLines,
+  renderCoreProjectServeLines,
+  renderCoreProjectStopLines,
   renderCoreProjectsListLines,
   renderCoreTeamAddLines,
   renderCoreTeamDefaultLines,
@@ -104,6 +108,8 @@ import {
   type CoreNotificationReadTextPayload,
   type CoreNotificationsListTextPayload,
   type CoreOverseerTextPayload,
+  type CoreProjectRestartTextPayload,
+  type CoreProjectServiceMutationTextPayload,
   type CoreRemoteStatusTextPayload,
   type CoreReviewRequestChangesTextPayload,
   type CoreTaskListTextPayload,
@@ -203,12 +209,18 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.notificationSendText,
   CORE_API_ROUTES.overseerClearText,
   CORE_API_ROUTES.overseerStartText,
+  CORE_API_ROUTES.projectEnsureText,
   CORE_API_ROUTES.teamAddText,
   CORE_API_ROUTES.teamDefaultText,
   CORE_API_ROUTES.teamInitText,
   CORE_API_ROUTES.teamRemoveText,
   CORE_API_ROUTES.teamShowText,
+  CORE_API_ROUTES.projectKillText,
+  CORE_API_ROUTES.projectRestartText,
+  CORE_API_ROUTES.projectServeText,
+  CORE_API_ROUTES.projectStopText,
   CORE_API_ROUTES.repairText,
+  CORE_API_ROUTES.restartText,
   CORE_API_ROUTES.reviewApproveText,
   CORE_API_ROUTES.reviewRequestChangesText,
   CORE_API_ROUTES.taskAcceptText,
@@ -601,6 +613,52 @@ export class AimuxDaemon {
     } catch (error) {
       return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private projectRootTextParam(routeUrl: URL, body: unknown): string | DaemonRouteResponse {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    return this.resolveProjectRoot(project);
+  }
+
+  private async projectServeTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.projectRootTextParam(routeUrl, body);
+    if (typeof projectRoot !== "string") return projectRoot;
+    const project = await this.ensureProject(projectRoot);
+    const payload = { project };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreProjectServeLines(payload));
+  }
+
+  private async projectStopTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.projectRootTextParam(routeUrl, body);
+    if (typeof projectRoot !== "string") return projectRoot;
+    const project = await this.stopProject(projectRoot);
+    const payload: CoreProjectServiceMutationTextPayload = { projectRoot, project };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreProjectStopLines(payload));
+  }
+
+  private async projectKillTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.projectRootTextParam(routeUrl, body);
+    if (typeof projectRoot !== "string") return projectRoot;
+    const project = await this.stopProject(projectRoot, { force: true });
+    const payload: CoreProjectServiceMutationTextPayload = { projectRoot, project };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreProjectKillLines(payload));
+  }
+
+  private async projectRestartTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.projectRootTextParam(routeUrl, body);
+    if (typeof projectRoot !== "string") return projectRoot;
+    const serveOnly = this.booleanParam(routeUrl, body, "serve", false);
+    await this.stopProject(projectRoot);
+    const project = await this.ensureProject(projectRoot);
+    let dashboardSessionName: string | undefined;
+    if (!serveOnly) {
+      const tmux = new TmuxRuntimeManager();
+      const { dashboardSession } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      dashboardSessionName = dashboardSession.sessionName;
+    }
+    const payload: CoreProjectRestartTextPayload = { projectRoot, project, dashboardSessionName };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreProjectRestartLines(payload));
   }
 
   private async metadataTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
@@ -2525,12 +2583,11 @@ export class AimuxDaemon {
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {
       const issuedAt = new Date().toISOString();
       try {
-        const result = await this.restartControlPlane(issuedAt);
-        return {
-          status: result.restart.summary.failures > 0 ? 500 : 200,
-          body: `${result.text}\n`,
-          contentType: "text/plain; charset=utf-8",
-        };
+        const projectParam = routeUrl.searchParams.get("project");
+        const projectRoot = projectParam ? this.resolveProjectRoot(projectParam) : undefined;
+        const result = await this.restartControlPlane(issuedAt, projectRoot);
+        const response = this.textOrJsonLines(routeUrl, result.restart, result.text.split("\n"));
+        return { ...response, status: result.restart.summary.failures > 0 ? 500 : 200 };
       } catch (error) {
         return {
           status: 500,
@@ -2549,6 +2606,22 @@ export class AimuxDaemon {
       const project = await this.ensureProject(projectRoot);
       const payload = { project };
       return this.textOrJsonLines(routeUrl, payload, renderCoreProjectEnsureLines(payload));
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.projectServeText) {
+      return this.projectServeTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.projectStopText) {
+      return this.projectStopTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.projectKillText) {
+      return this.projectKillTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.projectRestartText) {
+      return this.projectRestartTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleSpawnText) {

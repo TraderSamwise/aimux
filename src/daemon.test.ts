@@ -354,6 +354,7 @@ describe("daemon supervision", () => {
     backendReconcileMock.reconcileOfflineBackendSessionIds.mockReturnValue({ reconciled: [] });
     dashboardTargetMock.resolveDashboardTarget.mockReset();
     dashboardTargetMock.resolveDashboardTarget.mockReturnValue({
+      dashboardSession: { sessionName: "aimux-test" },
       dashboardTarget: { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
     });
     tmuxRuntimeMock.openTarget.mockReset();
@@ -1171,6 +1172,65 @@ describe("daemon supervision", () => {
     expect(response.status).toBe(200);
     expect(response.contentType).toBe("text/plain; charset=utf-8");
     expect(JSON.parse(response.body as string)).toMatchObject({
+      project: {
+        projectId: `proj-${basename(projectRoot)}`,
+        projectRoot,
+        pid: process.pid,
+      },
+    });
+  });
+
+  it("serves project service management text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const serve = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectServeText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const stop = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectStopText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    await daemon.routeRequest("POST", `${CORE_API_ROUTES.projectServeText}?project=${encodeURIComponent(projectRoot)}`);
+    const kill = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectKillText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const restart = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectRestartText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const restartServe = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectRestartText}?serve=1&project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(serve.body).toBe(`aimux serve: daemon managing ${projectRoot} (service pid ${process.pid})\n`);
+    expect(stop.body).toBe(`Stopped project service pid ${process.pid}\n`);
+    expect(kill.body).toBe(`Killed project service pid ${process.pid}\n`);
+    expect(restart.body).toBe("Restarted project service for aimux-test\n");
+    expect(restartServe.body).toBe(`Restarted project service for ${projectRoot}\n`);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.kills).toHaveBeenCalledWith(projectRoot);
+    expect(dashboardTargetMock.resolveDashboardTarget).toHaveBeenCalledWith(projectRoot, expect.any(Object), {
+      forceReload: true,
+    });
+  });
+
+  it("serves project service management JSON for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectRestartText}?json=1&serve=1&project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body as string)).toMatchObject({
+      projectRoot,
       project: {
         projectId: `proj-${basename(projectRoot)}`,
         projectRoot,
@@ -2025,12 +2085,21 @@ describe("daemon supervision", () => {
       undefined,
       headers,
     );
+    const restart = await daemon.routeRequest("POST", CORE_API_ROUTES.restartText, undefined, headers);
+    const projectEnsure = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectEnsureText}?project=${encodeURIComponent(projectRoot)}`,
+      undefined,
+      headers,
+    );
 
     expect(spawn).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(worktrees).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(doctor).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(metadata).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(repair).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
+    expect(restart).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
+    expect(projectEnsure).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(coreActorMock.starts).not.toHaveBeenCalled();
   });
 
@@ -3771,6 +3840,14 @@ describe("daemon routing (relay + proxy)", () => {
 
       expect(metadataRes.status).toBe(403);
       expect(await metadataRes.text()).toBe("core text routes are cli-only\n");
+
+      const restartRes = await fetch(`http://127.0.0.1:${port}${CORE_API_ROUTES.restartText}`, {
+        method: "POST",
+        headers: { Origin: "http://localhost:8081" },
+      });
+
+      expect(restartRes.status).toBe(403);
+      expect(await restartRes.text()).toBe("core text routes are cli-only\n");
 
       const getRes = await fetch(
         `http://127.0.0.1:${port}${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}`,

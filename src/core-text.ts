@@ -21,6 +21,17 @@ export interface CoreProjectEnsureTextPayload {
   project: CoreProjectServiceState;
 }
 
+export interface CoreProjectServiceMutationTextPayload {
+  projectRoot: string;
+  project: CoreProjectServiceState | null;
+}
+
+export interface CoreProjectRestartTextPayload {
+  projectRoot: string;
+  project: CoreProjectServiceState;
+  dashboardSessionName?: string;
+}
+
 export interface CoreRemoteStatusTextPayload {
   credentials: { relayUrl: string; remoteEnabled: boolean } | null;
   relay: CoreRelaySnapshot;
@@ -265,6 +276,25 @@ export function renderCoreHostStatusLines(payload: CoreHostStatusTextPayload, kn
 
 export function renderCoreProjectEnsureLines(payload: CoreProjectEnsureTextPayload): string[] {
   return [`Ensured project service for ${payload.project.projectRoot} (pid ${payload.project.pid})`];
+}
+
+export function renderCoreProjectServeLines(payload: CoreProjectEnsureTextPayload): string[] {
+  return [`aimux serve: daemon managing ${payload.project.projectRoot} (service pid ${payload.project.pid})`];
+}
+
+export function renderCoreProjectStopLines(payload: CoreProjectServiceMutationTextPayload): string[] {
+  if (!payload.project) return ["No live project service to stop."];
+  return [`Stopped project service pid ${payload.project.pid}`];
+}
+
+export function renderCoreProjectKillLines(payload: CoreProjectServiceMutationTextPayload): string[] {
+  if (!payload.project) return ["No live project service to kill."];
+  return [`Killed project service pid ${payload.project.pid}`];
+}
+
+export function renderCoreProjectRestartLines(payload: CoreProjectRestartTextPayload): string[] {
+  if (payload.dashboardSessionName) return [`Restarted project service for ${payload.dashboardSessionName}`];
+  return [`Restarted project service for ${payload.projectRoot}`];
 }
 
 export function renderCoreDaemonProjectsLines(projects: CoreStatusProject[]): string[] {
