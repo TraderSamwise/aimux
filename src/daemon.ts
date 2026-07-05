@@ -109,6 +109,7 @@ import {
   type DaemonState,
   type ProjectServiceState,
 } from "./daemon-state.js";
+import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
 
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
@@ -134,6 +135,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.handoffCompleteText,
   CORE_API_ROUTES.handoffSendText,
   CORE_API_ROUTES.hostAgentReadText,
+  CORE_API_ROUTES.hostAgentStreamText,
   CORE_API_ROUTES.lifecycleForkText,
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
@@ -675,6 +677,93 @@ export class AimuxDaemon {
       body: output.length > 0 && !output.endsWith("\n") ? `${output}\n` : output,
       contentType: "text/plain; charset=utf-8",
     };
+  }
+
+  private async resolveHostAgentStreamTextRoute(
+    routeUrl: URL,
+    headers?: Record<string, string>,
+  ): Promise<{ ok: true; url: string; sessionId: string } | { ok: false; response: DaemonRouteResponse }> {
+    this.refreshState();
+    const pathname = routeUrl.pathname;
+    const actor = parseRemoteActor(headers);
+    const access = assertRemoteAccessAllowed(actor, "GET", pathname, routeUrl.searchParams);
+    if (!access.ok) {
+      return {
+        ok: false,
+        response: { status: access.status ?? 403, body: { ok: false, error: access.error ?? "remote access denied" } },
+      };
+    }
+    if (actor) {
+      return { ok: false, response: this.textError(403, "core text routes are loopback-only") };
+    }
+    if (headers?.origin || headers?.Origin) {
+      return { ok: false, response: this.textError(403, "core text routes are cli-only") };
+    }
+
+    const project = this.requiredParam(routeUrl, undefined, "project");
+    if (typeof project !== "string") return { ok: false, response: project };
+    const sessionId = this.requiredParam(routeUrl, undefined, "sessionId");
+    if (typeof sessionId !== "string") return { ok: false, response: sessionId };
+    const startLine = this.integerParam(routeUrl, undefined, "startLine", -120, "start-line");
+    if (typeof startLine !== "number") return { ok: false, response: startLine };
+    const intervalMs = this.integerParam(routeUrl, undefined, "intervalMs", 500, "interval-ms");
+    if (typeof intervalMs !== "number") return { ok: false, response: intervalMs };
+    if (intervalMs < 100) {
+      return { ok: false, response: this.textError(400, "Error: --interval-ms must be an integer >= 100") };
+    }
+
+    const projectRoot = this.resolveProjectRoot(project);
+    try {
+      await this.ensureProject(projectRoot);
+      const endpoint = loadMetadataEndpointByProjectId(getProjectIdFor(projectRoot));
+      if (!endpoint) {
+        return {
+          ok: false,
+          response: this.textError(503, `Error: project service unavailable for ${projectRoot}`),
+        };
+      }
+      const params = new URLSearchParams({ sessionId, startLine: String(startLine), intervalMs: String(intervalMs) });
+      return {
+        ok: true,
+        sessionId,
+        url: `http://${endpoint.host}:${endpoint.port}${PROJECT_API_ROUTES.agents.outputStream}?${params}`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        response: this.textError(502, `Error: ${error instanceof Error ? error.message : String(error)}`),
+      };
+    }
+  }
+
+  private async pipeHostAgentStreamText(upstreamUrl: string, sessionId: string, res: ServerResponse): Promise<void> {
+    const upstream = await fetch(upstreamUrl, { headers: { accept: "text/event-stream" } });
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => "");
+      const message = text.trim() || `request failed: ${upstream.status}`;
+      send(res, upstream.status || 502, `${message}\n`, "text/plain; charset=utf-8");
+      return;
+    }
+
+    res.statusCode = 200;
+    res.setHeader("content-type", "text/plain; charset=utf-8");
+    res.setHeader("connection", "close");
+    const decoder = new TextDecoder();
+    const textHandler = createAgentOutputSseTextHandler(sessionId, (text) => {
+      if (!res.writableEnded) res.write(text);
+    });
+    try {
+      for await (const chunk of upstream.body) {
+        textHandler.pushChunkText(decoder.decode(chunk, { stream: true }));
+      }
+      res.end();
+    } catch (error) {
+      if (!res.headersSent) {
+        send(res, 502, `${error instanceof Error ? error.message : String(error)}\n`, "text/plain; charset=utf-8");
+        return;
+      }
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   private async worktreeCreateTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -2210,6 +2299,16 @@ export class AimuxDaemon {
     }
 
     const url = new URL(req.url ?? "/", getDaemonBaseUrl());
+    if (req.method === "GET" && url.pathname === CORE_API_ROUTES.hostAgentStreamText) {
+      const streamTarget = await this.resolveHostAgentStreamTextRoute(url, requestHeaders(req));
+      if (!streamTarget.ok) {
+        send(res, streamTarget.response.status, streamTarget.response.body, streamTarget.response.contentType);
+        return;
+      }
+      await this.pipeHostAgentStreamText(streamTarget.url, streamTarget.sessionId, res);
+      return;
+    }
+
     const body =
       req.method === "POST" && url.pathname !== CORE_API_ROUTES.restartText ? await readJson(req) : undefined;
     const result = await this.routeRequest(

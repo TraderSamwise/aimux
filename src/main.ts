@@ -77,6 +77,7 @@ import {
   renderRuntimeMigrationRollbackResult,
   rollbackRuntimeMigration,
 } from "./runtime-migration.js";
+import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
 import {
   DEFAULT_LOCAL_UI_HOST,
   DEFAULT_LOCAL_UI_PORT,
@@ -1270,54 +1271,10 @@ hostCmd
       }
 
       const decoder = new TextDecoder();
-      let buffer = "";
-      let lastOutput = "";
-
-      const flushEventBlock = (block: string) => {
-        const lines = block.split("\n");
-        let eventName = "message";
-        const dataLines: string[] = [];
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            eventName = line.slice("event:".length).trim();
-            continue;
-          }
-          if (line.startsWith("data:")) {
-            dataLines.push(line.slice("data:".length).trim());
-          }
-        }
-        if (eventName === "ready") return;
-        if (eventName === "error") {
-          const payload = dataLines.length > 0 ? JSON.parse(dataLines.join("\n")) : {};
-          throw new Error(payload?.error || `stream error for ${sessionId}`);
-        }
-        if (eventName !== "output" || dataLines.length === 0) return;
-        const payload = JSON.parse(dataLines.join("\n")) as { output?: string };
-        if (typeof payload.output === "string") {
-          const nextOutput = payload.output;
-          const renderText = nextOutput.startsWith(lastOutput)
-            ? nextOutput.slice(lastOutput.length)
-            : `${lastOutput ? "\n[aimux stream resync]\n" : ""}${nextOutput}`;
-          lastOutput = nextOutput;
-          if (!renderText) return;
-          process.stdout.write(renderText);
-          if (renderText.length > 0 && !renderText.endsWith("\n")) {
-            process.stdout.write("\n");
-          }
-        }
-      };
+      const textHandler = createAgentOutputSseTextHandler(sessionId, (text) => process.stdout.write(text));
 
       for await (const chunk of res.body) {
-        buffer += decoder.decode(chunk, { stream: true });
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary !== -1) {
-          const block = buffer.slice(0, boundary).replace(/\r/g, "");
-          buffer = buffer.slice(boundary + 2);
-          if (block && !block.startsWith(":")) {
-            flushEventBlock(block);
-          }
-          boundary = buffer.indexOf("\n\n");
-        }
+        textHandler.pushChunkText(decoder.decode(chunk, { stream: true }));
       }
     } catch (error) {
       if ((error as Error).name === "AbortError") {
