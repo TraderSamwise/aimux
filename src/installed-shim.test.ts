@@ -135,6 +135,14 @@ exit "\${NODE_EXIT:-7}"
     `#!/usr/bin/env sh
 set -eu
 printf '%s\\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  'display-message -p #{client_session}')
+    printf '%s\\n' "\${TMUX_CLIENT_SESSION:-aimux-repo-client-feedbeef}"
+    ;;
+  'display-message -p #{client_tty}')
+    printf '%s\\n' "\${TMUX_CLIENT_TTY:-/dev/ttys001}"
+    ;;
+esac
 exit "\${TMUX_EXIT:-0}"
 `,
   );
@@ -482,19 +490,7 @@ describe("installed aimux shim", () => {
     const projectDir = join(fixture.root, "repo");
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(
-      fixture.textRouteFile,
-      JSON.stringify(
-        {
-          projectRoot: realpathSync(projectDir),
-          project: { projectId: "repo", projectRoot: realpathSync(projectDir), pid: 89 },
-          dashboardSessionName: "aimux-repo",
-          dashboardTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
-        },
-        null,
-        2,
-      ),
-    );
+    writeFileSync(fixture.textRouteFile, "Restarted project service for aimux-repo\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["host", "restart", "--open"], { TMUX: "/tmp/tmux-client" }, { cwd: projectDir });
@@ -502,9 +498,13 @@ describe("installed aimux shim", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("Restarted project service for aimux-repo\n");
     expect(result.stderr).toBe("");
-    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/project-restart-text?json=1");
-    expect(readFileSync(fixture.curlLog, "utf8")).not.toContain("open=1\n");
-    expect(readFileSync(fixture.tmuxLog, "utf8")).toBe("switch-client -t @2\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/project-restart-text");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("open=1\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("currentClientSession=aimux-repo-client-feedbeef\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("clientTty=/dev/ttys001\n");
+    expect(readFileSync(fixture.tmuxLog, "utf8")).toBe(
+      "display-message -p #{client_session}\ndisplay-message -p #{client_tty}\n",
+    );
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 

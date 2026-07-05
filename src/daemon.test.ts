@@ -1249,6 +1249,27 @@ describe("daemon supervision", () => {
     });
   });
 
+  it("focuses project restart text routes with explicit caller tmux context", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.projectRestartText}?open=1&currentClientSession=aimux-test-client-feedbeef&clientTty=%2Fdev%2Fttys001&project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("Restarted project service for aimux-test\n");
+    expect(tmuxRuntimeMock.openTarget).toHaveBeenCalledWith(
+      { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      {
+        insideTmux: true,
+        clientTty: "/dev/ttys001",
+        returnSessionName: "aimux-test-client-feedbeef",
+      },
+    );
+  });
+
   it("serves project service management JSON for the installed shell shim", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

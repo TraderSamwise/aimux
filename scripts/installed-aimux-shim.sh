@@ -252,21 +252,6 @@ aimux_post_query_text_route() {
   esac
 }
 
-aimux_open_tmux_target() {
-  session_name="$1"
-  window_id="$2"
-  window_index="$3"
-  [ -n "$session_name" ] || return 1
-  command -v tmux >/dev/null 2>&1 || return 1
-  target="$session_name"
-  [ -n "$window_id" ] && target="$window_id"
-  if [ -n "${TMUX:-}" ]; then
-    tmux switch-client -t "$target" 2>/dev/null || tmux switch-client -t "$session_name:$window_index"
-  else
-    tmux attach-session -t "$session_name:$window_index"
-  fi
-}
-
 aimux_post_project_restart_open() {
   timeout="${1:-120}"
   shift
@@ -309,7 +294,8 @@ aimux_post_project_restart_open() {
   rm -f "$body_file"
   trap - EXIT INT TERM
   [ -n "$session_name" ] || return 0
-  aimux_open_tmux_target "$session_name" "$window_id" "$window_index"
+  command -v tmux >/dev/null 2>&1 || return 1
+  tmux attach-session -t "$session_name:$window_index"
 }
 
 aimux_post_get_query_text_route() {
@@ -803,8 +789,21 @@ aimux_try_host_service() {
   set -- --data-urlencode "project=$project_root"
   [ "$serve" -eq 1 ] && set -- "$@" --data-urlencode "serve=1"
   if [ "$open" -eq 1 ]; then
-    aimux_post_project_restart_open 120 "$@"
-    return $?
+    if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+      current_client_session="$(tmux display-message -p "#{client_session}" 2>/dev/null || true)"
+      client_tty="$(tmux display-message -p "#{client_tty}" 2>/dev/null || true)"
+      if [ -n "$current_client_session" ] || [ -n "$client_tty" ]; then
+        set -- "$@" --data-urlencode "open=1"
+        [ -n "$current_client_session" ] && set -- "$@" --data-urlencode "currentClientSession=$current_client_session"
+        [ -n "$client_tty" ] && set -- "$@" --data-urlencode "clientTty=$client_tty"
+        aimux_post_query_text_route "$path" 120 "$@"
+        return $?
+      fi
+    fi
+    if [ "$serve" -eq 0 ]; then
+      aimux_post_project_restart_open 120 "$@"
+      return $?
+    fi
   fi
   aimux_post_query_text_route "$path" 120 "$@"
 }

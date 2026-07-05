@@ -651,7 +651,14 @@ export class AimuxDaemon {
     const projectRoot = this.projectRootTextParam(routeUrl, body);
     if (typeof projectRoot !== "string") return projectRoot;
     const serveOnly = this.booleanParam(routeUrl, body, "serve", false);
-    const payload = await this.restartProjectService(projectRoot, { serveOnly });
+    const open = this.booleanParam(routeUrl, body, "open", false);
+    const currentClientSession = this.stringParam(routeUrl, body, "currentClientSession")?.trim();
+    const clientTty = this.stringParam(routeUrl, body, "clientTty")?.trim();
+    const payload = await this.restartProjectService(projectRoot, {
+      serveOnly,
+      openFocus:
+        open && !serveOnly && (currentClientSession || clientTty) ? { currentClientSession, clientTty } : undefined,
+    });
     return this.textOrJsonLines(routeUrl, payload, renderCoreProjectRestartLines(payload));
   }
 
@@ -2294,7 +2301,7 @@ export class AimuxDaemon {
 
   private async restartProjectService(
     projectRoot: string,
-    options: { serveOnly?: boolean } = {},
+    options: { serveOnly?: boolean; openFocus?: { currentClientSession?: string; clientTty?: string } } = {},
   ): Promise<CoreProjectRestartTextPayload> {
     await this.stopProject(projectRoot);
     const project = await this.ensureProject(projectRoot);
@@ -2305,6 +2312,13 @@ export class AimuxDaemon {
       const resolved = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
       dashboardSessionName = resolved.dashboardSession.sessionName;
       dashboardTarget = resolved.dashboardTarget;
+      if (options.openFocus) {
+        tmux.openTarget(dashboardTarget, {
+          insideTmux: Boolean(options.openFocus.currentClientSession || options.openFocus.clientTty),
+          clientTty: options.openFocus.clientTty,
+          returnSessionName: options.openFocus.currentClientSession,
+        });
+      }
     }
     return { projectRoot, project, dashboardSessionName, dashboardTarget };
   }
