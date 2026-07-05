@@ -1880,6 +1880,12 @@ describe("daemon supervision", () => {
       headers,
     );
     const doctor = await daemon.routeRequest("GET", CORE_API_ROUTES.doctorVersionsText, undefined, headers);
+    const metadata = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.metadataText}?project=${encodeURIComponent(projectRoot)}&arg=metadata&arg=set-status`,
+      undefined,
+      headers,
+    );
     const repair = await daemon.routeRequest(
       "POST",
       `${CORE_API_ROUTES.repairText}?projectRoot=${encodeURIComponent(projectRoot)}`,
@@ -1890,6 +1896,7 @@ describe("daemon supervision", () => {
     expect(spawn).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(worktrees).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(doctor).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
+    expect(metadata).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(repair).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(coreActorMock.starts).not.toHaveBeenCalled();
   });
@@ -3623,6 +3630,14 @@ describe("daemon routing (relay + proxy)", () => {
 
       expect(res.status).toBe(403);
       expect(await res.text()).toBe("core text routes are cli-only\n");
+
+      const metadataRes = await fetch(`http://127.0.0.1:${port}${CORE_API_ROUTES.metadataText}`, {
+        method: "POST",
+        headers: { Origin: "http://localhost:8081" },
+      });
+
+      expect(metadataRes.status).toBe(403);
+      expect(await metadataRes.text()).toBe("core text routes are cli-only\n");
 
       const getRes = await fetch(
         `http://127.0.0.1:${port}${CORE_API_ROUTES.worktreeListText}?project=${encodeURIComponent(projectRoot)}`,

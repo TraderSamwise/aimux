@@ -89,6 +89,17 @@ aimux_handle_fast_path_failure() {
   fi
 }
 
+aimux_args_include_help() {
+  for arg do
+    case "$arg" in
+      -h | --help)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 aimux_try_daemon_ensure() {
   port="$(aimux_matching_daemon_port)" || return 1
   json="$(aimux_health_json "$port")"
@@ -2047,7 +2058,9 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "metadata "*)
-    if aimux_try_metadata "$@"; then
+    if aimux_args_include_help "$@"; then
+      :
+    elif aimux_try_metadata "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"

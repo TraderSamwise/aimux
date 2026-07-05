@@ -504,6 +504,21 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js metadata endpoint\n`);
   });
 
+  it("falls through to Commander help for metadata help", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["metadata", "set-status", "--help"], { NODE_EXIT: "0" });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js metadata set-status --help\n`,
+    );
+    expect(existsSync(fixture.curlLog)).toBe(false);
+  });
+
   it("returns metadata daemon errors without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);

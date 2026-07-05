@@ -179,6 +179,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.logsClearText,
   CORE_API_ROUTES.logsPathText,
   CORE_API_ROUTES.logsTailText,
+  CORE_API_ROUTES.metadataText,
   CORE_API_ROUTES.loopAddText,
   CORE_API_ROUTES.loopBlockText,
   CORE_API_ROUTES.loopDoneText,
