@@ -15,7 +15,7 @@ import {
   getProjectStateDirFor,
   getRuntimeTopologyPath,
 } from "./paths.js";
-import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
+import { PROJECT_API_ROUTES, type TeamConfig } from "./project-api-contract.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -3532,20 +3532,52 @@ metadataCmd
 
 const teamCmd = program.command("team").description("Manage agent team roles");
 
+interface TeamCommandOptions {
+  project?: string;
+  json?: boolean;
+}
+
+function buildTeamCliPayload(projectRoot: string, config: TeamConfig, role?: string) {
+  return {
+    ok: true,
+    projectRoot,
+    config,
+    ...(role ? { role } : {}),
+  };
+}
+
+function printTeamShow(config: TeamConfig): void {
+  console.log("Team Roles:");
+  for (const [name, role] of Object.entries(config.roles)) {
+    const flags: string[] = [];
+    if (role.reviewedBy) flags.push(`reviewed by: ${role.reviewedBy}`);
+    if (role.canEdit) flags.push("can edit");
+    const flagStr = flags.length > 0 ? ` (${flags.join(", ")})` : "";
+    console.log(`  ${name}: ${role.description}${flagStr}`);
+  }
+  console.log(`\nDefault role: ${config.defaultRole}`);
+}
+
+function printTeamInit(config: TeamConfig): void {
+  console.log("Team config initialized with default roles:");
+  for (const [name, role] of Object.entries(config.roles)) {
+    console.log(`  ${name}: ${role.description}`);
+  }
+}
+
 teamCmd
   .command("show")
   .description("Show current team config")
-  .action(() => {
-    const config = loadTeamConfig();
-    console.log("Team Roles:");
-    for (const [name, role] of Object.entries(config.roles) as [string, any][]) {
-      const flags: string[] = [];
-      if (role.reviewedBy) flags.push(`reviewed by: ${role.reviewedBy}`);
-      if (role.canEdit) flags.push("can edit");
-      const flagStr = flags.length > 0 ? ` (${flags.join(", ")})` : "";
-      console.log(`  ${name}: ${role.description}${flagStr}`);
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await getProjectServiceJson(PROJECT_API_ROUTES.team.config, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config), null, 2));
+      return;
     }
-    console.log(`\nDefault role: ${config.defaultRole}`);
+    printTeamShow(result.config);
   });
 
 teamCmd
@@ -3554,58 +3586,75 @@ teamCmd
   .option("-d, --description <desc>", "Role description")
   .option("--reviewed-by <role>", "Role that reviews this role's work")
   .option("--can-edit", "Whether this role can edit code directly")
-  .action((role: string, options: { description?: string; reviewedBy?: string; canEdit?: boolean }) => {
-    const config = loadTeamConfig();
-    config.roles[role] = {
-      description: options.description ?? config.roles[role]?.description ?? `${role} agent`,
-      ...(options.reviewedBy && { reviewedBy: options.reviewedBy }),
-      ...(options.canEdit && { canEdit: true }),
-    };
-    saveTeamConfig(config);
-    console.log(`Role "${role}" saved.`);
-  });
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(
+    async (
+      role: string,
+      options: TeamCommandOptions & { description?: string; reviewedBy?: string; canEdit?: boolean },
+    ) => {
+      const projectRoot = await prepareProjectContext(options.project);
+      const result = await postProjectServiceJson(
+        PROJECT_API_ROUTES.team.addRole,
+        {
+          role,
+          ...(options.description ? { description: options.description } : {}),
+          ...(options.reviewedBy ? { reviewedBy: options.reviewedBy } : {}),
+          ...(options.canEdit ? { canEdit: true } : {}),
+        },
+        { projectRoot },
+      );
+      if (options.json) {
+        console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config, role), null, 2));
+        return;
+      }
+      console.log(`Role "${role}" saved.`);
+    },
+  );
 
 teamCmd
   .command("remove <role>")
   .description("Remove a role")
-  .action((role: string) => {
-    const config = loadTeamConfig();
-    if (!config.roles[role]) {
-      console.error(`Role "${role}" not found.`);
-      process.exit(1);
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (role: string, options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.removeRole, { role }, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config, role), null, 2));
+      return;
     }
-    delete config.roles[role];
-    if (config.defaultRole === role) {
-      config.defaultRole = Object.keys(config.roles)[0] ?? "coder";
-    }
-    saveTeamConfig(config);
     console.log(`Role "${role}" removed.`);
   });
 
 teamCmd
   .command("default <role>")
   .description("Set the default role for new agents")
-  .action((role: string) => {
-    const config = loadTeamConfig();
-    if (!config.roles[role]) {
-      console.error(`Role "${role}" not found. Add it first with: aimux team add ${role}`);
-      process.exit(1);
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (role: string, options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.defaultRole, { role }, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config, role), null, 2));
+      return;
     }
-    config.defaultRole = role;
-    saveTeamConfig(config);
     console.log(`Default role set to "${role}".`);
   });
 
 teamCmd
   .command("init")
   .description("Initialize project with default team structure")
-  .action(() => {
-    const config = getDefaultTeamConfig();
-    saveTeamConfig(config);
-    console.log("Team config initialized with default roles:");
-    for (const [name, role] of Object.entries(config.roles) as [string, any][]) {
-      console.log(`  ${name}: ${role.description}`);
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (options: TeamCommandOptions) => {
+    const projectRoot = await prepareProjectContext(options.project);
+    const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.init, {}, { projectRoot });
+    if (options.json) {
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config), null, 2));
+      return;
     }
+    printTeamInit(result.config);
   });
 
 void program.parseAsync().catch((error: unknown) => {

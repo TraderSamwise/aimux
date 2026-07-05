@@ -1,4 +1,5 @@
 import type { CoreProjectServiceState, CoreRelaySnapshot, CoreStatusProject } from "./core-command-contract.js";
+import type { TeamConfig } from "./project-api-contract.js";
 
 export interface CoreDaemonStatusTextPayload {
   daemon: { pid?: number; port?: number; serviceInfo?: unknown } | null;
@@ -80,6 +81,13 @@ export interface CoreOverseerTextPayload {
   sessionId: string;
   tool?: string;
   overseer: boolean;
+}
+
+export interface CoreTeamTextPayload {
+  ok: true;
+  projectRoot: string;
+  config: TeamConfig;
+  role?: string;
 }
 
 export interface CoreWorktreeSummaryTextPayload {
@@ -333,6 +341,46 @@ export function renderCoreOverseerStartLines(payload: CoreOverseerTextPayload): 
 
 export function renderCoreOverseerClearLines(payload: CoreOverseerTextPayload): string[] {
   return [`overseer cleared ${payload.sessionId}`];
+}
+
+export function renderCoreTeamShowLines(payload: CoreTeamTextPayload): string[] {
+  const lines = ["Team Roles:"];
+  for (const [name, role] of Object.entries(payload.config.roles)) {
+    const flags: string[] = [];
+    if (role.reviewedBy) flags.push(`reviewed by: ${role.reviewedBy}`);
+    if (role.canEdit) flags.push("can edit");
+    const flagStr = flags.length > 0 ? ` (${flags.join(", ")})` : "";
+    lines.push(`  ${name}: ${role.description}${flagStr}`);
+  }
+  lines.push("", `Default role: ${payload.config.defaultRole}`);
+  return lines;
+}
+
+export function renderCoreTeamAddLines(payload: CoreTeamTextPayload): string[] {
+  const role = requiredCoreTeamRole(payload);
+  return role ? [`Role "${role}" saved.`] : ["Error: role is required for this operation."];
+}
+
+export function renderCoreTeamRemoveLines(payload: CoreTeamTextPayload): string[] {
+  const role = requiredCoreTeamRole(payload);
+  return role ? [`Role "${role}" removed.`] : ["Error: role is required for this operation."];
+}
+
+export function renderCoreTeamDefaultLines(payload: CoreTeamTextPayload): string[] {
+  const role = requiredCoreTeamRole(payload);
+  return role ? [`Default role set to "${role}".`] : ["Error: role is required for this operation."];
+}
+
+export function renderCoreTeamInitLines(payload: CoreTeamTextPayload): string[] {
+  const lines = ["Team config initialized with default roles:"];
+  for (const [name, role] of Object.entries(payload.config.roles)) {
+    lines.push(`  ${name}: ${role.description}`);
+  }
+  return lines;
+}
+
+function requiredCoreTeamRole(payload: CoreTeamTextPayload): string | undefined {
+  return typeof payload.role === "string" && payload.role.trim() ? payload.role.trim() : undefined;
 }
 
 export function renderCoreWorktreeListLines(payload: CoreWorktreeSummaryTextPayload): string[] {

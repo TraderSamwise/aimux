@@ -1047,6 +1047,87 @@ describe("daemon supervision", () => {
     });
   });
 
+  it("serves team config text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const config = {
+      defaultRole: "coder",
+      roles: {
+        coder: { description: "Writes code", reviewedBy: "reviewer" },
+        reviewer: { description: "Reviews code", canEdit: true },
+      },
+    };
+    const calls: Array<{ url: string; body?: unknown; timeoutMs?: number }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown; timeoutMs?: number }) => {
+      calls.push({ url, body: opts?.body, timeoutMs: opts?.timeoutMs });
+      if (url.endsWith(PROJECT_API_ROUTES.team.config)) {
+        return { status: 200, json: { ok: true, config } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.team.init)) {
+        return { status: 200, json: { ok: true, config } };
+      }
+      if (
+        url.endsWith(PROJECT_API_ROUTES.team.addRole) ||
+        url.endsWith(PROJECT_API_ROUTES.team.removeRole) ||
+        url.endsWith(PROJECT_API_ROUTES.team.defaultRole)
+      ) {
+        return { status: 200, json: { ok: true, config } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const show = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.teamShowText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const add = await daemon.routeRequest("POST", CORE_API_ROUTES.teamAddText, {
+      project: projectRoot,
+      role: "planner",
+      description: "Plans work",
+      reviewedBy: "reviewer",
+      canEdit: true,
+    });
+    const defaulted = await daemon.routeRequest("POST", CORE_API_ROUTES.teamDefaultText, {
+      project: projectRoot,
+      role: "planner",
+    });
+    const removed = await daemon.routeRequest("POST", CORE_API_ROUTES.teamRemoveText, {
+      project: projectRoot,
+      role: "planner",
+    });
+    const initialized = await daemon.routeRequest("POST", CORE_API_ROUTES.teamInitText, {
+      project: projectRoot,
+    });
+
+    expect(show.status).toBe(200);
+    expect(show.body).toBe(
+      "Team Roles:\n  coder: Writes code (reviewed by: reviewer)\n  reviewer: Reviews code (can edit)\n\nDefault role: coder\n",
+    );
+    expect(add.body).toBe('Role "planner" saved.\n');
+    expect(defaulted.body).toBe('Default role set to "planner".\n');
+    expect(removed.body).toBe('Role "planner" removed.\n');
+    expect(initialized.body).toBe(
+      "Team config initialized with default roles:\n  coder: Writes code\n  reviewer: Reviews code\n",
+    );
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.addRole))?.body).toEqual({
+      role: "planner",
+      description: "Plans work",
+      reviewedBy: "reviewer",
+      canEdit: true,
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.addRole))?.timeoutMs).toBe(120_000);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.defaultRole))?.body).toEqual({
+      role: "planner",
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.defaultRole))?.timeoutMs).toBe(120_000);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.removeRole))?.body).toEqual({
+      role: "planner",
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.removeRole))?.timeoutMs).toBe(120_000);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.init))?.timeoutMs).toBe(120_000);
+  });
+
   it("rejects malformed lifecycle project-service responses", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
