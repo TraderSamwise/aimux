@@ -716,11 +716,16 @@ aimux_try_host_service() {
   shift
   project_root="$(pwd -P 2>/dev/null)" || return 1
   serve=0
+  open=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --serve)
         [ "$subcommand" = "restart" ] || return 1
         serve=1
+        ;;
+      --open)
+        [ "$subcommand" = "restart" ] || return 1
+        open=1
         ;;
       *)
         return 1
@@ -737,6 +742,7 @@ aimux_try_host_service() {
   esac
   set -- --data-urlencode "project=$project_root"
   [ "$serve" -eq 1 ] && set -- "$@" --data-urlencode "serve=1"
+  [ "$open" -eq 1 ] && set -- "$@" --data-urlencode "open=1"
   aimux_post_query_text_route "$path" 120 "$@"
 }
 

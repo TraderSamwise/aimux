@@ -478,6 +478,33 @@ describe("daemon supervision", () => {
     expect(coreActorMock.stops).not.toHaveBeenCalled();
   });
 
+  it("restarts project actors through the core command bus", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      id: "restart-project",
+      command: CORE_COMMAND_NAMES.projectRestart,
+      payload: { projectRoot, open: true },
+    });
+    const body = response.body as CoreCommandOk<typeof CORE_COMMAND_NAMES.projectRestart>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.project.projectRoot).toBe(projectRoot);
+    expect(body.result.dashboardSessionName).toBe("aimux-test");
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(tmuxRuntimeMock.openTarget).toHaveBeenCalledWith(
+      { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: false, alreadyResolved: true },
+    );
+  });
+
   it("runs control-plane restart through daemon-owned project actors", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

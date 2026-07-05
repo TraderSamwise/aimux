@@ -20,6 +20,8 @@ import {
   type CoreCommandEnvelope,
   type CoreCommandName,
   type CoreCommandResponse,
+  type CoreProjectRestartPayload,
+  type CoreProjectRestartResult,
   type CoreRelaySnapshot,
   type CoreRestartResult,
   type CoreStatusProject,
@@ -649,15 +651,8 @@ export class AimuxDaemon {
     const projectRoot = this.projectRootTextParam(routeUrl, body);
     if (typeof projectRoot !== "string") return projectRoot;
     const serveOnly = this.booleanParam(routeUrl, body, "serve", false);
-    await this.stopProject(projectRoot);
-    const project = await this.ensureProject(projectRoot);
-    let dashboardSessionName: string | undefined;
-    if (!serveOnly) {
-      const tmux = new TmuxRuntimeManager();
-      const { dashboardSession } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
-      dashboardSessionName = dashboardSession.sessionName;
-    }
-    const payload: CoreProjectRestartTextPayload = { projectRoot, project, dashboardSessionName };
+    const open = this.booleanParam(routeUrl, body, "open", false);
+    const payload = await this.restartProjectService(projectRoot, { open, serveOnly });
     return this.textOrJsonLines(routeUrl, payload, renderCoreProjectRestartLines(payload));
   }
 
@@ -2298,6 +2293,31 @@ export class AimuxDaemon {
     };
   }
 
+  private async restartProjectService(
+    projectRoot: string,
+    options: { open?: boolean; serveOnly?: boolean } = {},
+  ): Promise<CoreProjectRestartTextPayload> {
+    await this.stopProject(projectRoot);
+    const project = await this.ensureProject(projectRoot);
+    let dashboardSessionName: string | undefined;
+    if (!options.serveOnly) {
+      const tmux = new TmuxRuntimeManager();
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      dashboardSessionName = dashboardSession.sessionName;
+      if (options.open) {
+        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+      }
+    }
+    return { projectRoot, project, dashboardSessionName };
+  }
+
+  private projectRestartResult(payload: CoreProjectRestartTextPayload): CoreProjectRestartResult {
+    return {
+      project: payload.project,
+      dashboardSessionName: payload.dashboardSessionName,
+    };
+  }
+
   private async doctorVersionsTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
     try {
       const report = await buildRuntimeCoherenceReport();
@@ -2446,6 +2466,25 @@ export class AimuxDaemon {
             command,
             issuedAt,
             result: { project: await this.stopProject(killProjectRoot.projectRoot, { force: true }) },
+          },
+        };
+      }
+      case CORE_COMMAND_NAMES.projectRestart: {
+        const restartPayload = envelope?.payload as CoreProjectRestartPayload | undefined;
+        const restartProjectRoot = this.requireProjectRoot(id, command, restartPayload);
+        if (!restartProjectRoot.ok) return restartProjectRoot.response;
+        const result = await this.restartProjectService(restartProjectRoot.projectRoot, {
+          open: Boolean(restartPayload?.open),
+          serveOnly: Boolean(restartPayload?.serve),
+        });
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            id,
+            command,
+            issuedAt,
+            result: this.projectRestartResult(result),
           },
         };
       }

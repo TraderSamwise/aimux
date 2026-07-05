@@ -2,8 +2,11 @@ import { resolve as pathResolve } from "node:path";
 import {
   coreCommandArgs,
   isCoreCliCommand,
+  parseCoreDaemonRestartArgs,
+  parseCoreHostRestartArgs,
   parseCoreLogsArgs,
   parseCoreProjectEnsureArgs,
+  parseCoreRestartArgs,
 } from "./core-cli-routing.js";
 import { CORE_COMMAND_NAMES, type CoreRelaySnapshot, type CoreStatusProject } from "./core-command-contract.js";
 import {
@@ -13,6 +16,10 @@ import {
   renderCoreLoginLines,
   renderCoreLogoutLines,
   renderCoreProjectEnsureLines,
+  renderCoreProjectKillLines,
+  renderCoreProjectRestartLines,
+  renderCoreProjectServeLines,
+  renderCoreProjectStopLines,
   renderCoreProjectsListLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
@@ -152,6 +159,63 @@ async function runDaemonProjectEnsure(args: string[], io: Required<CoreCliIo>): 
     return 0;
   }
   renderCoreProjectEnsureLines(payload).forEach(io.stdout);
+  return 0;
+}
+
+async function runRestart(args: string[], io: Required<CoreCliIo>): Promise<number> {
+  const parsedArgs = args[0] === "daemon" ? parseCoreDaemonRestartArgs(args) : parseCoreRestartArgs(args);
+  if (!parsedArgs) {
+    io.stderr("error: invalid restart arguments");
+    return 1;
+  }
+  const restartArgs = args[0] === "daemon" ? null : parseCoreRestartArgs(args);
+  const projectRoot = restartArgs?.project ? resolveProjectRoot(pathResolve(restartArgs.project)) : undefined;
+  const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.restart, projectRoot ? { projectRoot } : undefined);
+  if (parsedArgs.json) {
+    io.stdout(JSON.stringify(result.restart, null, 2));
+  } else {
+    io.stdout(result.text);
+  }
+  return result.restart.summary.failures > 0 ? 1 : 0;
+}
+
+async function runProjectServe(io: Required<CoreCliIo>): Promise<number> {
+  const projectRoot = resolveProjectRoot(io.cwd());
+  await initPaths(projectRoot);
+  const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+  renderCoreProjectServeLines({ project: result.project }).forEach(io.stdout);
+  return 0;
+}
+
+async function runHostService(args: string[], io: Required<CoreCliIo>): Promise<number> {
+  const projectRoot = resolveProjectRoot(io.cwd());
+  await initPaths(projectRoot);
+  const [, subcommand] = args;
+  if (subcommand === "stop") {
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+    renderCoreProjectStopLines({ projectRoot, project: result.project }).forEach(io.stdout);
+    return 0;
+  }
+  if (subcommand === "kill") {
+    const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectKill, { projectRoot });
+    renderCoreProjectKillLines({ projectRoot, project: result.project }).forEach(io.stdout);
+    return 0;
+  }
+  const restartArgs = parseCoreHostRestartArgs(args);
+  if (!restartArgs) {
+    io.stderr("error: invalid host restart arguments");
+    return 1;
+  }
+  const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectRestart, {
+    projectRoot,
+    open: restartArgs.open,
+    serve: restartArgs.serve,
+  });
+  renderCoreProjectRestartLines({
+    projectRoot,
+    project: result.project,
+    dashboardSessionName: result.dashboardSessionName,
+  }).forEach(io.stdout);
   return 0;
 }
 
@@ -314,8 +378,14 @@ export async function runCoreCli(
       io.stderr(`unsupported core command: ${args.join(" ")}`);
       return 2;
     }
+    if (command === "restart") return await runRestart(args, io);
     if (command === "host" && subcommand === "status") return await runHostStatus(args, io);
+    if (command === "serve") return await runProjectServe(io);
+    if (command === "host" && ["stop", "kill", "restart"].includes(subcommand ?? "")) {
+      return await runHostService(args, io);
+    }
     if (command === "daemon" && subcommand === "ensure") return await runDaemonEnsure(args, io);
+    if (command === "daemon" && subcommand === "restart") return await runRestart(args, io);
     if (command === "daemon" && subcommand === "status") return await runDaemonStatus(args, io);
     if (command === "daemon" && subcommand === "projects") return await runDaemonProjects(args, io);
     if (command === "daemon" && subcommand === "project-ensure") return await runDaemonProjectEnsure(args, io);

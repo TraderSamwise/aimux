@@ -96,6 +96,7 @@ export const CORE_COMMAND_NAMES = {
   projectEnsure: "core.project.ensure",
   projectStop: "core.project.stop",
   projectKill: "core.project.kill",
+  projectRestart: "core.project.restart",
   restart: "core.restart",
   relayStatus: "core.relay.status",
   relayEnable: "core.relay.enable",
@@ -143,6 +144,11 @@ export interface CoreProjectPayload {
   projectRoot: string;
 }
 
+export interface CoreProjectRestartPayload extends CoreProjectPayload {
+  open?: boolean;
+  serve?: boolean;
+}
+
 export interface CoreRestartPayload {
   projectRoot?: string;
 }
@@ -169,6 +175,11 @@ export interface CoreProjectStopResult {
 
 export type CoreProjectKillResult = CoreProjectStopResult;
 
+export interface CoreProjectRestartResult {
+  project: CoreProjectServiceState;
+  dashboardSessionName?: string;
+}
+
 export interface CoreRelayResult {
   relay: CoreRelaySnapshot;
 }
@@ -185,6 +196,7 @@ export interface CoreCommandPayloadByName {
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectPayload;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectPayload;
+  [CORE_COMMAND_NAMES.projectRestart]: CoreProjectRestartPayload;
   [CORE_COMMAND_NAMES.restart]: CoreRestartPayload | undefined;
   [CORE_COMMAND_NAMES.relayStatus]: undefined;
   [CORE_COMMAND_NAMES.relayEnable]: undefined;
@@ -198,6 +210,7 @@ export interface CoreCommandResultByName {
   [CORE_COMMAND_NAMES.projectEnsure]: CoreProjectEnsureResult;
   [CORE_COMMAND_NAMES.projectStop]: CoreProjectStopResult;
   [CORE_COMMAND_NAMES.projectKill]: CoreProjectKillResult;
+  [CORE_COMMAND_NAMES.projectRestart]: CoreProjectRestartResult;
   [CORE_COMMAND_NAMES.restart]: CoreRestartResult;
   [CORE_COMMAND_NAMES.relayStatus]: CoreRelayResult;
   [CORE_COMMAND_NAMES.relayEnable]: CoreRelayResult;

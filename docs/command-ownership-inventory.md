@@ -92,7 +92,7 @@ No commands currently live in this category.
 | `aimux restart-runtime`                                                 | `BOOTSTRAP` | daemon + tmux          | Advanced runtime repair; normal restart should decide when this is needed.           |
 | `aimux repair`                                                          | `CUT`       | daemon + tmux          | Explicit advanced repair uses `/core/repair-text`; stale daemon fallback may bootstrap.               |
 | `aimux host ui`, `host serve`                                           | `INTERNAL`  | daemon                 | Developer service entrypoints; not normal user recovery commands.                    |
-| `aimux host stop`, `host kill`, `host restart`                          | `CUT`       | daemon                 | Healthy installed path uses `/core/project-*-text`; `host restart --open` remains unsupported by the shim fast path. |
+| `aimux host stop`, `host kill`, `host restart`                          | `CUT`       | daemon                 | Healthy installed path uses `/core/project-*-text`; `host restart --open` stays daemon-owned. |
 | `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
 | `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |

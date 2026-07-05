@@ -218,6 +218,12 @@ const coreCommandDispositions: Array<{
     shimNeedle: "/core/project-restart-text",
   },
   {
+    command: "host restart --open",
+    args: ["host", "restart", "--open"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/project-restart-text",
+  },
+  {
     command: "remote status",
     args: ["remote", "status"],
     disposition: "shim-fast-path",
@@ -313,6 +319,7 @@ describe("core command ownership inventory", () => {
       "host kill",
       "host restart",
       "host restart --serve",
+      "host restart --open",
       "remote status",
       "remote status --json",
       "remote enable",
@@ -333,7 +340,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(31);
+    expect(fastPaths).toHaveLength(32);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);

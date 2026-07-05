@@ -453,6 +453,7 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["host", "kill"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
     expect(fixture.run(["host", "restart"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
     expect(fixture.run(["host", "restart", "--serve"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
+    expect(fixture.run(["host", "restart", "--open"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
     expect(curlLog).toContain("/core/project-serve-text");
@@ -461,6 +462,7 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("/core/project-restart-text");
     expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
     expect(curlLog).toContain("serve=1\n");
+    expect(curlLog).toContain("open=1\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
@@ -486,7 +488,7 @@ describe("installed aimux shim", () => {
 
     expectInvalidNoNode(fixture, ["serve", "--json"]);
     expectInvalidNoNode(fixture, ["host", "stop", "--serve"]);
-    expectInvalidNoNode(fixture, ["host", "restart", "--open"]);
+    expectInvalidNoNode(fixture, ["host", "stop", "--open"]);
   });
 
   it("serves logs commands from a matching daemon without launching Node", () => {
