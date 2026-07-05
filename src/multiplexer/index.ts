@@ -24,7 +24,7 @@ import {
   type SessionAlertDisplayContext,
 } from "../alert-display.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
-import { listNotifications, type NotificationRecord } from "../notifications.js";
+import type { NotificationRecord } from "../notifications.js";
 import { type CoordinationModel, type WorklistItem } from "../coordination-model.js";
 import { type NotificationRowMeta } from "./notifications.js";
 import { type WorkflowEntry } from "../workflow.js";
@@ -385,15 +385,15 @@ export class Multiplexer {
 
   private deriveSessionSemanticState(sessionId: string, status?: DashboardSession["status"]) {
     const derived = loadMetadataState().sessions[sessionId]?.derived;
-    const unreadNotifications = listNotifications({ unreadOnly: true, sessionId });
-    const latestNotification = unreadNotifications[0];
+    const dashboardSession = this.dashboardSessionsCache.find((session) => session.id === sessionId);
+    const runtimeSession = this.sessions.find((session) => session.id === sessionId);
     return deriveSessionSemantics({
-      status: status ?? this.sessions.find((session) => session.id === sessionId)?.status ?? "offline",
+      status: status ?? dashboardSession?.status ?? runtimeSession?.status ?? "offline",
       activity: derived?.activity,
       attention: derived?.attention,
       unseenCount: derived?.unseenCount,
-      notificationUnreadCount: unreadNotifications.length,
-      latestNotification,
+      notificationUnreadCount: dashboardSession?.notificationUnreadCount ?? 0,
+      latestNotificationText: dashboardSession?.latestNotificationText,
       hasActiveTask: false,
     });
   }

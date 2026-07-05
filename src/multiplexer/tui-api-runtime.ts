@@ -1,4 +1,4 @@
-export type TuiApiConnectionState = "connected" | "degraded" | "reconnecting" | "disposed";
+export type TuiApiConnectionState = "connected" | "degraded" | "disposed";
 
 export interface TuiApiRequestOptions {
   timeoutMs?: number;
