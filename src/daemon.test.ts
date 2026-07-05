@@ -835,6 +835,76 @@ describe("daemon supervision", () => {
     expect(response.body).toContain("No log entries at ");
   });
 
+  it("serves metadata endpoint text through the daemon", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.metadataText}?project=${encodeURIComponent(projectRoot)}&arg=metadata&arg=endpoint`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("http://127.0.0.1:44291\n");
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("forwards metadata mutations through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown } = {}) => {
+      if (url.endsWith(PROJECT_API_ROUTES.runtime.setContext)) {
+        expect(opts.body).toEqual({
+          session: "claude-1",
+          context: {
+            cwd: "/repo",
+            branch: "feature",
+            pr: { number: 42, title: "Ship it" },
+          },
+        });
+        return { status: 200, json: { ok: true } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const args = [
+      "metadata",
+      "set-context",
+      "claude-1",
+      "--cwd",
+      "/repo",
+      "--branch=feature",
+      "--pr-number",
+      "42",
+      "--pr-title",
+      "Ship it",
+    ].join("\n");
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.metadataText}?project=${encodeURIComponent(projectRoot)}&args=${encodeURIComponent(args)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("");
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("rejects malformed metadata text before calling the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.metadataText}?project=${encodeURIComponent(projectRoot)}&arg=metadata&arg=set-status`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body).toBe("metadata set-status requires <session> and <text>\n");
+    expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
+  });
+
   it("serves host agent-read text through the project service", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
