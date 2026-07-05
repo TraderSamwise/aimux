@@ -48,6 +48,18 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart", "--json"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "serve"])).toBe("core");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "dashboard-reload", "--open", "--client-tty", "/dev/ttys001"])).toBe(
+      "core",
+    );
+    expect(
+      cliEntryFor([
+        "node",
+        "/p/bin/aimux",
+        "restart-runtime",
+        "--project-root=/p",
+        "--current-client-session=aimux-repo-client-1234abcd",
+      ]),
+    ).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "stop"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "kill"])).toBe("core");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "restart"])).toBe("core");
@@ -85,6 +97,8 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "serve", "--json"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "stop", "--open"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "host", "agent-stream", "claude-1"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "dashboard-reload", "--client-tty=-x"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "restart-runtime", "--project-root=-x"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "unlock"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "--help"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux"])).toBe("main");
