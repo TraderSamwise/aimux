@@ -97,6 +97,28 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("tolerates missing runtime context payloads", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const baseUrl = `http://127.0.0.1:${endpoint!.port}`;
+    updateSessionMetadata("claude-1", (current) => ({
+      ...current,
+      context: { cwd: "/repo", pr: { number: 42, title: "Ship it" } },
+    }));
+
+    const response = await fetch(`${baseUrl}${PROJECT_API_ROUTES.runtime.setContext}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: "claude-1", context: null }),
+    });
+
+    expect(response.ok).toBe(true);
+    expect(loadMetadataState().sessions["claude-1"].context).toEqual({
+      cwd: "/repo",
+      pr: { number: 42, title: "Ship it" },
+    });
+  });
+
   it("serves team config reads and mutations from the project service", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
