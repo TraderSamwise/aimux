@@ -208,6 +208,18 @@ const coreCommandDispositions: Array<{
     shimNeedle: "/core/dashboard-reload-text",
   },
   {
+    command: "dashboard-reload --open --client-tty",
+    args: ["dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/dashboard-reload-text",
+  },
+  {
+    command: "dashboard-reload --open --current-client-session",
+    args: ["dashboard-reload", "--open", "--current-client-session=aimux-repo-client-1234abcd"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/dashboard-reload-text",
+  },
+  {
     command: "restart-runtime",
     args: ["restart-runtime"],
     disposition: "shim-fast-path",
@@ -218,6 +230,18 @@ const coreCommandDispositions: Array<{
     args: ["restart-runtime", "--json"],
     disposition: "shim-fast-path",
     shimNeedle: "/core/runtime-restart-text?json=1",
+  },
+  {
+    command: "restart-runtime --open --client-tty",
+    args: ["restart-runtime", "--open", "--client-tty", "/dev/ttys001"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/runtime-restart-text",
+  },
+  {
+    command: "restart-runtime --project-root --current-client-session",
+    args: ["restart-runtime", "--project-root=/tmp/project", "--current-client-session=aimux-repo-client-1234abcd"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/runtime-restart-text",
   },
   {
     command: "host stop",
@@ -343,8 +367,12 @@ describe("core command ownership inventory", () => {
       "serve",
       "dashboard-reload",
       "dashboard-reload --open",
+      "dashboard-reload --open --client-tty",
+      "dashboard-reload --open --current-client-session",
       "restart-runtime",
       "restart-runtime --json",
+      "restart-runtime --open --client-tty",
+      "restart-runtime --project-root --current-client-session",
       "host stop",
       "host kill",
       "host restart",
@@ -365,13 +393,18 @@ describe("core command ownership inventory", () => {
       expect(isCoreCliCommand(entry.args), entry.command).toBe(true);
     }
     expect(isCoreCliCommand(["restart-runtime", "--open", "--json"])).toBe(false);
+    expect(isCoreCliCommand(["dashboard-reload", "--client-tty=-x"])).toBe(false);
+    expect(isCoreCliCommand(["dashboard-reload", "--current-client-session=-x"])).toBe(false);
+    expect(isCoreCliCommand(["restart-runtime", "--project-root=-x"])).toBe(false);
+    expect(isCoreCliCommand(["restart-runtime", "--client-tty=-x"])).toBe(false);
+    expect(isCoreCliCommand(["restart-runtime", "--current-client-session=-x"])).toBe(false);
   });
 
   it("keeps shim-fast-path commands backed by explicit installed shell routes", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(36);
+    expect(fastPaths).toHaveLength(40);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
