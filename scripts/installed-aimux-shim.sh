@@ -89,6 +89,23 @@ aimux_handle_fast_path_failure() {
   fi
 }
 
+aimux_args_include_help() {
+  for arg do
+    case "$arg" in
+      -h | --help)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+aimux_metadata_help_requested() {
+  [ "$#" -eq 1 ] && return 0
+  [ "${2:-}" = "help" ] && return 0
+  aimux_args_include_help "$@"
+}
+
 aimux_try_daemon_ensure() {
   port="$(aimux_matching_daemon_port)" || return 1
   json="$(aimux_health_json "$port")"
@@ -170,6 +187,41 @@ aimux_post_query_text_route() {
   trap 'rm -f "$body_file"; exit 130' INT TERM
   status="$(
     curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST "$@" \
+      "http://127.0.0.1:$port$path" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*)
+      cat "$body_file"
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 0
+      ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+}
+
+aimux_post_get_query_text_route() {
+  path="$1"
+  timeout="${2:-60}"
+  shift 2
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-core-query-post-get.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST --get "$@" \
       "http://127.0.0.1:$port$path" 2>/dev/null || true
   )"
   case "$status" in
@@ -428,6 +480,20 @@ aimux_try_logs() {
       return 1
       ;;
   esac
+}
+
+aimux_try_metadata() {
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  metadata_arg_count="$#"
+  while [ "$metadata_arg_count" -gt 0 ]; do
+    metadata_arg="$1"
+    shift
+    metadata_arg_count=$((metadata_arg_count - 1))
+    set -- "$@" --data-urlencode "arg=$metadata_arg"
+  done
+  set -- --data-urlencode "project=$project_root" "$@"
+  aimux_post_get_query_text_route "/core/metadata-text" 30 "$@"
 }
 
 aimux_try_doctor() {
@@ -1992,6 +2058,15 @@ case "${1:-} ${2:-}" in
     ;;
   "logs path" | "logs tail" | "logs clear")
     if aimux_try_logs "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  "metadata "*)
+    if aimux_metadata_help_requested "$@"; then
+      :
+    elif aimux_try_metadata "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"

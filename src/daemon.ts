@@ -143,6 +143,7 @@ import {
 } from "./daemon-state.js";
 import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
 import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
+import { parseRuntimeMetadataCliArgs } from "./metadata-cli-routing.js";
 
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
@@ -178,6 +179,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.logsClearText,
   CORE_API_ROUTES.logsPathText,
   CORE_API_ROUTES.logsTailText,
+  CORE_API_ROUTES.metadataText,
   CORE_API_ROUTES.loopAddText,
   CORE_API_ROUTES.loopBlockText,
   CORE_API_ROUTES.loopDoneText,
@@ -587,6 +589,30 @@ export class AimuxDaemon {
     } catch (error) {
       return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private async metadataTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
+    const project = routeUrl.searchParams.get("project");
+    if (!project) return this.textError(400, "project query is required");
+    const rawArgs = routeUrl.searchParams.getAll("arg");
+    const argsText = routeUrl.searchParams.get("args");
+    const args = rawArgs.length > 0 ? rawArgs : (argsText?.split("\n").filter(Boolean) ?? []);
+    const parsed = parseRuntimeMetadataCliArgs(args);
+    if (!parsed.ok) return this.textError(400, parsed.error);
+    const projectRoot = this.resolveProjectRoot(project);
+    if (parsed.command === "endpoint") {
+      await this.ensureProject(projectRoot);
+      const endpoint = loadMetadataEndpointByProjectId(getProjectIdFor(projectRoot));
+      if (!endpoint) return this.textError(503, `Error: project service unavailable for ${projectRoot}`);
+      return {
+        status: 200,
+        body: `http://${endpoint.host}:${endpoint.port}\n`,
+        contentType: "text/plain; charset=utf-8",
+      };
+    }
+    const result = await this.postProjectServiceJson(projectRoot, parsed.routePath, parsed.body);
+    if (!result.ok) return result.response;
+    return { status: 200, body: "", contentType: "text/plain; charset=utf-8" };
   }
 
   private isRouteResponse(value: unknown): value is DaemonRouteResponse {
@@ -2382,6 +2408,10 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.logsClearText) {
       return this.logsClearTextRoute(routeUrl);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.metadataText) {
+      return this.metadataTextRoute(routeUrl);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.doctorVersionsText) {

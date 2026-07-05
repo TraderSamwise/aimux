@@ -29,6 +29,7 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "logs path", shimNeedle: "/core/logs/path-text" },
   { command: "logs tail", shimNeedle: "/core/logs/tail-text" },
   { command: "logs clear", shimNeedle: "/core/logs/clear-text" },
+  { command: "metadata ...", shimNeedle: "/core/metadata-text" },
   { command: "repair", shimNeedle: "/core/repair-text" },
   { command: "restart", shimNeedle: "/core/restart-text" },
   { command: "worktree", shimNeedle: "/core/worktree/list-text" },

@@ -30,14 +30,11 @@ import {
 import {
   loadMetadataEndpoint,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
-  updateSessionMetadata,
-  clearSessionLogs,
   type MetadataTone,
   type SessionContextMetadata,
   type SessionServiceMetadata,
   removeMetadataEndpoint,
 } from "./metadata-store.js";
-import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { AimuxDaemon } from "./daemon.js";
 import { getDaemonHost, getDaemonPort, loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
@@ -3231,18 +3228,16 @@ repairCmd
   });
 
 const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");
-const metadataTracker = new AgentTracker();
+
+async function postRuntimeMetadata(path: string, body: unknown): Promise<void> {
+  await postProjectServiceJson(path, body);
+}
 
 metadataCmd
   .command("endpoint")
   .description("Print the local metadata API endpoint")
   .action(async () => {
-    await initPaths();
-    const endpoint = loadMetadataEndpoint();
-    if (!endpoint) {
-      console.error("aimux metadata API is not running for this project");
-      process.exit(1);
-    }
+    const endpoint = await getProjectServiceEndpoint();
     console.log(`http://${endpoint.host}:${endpoint.port}`);
   });
 
@@ -3266,14 +3261,16 @@ metadataCmd
         threadName?: string;
       },
     ) => {
-      await initPaths();
-      metadataTracker.emit(session, {
-        kind,
-        message: opts.message,
-        source: opts.source,
-        tone: opts.tone,
-        threadId: opts.threadId,
-        threadName: opts.threadName,
+      await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.event, {
+        session,
+        event: {
+          kind,
+          message: opts.message,
+          source: opts.source,
+          tone: opts.tone,
+          threadId: opts.threadId,
+          threadName: opts.threadName,
+        },
       });
     },
   );
@@ -3282,24 +3279,21 @@ metadataCmd
   .command("mark-seen <session>")
   .description("Mark a session's unseen activity as seen")
   .action(async (session: string) => {
-    await initPaths();
-    metadataTracker.markSeen(session);
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.markSeen, { session });
   });
 
 metadataCmd
   .command("set-activity <session> <activity>")
   .description("Set derived activity state for a session")
   .action(async (session: string, activity: AgentActivityState) => {
-    await initPaths();
-    metadataTracker.setActivity(session, activity);
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setActivity, { session, activity });
   });
 
 metadataCmd
   .command("set-attention <session> <attention>")
   .description("Set derived attention state for a session")
   .action(async (session: string, attention: AgentAttentionState) => {
-    await initPaths();
-    metadataTracker.setAttention(session, attention);
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setAttention, { session, attention });
   });
 
 program
@@ -3431,11 +3425,7 @@ metadataCmd
   .option("--tone <tone>", "Status tone", "info")
   .description("Set a session status pill")
   .action(async (session: string, text: string, opts: { tone?: MetadataTone }) => {
-    await initPaths();
-    updateSessionMetadata(session, (current) => ({
-      ...current,
-      status: { text, tone: opts.tone },
-    }));
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setStatus, { session, text, tone: opts.tone });
   });
 
 metadataCmd
@@ -3443,11 +3433,19 @@ metadataCmd
   .option("--label <label>", "Progress label")
   .description("Set per-session progress")
   .action(async (session: string, current: string, total: string, opts: { label?: string }) => {
-    await initPaths();
-    updateSessionMetadata(session, (existing) => ({
-      ...existing,
-      progress: { current: Number(current), total: Number(total), label: opts.label },
-    }));
+    const currentNum = Number(current);
+    const totalNum = Number(total);
+    if (!Number.isFinite(currentNum) || !Number.isFinite(totalNum)) {
+      console.error("metadata set-progress requires numeric <current> and <total>");
+      process.exitCode = 1;
+      return;
+    }
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setProgress, {
+      session,
+      current: currentNum,
+      total: totalNum,
+      label: opts.label,
+    });
   });
 
 metadataCmd
@@ -3473,32 +3471,20 @@ metadataCmd
         prUrl?: string;
       },
     ) => {
-      await initPaths();
       const context: SessionContextMetadata = {
         cwd: opts.cwd,
         worktreePath: opts.worktreePath,
         worktreeName: opts.worktreeName,
         branch: opts.branch,
-        pr:
-          opts.prNumber || opts.prTitle || opts.prUrl
-            ? {
-                number: opts.prNumber ? Number(opts.prNumber) : undefined,
-                title: opts.prTitle,
-                url: opts.prUrl,
-              }
-            : undefined,
       };
-      updateSessionMetadata(session, (existing) => ({
-        ...existing,
-        context: {
-          ...(existing.context ?? {}),
-          ...context,
-          pr: {
-            ...(existing.context?.pr ?? {}),
-            ...(context.pr ?? {}),
-          },
-        },
-      }));
+      if (opts.prNumber || opts.prTitle || opts.prUrl) {
+        context.pr = {
+          number: opts.prNumber ? Number(opts.prNumber) : undefined,
+          title: opts.prTitle,
+          url: opts.prUrl,
+        };
+      }
+      await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setContext, { session, context });
     },
   );
 
@@ -3508,7 +3494,6 @@ metadataCmd
   .option("--label <label>", "Shared label for the services")
   .description("Set detected session services/ports")
   .action(async (session: string, opts: { url: string[]; label?: string }) => {
-    await initPaths();
     const services: SessionServiceMetadata[] = (opts.url ?? []).map((url) => {
       const match = url.match(/:(\d+)(?:\/|$)/);
       return {
@@ -3517,13 +3502,7 @@ metadataCmd
         port: match ? Number(match[1]) : undefined,
       };
     });
-    updateSessionMetadata(session, (existing) => ({
-      ...existing,
-      derived: {
-        ...(existing.derived ?? {}),
-        services,
-      },
-    }));
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setServices, { session, services });
   });
 
 metadataCmd
@@ -3532,22 +3511,19 @@ metadataCmd
   .option("--tone <tone>", "Log tone")
   .description("Append a session log line")
   .action(async (session: string, message: string, opts: { source?: string; tone?: MetadataTone }) => {
-    await initPaths();
-    updateSessionMetadata(session, (existing) => ({
-      ...existing,
-      logs: [
-        ...(existing.logs ?? []).slice(-19),
-        { message, source: opts.source, tone: opts.tone, ts: new Date().toISOString() },
-      ],
-    }));
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.log, {
+      session,
+      message,
+      source: opts.source,
+      tone: opts.tone,
+    });
   });
 
 metadataCmd
   .command("clear-log <session>")
   .description("Clear session logs")
   .action(async (session: string) => {
-    await initPaths();
-    clearSessionLogs(session);
+    await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.clearLog, { session });
   });
 
 // ── Team commands ──────────────────────────────────────────────────
