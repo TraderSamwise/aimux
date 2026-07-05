@@ -805,13 +805,15 @@ describe("installed aimux shim", () => {
   it("serves agent utility commands from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
     const projectDir = join(fixture.root, "repo");
-    const worktreeDir = join(fixture.root, "repo", "feature");
-    mkdirSync(worktreeDir, { recursive: true });
+    mkdirSync(projectDir, { recursive: true });
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     writeFileSync(fixture.textRouteFile, "delivered to claude-1\n");
-    expect(fixture.run(["input", "claude-1", "hello", "--flag"], {}, { cwd: projectDir }).stdout).toBe(
+    expect(fixture.run(["input", "claude-1", "hello", "--project", projectDir], {}, { cwd: projectDir }).stdout).toBe(
+      "delivered to claude-1\n",
+    );
+    expect(fixture.run(["input", "claude-1", "--", "--flag"], {}, { cwd: projectDir }).stdout).toBe(
       "delivered to claude-1\n",
     );
 
@@ -821,6 +823,10 @@ describe("installed aimux shim", () => {
     writeFileSync(fixture.textRouteFile, "renamed claude-1 -> reviewer\n");
     expect(fixture.run(["rename", "claude-1", "--label", "reviewer", "--project=/repo"]).stdout).toBe(
       "renamed claude-1 -> reviewer\n",
+    );
+    writeFileSync(fixture.textRouteFile, "renamed claude-1 ->\n");
+    expect(fixture.run(["rename", "claude-1", "--label="], {}, { cwd: projectDir }).stdout).toBe(
+      "renamed claude-1 ->\n",
     );
 
     writeFileSync(fixture.textRouteFile, "migrated claude-1 -> feature\n");
@@ -834,9 +840,11 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("/core/agents/rename-text");
     expect(curlLog).toContain("/core/agents/migrate-text");
     expect(curlLog).toContain("sessionId=claude-1\n");
-    expect(curlLog).toContain("text=hello --flag\n");
+    expect(curlLog).toContain("text=hello\n");
+    expect(curlLog).toContain("text=--flag\n");
     expect(curlLog).toContain("label=reviewer\n");
-    expect(curlLog).toContain(`worktreePath=${realpathSync(worktreeDir)}\n`);
+    expect(curlLog).toContain("label=\n");
+    expect(curlLog).toContain("worktreePath=feature\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
@@ -899,6 +907,7 @@ describe("installed aimux shim", () => {
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     expectInvalidNoNode(fixture, ["input", "claude-1"]);
+    expectInvalidNoNode(fixture, ["input", "claude-1", "--flag"]);
     expectInvalidNoNode(fixture, ["ps", "--bad"]);
     expectInvalidNoNode(fixture, ["rename", "claude-1", "--label"]);
     expectInvalidNoNode(fixture, ["migrate", "claude-1", "--worktree"]);

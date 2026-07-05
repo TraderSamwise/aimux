@@ -1607,12 +1607,7 @@ export class AimuxDaemon {
     if (typeof sessionId !== "string") return sessionId;
     const text = this.requiredParam(routeUrl, body, "text");
     if (typeof text !== "string") return text;
-    const result = await this.postProjectServiceJson(
-      project,
-      PROJECT_API_ROUTES.agents.input,
-      { sessionId, text },
-      { ensureProject: false },
-    );
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.input, { sessionId, text });
     if (!result.ok) return result.response;
     const payload: CoreAgentInputTextPayload = { ok: true, projectRoot: result.projectRoot, sessionId };
     return this.textOrJsonLines(routeUrl, payload, renderCoreAgentInputLines(payload));
@@ -1621,12 +1616,15 @@ export class AimuxDaemon {
   private async agentPsTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
-    const result = await this.getProjectServiceJson(project, PROJECT_API_ROUTES.agents.list, { ensureProject: false });
+    const result = await this.getProjectServiceJson(project, PROJECT_API_ROUTES.agents.list);
     if (!result.ok) return result.response;
     const agents = this.requiredProjectServiceArray(result.json, "agent ps", "agents");
     if (!Array.isArray(agents)) return agents;
     if (agents.some((agent) => !agent || typeof agent !== "object" || Array.isArray(agent))) {
-      return this.textError(502, "Error: project service returned invalid agent ps response: agents entries are invalid");
+      return this.textError(
+        502,
+        "Error: project service returned invalid agent ps response: agents entries are invalid",
+      );
     }
     const payload: CoreAgentSummaryTextPayload = {
       agents: agents as CoreAgentSummaryTextPayload["agents"],
@@ -1639,24 +1637,20 @@ export class AimuxDaemon {
     if (typeof project !== "string") return project;
     const sessionId = this.requiredParam(routeUrl, body, "sessionId");
     if (typeof sessionId !== "string") return sessionId;
-    const label = this.requiredParam(routeUrl, body, "label");
-    if (typeof label !== "string") return label;
-    const result = await this.postProjectServiceJson(
-      project,
-      PROJECT_API_ROUTES.agents.rename,
-      { sessionId, label },
-      { ensureProject: false },
-    );
+    const bodyRecord = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const hasLabel = Object.prototype.hasOwnProperty.call(bodyRecord, "label") || routeUrl.searchParams.has("label");
+    const label = this.stringParam(routeUrl, body, "label");
+    if (!hasLabel || label === undefined) return this.textError(400, "label is required");
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.rename, { sessionId, label });
     if (!result.ok) return result.response;
     const returnedSessionId = this.requiredProjectServiceString(result.json, "rename", "sessionId");
     if (typeof returnedSessionId !== "string") return returnedSessionId;
-    const returnedLabel = this.requiredProjectServiceString(result.json, "rename", "label");
-    if (typeof returnedLabel !== "string") return returnedLabel;
+    const returnedLabel = typeof result.json.label === "string" ? result.json.label : undefined;
     const payload: CoreAgentRenameTextPayload = {
       ok: true,
       projectRoot: result.projectRoot,
       sessionId: returnedSessionId,
-      label: returnedLabel,
+      ...(returnedLabel !== undefined ? { label: returnedLabel } : {}),
     };
     return this.textOrJsonLines(routeUrl, payload, renderCoreAgentRenameLines(payload));
   }
@@ -1670,12 +1664,10 @@ export class AimuxDaemon {
     if (typeof worktreePath !== "string") return worktreePath;
     const projectRoot = this.resolveProjectRoot(project);
     const resolvedWorktreePath = this.resolveProjectRelativePath(projectRoot, worktreePath);
-    const result = await this.postProjectServiceJson(
-      projectRoot,
-      PROJECT_API_ROUTES.agents.migrate,
-      { sessionId, worktreePath: resolvedWorktreePath },
-      { ensureProject: false },
-    );
+    const result = await this.postProjectServiceJson(projectRoot, PROJECT_API_ROUTES.agents.migrate, {
+      sessionId,
+      worktreePath: resolvedWorktreePath,
+    });
     if (!result.ok) return result.response;
     const returnedSessionId = this.requiredProjectServiceString(result.json, "migrate", "sessionId");
     if (typeof returnedSessionId !== "string") return returnedSessionId;
