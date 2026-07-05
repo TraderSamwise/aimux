@@ -867,6 +867,10 @@ aimux_try_runtime_restart() {
     esac
     shift
   done
+  if [ "$open" -eq 1 ] && [ "$json" -eq 1 ]; then
+    printf 'Error: restart-runtime --open cannot be combined with --json\n' >&2
+    return 2
+  fi
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
   set -- --data-urlencode "projectRoot=$project_root"
   if [ "$open" -eq 1 ]; then

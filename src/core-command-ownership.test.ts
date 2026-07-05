@@ -364,6 +364,7 @@ describe("core command ownership inventory", () => {
     for (const entry of coreCommandDispositions) {
       expect(isCoreCliCommand(entry.args), entry.command).toBe(true);
     }
+    expect(isCoreCliCommand(["restart-runtime", "--open", "--json"])).toBe(false);
   });
 
   it("keeps shim-fast-path commands backed by explicit installed shell routes", () => {

@@ -237,9 +237,18 @@ function isCoreDashboardReloadCommand(args: string[]): boolean {
 
 function isCoreRuntimeRestartCommand(args: string[]): boolean {
   if (args[0] !== "restart-runtime") return false;
+  let open = false;
+  let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--open" || arg === "--json") continue;
+    if (arg === "--open") {
+      open = true;
+      continue;
+    }
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
     const projectRootIndex = consumeOptionalTextFlag(args, index, "--project-root");
     if (projectRootIndex !== undefined) {
       if (projectRootIndex === null) return false;
@@ -260,6 +269,7 @@ function isCoreRuntimeRestartCommand(args: string[]): boolean {
     }
     return false;
   }
+  if (open && json) return false;
   return true;
 }
 
