@@ -751,10 +751,19 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["list-notifications", "--project=/repo", "--unread", "--session", "claude-1"]).stdout).toBe(
       "notifications ok\n",
     );
-    expect(fixture.run(["read-notifications", "--project", "/repo", "--session=claude-1", "--json"]).stdout).toBe(
-      "notifications ok\n",
-    );
-    expect(fixture.run(["clear-notifications", "--project=/repo", "--session", "claude-1"]).stdout).toBe(
+    expect(
+      fixture.run([
+        "read-notifications",
+        "--project",
+        "/repo",
+        "--id=note-1",
+        "--ids",
+        "note-2,note-3",
+        "--session=claude-1",
+        "--json",
+      ]).stdout,
+    ).toBe("notifications ok\n");
+    expect(fixture.run(["clear-notifications", "--project=/repo", "--ids=note-4,note-5"]).stdout).toBe(
       "notifications ok\n",
     );
 
@@ -767,6 +776,9 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("title=Heads up\n");
     expect(curlLog).toContain("subtitle=Agent\n");
     expect(curlLog).toContain("body=Ready\n");
+    expect(curlLog).toContain("id=note-1\n");
+    expect(curlLog).toContain("ids=note-2,note-3\n");
+    expect(curlLog).toContain("ids=note-4,note-5\n");
     expect(curlLog).toContain("sessionId=claude-1\n");
     expect(curlLog).toContain("kind=attention\n");
     expect(curlLog).toContain("unread=1\n");
@@ -779,9 +791,14 @@ describe("installed aimux shim", () => {
     writeFileSync(fixture.textRouteFile, "notifications ok\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    expect(fixture.run(["list-notifications", "--unread"], { NODE_EXIT: "46" }).status).toBe(46);
+    expect(
+      fixture.run(
+        ["read-notifications", "--project=/repo", "--id=note-1", "--ids", "note-2,note-3", "--session=claude-1"],
+        { NODE_EXIT: "46" },
+      ).status,
+    ).toBe(46);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
-      `${fixture.aimuxRoot}/dist/launcher-bin.js list-notifications --unread\n`,
+      `${fixture.aimuxRoot}/dist/launcher-bin.js read-notifications --project=/repo --id=note-1 --ids note-2,note-3 --session=claude-1\n`,
     );
   });
 

@@ -1168,9 +1168,7 @@ describe("daemon supervision", () => {
 
     const listed = await daemon.routeRequest(
       "GET",
-      `${CORE_API_ROUTES.notificationListText}?project=${encodeURIComponent(
-        projectRoot,
-      )}&unread=1&sessionId=claude-1`,
+      `${CORE_API_ROUTES.notificationListText}?project=${encodeURIComponent(projectRoot)}&unread=1&sessionId=claude-1`,
     );
     const sent = await daemon.routeRequest("POST", `${CORE_API_ROUTES.notificationSendText}?json=1`, {
       project: projectRoot,
@@ -1182,10 +1180,13 @@ describe("daemon supervision", () => {
     });
     const read = await daemon.routeRequest("POST", CORE_API_ROUTES.notificationReadText, {
       project: projectRoot,
+      id: "note-1",
+      ids: ["note-2", "note-3"],
       sessionId: "claude-1",
     });
     const cleared = await daemon.routeRequest("POST", `${CORE_API_ROUTES.notificationClearText}?json=1`, {
       project: projectRoot,
+      ids: "note-4,note-5",
       sessionId: "claude-1",
     });
 
@@ -1195,9 +1196,7 @@ describe("daemon supervision", () => {
     expect(JSON.parse(sent.body as string)).toEqual({ ok: true });
     expect(read.body).toBe("Marked 2 notifications as read.\n");
     expect(JSON.parse(cleared.body as string)).toEqual({ ok: true, cleared: 3 });
-    expect(calls.find((call) => call.url.includes(PROJECT_API_ROUTES.notifications.list))?.url).toContain(
-      "unread=1",
-    );
+    expect(calls.find((call) => call.url.includes(PROJECT_API_ROUTES.notifications.list))?.url).toContain("unread=1");
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.runtime.notify))?.body).toEqual({
       title: "Heads up",
       subtitle: "Claude",
@@ -1208,9 +1207,12 @@ describe("daemon supervision", () => {
     });
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.runtime.notify))?.timeoutMs).toBe(120_000);
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.notifications.read))?.body).toEqual({
+      id: "note-1",
+      ids: ["note-2", "note-3"],
       sessionId: "claude-1",
     });
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.notifications.clear))?.body).toEqual({
+      ids: ["note-4", "note-5"],
       sessionId: "claude-1",
     });
   });
