@@ -651,8 +651,7 @@ export class AimuxDaemon {
     const projectRoot = this.projectRootTextParam(routeUrl, body);
     if (typeof projectRoot !== "string") return projectRoot;
     const serveOnly = this.booleanParam(routeUrl, body, "serve", false);
-    const open = this.booleanParam(routeUrl, body, "open", false);
-    const payload = await this.restartProjectService(projectRoot, { open, serveOnly });
+    const payload = await this.restartProjectService(projectRoot, { serveOnly });
     return this.textOrJsonLines(routeUrl, payload, renderCoreProjectRestartLines(payload));
   }
 
@@ -2295,26 +2294,26 @@ export class AimuxDaemon {
 
   private async restartProjectService(
     projectRoot: string,
-    options: { open?: boolean; serveOnly?: boolean } = {},
+    options: { serveOnly?: boolean } = {},
   ): Promise<CoreProjectRestartTextPayload> {
     await this.stopProject(projectRoot);
     const project = await this.ensureProject(projectRoot);
     let dashboardSessionName: string | undefined;
+    let dashboardTarget: CoreProjectRestartTextPayload["dashboardTarget"] | undefined;
     if (!options.serveOnly) {
       const tmux = new TmuxRuntimeManager();
-      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
-      dashboardSessionName = dashboardSession.sessionName;
-      if (options.open) {
-        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
-      }
+      const resolved = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      dashboardSessionName = resolved.dashboardSession.sessionName;
+      dashboardTarget = resolved.dashboardTarget;
     }
-    return { projectRoot, project, dashboardSessionName };
+    return { projectRoot, project, dashboardSessionName, dashboardTarget };
   }
 
   private projectRestartResult(payload: CoreProjectRestartTextPayload): CoreProjectRestartResult {
     return {
       project: payload.project,
       dashboardSessionName: payload.dashboardSessionName,
+      dashboardTarget: payload.dashboardTarget,
     };
   }
 
@@ -2474,7 +2473,6 @@ export class AimuxDaemon {
         const restartProjectRoot = this.requireProjectRoot(id, command, restartPayload);
         if (!restartProjectRoot.ok) return restartProjectRoot.response;
         const result = await this.restartProjectService(restartProjectRoot.projectRoot, {
-          open: Boolean(restartPayload?.open),
           serveOnly: Boolean(restartPayload?.serve),
         });
         return {

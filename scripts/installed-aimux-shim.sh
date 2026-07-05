@@ -252,6 +252,66 @@ aimux_post_query_text_route() {
   esac
 }
 
+aimux_open_tmux_target() {
+  session_name="$1"
+  window_id="$2"
+  window_index="$3"
+  [ -n "$session_name" ] || return 1
+  command -v tmux >/dev/null 2>&1 || return 1
+  target="$session_name"
+  [ -n "$window_id" ] && target="$window_id"
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "$target" 2>/dev/null || tmux switch-client -t "$session_name:$window_index"
+  else
+    tmux attach-session -t "$session_name:$window_index"
+  fi
+}
+
+aimux_post_project_restart_open() {
+  timeout="${1:-120}"
+  shift
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-project-restart-open.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST "$@" \
+      "http://127.0.0.1:$port/core/project-restart-text?json=1" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*) ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+
+  dashboard_session_name="$(sed -n 's/.*"dashboardSessionName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  project_root="$(sed -n 's/.*"projectRoot"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  session_name="$(sed -n 's/.*"sessionName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  window_id="$(sed -n 's/.*"windowId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  window_index="$(sed -n 's/.*"windowIndex"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$body_file" | sed -n '1p')"
+  [ -n "$window_index" ] || window_index=0
+  if [ -n "$dashboard_session_name" ]; then
+    printf 'Restarted project service for %s\n' "$dashboard_session_name"
+  else
+    printf 'Restarted project service for %s\n' "$project_root"
+  fi
+  rm -f "$body_file"
+  trap - EXIT INT TERM
+  [ -n "$session_name" ] || return 0
+  aimux_open_tmux_target "$session_name" "$window_id" "$window_index"
+}
+
 aimux_post_get_query_text_route() {
   path="$1"
   timeout="${2:-60}"
@@ -742,7 +802,10 @@ aimux_try_host_service() {
   esac
   set -- --data-urlencode "project=$project_root"
   [ "$serve" -eq 1 ] && set -- "$@" --data-urlencode "serve=1"
-  [ "$open" -eq 1 ] && set -- "$@" --data-urlencode "open=1"
+  if [ "$open" -eq 1 ]; then
+    aimux_post_project_restart_open 120 "$@"
+    return $?
+  fi
   aimux_post_query_text_route "$path" 120 "$@"
 }
 

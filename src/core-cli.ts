@@ -208,14 +208,18 @@ async function runHostService(args: string[], io: Required<CoreCliIo>): Promise<
   }
   const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.projectRestart, {
     projectRoot,
-    open: restartArgs.open,
     serve: restartArgs.serve,
   });
   renderCoreProjectRestartLines({
     projectRoot,
     project: result.project,
     dashboardSessionName: result.dashboardSessionName,
+    dashboardTarget: result.dashboardTarget,
   }).forEach(io.stdout);
+  if (restartArgs.open && result.dashboardTarget) {
+    const { openTmuxTargetFromCaller } = await import("./core-cli-open.js");
+    openTmuxTargetFromCaller(result.dashboardTarget);
+  }
   return 0;
 }
 

@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   readLastLogLines: vi.fn(),
   selectedLogPath: vi.fn(),
   requestCoreCommand: vi.fn(),
+  tmuxIsInsideTmux: vi.fn(),
+  tmuxOpenTarget: vi.fn(),
   setRemoteEnabled: vi.fn(),
   clearCredentials: vi.fn(),
   runLoginFlow: vi.fn(),
@@ -59,6 +61,18 @@ vi.mock("./logs.js", () => ({
 
 vi.mock("./paths.js", () => ({
   initPaths: mocks.initPaths,
+}));
+
+vi.mock("./tmux/runtime-manager.js", () => ({
+  TmuxRuntimeManager: class {
+    isInsideTmux() {
+      return mocks.tmuxIsInsideTmux();
+    }
+
+    openTarget(...args: unknown[]) {
+      return mocks.tmuxOpenTarget(...args);
+    }
+  },
 }));
 
 vi.mock("./worktree.js", () => ({
@@ -187,6 +201,9 @@ describe("runCoreCli", () => {
             updatedAt: iso,
           },
           dashboardSessionName: (payload as { serve?: boolean }).serve ? undefined : "aimux-repo",
+          dashboardTarget: (payload as { serve?: boolean }).serve
+            ? undefined
+            : { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
         });
       }
       if (command === CORE_COMMAND_NAMES.restart) {
@@ -213,6 +230,9 @@ describe("runCoreCli", () => {
     mocks.clearCredentials.mockReturnValue("cleared");
     mocks.runLoginFlow.mockReset();
     mocks.runLoginFlow.mockResolvedValue({ userId: "user-1" });
+    mocks.tmuxIsInsideTmux.mockReset();
+    mocks.tmuxIsInsideTmux.mockReturnValue(true);
+    mocks.tmuxOpenTarget.mockReset();
   });
 
   it("renders host status from the core sidecar", async () => {
@@ -316,19 +336,21 @@ describe("runCoreCli", () => {
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectKill, { projectRoot: "/repo" });
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
       projectRoot: "/repo",
-      open: false,
       serve: false,
     });
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
       projectRoot: "/repo",
-      open: false,
       serve: true,
     });
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
       projectRoot: "/repo",
-      open: true,
       serve: false,
     });
+    expect(mocks.tmuxOpenTarget).toHaveBeenCalledTimes(1);
+    expect(mocks.tmuxOpenTarget).toHaveBeenCalledWith(
+      { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: true, alreadyResolved: true },
+    );
   });
 
   it("runs global and daemon restart through the sidecar command transport", async () => {
