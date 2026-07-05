@@ -122,6 +122,19 @@ describe("session semantics", () => {
     expect(sessionSemanticCompactHint(activitySemantic)).toBe("3 new");
   });
 
+  it("accepts API-provided latest notification text without a local notification record", () => {
+    const semantic = deriveSessionSemantics({
+      status: "running",
+      notificationUnreadCount: 1,
+      latestNotificationText: "Claude needs input",
+    });
+
+    expect(semantic.notifications.unreadCount).toBe(1);
+    expect(semantic.notifications.latestText).toBe("Claude needs input");
+    expect(semantic.notifications.latestUnread).toBeUndefined();
+    expect(sessionSemanticCompactHint(semantic)).toBe("1 unread");
+  });
+
   it("keeps raw dashboard status fallback labels in the semantic display helper", () => {
     expect(sessionDisplayStatusLabel({ status: "running" })).toBe("running");
     expect(sessionDisplayStatusLabel({ status: "idle" })).toBe("idle");

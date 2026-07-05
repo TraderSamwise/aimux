@@ -1,18 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const metadataMocks = vi.hoisted(() => ({
-  removeMetadataEndpoint: vi.fn(),
-}));
-
 const controlMocks = vi.hoisted(() => ({
-  dashboardProjectRoot: vi.fn((host: any) => {
-    const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
-    return projectRoot || process.cwd();
-  }),
+  invalidateDashboardProjectServiceEndpointHealth: vi.fn(),
   resolveCurrentProjectServiceEndpointForDashboard: vi.fn(),
 }));
 
-vi.mock("../metadata-store.js", () => metadataMocks);
 vi.mock("./dashboard-control.js", () => controlMocks);
 
 import {
@@ -348,7 +340,7 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(25);
 
       expect(fetchMock).toHaveBeenCalledOnce();
-      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
+      expect(controlMocks.invalidateDashboardProjectServiceEndpointHealth).toHaveBeenCalledWith(host);
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
@@ -392,7 +384,7 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS);
       await vi.advanceTimersByTimeAsync(25);
 
-      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
+      expect(controlMocks.invalidateDashboardProjectServiceEndpointHealth).toHaveBeenCalledWith(host);
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,
@@ -443,7 +435,7 @@ describe("dashboard project event refresh", () => {
       await vi.advanceTimersByTimeAsync(25);
       await vi.advanceTimersByTimeAsync(25);
 
-      expect(metadataMocks.removeMetadataEndpoint).toHaveBeenCalledWith("/repo/project");
+      expect(controlMocks.invalidateDashboardProjectServiceEndpointHealth).toHaveBeenCalledWith(host);
       expect(host.ensureDashboardControlPlane).not.toHaveBeenCalled();
       expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(
         true,

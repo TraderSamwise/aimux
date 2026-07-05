@@ -90,6 +90,7 @@ export interface DeriveSessionSemanticsInput {
   unseenCount?: number;
   notificationUnreadCount?: number;
   latestNotification?: NotificationRecord;
+  latestNotificationText?: string;
   threadUnreadCount?: number;
   threadPendingCount?: number;
   threadWaitingOnMeCount?: number;
@@ -171,7 +172,7 @@ export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): Sess
   const notifications: SessionNotificationState = {
     unreadCount: Math.max(0, input.notificationUnreadCount ?? 0),
     latestUnread: input.latestNotification,
-    latestText: input.latestNotification?.body || input.latestNotification?.title,
+    latestText: input.latestNotificationText ?? input.latestNotification?.body ?? input.latestNotification?.title,
   };
   const pressure = deriveWorkflowPressure({
     pendingDeliveryCount,
