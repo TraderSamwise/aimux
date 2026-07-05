@@ -970,6 +970,83 @@ describe("daemon supervision", () => {
     expect(response.body).toBe("Error: actor start failed\n");
   });
 
+  it("serves loop exit text through the project service and records the status event", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      calls.push({ url, body: opts.body });
+      if (url.endsWith(PROJECT_API_ROUTES.agents.loop)) {
+        return { status: 200, json: { ok: true, sessionId: "claude-1", loop: null } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.runtime.event)) {
+        return { status: 200, json: { ok: true } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.loopDoneText, {
+      project: projectRoot,
+      sessionId: "claude-1",
+      reason: "done",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("loop done claude-1\n");
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.loop))?.body).toEqual({
+      sessionId: "claude-1",
+      active: false,
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.runtime.event))?.body).toEqual({
+      session: "claude-1",
+      event: { kind: "task_done", message: "done", tone: "success", source: "loop" },
+    });
+  });
+
+  it("serves overseer start and clear text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      calls.push({ url, body: opts.body });
+      if (url.endsWith(PROJECT_API_ROUTES.agents.spawn)) {
+        return { status: 200, json: { ok: true, sessionId: "codex-overseer" } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.agents.overseer)) {
+        return { status: 200, json: { ok: true, sessionId: "codex-overseer" } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const start = await daemon.routeRequest("POST", CORE_API_ROUTES.overseerStartText, {
+      project: projectRoot,
+      tool: "codex",
+      worktreePath: "../work",
+      open: false,
+    });
+    const clear = await daemon.routeRequest("POST", CORE_API_ROUTES.overseerClearText, {
+      project: projectRoot,
+      sessionId: "codex-overseer",
+    });
+
+    expect(start.status).toBe(200);
+    expect(start.body).toBe("overseer codex-overseer\n");
+    expect(clear.status).toBe(200);
+    expect(clear.body).toBe("overseer cleared codex-overseer\n");
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.spawn))?.body).toEqual({
+      tool: "codex",
+      worktreePath: join(tmpRoot, "work"),
+      open: false,
+      overseer: true,
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.overseer))?.body).toEqual({
+      sessionId: "codex-overseer",
+      active: false,
+    });
+  });
+
   it("rejects malformed lifecycle project-service responses", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

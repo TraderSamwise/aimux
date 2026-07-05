@@ -610,6 +610,139 @@ aimux_try_lifecycle_fork() {
   aimux_post_query_text_route "$path" 120 "$@"
 }
 
+aimux_try_loop() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    add|remove)
+      action="$subcommand"
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      session_id=""
+      goal=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --goal) [ "$action" = "add" ] || return 1; shift; aimux_require_arg_value "$@" || return 1; goal="$AIMUX_ARG_VALUE" ;;
+          --goal=*) [ "$action" = "add" ] || return 1; aimux_require_inline_value "${1#--goal=}" || return 1; goal="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          -*) return 1 ;;
+          *) [ -z "$session_id" ] || return 1; session_id="$1" ;;
+        esac
+        shift
+      done
+      [ -n "$session_id" ] || return 1
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      case "$action" in
+        add) path="/core/loop/add-text" ;;
+        remove) path="/core/loop/remove-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      set -- --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+      [ -n "$goal" ] && set -- "$@" --data-urlencode "goal=$goal"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    done|block)
+      action="$subcommand"
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      session_id="${AIMUX_SESSION_ID:-}"
+      reason=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --session) shift; aimux_require_arg_value "$@" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+          --session=*) aimux_require_inline_value "${1#--session=}" || return 1; session_id="$AIMUX_ARG_VALUE" ;;
+          --reason) shift; aimux_require_arg_value "$@" || return 1; reason="$AIMUX_ARG_VALUE" ;;
+          --reason=*) aimux_require_inline_value "${1#--reason=}" || return 1; reason="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      [ -n "$session_id" ] || return 1
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      case "$action" in
+        done) path="/core/loop/done-text" ;;
+        block) path="/core/loop/block-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      set -- --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+      [ -n "$reason" ] && set -- "$@" --data-urlencode "reason=$reason"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+aimux_try_overseer() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    start)
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      worktree_path=""
+      tool=""
+      open=1
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --tool) shift; aimux_require_arg_value "$@" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+          --tool=*) aimux_require_inline_value "${1#--tool=}" || return 1; tool="$AIMUX_ARG_VALUE" ;;
+          --worktree) shift; aimux_require_arg_value "$@" || return 1; worktree_path="$AIMUX_ARG_VALUE" ;;
+          --worktree=*) aimux_require_inline_value "${1#--worktree=}" || return 1; worktree_path="$AIMUX_ARG_VALUE" ;;
+          --no-open) open=0 ;;
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      path="/core/overseer/start-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      set -- --data-urlencode "project=$project_root" --data-urlencode "open=$open"
+      [ -n "$tool" ] && set -- "$@" --data-urlencode "tool=$tool"
+      [ -n "$worktree_path" ] && set -- "$@" --data-urlencode "worktreePath=$worktree_path"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    clear)
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      session_id=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          -*) return 1 ;;
+          *) [ -z "$session_id" ] || return 1; session_id="$1" ;;
+        esac
+        shift
+      done
+      [ -n "$session_id" ] || return 1
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      path="/core/overseer/clear-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 aimux_parse_project_json_args() {
   project_root="$(pwd -P 2>/dev/null)" || return 1
   json=0
@@ -1385,6 +1518,26 @@ case "${1:-}" in
     ;;
   fork)
     if aimux_try_lifecycle_fork "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  loop)
+    if aimux_try_loop "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  overseer)
+    if aimux_try_overseer "$@"; then
       exit 0
     else
       code="$?"
