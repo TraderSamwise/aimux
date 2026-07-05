@@ -90,7 +90,7 @@ No commands currently live in this category.
 | `aimux doctor notifications`                                            | `INTERNAL`  | desktop notifier        | Desktop notification diagnostic remains local debug plumbing.                        |
 | `aimux notifications test`                                              | `INTERNAL`  | desktop notifier        | Desktop delivery diagnostic; not a normal project-state command.                    |
 | `aimux logs ...`                                                        | `CUT`       | daemon/filesystem      | Healthy installed diagnostic log access uses `/core/logs/*-text`.                    |
-| `aimux metadata ...`                                                    | `INTERNAL`  | project service        | Agent/runtime integration plumbing, not a user-facing state authority.               |
+| `aimux metadata ...`                                                    | `CUT`       | daemon/project service | Agent/runtime integration plumbing uses `/core/metadata-text` to avoid one-shot Node. |
 
 ## Enforcement Rules
 
