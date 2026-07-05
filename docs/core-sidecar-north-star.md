@@ -138,6 +138,7 @@ user command families that should be sidecar-backed:
 - thread and message commands
 - workflow commands: task, handoff, and review
 - host pane read and stream commands
+- advanced repair commands: dashboard-reload and restart-runtime
 
 For those commands, the healthy path is:
 
