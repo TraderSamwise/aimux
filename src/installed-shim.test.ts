@@ -90,7 +90,7 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/doctor/versions-text*|*/core/doctor/tmux-text*|*/core/repair-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/logs/path-text*|*/core/logs/tail-text*|*/core/logs/clear-text*|*/core/metadata-text*|*/core/project-ensure-text*|*/core/project-serve-text*|*/core/project-stop-text*|*/core/project-kill-text*|*/core/project-restart-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/agents/input-text*|*/core/agents/ps-text*|*/core/agents/rename-text*|*/core/agents/migrate-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
+	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/doctor/versions-text*|*/core/doctor/tmux-text*|*/core/repair-text*|*/core/dashboard-reload-text*|*/core/runtime-restart-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/logs/path-text*|*/core/logs/tail-text*|*/core/logs/clear-text*|*/core/metadata-text*|*/core/project-ensure-text*|*/core/project-serve-text*|*/core/project-stop-text*|*/core/project-kill-text*|*/core/project-restart-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/agents/input-text*|*/core/agents/ps-text*|*/core/agents/rename-text*|*/core/agents/migrate-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     [ -n "\${CURL_FORCE_EXIT:-}" ] && exit "$CURL_FORCE_EXIT"
     text_status="\${TEXT_ROUTE_STATUS:-200}"
@@ -485,6 +485,127 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("/core/project-restart-text");
     expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
     expect(curlLog).toContain("serve=1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves dashboard reload and runtime restart from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    writeFileSync(fixture.textRouteFile, "Reloaded dashboard for aimux-repo\n");
+    expect(fixture.run(["dashboard-reload"], {}, { cwd: projectDir }).stdout).toBe(
+      "Reloaded dashboard for aimux-repo\n",
+    );
+
+    writeFileSync(fixture.textRouteFile, '{\n  "ok": true\n}\n');
+    expect(fixture.run(["restart-runtime", "--project-root", ".", "--json"], {}, { cwd: projectDir }).stdout).toBe(
+      '{\n  "ok": true\n}\n',
+    );
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("/core/dashboard-reload-text");
+    expect(curlLog).toContain("/core/runtime-restart-text?json=1");
+    expect(curlLog).toContain(`projectRoot=${realpathSync(projectDir)}\n`);
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("opens dashboard reload targets from the caller tmux client without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Reloaded dashboard for aimux-repo\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["dashboard-reload", "--open"], { TMUX: "/tmp/tmux-client" }, { cwd: projectDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Reloaded dashboard for aimux-repo\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/dashboard-reload-text");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("open=1\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("currentClientSession=aimux-repo-client-feedbeef\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("clientTty=/dev/ttys001\n");
+    expect(readFileSync(fixture.tmuxLog, "utf8")).toBe(
+      "display-message -p #{client_session}\ndisplay-message -p #{client_tty}\n",
+    );
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("attaches outside-tmux dashboard reload targets without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(
+      fixture.textRouteFile,
+      JSON.stringify(
+        {
+          projectRoot: realpathSync(projectDir),
+          dashboardSessionName: "aimux-repo",
+          dashboardTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["dashboard-reload", "--open"], {}, { cwd: projectDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Reloaded dashboard for aimux-repo\n");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/dashboard-reload-text?json=1");
+    expect(readFileSync(fixture.tmuxLog, "utf8")).toBe("attach-session -t aimux-repo:0\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("reports missing runtime restart dashboard targets without printing a fake target", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, JSON.stringify({ projectRoot: realpathSync(projectDir) }, null, 2));
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["restart-runtime", "--open"], { NODE_EXIT: "99" }, { cwd: projectDir });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe(`Restarted project runtime for ${realpathSync(projectDir)}\n`);
+    expect(result.stdout).not.toContain("Dashboard: :0");
+    expect(result.stderr).toContain("no dashboard target was available to open");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for stale dashboard reload and runtime restart daemon health", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "dashboard ok\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["dashboard-reload"], { NODE_EXIT: "46" }).status).toBe(46);
+    expect(fixture.run(["restart-runtime", "--project-root", "/repo"], { NODE_EXIT: "47" }).status).toBe(47);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js dashboard-reload\n` +
+        `${fixture.aimuxRoot}/dist/launcher-bin.js restart-runtime --project-root /repo\n`,
+    );
+  });
+
+  it("rejects invalid dashboard reload and runtime restart arguments without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "dashboard ok\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expectInvalidNoNode(fixture, ["dashboard-reload", "--json"]);
+    expectInvalidNoNode(fixture, ["restart-runtime", "--project-root"]);
+    expectInvalidNoNode(fixture, ["restart-runtime", "--bad"]);
+    const openJson = fixture.run(["restart-runtime", "--open", "--json"], { NODE_EXIT: "99" });
+    expect(openJson.status).toBe(1);
+    expect(openJson.stdout).toBe("");
+    expect(openJson.stderr).toContain("restart-runtime --open cannot be combined with --json");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 

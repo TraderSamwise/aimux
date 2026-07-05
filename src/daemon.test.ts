@@ -49,9 +49,16 @@ const backendReconcileMock = vi.hoisted(() => ({
 const dashboardTargetMock = vi.hoisted(() => ({
   resolveDashboardTarget: vi.fn(),
 }));
+const statuslineArtifactsMock = vi.hoisted(() => ({
+  rewriteDashboardStatuslineArtifacts: vi.fn(),
+}));
+const runtimeStopMock = vi.hoisted(() => ({
+  stopProjectTmuxRuntime: vi.fn(),
+}));
 const tmuxRuntimeMock = vi.hoisted(() => ({
   openTarget: vi.fn(),
   isInsideTmux: vi.fn(),
+  isAvailable: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -155,10 +162,22 @@ vi.mock("./dashboard/targets.js", () => ({
   resolveDashboardTarget: dashboardTargetMock.resolveDashboardTarget,
 }));
 
+vi.mock("./tmux/statusline-artifacts.js", () => ({
+  rewriteDashboardStatuslineArtifacts: statuslineArtifactsMock.rewriteDashboardStatuslineArtifacts,
+}));
+
+vi.mock("./tmux/runtime-stop.js", () => ({
+  stopProjectTmuxRuntime: runtimeStopMock.stopProjectTmuxRuntime,
+}));
+
 vi.mock("./tmux/runtime-manager.js", () => ({
   TmuxRuntimeManager: class {
     isInsideTmux() {
       return tmuxRuntimeMock.isInsideTmux();
+    }
+
+    isAvailable() {
+      return tmuxRuntimeMock.isAvailable();
     }
 
     openTarget(...args: unknown[]) {
@@ -357,9 +376,14 @@ describe("daemon supervision", () => {
       dashboardSession: { sessionName: "aimux-test" },
       dashboardTarget: { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
     });
+    statuslineArtifactsMock.rewriteDashboardStatuslineArtifacts.mockReset();
+    runtimeStopMock.stopProjectTmuxRuntime.mockReset();
+    runtimeStopMock.stopProjectTmuxRuntime.mockReturnValue(["aimux-test-client-feedbeef", "aimux-test"]);
     tmuxRuntimeMock.openTarget.mockReset();
     tmuxRuntimeMock.isInsideTmux.mockReset();
     tmuxRuntimeMock.isInsideTmux.mockReturnValue(false);
+    tmuxRuntimeMock.isAvailable.mockReset();
+    tmuxRuntimeMock.isAvailable.mockReturnValue(true);
     loginFlowMock.mockReset();
     loginFlowMock.mockResolvedValue({ userId: "user_123" });
     execFileSyncMock.mockReset();
@@ -659,6 +683,109 @@ describe("daemon supervision", () => {
     expect(response).toMatchObject({ status: 200, body: "Tmux Repair\n  ok\n" });
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
     expect(tmuxRuntimeMock.openTarget).toHaveBeenCalled();
+  });
+
+  it("serves daemon-owned dashboard reload route and focuses the caller tmux client", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.dashboardReloadText, {
+      projectRoot,
+      open: "1",
+      currentClientSession: "aimux-test-client-feedbeef",
+      clientTty: "/dev/ttys001",
+    });
+
+    expect(response).toMatchObject({
+      status: 200,
+      contentType: "text/plain; charset=utf-8",
+      body: "Reloaded dashboard for aimux-test\n",
+    });
+    expect(initPathsMock).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(dashboardTargetMock.resolveDashboardTarget).toHaveBeenCalledWith(projectRoot, expect.anything(), {
+      forceReload: true,
+      openInHostSession: true,
+    });
+    expect(statuslineArtifactsMock.rewriteDashboardStatuslineArtifacts).toHaveBeenCalledWith(
+      projectRoot,
+      expect.anything(),
+      "aimux-test",
+    );
+    expect(tmuxRuntimeMock.openTarget).toHaveBeenCalledWith(
+      { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      {
+        insideTmux: true,
+        alreadyResolved: true,
+        clientTty: "/dev/ttys001",
+        clientSuffix: "feedbeef",
+        returnSessionName: "aimux-test-client-feedbeef",
+      },
+    );
+  });
+
+  it("serves daemon-owned runtime restart route as JSON for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.projectServeText, { project: projectRoot });
+    coreActorMock.starts.mockClear();
+
+    const response = await daemon.routeRequest("POST", `${CORE_API_ROUTES.runtimeRestartText}?json=1`, { projectRoot });
+
+    expect(response.status).toBe(200);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(JSON.parse(response.body as string)).toEqual({
+      ok: true,
+      projectRoot,
+      project: {
+        projectId: `proj-${basename(projectRoot)}`,
+        projectRoot,
+        pid: process.pid,
+        startedAt: expect.any(String),
+        updatedAt: expect.any(String),
+      },
+      tmuxSessionsKilled: ["aimux-test-client-feedbeef", "aimux-test"],
+      dashboardSession: "aimux-test",
+      dashboardSessionName: "aimux-test",
+      dashboardTarget: { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+    });
+    expect(initPathsMock).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+    expect(runtimeStopMock.stopProjectTmuxRuntime).toHaveBeenCalledWith(expect.anything(), projectRoot);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(dashboardTargetMock.resolveDashboardTarget).toHaveBeenCalledWith(projectRoot, expect.anything(), {
+      forceReload: true,
+    });
+    expect(statuslineArtifactsMock.rewriteDashboardStatuslineArtifacts).toHaveBeenCalledWith(
+      projectRoot,
+      expect.anything(),
+      "aimux-test",
+    );
+  });
+
+  it("rejects dashboard reload and runtime restart routes without a project root", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const reload = await daemon.routeRequest("POST", CORE_API_ROUTES.dashboardReloadText);
+    const restart = await daemon.routeRequest("POST", CORE_API_ROUTES.runtimeRestartText);
+
+    expect(reload).toMatchObject({ status: 400, body: "projectRoot query is required\n" });
+    expect(restart).toMatchObject({ status: 400, body: "projectRoot query is required\n" });
+    expect(initPathsMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to project when explicit projectRoot is blank", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.dashboardReloadText, {
+      projectRoot: "",
+      project: projectRoot,
+    });
+
+    expect(response.status).toBe(200);
+    expect(initPathsMock).toHaveBeenCalledWith(projectRoot);
   });
 
   it("includes backend session reconciliation in repair output", async () => {
@@ -1265,6 +1392,7 @@ describe("daemon supervision", () => {
       {
         insideTmux: true,
         clientTty: "/dev/ttys001",
+        clientSuffix: "feedbeef",
         returnSessionName: "aimux-test-client-feedbeef",
       },
     );
