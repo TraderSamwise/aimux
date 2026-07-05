@@ -743,6 +743,95 @@ aimux_try_overseer() {
   esac
 }
 
+aimux_try_team() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    show|init)
+      action="$subcommand"
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      case "$action" in
+        show) path="/core/team/show-text"; [ "$json" -eq 1 ] && path="$path?json=1"; aimux_get_query_text_route "$path" 60 --data-urlencode "project=$project_root" ;;
+        init) path="/core/team/init-text"; [ "$json" -eq 1 ] && path="$path?json=1"; aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    add)
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      role=""
+      description=""
+      reviewed_by=""
+      can_edit=0
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          -d|--description) shift; aimux_require_arg_value "$@" || return 1; description="$AIMUX_ARG_VALUE" ;;
+          --description=*) aimux_require_inline_value "${1#--description=}" || return 1; description="$AIMUX_ARG_VALUE" ;;
+          --reviewed-by) shift; aimux_require_arg_value "$@" || return 1; reviewed_by="$AIMUX_ARG_VALUE" ;;
+          --reviewed-by=*) aimux_require_inline_value "${1#--reviewed-by=}" || return 1; reviewed_by="$AIMUX_ARG_VALUE" ;;
+          --can-edit) can_edit=1 ;;
+          --json) json=1 ;;
+          -*) return 1 ;;
+          *) [ -z "$role" ] || return 1; role="$1" ;;
+        esac
+        shift
+      done
+      [ -n "$role" ] || return 1
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      path="/core/team/add-text"
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      set -- --data-urlencode "project=$project_root" --data-urlencode "role=$role" --data-urlencode "canEdit=$can_edit"
+      [ -n "$description" ] && set -- "$@" --data-urlencode "description=$description"
+      [ -n "$reviewed_by" ] && set -- "$@" --data-urlencode "reviewedBy=$reviewed_by"
+      aimux_post_query_text_route "$path" 120 "$@"
+      ;;
+    remove|default)
+      action="$subcommand"
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      role=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+          --json) json=1 ;;
+          -*) return 1 ;;
+          *) [ -z "$role" ] || return 1; role="$1" ;;
+        esac
+        shift
+      done
+      [ -n "$role" ] || return 1
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      case "$action" in
+        remove) path="/core/team/remove-text" ;;
+        default) path="/core/team/default-text" ;;
+        *) return 1 ;;
+      esac
+      [ "$json" -eq 1 ] && path="$path?json=1"
+      aimux_post_query_text_route "$path" 120 --data-urlencode "project=$project_root" --data-urlencode "role=$role"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 aimux_parse_project_json_args() {
   project_root="$(pwd -P 2>/dev/null)" || return 1
   json=0
@@ -1538,6 +1627,16 @@ case "${1:-}" in
     ;;
   overseer)
     if aimux_try_overseer "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  team)
+    if aimux_try_team "$@"; then
       exit 0
     else
       code="$?"

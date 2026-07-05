@@ -10,6 +10,13 @@ export const PROJECT_API_ROUTES = {
   library: "/library",
   worktrees: "/worktrees",
   graveyard: "/graveyard",
+  team: {
+    config: "/team/config",
+    init: "/team/init",
+    addRole: "/team/roles/add",
+    removeRole: "/team/roles/remove",
+    defaultRole: "/team/default-role",
+  },
   plans: "/plans",
   statuslineRefresh: "/statusline/refresh",
   operationFailuresClear: "/operation-failures/clear",
@@ -154,6 +161,7 @@ export const PROJECT_API_VIEWS = [
   "notifications",
   "project-observability",
   "services",
+  "team",
   "tasks",
   "threads",
   "topology",
@@ -175,6 +183,21 @@ export interface ProjectUpdateEvent {
 
 export interface ProjectApiOk {
   ok: boolean;
+}
+
+export interface TeamRoleConfig {
+  description: string;
+  reviewedBy?: string;
+  canEdit?: boolean;
+}
+
+export interface TeamConfig {
+  roles: Record<string, TeamRoleConfig>;
+  defaultRole: string;
+}
+
+export interface TeamConfigResponse extends ProjectApiOk {
+  config: TeamConfig;
 }
 
 export interface LivePaneSessionInput {

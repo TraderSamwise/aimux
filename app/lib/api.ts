@@ -16,6 +16,7 @@ import type { DesktopState } from "@/lib/desktop-state";
 import type { ParsedAgentOutput } from "@/lib/events";
 import {
   PROJECT_API_ROUTES,
+  type TeamConfigResponse,
   type ActiveWindowRequest,
   type AgentListResponse,
   type AgentLoopInput,
@@ -384,6 +385,50 @@ export async function getProjectDiagnostics(
     PROJECT_API_ROUTES.diagnostics,
     opts,
   );
+}
+
+export async function getTeamConfig(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<TeamConfigResponse> {
+  return callProjectJson<TeamConfigResponse>(endpoint, "GET", PROJECT_API_ROUTES.team.config, opts);
+}
+
+export async function initTeamConfig(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<TeamConfigResponse> {
+  return callProjectJson<TeamConfigResponse>(endpoint, "POST", PROJECT_API_ROUTES.team.init, opts, {});
+}
+
+export async function addTeamRole(
+  endpoint: ServiceEndpoint,
+  input: { role: string; description?: string; reviewedBy?: string; canEdit?: boolean },
+  opts?: ApiOpts,
+): Promise<TeamConfigResponse> {
+  return callProjectJson<TeamConfigResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.team.addRole,
+    opts,
+    input,
+  );
+}
+
+export async function removeTeamRole(
+  endpoint: ServiceEndpoint,
+  role: string,
+  opts?: ApiOpts,
+): Promise<TeamConfigResponse> {
+  return callProjectJson<TeamConfigResponse>(endpoint, "POST", PROJECT_API_ROUTES.team.removeRole, opts, { role });
+}
+
+export async function setDefaultTeamRole(
+  endpoint: ServiceEndpoint,
+  role: string,
+  opts?: ApiOpts,
+): Promise<TeamConfigResponse> {
+  return callProjectJson<TeamConfigResponse>(endpoint, "POST", PROJECT_API_ROUTES.team.defaultRole, opts, { role });
 }
 
 export type AgentOutputResponse = LivePaneOutputResponse & { parsed?: ParsedAgentOutput };

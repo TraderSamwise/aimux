@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
 import { loadNotificationContexts } from "./notification-context.js";
 import { listNotifications, upsertNotification } from "./notifications.js";
@@ -93,6 +94,112 @@ describe("MetadataServer threads API", () => {
         memoryHeapUsedBytes: expect.any(Number),
       },
       recentSlowRequests: [],
+    });
+  });
+
+  it("serves team config reads and mutations from the project service", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const baseUrl = `http://127.0.0.1:${endpoint!.port}`;
+
+    const initial = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.config}`).then((res) => res.json());
+    expect(initial).toMatchObject({
+      ok: true,
+      config: {
+        defaultRole: "coder",
+        roles: {
+          coder: { description: expect.any(String), reviewedBy: "reviewer" },
+        },
+      },
+    });
+
+    const add = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.addRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        role: "planner",
+        description: "Plans work",
+        reviewedBy: "reviewer",
+        canEdit: true,
+      }),
+    }).then((res) => res.json());
+    expect(add).toMatchObject({
+      ok: true,
+      role: "planner",
+      config: {
+        roles: {
+          planner: { description: "Plans work", reviewedBy: "reviewer", canEdit: true },
+        },
+      },
+    });
+
+    const stored = JSON.parse(readFileSync(join(repoRoot, ".aimux", "team.json"), "utf8"));
+    expect(stored.roles.planner).toEqual({ description: "Plans work", reviewedBy: "reviewer", canEdit: true });
+
+    const updated = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.addRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        role: "planner",
+        description: "Plans revised",
+      }),
+    }).then((res) => res.json());
+    expect(updated.config.roles.planner).toEqual({
+      description: "Plans revised",
+      reviewedBy: "reviewer",
+      canEdit: true,
+    });
+
+    const defaulted = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.defaultRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "planner" }),
+    }).then((res) => res.json());
+    expect(defaulted.config.defaultRole).toBe("planner");
+
+    const missingDefault = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.defaultRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "missing" }),
+    });
+    expect(missingDefault.status).toBe(404);
+    await expect(missingDefault.json()).resolves.toMatchObject({
+      ok: false,
+      error: 'Role "missing" not found. Add it first with: aimux team add missing',
+    });
+
+    const removed = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.removeRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "planner" }),
+    }).then((res) => res.json());
+    expect(removed.config.roles.planner).toBeUndefined();
+    expect(removed.config.defaultRole).toBe("coder");
+
+    const initialized = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.init}`, {
+      method: "POST",
+    }).then((res) => res.json());
+    expect(initialized).toMatchObject({
+      ok: true,
+      config: { defaultRole: "coder", roles: { coder: expect.any(Object), reviewer: expect.any(Object) } },
+    });
+
+    const reviewerRemoved = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.removeRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "reviewer" }),
+    }).then((res) => res.json());
+    expect(reviewerRemoved.config.defaultRole).toBe("coder");
+
+    const lastRoleRemoved = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.removeRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "coder" }),
+    });
+    expect(lastRoleRemoved.status).toBe(400);
+    await expect(lastRoleRemoved.json()).resolves.toMatchObject({
+      ok: false,
+      error: "cannot remove the last team role",
     });
   });
 
