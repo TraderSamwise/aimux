@@ -1296,6 +1296,117 @@ describe("daemon supervision", () => {
     });
   });
 
+  it("serves agent input text through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.input)) {
+        expect(opts.body).toEqual({ sessionId: "claude-1", text: "hello" });
+        return { status: 200, json: { ok: true } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.agentInputText, {
+      project: projectRoot,
+      sessionId: "claude-1",
+      text: "hello",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("delivered to claude-1\n");
+    expect(coreActorMock.starts).not.toHaveBeenCalled();
+  });
+
+  it("serves agent ps text and JSON through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const agents = [
+      {
+        id: "claude-1",
+        tool: "claude",
+        role: "coder",
+        status: "ready",
+        activity: "output",
+        attention: "needs_response",
+        loop: { active: true, goal: "ship" },
+        overseer: true,
+        worktreePath: "/repo/work",
+        task: { description: "Fix bug", status: "open" },
+      },
+    ];
+    vi.mocked(requestJson).mockImplementation(async (url: string) => {
+      if (url.endsWith(PROJECT_API_ROUTES.agents.list)) {
+        return { status: 200, json: { ok: true, agents } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const textResponse = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.agentPsText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const jsonResponse = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.agentPsText}?json=1&project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(textResponse.status).toBe(200);
+    expect(textResponse.body).toBe(
+      "claude-1  [claude:coder]  ready  output/needs_response  {overseer loop:ship}\n" +
+        "    worktree: /repo/work\n" +
+        "    task: Fix bug (open)\n",
+    );
+    expect(JSON.parse(jsonResponse.body as string)).toEqual(agents);
+    expect(coreActorMock.starts).not.toHaveBeenCalled();
+  });
+
+  it("serves agent rename and migrate JSON through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts: { body?: unknown }) => {
+      calls.push({ url, body: opts.body });
+      if (url.endsWith(PROJECT_API_ROUTES.agents.rename)) {
+        return { status: 200, json: { ok: true, sessionId: "claude-1", label: "reviewer" } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.agents.migrate)) {
+        return { status: 200, json: { ok: true, sessionId: "claude-1", worktreePath: join(projectRoot, "work") } };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const renameResponse = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.agentRenameText}?json=1&project=${encodeURIComponent(
+        projectRoot,
+      )}&sessionId=claude-1&label=reviewer`,
+    );
+    const migrateResponse = await daemon.routeRequest("POST", CORE_API_ROUTES.agentMigrateText, {
+      project: projectRoot,
+      sessionId: "claude-1",
+      worktreePath: "work",
+    });
+
+    expect(renameResponse.status).toBe(200);
+    expect(JSON.parse(renameResponse.body as string)).toEqual({
+      ok: true,
+      projectRoot,
+      sessionId: "claude-1",
+      label: "reviewer",
+    });
+    expect(migrateResponse.status).toBe(200);
+    expect(migrateResponse.body).toBe(`migrated claude-1 -> ${join(projectRoot, "work")}\n`);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.agents.migrate))?.body).toEqual({
+      sessionId: "claude-1",
+      worktreePath: join(projectRoot, "work"),
+    });
+    expect(coreActorMock.starts).not.toHaveBeenCalled();
+  });
+
   it("returns project-service lifecycle errors as text without proxying through Node", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();

@@ -88,7 +88,7 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/doctor/versions-text*|*/core/doctor/tmux-text*|*/core/repair-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/logs/path-text*|*/core/logs/tail-text*|*/core/logs/clear-text*|*/core/metadata-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
+	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/doctor/versions-text*|*/core/doctor/tmux-text*|*/core/repair-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/logs/path-text*|*/core/logs/tail-text*|*/core/logs/clear-text*|*/core/metadata-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/agents/input-text*|*/core/agents/ps-text*|*/core/agents/rename-text*|*/core/agents/migrate-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     [ -n "\${CURL_FORCE_EXIT:-}" ] && exit "$CURL_FORCE_EXIT"
     text_status="\${TEXT_ROUTE_STATUS:-200}"
@@ -802,6 +802,44 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
+  it("serves agent utility commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    const worktreeDir = join(fixture.root, "repo", "feature");
+    mkdirSync(worktreeDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    writeFileSync(fixture.textRouteFile, "delivered to claude-1\n");
+    expect(fixture.run(["input", "claude-1", "hello", "--flag"], {}, { cwd: projectDir }).stdout).toBe(
+      "delivered to claude-1\n",
+    );
+
+    writeFileSync(fixture.textRouteFile, "claude-1  [claude]  ready\n");
+    expect(fixture.run(["ps", "--project", projectDir, "--json"]).stdout).toBe("claude-1  [claude]  ready\n");
+
+    writeFileSync(fixture.textRouteFile, "renamed claude-1 -> reviewer\n");
+    expect(fixture.run(["rename", "claude-1", "--label", "reviewer", "--project=/repo"]).stdout).toBe(
+      "renamed claude-1 -> reviewer\n",
+    );
+
+    writeFileSync(fixture.textRouteFile, "migrated claude-1 -> feature\n");
+    expect(fixture.run(["migrate", "claude-1", "--worktree", "feature"], {}, { cwd: projectDir }).stdout).toBe(
+      "migrated claude-1 -> feature\n",
+    );
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("/core/agents/input-text");
+    expect(curlLog).toContain("/core/agents/ps-text?json=1");
+    expect(curlLog).toContain("/core/agents/rename-text");
+    expect(curlLog).toContain("/core/agents/migrate-text");
+    expect(curlLog).toContain("sessionId=claude-1\n");
+    expect(curlLog).toContain("text=hello --flag\n");
+    expect(curlLog).toContain("label=reviewer\n");
+    expect(curlLog).toContain(`worktreePath=${realpathSync(worktreeDir)}\n`);
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
   it("returns lifecycle daemon errors without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
@@ -830,6 +868,20 @@ describe("installed aimux shim", () => {
     );
   });
 
+  it("falls back to the Node launcher for agent utility commands when daemon health is stale", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "delivered to claude-1\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["rename", "claude-1", "--label", "reviewer"], { NODE_EXIT: "44" });
+
+    expect(result.status).toBe(44);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js rename claude-1 --label reviewer\n`,
+    );
+  });
+
   it("rejects invalid lifecycle arguments without launching Node when the daemon is healthy", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
@@ -838,6 +890,18 @@ describe("installed aimux shim", () => {
 
     expectInvalidNoNode(fixture, ["stop", "--bad"]);
     expectInvalidNoNode(fixture, ["spawn", "--tool"]);
+  });
+
+  it("rejects invalid agent utility arguments without launching Node when the daemon is healthy", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "agent ok\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expectInvalidNoNode(fixture, ["input", "claude-1"]);
+    expectInvalidNoNode(fixture, ["ps", "--bad"]);
+    expectInvalidNoNode(fixture, ["rename", "claude-1", "--label"]);
+    expectInvalidNoNode(fixture, ["migrate", "claude-1", "--worktree"]);
   });
 
   it("keeps bare project-runtime stop on the bootstrap launcher path", () => {

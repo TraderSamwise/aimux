@@ -27,6 +27,10 @@ import {
 import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
+  renderCoreAgentInputLines,
+  renderCoreAgentMigrateLines,
+  renderCoreAgentPsLines,
+  renderCoreAgentRenameLines,
   renderCoreHostStatusLines,
   renderCoreLifecycleForkLines,
   renderCoreLifecycleKillLines,
@@ -80,6 +84,10 @@ import {
   renderCoreWhoamiLines,
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
+  type CoreAgentInputTextPayload,
+  type CoreAgentMigrateTextPayload,
+  type CoreAgentRenameTextPayload,
+  type CoreAgentSummaryTextPayload,
   type CoreGraveyardAgentTextPayload,
   type CoreGraveyardCleanupTextPayload,
   type CoreGraveyardTextPayload,
@@ -170,6 +178,10 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.handoffAcceptText,
   CORE_API_ROUTES.handoffCompleteText,
   CORE_API_ROUTES.handoffSendText,
+  CORE_API_ROUTES.agentInputText,
+  CORE_API_ROUTES.agentMigrateText,
+  CORE_API_ROUTES.agentPsText,
+  CORE_API_ROUTES.agentRenameText,
   CORE_API_ROUTES.hostAgentReadText,
   CORE_API_ROUTES.hostAgentStreamText,
   CORE_API_ROUTES.lifecycleForkText,
@@ -1588,6 +1600,98 @@ export class AimuxDaemon {
     return this.textOrJsonLines(routeUrl, payload, renderCoreLifecycleForkLines(payload));
   }
 
+  private async agentInputTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const text = this.requiredParam(routeUrl, body, "text");
+    if (typeof text !== "string") return text;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.agents.input,
+      { sessionId, text },
+      { ensureProject: false },
+    );
+    if (!result.ok) return result.response;
+    const payload: CoreAgentInputTextPayload = { ok: true, projectRoot: result.projectRoot, sessionId };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreAgentInputLines(payload));
+  }
+
+  private async agentPsTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const result = await this.getProjectServiceJson(project, PROJECT_API_ROUTES.agents.list, { ensureProject: false });
+    if (!result.ok) return result.response;
+    const agents = this.requiredProjectServiceArray(result.json, "agent ps", "agents");
+    if (!Array.isArray(agents)) return agents;
+    if (agents.some((agent) => !agent || typeof agent !== "object" || Array.isArray(agent))) {
+      return this.textError(502, "Error: project service returned invalid agent ps response: agents entries are invalid");
+    }
+    const payload: CoreAgentSummaryTextPayload = {
+      agents: agents as CoreAgentSummaryTextPayload["agents"],
+    };
+    return this.textOrJsonLines(routeUrl, agents, renderCoreAgentPsLines(payload));
+  }
+
+  private async agentRenameTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const label = this.requiredParam(routeUrl, body, "label");
+    if (typeof label !== "string") return label;
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.agents.rename,
+      { sessionId, label },
+      { ensureProject: false },
+    );
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, "rename", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const returnedLabel = this.requiredProjectServiceString(result.json, "rename", "label");
+    if (typeof returnedLabel !== "string") return returnedLabel;
+    const payload: CoreAgentRenameTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      label: returnedLabel,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreAgentRenameLines(payload));
+  }
+
+  private async agentMigrateTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const worktreePath = this.requiredParam(routeUrl, body, "worktreePath");
+    if (typeof worktreePath !== "string") return worktreePath;
+    const projectRoot = this.resolveProjectRoot(project);
+    const resolvedWorktreePath = this.resolveProjectRelativePath(projectRoot, worktreePath);
+    const result = await this.postProjectServiceJson(
+      projectRoot,
+      PROJECT_API_ROUTES.agents.migrate,
+      { sessionId, worktreePath: resolvedWorktreePath },
+      { ensureProject: false },
+    );
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, "migrate", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const returnedWorktreePath =
+      typeof result.json.worktreePath === "string" && result.json.worktreePath.trim()
+        ? result.json.worktreePath
+        : resolvedWorktreePath;
+    const payload: CoreAgentMigrateTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      worktreePath: returnedWorktreePath,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreAgentMigrateLines(payload));
+  }
+
   private async loopTextRoute(
     routeUrl: URL,
     body: unknown,
@@ -2469,6 +2573,22 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleForkText) {
       return this.lifecycleForkTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.agentInputText) {
+      return this.agentInputTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.agentPsText) {
+      return this.agentPsTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.agentRenameText) {
+      return this.agentRenameTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.agentMigrateText) {
+      return this.agentMigrateTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.loopAddText) {
