@@ -1404,6 +1404,10 @@ function clearProjectServiceEndpointHealth(host: DashboardControlHost): void {
   host.dashboardProjectServiceEndpointHealth = undefined;
 }
 
+export function invalidateDashboardProjectServiceEndpointHealth(host: DashboardControlHost): void {
+  clearProjectServiceEndpointHealth(host);
+}
+
 async function endpointMatchesCurrentProjectService(
   endpoint: { host: string; port: number; pid?: number },
   timeoutMs: number,

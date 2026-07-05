@@ -1,7 +1,6 @@
 import { TextDecoder } from "node:util";
 
 import { debug } from "../debug.js";
-import { removeMetadataEndpoint } from "../metadata-store.js";
 import {
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
@@ -11,7 +10,10 @@ import {
 } from "../project-api-contract.js";
 import type { AlertEvent } from "../project-events.js";
 import { refreshGraveyardEntriesFromService } from "./archives.js";
-import { dashboardProjectRoot, resolveCurrentProjectServiceEndpointForDashboard } from "./dashboard-control.js";
+import {
+  invalidateDashboardProjectServiceEndpointHealth,
+  resolveCurrentProjectServiceEndpointForDashboard,
+} from "./dashboard-control.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -192,7 +194,7 @@ class DashboardProjectEventAdapter {
           `dashboard project event stream reconnecting: ${error instanceof Error ? error.message : String(error)}`,
           "dashboard",
         );
-        removeMetadataEndpoint(dashboardProjectRoot(this.host));
+        invalidateDashboardProjectServiceEndpointHealth(this.host);
         await this.recover(signal);
         await sleep(projectEventStreamRetryMs(retryAttempt++), signal);
       } finally {
