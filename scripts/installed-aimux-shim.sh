@@ -770,11 +770,8 @@ aimux_try_team() {
       ;;
     add)
       shift
-      [ "$#" -gt 0 ] || return 1
-      role="$1"
-      case "$role" in -*) return 1 ;; esac
-      shift
       project_root="$(pwd -P 2>/dev/null)" || return 1
+      role=""
       description=""
       reviewed_by=""
       can_edit=0
@@ -789,10 +786,12 @@ aimux_try_team() {
           --reviewed-by=*) aimux_require_inline_value "${1#--reviewed-by=}" || return 1; reviewed_by="$AIMUX_ARG_VALUE" ;;
           --can-edit) can_edit=1 ;;
           --json) json=1 ;;
-          *) return 1 ;;
+          -*) return 1 ;;
+          *) [ -z "$role" ] || return 1; role="$1" ;;
         esac
         shift
       done
+      [ -n "$role" ] || return 1
       project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
       path="/core/team/add-text"
       [ "$json" -eq 1 ] && path="$path?json=1"
@@ -804,21 +803,20 @@ aimux_try_team() {
     remove|default)
       action="$subcommand"
       shift
-      [ "$#" -gt 0 ] || return 1
-      role="$1"
-      case "$role" in -*) return 1 ;; esac
-      shift
       project_root="$(pwd -P 2>/dev/null)" || return 1
+      role=""
       json=0
       while [ "$#" -gt 0 ]; do
         case "$1" in
           --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
           --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
           --json) json=1 ;;
-          *) return 1 ;;
+          -*) return 1 ;;
+          *) [ -z "$role" ] || return 1; role="$1" ;;
         esac
         shift
       done
+      [ -n "$role" ] || return 1
       project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
       case "$action" in
         remove) path="/core/team/remove-text" ;;

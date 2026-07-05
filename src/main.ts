@@ -3537,6 +3537,15 @@ interface TeamCommandOptions {
   json?: boolean;
 }
 
+function buildTeamCliPayload(projectRoot: string, config: TeamConfig, role?: string) {
+  return {
+    ok: true,
+    projectRoot,
+    config,
+    ...(role ? { role } : {}),
+  };
+}
+
 function printTeamShow(config: TeamConfig): void {
   console.log("Team Roles:");
   for (const [name, role] of Object.entries(config.roles)) {
@@ -3565,7 +3574,7 @@ teamCmd
     const projectRoot = await prepareProjectContext(options.project);
     const result = await getProjectServiceJson(PROJECT_API_ROUTES.team.config, { projectRoot });
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config), null, 2));
       return;
     }
     printTeamShow(result.config);
@@ -3596,7 +3605,7 @@ teamCmd
         { projectRoot },
       );
       if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config, role), null, 2));
         return;
       }
       console.log(`Role "${role}" saved.`);
@@ -3612,7 +3621,7 @@ teamCmd
     const projectRoot = await prepareProjectContext(options.project);
     const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.removeRole, { role }, { projectRoot });
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config, role), null, 2));
       return;
     }
     console.log(`Role "${role}" removed.`);
@@ -3627,7 +3636,7 @@ teamCmd
     const projectRoot = await prepareProjectContext(options.project);
     const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.defaultRole, { role }, { projectRoot });
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config, role), null, 2));
       return;
     }
     console.log(`Default role set to "${role}".`);
@@ -3642,7 +3651,7 @@ teamCmd
     const projectRoot = await prepareProjectContext(options.project);
     const result = await postProjectServiceJson(PROJECT_API_ROUTES.team.init, {}, { projectRoot });
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(buildTeamCliPayload(projectRoot, result.config), null, 2));
       return;
     }
     printTeamInit(result.config);
