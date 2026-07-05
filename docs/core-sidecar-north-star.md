@@ -123,6 +123,39 @@ This migration is done when:
 - dead direct-writer and direct-computation paths are removed
 - docs and tests make regressions hard to reintroduce
 
+## Current Progress
+
+As of 2026-07-05, the normal installed CLI path has been cut over for the core
+user command families that should be sidecar-backed:
+
+- daemon restart/status/project ensure
+- host status
+- remote, login, logout, account, and security unlock
+- lifecycle commands: spawn, stop, kill, and fork
+- worktree and graveyard commands
+- thread and message commands
+- workflow commands: task, handoff, and review
+- host pane read and stream commands
+
+For those commands, the healthy path is:
+
+```text
+installed aimux shim -> global daemon core route -> project service or daemon owner
+```
+
+The remaining work is not "make more fallback paths." The remaining work is to
+shrink the exceptional surface:
+
+- keep bootstrap/repair/dashboard entry as the only normal paths allowed to
+  start Node
+- classify or remove legacy/internal command families that still bypass the
+  daemon-owned model
+- make diagnostics read daemon/project-service truth instead of recomputing
+  product state locally
+- continue moving client state transitions into API-backed lifecycle contracts
+  so TUI, web, and mobile see the same state machine
+- remove dead direct-writer and direct-computation paths as each owner cut lands
+
 ## Path Forward
 
 Work should proceed by command and client-surface families, not random one-off
