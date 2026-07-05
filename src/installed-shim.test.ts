@@ -25,9 +25,11 @@ function makeFixture() {
   const authWaitFile = join(root, "auth-wait.txt");
   const daemonInfoPath = join(home, "daemon", "daemon.json");
   const nodeLog = join(root, "node.log");
+  const tmuxLog = join(root, "tmux.log");
   const curlLog = join(root, "curl.log");
   const curlPath = join(bin, "curl");
   const nodePath = join(bin, "node");
+  const tmuxPath = join(bin, "tmux");
 
   writeFileSync(
     curlPath,
@@ -128,8 +130,17 @@ printf '%s\\n' "$*" >> "$NODE_LOG"
 exit "\${NODE_EXIT:-7}"
 `,
   );
+  writeFileSync(
+    tmuxPath,
+    `#!/usr/bin/env sh
+set -eu
+printf '%s\\n' "$*" >> "$TMUX_LOG"
+exit "\${TMUX_EXIT:-0}"
+`,
+  );
   chmodSync(curlPath, 0o755);
   chmodSync(nodePath, 0o755);
+  chmodSync(tmuxPath, 0o755);
 
   const env = {
     ...process.env,
@@ -141,6 +152,7 @@ exit "\${NODE_EXIT:-7}"
     HEALTH_FILE: healthFile,
     RESTART_FILE: restartFile,
     TEXT_ROUTE_FILE: textRouteFile,
+    TMUX_LOG: tmuxLog,
     AUTH_START_FILE: authStartFile,
     AUTH_WAIT_FILE: authWaitFile,
     NODE_LOG: nodeLog,
@@ -162,6 +174,7 @@ exit "\${NODE_EXIT:-7}"
     healthFile,
     restartFile,
     textRouteFile,
+    tmuxLog,
     nodeLog,
     root,
     run,
@@ -453,7 +466,6 @@ describe("installed aimux shim", () => {
     expect(fixture.run(["host", "kill"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
     expect(fixture.run(["host", "restart"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
     expect(fixture.run(["host", "restart", "--serve"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
-    expect(fixture.run(["host", "restart", "--open"], {}, { cwd: projectDir }).stdout).toBe("host ok\n");
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
     expect(curlLog).toContain("/core/project-serve-text");
@@ -462,7 +474,37 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("/core/project-restart-text");
     expect(curlLog).toContain(`project=${realpathSync(projectDir)}\n`);
     expect(curlLog).toContain("serve=1\n");
-    expect(curlLog).toContain("open=1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("opens host restart targets from the caller shell without launching Node", () => {
+    const fixture = makeFixture();
+    const projectDir = join(fixture.root, "repo");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(
+      fixture.textRouteFile,
+      JSON.stringify(
+        {
+          projectRoot: realpathSync(projectDir),
+          project: { projectId: "repo", projectRoot: realpathSync(projectDir), pid: 89 },
+          dashboardSessionName: "aimux-repo",
+          dashboardTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "restart", "--open"], { TMUX: "/tmp/tmux-client" }, { cwd: projectDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("Restarted project service for aimux-repo\n");
+    expect(result.stderr).toBe("");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/project-restart-text?json=1");
+    expect(readFileSync(fixture.curlLog, "utf8")).not.toContain("open=1\n");
+    expect(readFileSync(fixture.tmuxLog, "utf8")).toBe("switch-client -t @2\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 

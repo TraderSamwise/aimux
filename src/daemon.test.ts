@@ -497,12 +497,15 @@ describe("daemon supervision", () => {
     expect(body.ok).toBe(true);
     expect(body.result.project.projectRoot).toBe(projectRoot);
     expect(body.result.dashboardSessionName).toBe("aimux-test");
+    expect(body.result.dashboardTarget).toEqual({
+      sessionName: "aimux-test",
+      windowId: "@2",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
     expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
-    expect(tmuxRuntimeMock.openTarget).toHaveBeenCalledWith(
-      { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
-      { insideTmux: false, alreadyResolved: true },
-    );
+    expect(tmuxRuntimeMock.openTarget).not.toHaveBeenCalled();
   });
 
   it("runs control-plane restart through daemon-owned project actors", async () => {
@@ -1256,7 +1259,8 @@ describe("daemon supervision", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(JSON.parse(response.body as string)).toMatchObject({
+    const payload = JSON.parse(response.body as string);
+    expect(payload).toMatchObject({
       projectRoot,
       project: {
         projectId: `proj-${basename(projectRoot)}`,
@@ -1264,6 +1268,7 @@ describe("daemon supervision", () => {
         pid: process.pid,
       },
     });
+    expect(payload.dashboardTarget).toBeUndefined();
   });
 
   it("requires a project query for project ensure text", async () => {

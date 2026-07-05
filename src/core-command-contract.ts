@@ -145,7 +145,6 @@ export interface CoreProjectPayload {
 }
 
 export interface CoreProjectRestartPayload extends CoreProjectPayload {
-  open?: boolean;
   serve?: boolean;
 }
 
@@ -159,6 +158,13 @@ export interface CoreProjectServiceState {
   pid: number;
   startedAt: string;
   updatedAt: string;
+}
+
+export interface CoreTmuxTarget {
+  sessionName: string;
+  windowId: string;
+  windowIndex: number;
+  windowName: string;
 }
 
 export interface CoreProjectsListResult {
@@ -178,6 +184,7 @@ export type CoreProjectKillResult = CoreProjectStopResult;
 export interface CoreProjectRestartResult {
   project: CoreProjectServiceState;
   dashboardSessionName?: string;
+  dashboardTarget?: CoreTmuxTarget;
 }
 
 export interface CoreRelayResult {

@@ -1,4 +1,9 @@
-import type { CoreProjectServiceState, CoreRelaySnapshot, CoreStatusProject } from "./core-command-contract.js";
+import type {
+  CoreProjectServiceState,
+  CoreRelaySnapshot,
+  CoreStatusProject,
+  CoreTmuxTarget,
+} from "./core-command-contract.js";
 import type { NotificationRecord, TeamConfig } from "./project-api-contract.js";
 
 export interface CoreDaemonStatusTextPayload {
@@ -30,6 +35,7 @@ export interface CoreProjectRestartTextPayload {
   projectRoot: string;
   project: CoreProjectServiceState;
   dashboardSessionName?: string;
+  dashboardTarget?: CoreTmuxTarget;
 }
 
 export interface CoreRemoteStatusTextPayload {
