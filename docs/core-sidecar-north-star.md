@@ -146,6 +146,10 @@ For those commands, the healthy path is:
 installed aimux shim -> global daemon core route -> project service or daemon owner
 ```
 
+The TUI dashboard now routes shared lifecycle mutations through the project API
+and keeps API refresh glitches from clearing in-flight start/stop/create/remove
+state while the matching pending action still owns the transition.
+
 The remaining work is not "make more fallback paths." The remaining work is to
 shrink the exceptional surface:
 

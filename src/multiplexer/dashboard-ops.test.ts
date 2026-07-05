@@ -840,6 +840,7 @@ describe("dashboard-ops", () => {
   });
 
   it("clears pending and reports restore failure when the service snapshot is unreachable", async () => {
+    vi.useFakeTimers();
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
       mode: "dashboard",
@@ -861,13 +862,61 @@ describe("dashboard-ops", () => {
       showDashboardError: vi.fn(),
     };
 
-    await resumeOfflineSessionWithFeedback(host, session);
+    try {
+      const action = resumeOfflineSessionWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
-    expect(host.waitForSessionStart).not.toHaveBeenCalled();
+    expect(host.waitForSessionStart).toHaveBeenCalled();
     expect(host.showDashboardError).toHaveBeenCalledWith('Failed to restore "codex"', [
       "starting did not settle before timing out",
     ]);
+  });
+
+  it("keeps restore pending across a transient service snapshot miss", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
+    let refreshCount = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshError: undefined as Error | undefined,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount === 1) {
+          host.dashboardModelServiceRefreshError = new Error("temporary reconnect");
+          return false;
+        }
+        host.dashboardModelServiceRefreshError = undefined;
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() =>
+        refreshCount < 2
+          ? [{ ...session, status: "offline", pendingAction: "starting" }]
+          : [{ ...session, status: "waiting", tmuxWindowId: "@21" }],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored codex");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("uses a live tmux agent window as resume evidence while waiting for the API row", async () => {
