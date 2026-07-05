@@ -8,13 +8,12 @@ file tracks which command families still violate or satisfy that model.
 
 - `CUT`: healthy installed path already routes through the long-lived daemon or
   project service without spawning Node.
-- `SIDEcar`: routed by the Node launcher through the daemon/project service, but
+- `SIDECAR`: routed by the Node launcher through the daemon/project service, but
   the installed shell shim still starts Node before reaching that route.
 - `BOOTSTRAP`: allowed to start Node because its purpose is daemon startup,
   stale recovery, install, or explicit repair.
 - `TMUX`: terminal-local mechanics; it may use tmux directly, but not as product
   state authority.
-- `LEGACY`: still needs an owner cut before it satisfies the north star.
 - `INTERNAL`: developer/debug plumbing, not a normal user recovery path.
 
 ## Installed Shim Fast Paths
@@ -97,7 +96,9 @@ No commands currently live in this category.
   core command disposition test.
 - Moving a command to `CUT` requires a healthy installed no-spawn test, stale
   fallback coverage, and output parity for text/JSON modes.
-- Keeping a command out of `CUT` requires an explicit `SIDEcar`, `BOOTSTRAP`,
-  `TMUX`, `LEGACY`, or `INTERNAL` classification.
+- Invalid or unsupported arguments for a recognized `CUT` command must fail in
+  the shim without spawning Node when a matching daemon is healthy.
+- Keeping a command out of `CUT` requires an explicit `SIDECAR`, `BOOTSTRAP`,
+  `TMUX`, or `INTERNAL` classification.
 - Shell fast paths must stay dumb transport. Complex parsing and semantics
   belong in the daemon or project service.

@@ -5,6 +5,9 @@ import { isCoreCliCommand } from "./core-cli-routing.js";
 
 type Disposition = "shim-fast-path" | "node-core-fallback";
 
+const inventoryPath = join(process.cwd(), "docs", "command-ownership-inventory.md");
+const allowedInventoryStatuses = new Set(["CUT", "SIDECAR", "BOOTSTRAP", "TMUX", "INTERNAL"]);
+
 const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "spawn", shimNeedle: "/core/lifecycle/spawn-text" },
   { command: "stop <sessionId>", shimNeedle: "/core/lifecycle/stop-text" },
@@ -199,6 +202,21 @@ const coreCommandDispositions: Array<{
 ];
 
 describe("core command ownership inventory", () => {
+  it("keeps command inventory status labels canonical and non-legacy", () => {
+    const inventory = readFileSync(inventoryPath, "utf8");
+    const statusLabels = inventory
+      .split("\n")
+      .filter((line) => line.startsWith("|"))
+      .map((line) => line.split("|").map((part) => part.trim()))
+      .map((columns) => columns[2]?.match(/^`([^`]+)`$/)?.[1])
+      .filter((status): status is string => Boolean(status));
+
+    expect(inventory).not.toContain("SIDEcar");
+    expect(inventory).not.toContain("`LEGACY`");
+    expect(new Set(statusLabels)).toEqual(new Set(["CUT", "BOOTSTRAP", "INTERNAL"]));
+    expect(statusLabels.every((status) => allowedInventoryStatuses.has(status))).toBe(true);
+  });
+
   it("classifies every routed core command used by the installed CLI", () => {
     expect(coreCommandDispositions.map((entry) => entry.command)).toEqual([
       "daemon ensure",
