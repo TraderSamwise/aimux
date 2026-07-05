@@ -1,5 +1,5 @@
 import type { CoreProjectServiceState, CoreRelaySnapshot, CoreStatusProject } from "./core-command-contract.js";
-import type { TeamConfig } from "./project-api-contract.js";
+import type { NotificationRecord, TeamConfig } from "./project-api-contract.js";
 
 export interface CoreDaemonStatusTextPayload {
   daemon: { pid?: number; port?: number; serviceInfo?: unknown } | null;
@@ -88,6 +88,25 @@ export interface CoreTeamTextPayload {
   projectRoot: string;
   config: TeamConfig;
   role?: string;
+}
+
+export interface CoreNotificationsListTextPayload {
+  notifications: NotificationRecord[];
+  unreadCount: number;
+}
+
+export interface CoreNotificationSendTextPayload {
+  title: string;
+}
+
+export interface CoreNotificationReadTextPayload {
+  ok: true;
+  updated: number;
+}
+
+export interface CoreNotificationClearTextPayload {
+  ok: true;
+  cleared: number;
 }
 
 export interface CoreWorktreeSummaryTextPayload {
@@ -377,6 +396,27 @@ export function renderCoreTeamInitLines(payload: CoreTeamTextPayload): string[] 
     lines.push(`  ${name}: ${role.description}`);
   }
   return lines;
+}
+
+export function renderCoreNotificationsListLines(payload: CoreNotificationsListTextPayload): string[] {
+  if (payload.notifications.length === 0) return ["No notifications."];
+  return payload.notifications.map((notification) => {
+    const state = notification.unread ? "unread" : "read";
+    const session = notification.sessionId ? ` [${notification.sessionId}]` : "";
+    return `${notification.id} ${state}${session} ${notification.title}: ${notification.body}`;
+  });
+}
+
+export function renderCoreNotificationSendLines(payload: CoreNotificationSendTextPayload): string[] {
+  return [`Queued notification "${payload.title}".`];
+}
+
+export function renderCoreNotificationReadLines(payload: CoreNotificationReadTextPayload): string[] {
+  return [`Marked ${payload.updated} notification${payload.updated === 1 ? "" : "s"} as read.`];
+}
+
+export function renderCoreNotificationClearLines(payload: CoreNotificationClearTextPayload): string[] {
+  return [`Cleared ${payload.cleared} notification${payload.cleared === 1 ? "" : "s"}.`];
 }
 
 function requiredCoreTeamRole(payload: CoreTeamTextPayload): string | undefined {

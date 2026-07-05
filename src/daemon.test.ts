@@ -1128,6 +1128,93 @@ describe("daemon supervision", () => {
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.init))?.timeoutMs).toBe(120_000);
   });
 
+  it("serves notification text routes through the project service", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+    const calls: Array<{ url: string; body?: unknown; timeoutMs?: number }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown; timeoutMs?: number }) => {
+      calls.push({ url, body: opts?.body, timeoutMs: opts?.timeoutMs });
+      if (url.endsWith(PROJECT_API_ROUTES.runtime.notify)) {
+        return { status: 200, json: { ok: true } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.notifications.read)) {
+        return { status: 200, json: { ok: true, updated: 2 } };
+      }
+      if (url.endsWith(PROJECT_API_ROUTES.notifications.clear)) {
+        return { status: 200, json: { ok: true, cleared: 3 } };
+      }
+      if (url.includes(PROJECT_API_ROUTES.notifications.list)) {
+        return {
+          status: 200,
+          json: {
+            ok: true,
+            notifications: [
+              {
+                id: "note-1",
+                title: "Needs attention",
+                body: "Claude is waiting",
+                unread: true,
+                sessionId: "claude-1",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+            unreadCount: 1,
+          },
+        };
+      }
+      return { status: 200, json: projectServiceHealth(process.pid) };
+    });
+
+    const listed = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.notificationListText}?project=${encodeURIComponent(
+        projectRoot,
+      )}&unread=1&sessionId=claude-1`,
+    );
+    const sent = await daemon.routeRequest("POST", `${CORE_API_ROUTES.notificationSendText}?json=1`, {
+      project: projectRoot,
+      title: "Heads up",
+      subtitle: "Claude",
+      body: "Ready",
+      sessionId: "claude-1",
+      kind: "attention",
+    });
+    const read = await daemon.routeRequest("POST", CORE_API_ROUTES.notificationReadText, {
+      project: projectRoot,
+      sessionId: "claude-1",
+    });
+    const cleared = await daemon.routeRequest("POST", `${CORE_API_ROUTES.notificationClearText}?json=1`, {
+      project: projectRoot,
+      sessionId: "claude-1",
+    });
+
+    expect(listed.status).toBe(200);
+    expect(listed.body).toBe("note-1 unread [claude-1] Needs attention: Claude is waiting\n");
+    expect(sent.status).toBe(200);
+    expect(JSON.parse(sent.body as string)).toEqual({ ok: true });
+    expect(read.body).toBe("Marked 2 notifications as read.\n");
+    expect(JSON.parse(cleared.body as string)).toEqual({ ok: true, cleared: 3 });
+    expect(calls.find((call) => call.url.includes(PROJECT_API_ROUTES.notifications.list))?.url).toContain(
+      "unread=1",
+    );
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.runtime.notify))?.body).toEqual({
+      title: "Heads up",
+      subtitle: "Claude",
+      message: "Ready",
+      sessionId: "claude-1",
+      kind: "attention",
+      force: true,
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.runtime.notify))?.timeoutMs).toBe(120_000);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.notifications.read))?.body).toEqual({
+      sessionId: "claude-1",
+    });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.notifications.clear))?.body).toEqual({
+      sessionId: "claude-1",
+    });
+  });
+
   it("rejects malformed lifecycle project-service responses", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
