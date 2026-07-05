@@ -560,21 +560,33 @@ export class AimuxDaemon {
   }
 
   private logsPathTextRoute(routeUrl: URL): DaemonRouteResponse {
-    const path = selectedLogPath(this.logSelectionOptions(routeUrl));
-    return { status: 200, body: `${path}\n`, contentType: "text/plain; charset=utf-8" };
+    try {
+      const path = selectedLogPath(this.logSelectionOptions(routeUrl));
+      return { status: 200, body: `${path}\n`, contentType: "text/plain; charset=utf-8" };
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private logsTailTextRoute(routeUrl: URL): DaemonRouteResponse {
-    const path = selectedLogPath(this.logSelectionOptions(routeUrl));
-    const output = readLastLogLines(path, parseLineCount(routeUrl.searchParams.get("lines") ?? undefined));
-    if (!output) return this.textError(404, `No log entries at ${path}`);
-    return { status: 200, body: `${output}\n`, contentType: "text/plain; charset=utf-8" };
+    try {
+      const path = selectedLogPath(this.logSelectionOptions(routeUrl));
+      const output = readLastLogLines(path, parseLineCount(routeUrl.searchParams.get("lines") ?? undefined));
+      if (!output) return this.textError(404, `No log entries at ${path}`);
+      return { status: 200, body: `${output}\n`, contentType: "text/plain; charset=utf-8" };
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private logsClearTextRoute(routeUrl: URL): DaemonRouteResponse {
-    const path = selectedLogPath(this.logSelectionOptions(routeUrl));
-    clearLogFile(path);
-    return { status: 200, body: `Cleared ${path}\n`, contentType: "text/plain; charset=utf-8" };
+    try {
+      const path = selectedLogPath(this.logSelectionOptions(routeUrl));
+      clearLogFile(path);
+      return { status: 200, body: `Cleared ${path}\n`, contentType: "text/plain; charset=utf-8" };
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private isRouteResponse(value: unknown): value is DaemonRouteResponse {
