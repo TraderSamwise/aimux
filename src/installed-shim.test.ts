@@ -37,6 +37,7 @@ url=""
 output_file=""
 write_status=""
 pending_data=0
+fail_on_http=0
 while [ "$#" -gt 0 ]; do
   if [ "$pending_data" -eq 1 ]; then
     printf '%s\\n' "$1" >> "$CURL_LOG"
@@ -45,6 +46,9 @@ while [ "$#" -gt 0 ]; do
     continue
   fi
   case "$1" in
+    -f|-f*|--fail)
+      fail_on_http=1
+      ;;
     -o)
       shift
       output_file="$1"
@@ -86,12 +90,17 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     ;;
 	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
+    text_status="\${TEXT_ROUTE_STATUS:-200}"
+    case "$text_status" in
+      2*) ;;
+      *) [ "$fail_on_http" -eq 1 ] && exit 22 ;;
+    esac
     if [ -n "$output_file" ]; then
       cat "$TEXT_ROUTE_FILE" > "$output_file"
     else
       cat "$TEXT_ROUTE_FILE"
     fi
-    [ -n "$write_status" ] && printf '%s' "\${TEXT_ROUTE_STATUS:-200}"
+    [ -n "$write_status" ] && printf '%s' "$text_status"
     exit 0
     ;;
   */core/restart-text)
@@ -418,6 +427,22 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
       `${fixture.aimuxRoot}/dist/launcher-bin.js host agent-stream claude-1 --project /repo\n`,
     );
+  });
+
+  it("returns nonzero for host agent-stream daemon errors without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "Error: --start-line must be an integer\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-stream", "claude-1", "--project", "/repo", "--start-line", "10px"], {
+      TEXT_ROUTE_STATUS: "400",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/core/host-agent-stream-text");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
   it("serves daemon project-ensure from a matching daemon without launching Node", () => {
