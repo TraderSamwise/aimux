@@ -331,6 +331,11 @@ describe("runCoreCli", () => {
       code: 0,
       stdout: ["Restarted project service for aimux-repo"],
     });
+    await expect(run(["host", "restart", "--serve", "--open"])).resolves.toMatchObject({
+      code: 1,
+      stdout: ["Restarted project service for /repo"],
+      stderr: ["error: restarted project service, but no dashboard target was available to open"],
+    });
 
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectStop, { projectRoot: "/repo" });
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectKill, { projectRoot: "/repo" });
@@ -345,6 +350,10 @@ describe("runCoreCli", () => {
     expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
       projectRoot: "/repo",
       serve: false,
+    });
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectRestart, {
+      projectRoot: "/repo",
+      serve: true,
     });
     expect(mocks.tmuxOpenTarget).toHaveBeenCalledTimes(1);
     expect(mocks.tmuxOpenTarget).toHaveBeenCalledWith(

@@ -293,7 +293,10 @@ aimux_post_project_restart_open() {
   fi
   rm -f "$body_file"
   trap - EXIT INT TERM
-  [ -n "$session_name" ] || return 0
+  if [ -z "$session_name" ]; then
+    printf 'Error: restarted project service, but no dashboard target was available to open\n' >&2
+    return 2
+  fi
   if ! command -v tmux >/dev/null 2>&1; then
     printf 'Error: restarted project service, but tmux is not available to open dashboard %s:%s\n' "$session_name" "$window_index" >&2
     return 2

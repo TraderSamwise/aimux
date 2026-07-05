@@ -219,6 +219,9 @@ async function runHostService(args: string[], io: Required<CoreCliIo>): Promise<
   if (restartArgs.open && result.dashboardTarget) {
     const { openTmuxTargetFromCaller } = await import("./core-cli-open.js");
     openTmuxTargetFromCaller(result.dashboardTarget);
+  } else if (restartArgs.open) {
+    io.stderr("error: restarted project service, but no dashboard target was available to open");
+    return 1;
   }
   return 0;
 }
