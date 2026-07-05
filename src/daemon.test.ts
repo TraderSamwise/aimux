@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestJson } from "./http-client.js";
@@ -9,7 +9,7 @@ import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
-import { getProjectIdFor } from "./paths.js";
+import { getDaemonLogPath, getProjectIdFor, getProjectLogPathFor } from "./paths.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -64,8 +64,12 @@ vi.mock("./paths.js", () => ({
   getDaemonInfoPath: () => join(tmpRoot, ".aimux", "daemon", "daemon.json"),
   getDaemonStatePath: () => join(tmpRoot, ".aimux", "daemon", "state.json"),
   getDaemonStdioLogPath: () => join(tmpRoot, ".aimux", "daemon", "logs", "daemon-stdio.log"),
+  getDaemonLogPath: () => join(tmpRoot, ".aimux", "daemon", "logs", "daemon.jsonl"),
   getAuthPath: () => join(tmpRoot, ".aimux", "auth.json"),
   getProjectStateDir: () => join(tmpRoot, ".aimux", "projects", "global"),
+  getProjectLogPath: () => join(tmpRoot, ".aimux", "projects", "global", "logs", "aimux.jsonl"),
+  getProjectLogPathFor: (cwd: string) =>
+    join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`, "logs", "aimux.jsonl"),
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
@@ -779,6 +783,56 @@ describe("daemon supervision", () => {
 
     expect(response.status).toBe(400);
     expect(response.body).toBe("project query is required\n");
+  });
+
+  it("serves log path and tail text for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const logPath = getProjectLogPathFor(projectRoot);
+    mkdirSync(dirname(logPath), { recursive: true });
+    writeFileSync(logPath, "one\ntwo\nthree\n");
+
+    const path = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.logsPathText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+    const tail = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.logsTailText}?project=${encodeURIComponent(projectRoot)}&lines=2`,
+    );
+
+    expect(path.status).toBe(200);
+    expect(path.body).toBe(`${logPath}\n`);
+    expect(tail.status).toBe(200);
+    expect(tail.body).toBe("two\nthree\n");
+  });
+
+  it("clears daemon logs for the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const logPath = getDaemonLogPath();
+    mkdirSync(dirname(logPath), { recursive: true });
+    writeFileSync(logPath, "daemon log\n");
+
+    const response = await daemon.routeRequest("POST", `${CORE_API_ROUTES.logsClearText}?daemon=1`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe(`Cleared ${logPath}\n`);
+    expect(readFileSync(logPath, "utf8")).toBe("");
+  });
+
+  it("returns a text error for empty log tails", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.logsTailText}?project=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.contentType).toBe("text/plain; charset=utf-8");
+    expect(response.body).toContain("No log entries at ");
   });
 
   it("serves host agent-read text through the project service", async () => {

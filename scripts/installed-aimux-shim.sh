@@ -55,6 +55,12 @@ aimux_require_inline_value() {
   AIMUX_ARG_VALUE="$1"
 }
 
+aimux_require_any_arg_value() {
+  [ "$#" -gt 0 ] || return 1
+  [ -n "$1" ] || return 1
+  AIMUX_ARG_VALUE="$1"
+}
+
 aimux_matching_daemon_port() {
   command -v curl >/dev/null 2>&1 || return 1
   [ -f "$AIMUX_ROOT/BUILD_STAMP" ] || return 1
@@ -355,6 +361,73 @@ aimux_try_host_agent_stream() {
   fi
   trap - INT TERM
   return 2
+}
+
+aimux_try_logs() {
+  shift
+  [ "$#" -gt 0 ] || return 1
+  subcommand="$1"
+  shift
+  daemon=0
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  lines=""
+  case "$subcommand" in
+    path|tail|clear) ;;
+    *) return 1 ;;
+  esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --daemon)
+        daemon=1
+        ;;
+      --project)
+        shift
+        aimux_require_any_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project=*)
+        aimux_require_inline_value "${1#--project=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      -n|--lines)
+        [ "$subcommand" = "tail" ] || return 1
+        shift
+        aimux_require_any_arg_value "$@" || return 1
+        lines="$AIMUX_ARG_VALUE"
+        ;;
+      --lines=*)
+        [ "$subcommand" = "tail" ] || return 1
+        aimux_require_inline_value "${1#--lines=}" || return 1
+        lines="$AIMUX_ARG_VALUE"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  set --
+  if [ "$daemon" -eq 1 ]; then
+    set -- --data-urlencode "daemon=1"
+  else
+    project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+    set -- --data-urlencode "project=$project_root"
+  fi
+  case "$subcommand" in
+    path)
+      aimux_get_query_text_route "/core/logs/path-text" 5 "$@"
+      ;;
+    tail)
+      [ -n "$lines" ] && set -- "$@" --data-urlencode "lines=$lines"
+      aimux_get_query_text_route "/core/logs/tail-text" 5 "$@"
+      ;;
+    clear)
+      aimux_post_query_text_route "/core/logs/clear-text" 5 "$@"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 aimux_try_doctor() {
@@ -1912,6 +1985,13 @@ case "${1:-} ${2:-}" in
     ;;
   "host agent-stream")
     if aimux_try_host_agent_stream "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  "logs path" | "logs tail" | "logs clear")
+    if aimux_try_logs "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"

@@ -26,6 +26,9 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "team default <role>", shimNeedle: "/core/team/default-text" },
   { command: "doctor versions", shimNeedle: "/core/doctor/versions-text" },
   { command: "doctor tmux", shimNeedle: "/core/doctor/tmux-text" },
+  { command: "logs path", shimNeedle: "/core/logs/path-text" },
+  { command: "logs tail", shimNeedle: "/core/logs/tail-text" },
+  { command: "logs clear", shimNeedle: "/core/logs/clear-text" },
   { command: "repair", shimNeedle: "/core/repair-text" },
   { command: "restart", shimNeedle: "/core/restart-text" },
   { command: "worktree", shimNeedle: "/core/worktree/list-text" },
@@ -134,6 +137,24 @@ const coreCommandDispositions: Array<{
     shimNeedle: "/core/host-status-text?json=1",
   },
   {
+    command: "logs path",
+    args: ["logs", "path"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/logs/path-text",
+  },
+  {
+    command: "logs tail",
+    args: ["logs", "tail", "--project", "/tmp/project", "--lines", "100"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/logs/tail-text",
+  },
+  {
+    command: "logs clear",
+    args: ["logs", "clear", "--daemon"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/logs/clear-text",
+  },
+  {
     command: "daemon project-ensure",
     args: ["daemon", "project-ensure", "--project", "/tmp/project"],
     disposition: "shim-fast-path",
@@ -229,6 +250,9 @@ describe("core command ownership inventory", () => {
       "projects list --json",
       "host status",
       "host status --json",
+      "logs path",
+      "logs tail",
+      "logs clear",
       "daemon project-ensure",
       "daemon project-ensure --json",
       "remote status",
@@ -251,7 +275,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(21);
+    expect(fastPaths).toHaveLength(24);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
