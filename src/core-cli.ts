@@ -1,5 +1,10 @@
 import { resolve as pathResolve } from "node:path";
-import { coreCommandArgs, isCoreCliCommand, parseCoreProjectEnsureArgs } from "./core-cli-routing.js";
+import {
+  coreCommandArgs,
+  isCoreCliCommand,
+  parseCoreLogsArgs,
+  parseCoreProjectEnsureArgs,
+} from "./core-cli-routing.js";
 import { CORE_COMMAND_NAMES, type CoreRelaySnapshot, type CoreStatusProject } from "./core-command-contract.js";
 import {
   renderCoreDaemonProjectsLines,
@@ -21,6 +26,7 @@ import { requestCoreCommand } from "./core-command-client.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
 import { runLoginFlow } from "./login-flow.js";
+import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { initPaths } from "./paths.js";
 import { findMainRepo } from "./worktree.js";
 
@@ -146,6 +152,34 @@ async function runDaemonProjectEnsure(args: string[], io: Required<CoreCliIo>): 
     return 0;
   }
   renderCoreProjectEnsureLines(payload).forEach(io.stdout);
+  return 0;
+}
+
+async function runLogs(args: string[], io: Required<CoreCliIo>): Promise<number> {
+  const parsed = parseCoreLogsArgs(args);
+  if (!parsed) {
+    io.stderr("error: invalid logs arguments");
+    return 1;
+  }
+  if (!parsed.daemon && !parsed.project) {
+    await initPaths(resolveProjectRoot(io.cwd()));
+  }
+  const path = selectedLogPath({ daemon: parsed.daemon, project: parsed.project });
+  if (parsed.subcommand === "path") {
+    io.stdout(path);
+    return 0;
+  }
+  if (parsed.subcommand === "tail") {
+    const output = readLastLogLines(path, parseLineCount(parsed.lines));
+    if (!output) {
+      io.stderr(`No log entries at ${path}`);
+      return 1;
+    }
+    io.stdout(output);
+    return 0;
+  }
+  clearLogFile(path);
+  io.stdout(`Cleared ${path}`);
   return 0;
 }
 
@@ -285,6 +319,7 @@ export async function runCoreCli(
     if (command === "daemon" && subcommand === "status") return await runDaemonStatus(args, io);
     if (command === "daemon" && subcommand === "projects") return await runDaemonProjects(args, io);
     if (command === "daemon" && subcommand === "project-ensure") return await runDaemonProjectEnsure(args, io);
+    if (command === "logs") return await runLogs(args, io);
     if (command === "projects" && subcommand === "list") return await runProjectsList(args, io);
     if (command === "remote" && subcommand === "status") return await runRemoteStatus(args, io);
     if (command === "remote" && subcommand === "enable") return await runRemoteEnable(io);

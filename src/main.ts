@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
-import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
+import { readFileSync, readdirSync, mkdirSync } from "node:fs";
+import { join as pathJoin, resolve as pathResolve } from "node:path";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
@@ -15,6 +15,7 @@ import {
   getProjectStateDirFor,
   getRuntimeTopologyPath,
 } from "./paths.js";
+import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 import { PROJECT_API_ROUTES, type TeamConfig } from "./project-api-contract.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
@@ -659,29 +660,12 @@ function configureLoggingForCommand(command: Command): void {
   });
 }
 
-function parseLineCount(value: string | undefined): number {
-  const parsed = Number.parseInt(value ?? "80", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 80;
-}
-
 function parsePortOption(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? String(fallback), 10);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
     throw new Error(`Port must be an integer between 1 and 65535, got ${value}`);
   }
   return parsed;
-}
-
-function selectedLogPath(opts: { daemon?: boolean }): string {
-  return opts.daemon ? getDaemonLogPath() : getProjectLogPath();
-}
-
-function readLastLogLines(path: string, lines: number): string {
-  if (!existsSync(path)) return "";
-  const content = readFileSync(path, "utf-8");
-  const allLines = content.split(/\r?\n/);
-  if (allLines.at(-1) === "") allLines.pop();
-  return allLines.slice(-lines).join("\n");
 }
 
 function findCoreProject(projects: CoreStatusProject[], projectRoot: string): CoreStatusProject | null {
@@ -3135,8 +3119,7 @@ logsCmd
   .option("--project <path>", "Project path")
   .action((opts: { daemon?: boolean; project?: string }) => {
     const path = selectedLogPath(opts);
-    mkdirSync(pathDirname(path), { recursive: true });
-    writeFileSync(path, "");
+    clearLogFile(path);
     console.log(`Cleared ${path}`);
   });
 

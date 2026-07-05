@@ -142,6 +142,7 @@ import {
   type ProjectServiceState,
 } from "./daemon-state.js";
 import { createAgentOutputSseTextHandler } from "./agent-output-stream.js";
+import { clearLogFile, parseLineCount, readLastLogLines, selectedLogPath } from "./logs.js";
 
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
@@ -174,6 +175,9 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
   CORE_API_ROUTES.lifecycleStopText,
+  CORE_API_ROUTES.logsClearText,
+  CORE_API_ROUTES.logsPathText,
+  CORE_API_ROUTES.logsTailText,
   CORE_API_ROUTES.loopAddText,
   CORE_API_ROUTES.loopBlockText,
   CORE_API_ROUTES.loopDoneText,
@@ -546,6 +550,43 @@ export class AimuxDaemon {
 
   private textError(status: number, message: string): DaemonRouteResponse {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private logSelectionOptions(routeUrl: URL): { daemon: boolean; project?: string } {
+    return {
+      daemon: routeUrl.searchParams.get("daemon") === "1",
+      project: routeUrl.searchParams.get("project") ?? undefined,
+    };
+  }
+
+  private logsPathTextRoute(routeUrl: URL): DaemonRouteResponse {
+    try {
+      const path = selectedLogPath(this.logSelectionOptions(routeUrl));
+      return { status: 200, body: `${path}\n`, contentType: "text/plain; charset=utf-8" };
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private logsTailTextRoute(routeUrl: URL): DaemonRouteResponse {
+    try {
+      const path = selectedLogPath(this.logSelectionOptions(routeUrl));
+      const output = readLastLogLines(path, parseLineCount(routeUrl.searchParams.get("lines") ?? undefined));
+      if (!output) return this.textError(404, `No log entries at ${path}`);
+      return { status: 200, body: `${output}\n`, contentType: "text/plain; charset=utf-8" };
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private logsClearTextRoute(routeUrl: URL): DaemonRouteResponse {
+    try {
+      const path = selectedLogPath(this.logSelectionOptions(routeUrl));
+      clearLogFile(path);
+      return { status: 200, body: `Cleared ${path}\n`, contentType: "text/plain; charset=utf-8" };
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private isRouteResponse(value: unknown): value is DaemonRouteResponse {
@@ -2329,6 +2370,18 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.hostAgentReadText) {
       return this.hostAgentReadTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.logsPathText) {
+      return this.logsPathTextRoute(routeUrl);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.logsTailText) {
+      return this.logsTailTextRoute(routeUrl);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.logsClearText) {
+      return this.logsClearTextRoute(routeUrl);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.doctorVersionsText) {
