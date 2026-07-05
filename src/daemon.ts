@@ -690,8 +690,13 @@ export class AimuxDaemon {
       insideTmux: Boolean(currentClientSession || clientTty),
       alreadyResolved: true,
       clientTty,
+      clientSuffix: this.clientSuffixForSession(currentClientSession),
       returnSessionName: currentClientSession,
     });
+  }
+
+  private clientSuffixForSession(sessionName: string | undefined): string | undefined {
+    return sessionName?.match(/-client-([0-9a-f]{8})$/)?.[1];
   }
 
   private async dashboardReloadTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
@@ -2412,6 +2417,7 @@ export class AimuxDaemon {
         tmux.openTarget(dashboardTarget, {
           insideTmux: Boolean(options.openFocus.currentClientSession || options.openFocus.clientTty),
           clientTty: options.openFocus.clientTty,
+          clientSuffix: this.clientSuffixForSession(options.openFocus.currentClientSession),
           returnSessionName: options.openFocus.currentClientSession,
         });
       }

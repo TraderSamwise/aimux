@@ -585,6 +585,11 @@ describe("installed aimux shim", () => {
     expectInvalidNoNode(fixture, ["dashboard-reload", "--json"]);
     expectInvalidNoNode(fixture, ["restart-runtime", "--project-root"]);
     expectInvalidNoNode(fixture, ["restart-runtime", "--bad"]);
+    const openJson = fixture.run(["restart-runtime", "--open", "--json"], { NODE_EXIT: "99" });
+    expect(openJson.status).toBe(1);
+    expect(openJson.stdout).toBe("");
+    expect(openJson.stderr).toContain("restart-runtime --open cannot be combined with --json");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
   });
 
   it("opens host restart targets from the caller shell without launching Node", () => {

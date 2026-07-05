@@ -718,6 +718,7 @@ describe("daemon supervision", () => {
         insideTmux: true,
         alreadyResolved: true,
         clientTty: "/dev/ttys001",
+        clientSuffix: "feedbeef",
         returnSessionName: "aimux-test-client-feedbeef",
       },
     );
@@ -1373,6 +1374,7 @@ describe("daemon supervision", () => {
       {
         insideTmux: true,
         clientTty: "/dev/ttys001",
+        clientSuffix: "feedbeef",
         returnSessionName: "aimux-test-client-feedbeef",
       },
     );
