@@ -9,6 +9,7 @@ import { log } from "./debug.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { loadConfig } from "./config.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import {
@@ -31,11 +32,17 @@ import {
   renderCoreLifecycleKillLines,
   renderCoreLifecycleSpawnLines,
   renderCoreLifecycleStopLines,
+  renderCoreLoopAddLines,
+  renderCoreLoopBlockLines,
+  renderCoreLoopDoneLines,
+  renderCoreLoopRemoveLines,
   renderCoreLoginLines,
   renderCoreLogoutLines,
   renderCoreHandoffMutationLines,
   renderCoreHandoffSendLines,
   renderCoreMessageSendLines,
+  renderCoreOverseerClearLines,
+  renderCoreOverseerStartLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
   renderCoreReviewRequestChangesLines,
@@ -74,7 +81,9 @@ import {
   type CoreLifecycleKillTextPayload,
   type CoreLifecycleSpawnTextPayload,
   type CoreLifecycleStopTextPayload,
+  type CoreLoopTextPayload,
   type CoreMessageSendTextPayload,
+  type CoreOverseerTextPayload,
   type CoreRemoteStatusTextPayload,
   type CoreReviewRequestChangesTextPayload,
   type CoreTaskListTextPayload,
@@ -140,7 +149,13 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.lifecycleKillText,
   CORE_API_ROUTES.lifecycleSpawnText,
   CORE_API_ROUTES.lifecycleStopText,
+  CORE_API_ROUTES.loopAddText,
+  CORE_API_ROUTES.loopBlockText,
+  CORE_API_ROUTES.loopDoneText,
+  CORE_API_ROUTES.loopRemoveText,
   CORE_API_ROUTES.messageSendText,
+  CORE_API_ROUTES.overseerClearText,
+  CORE_API_ROUTES.overseerStartText,
   CORE_API_ROUTES.reviewApproveText,
   CORE_API_ROUTES.reviewRequestChangesText,
   CORE_API_ROUTES.taskAcceptText,
@@ -1435,6 +1450,125 @@ export class AimuxDaemon {
     return this.textOrJsonLines(routeUrl, payload, renderCoreLifecycleForkLines(payload));
   }
 
+  private async loopTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: { active: boolean; render: (payload: CoreLoopTextPayload) => string[] },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const goal = this.stringParam(routeUrl, body, "goal") || undefined;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.loop, {
+      sessionId,
+      active: input.active,
+      ...(goal ? { goal } : {}),
+    });
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, "loop", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const loop = result.json.loop && typeof result.json.loop === "object" ? result.json.loop : undefined;
+    const payload: CoreLoopTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      active: input.active,
+      goal: loop && typeof (loop as { goal?: unknown }).goal === "string" ? (loop as { goal: string }).goal : goal,
+    };
+    return this.textOrJsonLines(routeUrl, payload, input.render(payload));
+  }
+
+  private async loopExitTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: {
+      event: (message: string) => Record<string, unknown>;
+      render: (payload: CoreLoopTextPayload) => string[];
+    },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const reason = this.stringParam(routeUrl, body, "reason") || undefined;
+    const loopResult = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.loop, {
+      sessionId,
+      active: false,
+    });
+    if (!loopResult.ok) return loopResult.response;
+    const returnedSessionId = this.requiredProjectServiceString(loopResult.json, "loop", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    let eventWarning: string | undefined;
+    const eventResult = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.runtime.event,
+      { session: returnedSessionId, event: input.event(reason ?? "") },
+      { ensureProject: false },
+    );
+    if (!eventResult.ok) {
+      eventWarning = `aimux: loop exited, but the status event could not be recorded: ${String(
+        eventResult.response.body,
+      ).trim()}`;
+    }
+    const payload: CoreLoopTextPayload = {
+      ok: true,
+      projectRoot: loopResult.projectRoot,
+      sessionId: returnedSessionId,
+      active: false,
+      eventWarning,
+    };
+    return this.textOrJsonLines(routeUrl, payload, input.render(payload));
+  }
+
+  private async overseerStartTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const projectRoot = this.resolveProjectRoot(project);
+    const explicitTool = this.stringParam(routeUrl, body, "tool") || undefined;
+    const tool = explicitTool ?? loadConfig({ projectRoot }).defaultTool;
+    const worktreePath = this.resolveLifecycleWorktree(projectRoot, this.stringParam(routeUrl, body, "worktreePath"));
+    const open = this.booleanParam(routeUrl, body, "open", true);
+    const result = await this.postProjectServiceJson(projectRoot, PROJECT_API_ROUTES.agents.spawn, {
+      tool,
+      ...(worktreePath ? { worktreePath } : {}),
+      open,
+      overseer: true,
+    });
+    if (!result.ok) return result.response;
+    const sessionId = this.requiredProjectServiceString(result.json, "overseer start", "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const payload: CoreOverseerTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId,
+      tool,
+      overseer: true,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreOverseerStartLines(payload));
+  }
+
+  private async overseerClearTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const sessionId = this.requiredParam(routeUrl, body, "sessionId");
+    if (typeof sessionId !== "string") return sessionId;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.agents.overseer, {
+      sessionId,
+      active: false,
+    });
+    if (!result.ok) return result.response;
+    const returnedSessionId = this.requiredProjectServiceString(result.json, "overseer clear", "sessionId");
+    if (typeof returnedSessionId !== "string") return returnedSessionId;
+    const payload: CoreOverseerTextPayload = {
+      ok: true,
+      projectRoot: result.projectRoot,
+      sessionId: returnedSessionId,
+      overseer: false,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreOverseerClearLines(payload));
+  }
+
   private async runAuthTextRoute(opts: {
     action?: "security-unlock";
     render: (payload: { userId: string; relay: CoreRelaySnapshot }) => string[];
@@ -1950,6 +2084,45 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleForkText) {
       return this.lifecycleForkTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.loopAddText) {
+      return this.loopTextRoute(routeUrl, body, { active: true, render: renderCoreLoopAddLines });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.loopRemoveText) {
+      return this.loopTextRoute(routeUrl, body, { active: false, render: renderCoreLoopRemoveLines });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.loopDoneText) {
+      return this.loopExitTextRoute(routeUrl, body, {
+        event: (message) => ({
+          kind: "task_done",
+          message: message || "Loop goal completed.",
+          tone: "success",
+          source: "loop",
+        }),
+        render: renderCoreLoopDoneLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.loopBlockText) {
+      return this.loopExitTextRoute(routeUrl, body, {
+        event: (message) => ({
+          kind: "blocked",
+          message: message || "Blocked beyond repair.",
+          source: "loop",
+        }),
+        render: renderCoreLoopBlockLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.overseerStartText) {
+      return this.overseerStartTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.overseerClearText) {
+      return this.overseerClearTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.worktreeListText) {
