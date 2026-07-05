@@ -132,6 +132,7 @@ user command families that should be sidecar-backed:
 - host status
 - remote, login, logout, account, and security unlock
 - lifecycle commands: spawn, stop, kill, and fork
+- orchestration commands: loop and overseer
 - worktree and graveyard commands
 - thread and message commands
 - workflow commands: task, handoff, and review

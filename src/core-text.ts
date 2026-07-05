@@ -65,6 +65,23 @@ export interface CoreLifecycleForkTextPayload extends CoreLifecycleSpawnTextPayl
   threadId: unknown;
 }
 
+export interface CoreLoopTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: string;
+  active: boolean;
+  goal?: string;
+  eventWarning?: string;
+}
+
+export interface CoreOverseerTextPayload {
+  ok: true;
+  projectRoot: string;
+  sessionId: string;
+  tool?: string;
+  overseer: boolean;
+}
+
 export interface CoreWorktreeSummaryTextPayload {
   worktrees: unknown[];
 }
@@ -288,6 +305,34 @@ export function renderCoreLifecycleKillLines(payload: CoreLifecycleKillTextPaylo
 
 export function renderCoreLifecycleForkLines(payload: CoreLifecycleForkTextPayload): string[] {
   return [`forked ${String(payload.sessionId)}`, `thread ${String(payload.threadId)}`];
+}
+
+export function renderCoreLoopAddLines(payload: CoreLoopTextPayload): string[] {
+  return [`loop on ${payload.sessionId}${payload.goal ? ` — ${payload.goal}` : ""}`];
+}
+
+export function renderCoreLoopRemoveLines(payload: CoreLoopTextPayload): string[] {
+  return [`loop off ${payload.sessionId}`];
+}
+
+export function renderCoreLoopDoneLines(payload: CoreLoopTextPayload): string[] {
+  const lines = payload.eventWarning ? [payload.eventWarning] : [];
+  lines.push(`loop done ${payload.sessionId}`);
+  return lines;
+}
+
+export function renderCoreLoopBlockLines(payload: CoreLoopTextPayload): string[] {
+  const lines = payload.eventWarning ? [payload.eventWarning] : [];
+  lines.push(`loop blocked ${payload.sessionId}`);
+  return lines;
+}
+
+export function renderCoreOverseerStartLines(payload: CoreOverseerTextPayload): string[] {
+  return [`overseer ${payload.sessionId}`];
+}
+
+export function renderCoreOverseerClearLines(payload: CoreOverseerTextPayload): string[] {
+  return [`overseer cleared ${payload.sessionId}`];
 }
 
 export function renderCoreWorktreeListLines(payload: CoreWorktreeSummaryTextPayload): string[] {
