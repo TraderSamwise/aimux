@@ -519,6 +519,21 @@ describe("installed aimux shim", () => {
     expect(existsSync(fixture.curlLog)).toBe(false);
   });
 
+  it("falls through to Commander help for metadata help subcommands", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["metadata", "help", "set-status"], { NODE_EXIT: "0" });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js metadata help set-status\n`,
+    );
+    expect(existsSync(fixture.curlLog)).toBe(false);
+  });
+
   it("returns metadata daemon errors without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
