@@ -43,6 +43,7 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "review approve <taskId>", shimNeedle: "/core/review/approve-text" },
   { command: "review request-changes <taskId>", shimNeedle: "/core/review/request-changes-text" },
   { command: "host agent-read <sessionId>", shimNeedle: "/core/host-agent-read-text" },
+  { command: "host agent-stream <sessionId>", shimNeedle: "/core/host-agent-stream-text" },
 ];
 
 const coreCommandDispositions: Array<{

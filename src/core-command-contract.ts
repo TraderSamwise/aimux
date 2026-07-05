@@ -7,6 +7,7 @@ export const CORE_API_ROUTES = {
   daemonProjectsText: "/core/daemon-projects-text",
   daemonStatusText: "/core/daemon-status-text",
   hostAgentReadText: "/core/host-agent-read-text",
+  hostAgentStreamText: "/core/host-agent-stream-text",
   hostStatusText: "/core/host-status-text",
   lifecycleForkText: "/core/lifecycle/fork-text",
   lifecycleKillText: "/core/lifecycle/kill-text",

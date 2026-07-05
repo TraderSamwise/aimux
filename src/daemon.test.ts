@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -131,13 +132,13 @@ vi.mock("./http-client.js", () => ({
   })),
 }));
 
-function writeMetadataEndpointFor(pid: number) {
+function writeMetadataEndpointFor(pid: number, port = 44291) {
   mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
   writeFileSync(
     join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"),
     JSON.stringify({
       host: "127.0.0.1",
-      port: 44291,
+      port,
       pid,
       updatedAt: new Date().toISOString(),
     }),
@@ -200,6 +201,25 @@ function readMetadataEndpointPid(): number {
     "utf-8",
   );
   return JSON.parse(raw).pid as number;
+}
+
+async function listenOnLoopback(server: Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+  return address.port;
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 function mockProjectServiceHealth(
@@ -582,6 +602,185 @@ describe("daemon supervision", () => {
     expect(response.status).toBe(400);
     expect(response.body).toBe("Error: --start-line must be a safe integer\n");
     expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
+  });
+
+  it("streams host agent output through the daemon as plain text", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const streamServer = createServer((req, res) => {
+      expect(req.url).toContain(PROJECT_API_ROUTES.agents.outputStream);
+      expect(req.url).toContain("sessionId=claude-1");
+      expect(req.url).toContain("startLine=-80");
+      expect(req.url).toContain("intervalMs=250");
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("event: ready\n\n");
+      res.write('event: output\ndata: {"output":"one"}\n\n');
+      res.write('event: output\ndata: {"output":"one\\ntwo"}\n\n');
+      res.end();
+    });
+    const servicePort = await listenOnLoopback(streamServer);
+    const daemonPort = "49195";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid, servicePort);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=-80&intervalMs=250`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/plain");
+      expect(await response.text()).toBe("one\n\ntwo\n");
+      expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    } finally {
+      daemon.stop();
+      await closeServer(streamServer);
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
+  it("aborts the upstream host agent stream when the client disconnects", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    let closeUpstream: (() => void) | null = null;
+    const upstreamClosed = new Promise<void>((resolve) => {
+      closeUpstream = resolve;
+    });
+    const streamServer = createServer((req, res) => {
+      req.on("close", () => closeUpstream?.());
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write('event: output\ndata: {"output":"one"}\n\n');
+    });
+    const servicePort = await listenOnLoopback(streamServer);
+    const daemonPort = "49198";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid, servicePort);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=-80&intervalMs=250`,
+      );
+      expect(response.status).toBe(200);
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const firstChunk = await reader!.read();
+      expect(new TextDecoder().decode(firstChunk.value)).toBe("one\n");
+      await reader!.cancel();
+      await Promise.race([
+        upstreamClosed,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("upstream stream stayed open")), 2_000)),
+      ]);
+    } finally {
+      daemon.stop();
+      await closeServer(streamServer);
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
+  it("returns text errors when the host agent stream endpoint is unreachable", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const closedServer = createServer();
+    const servicePort = await listenOnLoopback(closedServer);
+    await closeServer(closedServer);
+    const daemonPort = "49199";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid, servicePort);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=-80&intervalMs=250`,
+      );
+
+      expect(response.status).toBe(502);
+      expect(response.headers.get("content-type")).toContain("text/plain");
+      expect(await response.text()).toContain("fetch failed");
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
+  it("rejects malformed host agent-stream parameters before opening the project stream", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const daemonPort = "49196";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=10px&intervalMs=250`,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("Error: --start-line must be an integer\n");
+      expect(coreActorMock.starts).not.toHaveBeenCalled();
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
+  it("rejects too-fast host agent-stream intervals before opening the project stream", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const daemonPort = "49197";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    writeMetadataEndpointFor(process.pid);
+
+    try {
+      await daemon.start();
+      const response = await fetch(
+        `http://127.0.0.1:${daemonPort}${CORE_API_ROUTES.hostAgentStreamText}?project=${encodeURIComponent(
+          projectRoot,
+        )}&sessionId=claude-1&startLine=-80&intervalMs=99`,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("Error: --interval-ms must be an integer >= 100\n");
+      expect(coreActorMock.starts).not.toHaveBeenCalled();
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
   });
 
   it("serves project ensure text for the installed shell shim", async () => {

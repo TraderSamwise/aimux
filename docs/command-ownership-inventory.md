@@ -73,7 +73,7 @@ No commands currently live in this category.
 | `aimux repair`                                                          | `BOOTSTRAP` | daemon + tmux          | Internal repair path, not a user decision UI.                                        |
 | `aimux host ui`, `host serve`, `host stop`, `host kill`, `host restart` | `INTERNAL`  | daemon                 | Host/service management plumbing.                                                    |
 | `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
-| `aimux host agent-stream`                                              | `SIDEcar`   | project service + tmux | Needs daemon streaming/proxy transport before it can avoid the Node launcher safely. |
+| `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |
 | `aimux doctor ...`                                                      | `INTERNAL`  | daemon/project service | Diagnostics should read daemon/project-service reports, not recompute truth locally. |
 | `aimux logs ...`                                                        | `INTERNAL`  | daemon/filesystem      | Debug log access; may stay explicitly internal.                                      |

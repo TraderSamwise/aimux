@@ -312,6 +312,41 @@ aimux_try_host_agent_read() {
     --data-urlencode "startLine=$start_line"
 }
 
+aimux_try_host_agent_stream() {
+  shift 2
+  [ "$#" -gt 0 ] || return 1
+  session_id="$1"
+  case "$session_id" in -*) return 1 ;; esac
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  start_line="-120"
+  interval_ms="500"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project) shift; aimux_require_arg_value "$@" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --project=*) aimux_require_inline_value "${1#--project=}" || return 1; project_root="$AIMUX_ARG_VALUE" ;;
+      --start-line) shift; aimux_require_inline_value "${1:-}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
+      --start-line=*) aimux_require_inline_value "${1#--start-line=}" || return 1; start_line="$AIMUX_ARG_VALUE" ;;
+      --interval-ms) shift; aimux_require_inline_value "${1:-}" || return 1; interval_ms="$AIMUX_ARG_VALUE" ;;
+      --interval-ms=*) aimux_require_inline_value "${1#--interval-ms=}" || return 1; interval_ms="$AIMUX_ARG_VALUE" ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  port="$(aimux_matching_daemon_port)" || return 1
+  trap 'trap - INT TERM; exit 130' INT
+  trap 'trap - INT TERM; exit 143' TERM
+  if curl -fsS -N --get --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
+    --data-urlencode "startLine=$start_line" --data-urlencode "intervalMs=$interval_ms" \
+    "http://127.0.0.1:$port/core/host-agent-stream-text" 2>/dev/null; then
+    trap - INT TERM
+    return 0
+  fi
+  trap - INT TERM
+  return 2
+}
+
 aimux_resolve_project_arg() {
   project_arg="$1"
   if [ -d "$project_arg" ]; then
@@ -1391,6 +1426,16 @@ case "${1:-} ${2:-}" in
     ;;
   "host agent-read")
     if aimux_try_host_agent_read "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  "host agent-stream")
+    if aimux_try_host_agent_stream "$@"; then
       exit 0
     else
       code="$?"
