@@ -711,15 +711,15 @@ describe("installed aimux shim", () => {
         "--json",
       ]).stdout,
     ).toBe("team ok\n");
-    expect(fixture.run(["team", "default", "planner", "--project=/repo"]).stdout).toBe("team ok\n");
-    expect(fixture.run(["team", "remove", "planner", "--project=/repo"]).stdout).toBe("team ok\n");
+    expect(fixture.run(["team", "default", "--project=/repo", "planner"]).stdout).toBe("team ok\n");
+    expect(fixture.run(["team", "remove", "--json", "--project=/repo", "planner"]).stdout).toBe("team ok\n");
 
     const curlLog = readFileSync(fixture.curlLog, "utf8");
     expect(curlLog).toContain("/core/team/show-text");
     expect(curlLog).toContain("/core/team/init-text?json=1");
     expect(curlLog).toContain("/core/team/add-text?json=1");
     expect(curlLog).toContain("/core/team/default-text");
-    expect(curlLog).toContain("/core/team/remove-text");
+    expect(curlLog).toContain("/core/team/remove-text?json=1");
     expect(curlLog).toContain("project=/repo\n");
     expect(curlLog).toContain("role=planner\n");
     expect(curlLog).toContain("description=Plans work\n");
@@ -754,21 +754,21 @@ describe("installed aimux shim", () => {
         [
           "team",
           "add",
-          "planner",
+          "--project=/repo",
+          "--json",
           "-d",
           "Plans work",
+          "planner",
           "--reviewed-by",
           "reviewer",
           "--can-edit",
-          "--project=/repo",
-          "--json",
         ],
         { NODE_EXIT: "44" },
       ).status,
     ).toBe(44);
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
       `${fixture.aimuxRoot}/dist/launcher-bin.js team show --project=/repo --json\n` +
-        `${fixture.aimuxRoot}/dist/launcher-bin.js team add planner -d Plans work --reviewed-by reviewer --can-edit --project=/repo --json\n`,
+        `${fixture.aimuxRoot}/dist/launcher-bin.js team add --project=/repo --json -d Plans work planner --reviewed-by reviewer --can-edit\n`,
     );
   });
 
