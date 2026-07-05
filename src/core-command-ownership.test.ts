@@ -35,6 +35,8 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "logs clear", shimNeedle: "/core/logs/clear-text" },
   { command: "metadata ...", shimNeedle: "/core/metadata-text" },
   { command: "repair", shimNeedle: "/core/repair-text" },
+  { command: "dashboard-reload", shimNeedle: "/core/dashboard-reload-text" },
+  { command: "restart-runtime", shimNeedle: "/core/runtime-restart-text" },
   { command: "restart", shimNeedle: "/core/restart-text" },
   { command: "serve", shimNeedle: "/core/project-serve-text" },
   { command: "worktree", shimNeedle: "/core/worktree/list-text" },
@@ -194,6 +196,30 @@ const coreCommandDispositions: Array<{
     shimNeedle: "/core/project-serve-text",
   },
   {
+    command: "dashboard-reload",
+    args: ["dashboard-reload"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/dashboard-reload-text",
+  },
+  {
+    command: "dashboard-reload --open",
+    args: ["dashboard-reload", "--open"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/dashboard-reload-text",
+  },
+  {
+    command: "restart-runtime",
+    args: ["restart-runtime"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/runtime-restart-text",
+  },
+  {
+    command: "restart-runtime --json",
+    args: ["restart-runtime", "--json"],
+    disposition: "shim-fast-path",
+    shimNeedle: "/core/runtime-restart-text?json=1",
+  },
+  {
     command: "host stop",
     args: ["host", "stop"],
     disposition: "shim-fast-path",
@@ -315,6 +341,10 @@ describe("core command ownership inventory", () => {
       "daemon restart",
       "daemon restart --json",
       "serve",
+      "dashboard-reload",
+      "dashboard-reload --open",
+      "restart-runtime",
+      "restart-runtime --json",
       "host stop",
       "host kill",
       "host restart",
@@ -334,13 +364,14 @@ describe("core command ownership inventory", () => {
     for (const entry of coreCommandDispositions) {
       expect(isCoreCliCommand(entry.args), entry.command).toBe(true);
     }
+    expect(isCoreCliCommand(["restart-runtime", "--open", "--json"])).toBe(false);
   });
 
   it("keeps shim-fast-path commands backed by explicit installed shell routes", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(32);
+    expect(fastPaths).toHaveLength(36);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);

@@ -29,6 +29,7 @@ import {
 import {
   renderCoreDaemonProjectsLines,
   renderCoreDaemonStatusLines,
+  renderCoreDashboardReloadLines,
   renderCoreAgentInputLines,
   renderCoreAgentMigrateLines,
   renderCoreAgentPsLines,
@@ -58,6 +59,7 @@ import {
   renderCoreProjectRestartLines,
   renderCoreProjectServeLines,
   renderCoreProjectStopLines,
+  renderCoreRuntimeRestartLines,
   renderCoreProjectsListLines,
   renderCoreTeamAddLines,
   renderCoreTeamDefaultLines,
@@ -89,6 +91,7 @@ import {
   renderCoreWorktreeResurrectLines,
   renderCoreWhoamiLines,
   coreWhoamiJson,
+  type CoreDashboardReloadTextPayload,
   type CoreDaemonStatusTextPayload,
   type CoreAgentInputTextPayload,
   type CoreAgentMigrateTextPayload,
@@ -114,6 +117,7 @@ import {
   type CoreProjectServiceMutationTextPayload,
   type CoreRemoteStatusTextPayload,
   type CoreReviewRequestChangesTextPayload,
+  type CoreRuntimeRestartTextPayload,
   type CoreTaskListTextPayload,
   type CoreTaskMutationTextPayload,
   type CoreTaskShowTextPayload,
@@ -135,6 +139,9 @@ import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-
 import { resolveDashboardTarget } from "./dashboard/targets.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
+import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
+import { rewriteDashboardStatuslineArtifacts } from "./tmux/statusline-artifacts.js";
+import { stopProjectTmuxRuntime } from "./tmux/runtime-stop.js";
 import { CoreProjectActor } from "./core-project-actor.js";
 import { findMainRepo } from "./worktree.js";
 import {
@@ -199,6 +206,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.logsClearText,
   CORE_API_ROUTES.logsPathText,
   CORE_API_ROUTES.logsTailText,
+  CORE_API_ROUTES.dashboardReloadText,
   CORE_API_ROUTES.metadataText,
   CORE_API_ROUTES.loopAddText,
   CORE_API_ROUTES.loopBlockText,
@@ -223,6 +231,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.projectStopText,
   CORE_API_ROUTES.repairText,
   CORE_API_ROUTES.restartText,
+  CORE_API_ROUTES.runtimeRestartText,
   CORE_API_ROUTES.reviewApproveText,
   CORE_API_ROUTES.reviewRequestChangesText,
   CORE_API_ROUTES.taskAcceptText,
@@ -623,6 +632,13 @@ export class AimuxDaemon {
     return this.resolveProjectRoot(project);
   }
 
+  private explicitProjectRootTextParam(routeUrl: URL, body: unknown): string | DaemonRouteResponse {
+    const projectRoot =
+      this.stringParam(routeUrl, body, "projectRoot")?.trim() || this.stringParam(routeUrl, body, "project")?.trim();
+    if (!projectRoot) return this.textError(400, "projectRoot query is required");
+    return this.resolveProjectRoot(projectRoot);
+  }
+
   private async projectServeTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const projectRoot = this.projectRootTextParam(routeUrl, body);
     if (typeof projectRoot !== "string") return projectRoot;
@@ -660,6 +676,100 @@ export class AimuxDaemon {
         open && !serveOnly && (currentClientSession || clientTty) ? { currentClientSession, clientTty } : undefined,
     });
     return this.textOrJsonLines(routeUrl, payload, renderCoreProjectRestartLines(payload));
+  }
+
+  private openDashboardTargetForCaller(
+    tmux: TmuxRuntimeManager,
+    dashboardTarget: CoreProjectRestartTextPayload["dashboardTarget"],
+    routeUrl: URL,
+    body: unknown,
+  ): void {
+    if (!dashboardTarget) return;
+    const currentClientSession = this.stringParam(routeUrl, body, "currentClientSession")?.trim() || undefined;
+    const clientTty = this.stringParam(routeUrl, body, "clientTty")?.trim() || undefined;
+    tmux.openTarget(dashboardTarget, {
+      insideTmux: Boolean(currentClientSession || clientTty),
+      alreadyResolved: true,
+      clientTty,
+      clientSuffix: this.clientSuffixForSession(currentClientSession),
+      returnSessionName: currentClientSession,
+    });
+  }
+
+  private clientSuffixForSession(sessionName: string | undefined): string | undefined {
+    return sessionName?.match(/-client-([0-9a-f]{8})$/)?.[1];
+  }
+
+  private async dashboardReloadTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.explicitProjectRootTextParam(routeUrl, body);
+    if (typeof projectRoot !== "string") return projectRoot;
+    try {
+      await initPaths(projectRoot);
+      await this.ensureProject(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      if (!tmux.isAvailable()) return this.textError(500, "Error: tmux is not installed or not available in PATH");
+      invalidateTmuxStatuslineArtifacts(projectRoot);
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, {
+        forceReload: true,
+        openInHostSession: true,
+      });
+      await this.postProjectServiceJson(
+        projectRoot,
+        PROJECT_API_ROUTES.statuslineRefresh,
+        { force: true },
+        { timeoutMs: 1500 },
+      ).catch(() => null);
+      rewriteDashboardStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
+      if (this.booleanParam(routeUrl, body, "open", false)) {
+        this.openDashboardTargetForCaller(tmux, dashboardTarget, routeUrl, body);
+      }
+      const payload: CoreDashboardReloadTextPayload = {
+        ok: true,
+        projectRoot,
+        dashboardSessionName: dashboardSession.sessionName,
+        dashboardTarget,
+      };
+      return this.textOrJsonLines(routeUrl, payload, renderCoreDashboardReloadLines(payload));
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async runtimeRestartTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectRoot = this.explicitProjectRootTextParam(routeUrl, body);
+    if (typeof projectRoot !== "string") return projectRoot;
+    try {
+      await initPaths(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      if (!tmux.isAvailable()) return this.textError(500, "Error: tmux is not installed or not available in PATH");
+      await this.stopProject(projectRoot);
+      const tmuxSessionsKilled = stopProjectTmuxRuntime(tmux, projectRoot);
+      const project = await this.ensureProject(projectRoot);
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      invalidateTmuxStatuslineArtifacts(projectRoot);
+      await this.postProjectServiceJson(
+        projectRoot,
+        PROJECT_API_ROUTES.statuslineRefresh,
+        { force: true },
+        { timeoutMs: 1500 },
+      ).catch(() => null);
+      rewriteDashboardStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
+      if (this.booleanParam(routeUrl, body, "open", false)) {
+        this.openDashboardTargetForCaller(tmux, dashboardTarget, routeUrl, body);
+      }
+      const payload: CoreRuntimeRestartTextPayload = {
+        ok: true,
+        projectRoot,
+        dashboardSession: dashboardSession.sessionName,
+        project,
+        tmuxSessionsKilled,
+        dashboardSessionName: dashboardSession.sessionName,
+        dashboardTarget,
+      };
+      return this.textOrJsonLines(routeUrl, payload, renderCoreRuntimeRestartLines(payload));
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async metadataTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
@@ -2316,6 +2426,7 @@ export class AimuxDaemon {
         tmux.openTarget(dashboardTarget, {
           insideTmux: Boolean(options.openFocus.currentClientSession || options.openFocus.clientTty),
           clientTty: options.openFocus.clientTty,
+          clientSuffix: this.clientSuffixForSession(options.openFocus.currentClientSession),
           returnSessionName: options.openFocus.currentClientSession,
         });
       }
@@ -2673,6 +2784,14 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.projectRestartText) {
       return this.projectRestartTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.dashboardReloadText) {
+      return this.dashboardReloadTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.runtimeRestartText) {
+      return this.runtimeRestartTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.lifecycleSpawnText) {

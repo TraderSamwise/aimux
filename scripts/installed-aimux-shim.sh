@@ -307,6 +307,71 @@ aimux_post_project_restart_open() {
   fi
 }
 
+aimux_post_dashboard_open_route() {
+  route_path="$1"
+  success_kind="$2"
+  timeout="${3:-120}"
+  shift 3
+  port="$(aimux_matching_daemon_port)" || return 1
+  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-dashboard-open.XXXXXX")" || return 1
+  trap 'rm -f "$body_file"' EXIT
+  trap 'rm -f "$body_file"; exit 130' INT TERM
+  status="$(
+    curl -sS --max-time "$timeout" -o "$body_file" -w '%{http_code}' -X POST "$@" \
+      "http://127.0.0.1:$port$route_path?json=1" 2>/dev/null || true
+  )"
+  case "$status" in
+    '' | 000)
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+  case "$status" in
+    2*) ;;
+    *)
+      cat "$body_file" >&2
+      rm -f "$body_file"
+      trap - EXIT INT TERM
+      return 2
+      ;;
+  esac
+
+  dashboard_session_name="$(sed -n 's/.*"dashboardSessionName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  project_root="$(sed -n 's/.*"projectRoot"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  session_name="$(sed -n 's/.*"sessionName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$body_file" | sed -n '1p')"
+  window_index="$(sed -n 's/.*"windowIndex"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$body_file" | sed -n '1p')"
+  [ -n "$window_index" ] || window_index=0
+  case "$success_kind" in
+    dashboard-reload)
+      printf 'Reloaded dashboard for %s\n' "$dashboard_session_name"
+      ;;
+    runtime-restart)
+      printf 'Restarted project runtime for %s\n' "$project_root"
+      ;;
+    *)
+      cat "$body_file"
+      ;;
+  esac
+  rm -f "$body_file"
+  trap - EXIT INT TERM
+  if [ -z "$session_name" ]; then
+    printf 'Error: command completed, but no dashboard target was available to open\n' >&2
+    return 2
+  fi
+  if [ "$success_kind" = "runtime-restart" ]; then
+    printf 'Dashboard: %s:%s\n' "$dashboard_session_name" "$window_index"
+  fi
+  if ! command -v tmux >/dev/null 2>&1; then
+    printf 'Error: command completed, but tmux is not available to open dashboard %s:%s\n' "$session_name" "$window_index" >&2
+    return 2
+  fi
+  if ! tmux attach-session -t "$session_name:$window_index"; then
+    printf 'Error: command completed, but failed to open dashboard %s:%s\n' "$session_name" "$window_index" >&2
+    return 2
+  fi
+}
+
 aimux_post_get_query_text_route() {
   path="$1"
   timeout="${2:-60}"
@@ -699,6 +764,135 @@ aimux_try_repair() {
   path="/core/repair-text"
   [ "$json" -eq 1 ] && path="/core/repair-text?json=1"
   aimux_post_query_text_route "$path" 120 --data-urlencode "projectRoot=$project_root" --data-urlencode "open=$open"
+}
+
+aimux_try_dashboard_reload() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  open=0
+  client_tty=""
+  current_client_session=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --open)
+        open=1
+        ;;
+      --client-tty)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        client_tty="$AIMUX_ARG_VALUE"
+        ;;
+      --client-tty=*)
+        aimux_require_inline_value "${1#--client-tty=}" || return 1
+        client_tty="$AIMUX_ARG_VALUE"
+        ;;
+      --current-client-session)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        current_client_session="$AIMUX_ARG_VALUE"
+        ;;
+      --current-client-session=*)
+        aimux_require_inline_value "${1#--current-client-session=}" || return 1
+        current_client_session="$AIMUX_ARG_VALUE"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  set -- --data-urlencode "projectRoot=$project_root"
+  if [ "$open" -eq 1 ]; then
+    if [ -z "$current_client_session" ] && [ -z "$client_tty" ] && [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+      current_client_session="$(tmux display-message -p "#{client_session}" 2>/dev/null || true)"
+      client_tty="$(tmux display-message -p "#{client_tty}" 2>/dev/null || true)"
+    fi
+    if [ -n "$current_client_session" ] || [ -n "$client_tty" ]; then
+      set -- "$@" --data-urlencode "open=1"
+      [ -n "$current_client_session" ] && set -- "$@" --data-urlencode "currentClientSession=$current_client_session"
+      [ -n "$client_tty" ] && set -- "$@" --data-urlencode "clientTty=$client_tty"
+      aimux_post_query_text_route "/core/dashboard-reload-text" 120 "$@"
+      return $?
+    fi
+    aimux_post_dashboard_open_route "/core/dashboard-reload-text" dashboard-reload 120 "$@"
+    return $?
+  fi
+  aimux_post_query_text_route "/core/dashboard-reload-text" 120 "$@"
+}
+
+aimux_try_runtime_restart() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  open=0
+  json=0
+  client_tty=""
+  current_client_session=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project-root)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project-root=*)
+        aimux_require_inline_value "${1#--project-root=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --open)
+        open=1
+        ;;
+      --client-tty)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        client_tty="$AIMUX_ARG_VALUE"
+        ;;
+      --client-tty=*)
+        aimux_require_inline_value "${1#--client-tty=}" || return 1
+        client_tty="$AIMUX_ARG_VALUE"
+        ;;
+      --current-client-session)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        current_client_session="$AIMUX_ARG_VALUE"
+        ;;
+      --current-client-session=*)
+        aimux_require_inline_value "${1#--current-client-session=}" || return 1
+        current_client_session="$AIMUX_ARG_VALUE"
+        ;;
+      --json)
+        json=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  if [ "$open" -eq 1 ] && [ "$json" -eq 1 ]; then
+    printf 'Error: restart-runtime --open cannot be combined with --json\n' >&2
+    return 2
+  fi
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  set -- --data-urlencode "projectRoot=$project_root"
+  if [ "$open" -eq 1 ]; then
+    if [ -z "$current_client_session" ] && [ -z "$client_tty" ] && [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+      current_client_session="$(tmux display-message -p "#{client_session}" 2>/dev/null || true)"
+      client_tty="$(tmux display-message -p "#{client_tty}" 2>/dev/null || true)"
+    fi
+    if [ -n "$current_client_session" ] || [ -n "$client_tty" ]; then
+      set -- "$@" --data-urlencode "open=1"
+      [ -n "$current_client_session" ] && set -- "$@" --data-urlencode "currentClientSession=$current_client_session"
+      [ -n "$client_tty" ] && set -- "$@" --data-urlencode "clientTty=$client_tty"
+      aimux_post_query_text_route "/core/runtime-restart-text" 120 "$@"
+      return $?
+    fi
+    aimux_post_dashboard_open_route "/core/runtime-restart-text" runtime-restart 120 "$@"
+    return $?
+  fi
+  path="/core/runtime-restart-text"
+  [ "$json" -eq 1 ] && path="/core/runtime-restart-text?json=1"
+  aimux_post_query_text_route "$path" 120 "$@"
 }
 
 aimux_resolve_project_arg() {
@@ -2313,6 +2507,20 @@ case "${1:-}" in
     ;;
   serve)
     if aimux_try_project_serve "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  dashboard-reload)
+    if aimux_try_dashboard_reload "$@"; then
+      exit 0
+    else
+      aimux_handle_fast_path_failure "$*" "$?"
+    fi
+    ;;
+  restart-runtime)
+    if aimux_try_runtime_restart "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"

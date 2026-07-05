@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { readFileSync, readdirSync, mkdirSync } from "node:fs";
-import { join as pathJoin, resolve as pathResolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
@@ -20,7 +20,6 @@ import { PROJECT_API_ROUTES, type TeamConfig } from "./project-api-contract.js";
 import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
-import { isTmuxClientSessionForHost } from "./tmux/session-names.js";
 import {
   buildTmuxDoctorReport,
   renderTmuxDoctorReport,
@@ -60,10 +59,9 @@ import { requestJson } from "./http-client.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { findLiveDashboardTarget, openDashboardTarget, resolveDashboardTarget } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
-import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
-import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
-import { configureLogging, debug, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
-import { writeTextAtomic } from "./atomic-write.js";
+import { rewriteDashboardStatuslineArtifacts } from "./tmux/statusline-artifacts.js";
+import { stopProjectTmuxRuntime } from "./tmux/runtime-stop.js";
+import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import { type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
@@ -288,65 +286,7 @@ async function waitForVerifiedProjectService(
   );
 }
 
-function rewriteLocalStatuslineArtifacts(
-  projectRoot: string,
-  tmux: TmuxRuntimeManager,
-  dashboardSessionName?: string,
-): void {
-  const data = loadStatusline(projectRoot);
-  if (!data) return;
-  const statusDir = pathJoin(getProjectStateDirFor(projectRoot), "tmux-statusline");
-  mkdirSync(statusDir, { recursive: true });
-
-  const writeStatusFile = (name: string, content: string): void => {
-    // Statusline files are cosmetic tmux chrome and can be written concurrently by
-    // multiple clients/refreshes. Use the unique-temp atomic writer (never a shared
-    // ".tmp" that racing writers rename out from under each other), and never let a
-    // write failure abort dashboard startup.
-    try {
-      writeTextAtomic(pathJoin(statusDir, name), `${content}\n`);
-    } catch (error) {
-      debug(
-        `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
-        "statusline",
-      );
-    }
-  };
-
-  const dashboardTop = renderTmuxStatuslineFromData(data, projectRoot, "top", {
-    currentWindow: "dashboard",
-    currentPath: projectRoot,
-  });
-  const dashboardBottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", {
-    currentWindow: "dashboard",
-    currentPath: projectRoot,
-    currentSession: dashboardSessionName,
-  });
-  writeStatusFile("top-dashboard.txt", dashboardTop);
-  writeStatusFile("bottom-dashboard.txt", dashboardBottom);
-  if (dashboardSessionName) {
-    writeStatusFile(`bottom-dashboard-${dashboardSessionName}.txt`, dashboardBottom);
-  }
-
-  for (const entry of [...(data.sessions ?? []), ...(data.teammates ?? [])]) {
-    if (!entry.tmuxWindowId) continue;
-    const renderOptions = {
-      currentWindow: entry.windowName,
-      currentWindowId: entry.tmuxWindowId,
-      currentPath: entry.worktreePath ?? projectRoot,
-    };
-    writeStatusFile(
-      `top-${entry.tmuxWindowId}.txt`,
-      renderTmuxStatuslineFromData(data, projectRoot, "top", renderOptions),
-    );
-    writeStatusFile(
-      `bottom-${entry.tmuxWindowId}.txt`,
-      renderTmuxStatuslineFromData(data, projectRoot, "bottom", renderOptions),
-    );
-  }
-
-  tmux.refreshStatus();
-}
+const rewriteLocalStatuslineArtifacts = rewriteDashboardStatuslineArtifacts;
 
 async function postProjectServiceJson(
   path: string,
@@ -524,28 +464,6 @@ function isRepairableCoreProjectStartupError(error: unknown): boolean {
   );
 }
 
-function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: string): string[] {
-  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
-  return tmux
-    .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || isTmuxClientSessionForHost(sessionName, hostSession))
-    .sort((a, b) => {
-      const aIsHost = a === hostSession ? 1 : 0;
-      const bIsHost = b === hostSession ? 1 : 0;
-      return aIsHost - bIsHost;
-    });
-}
-
-function stopProjectTmuxRuntime(tmux: TmuxRuntimeManager, projectRoot: string): string[] {
-  const killed: string[] = [];
-  for (const sessionName of listManagedProjectSessionNames(tmux, projectRoot)) {
-    if (!tmux.hasSession(sessionName)) continue;
-    tmux.killSession(sessionName);
-    killed.push(sessionName);
-  }
-  return killed;
-}
-
 async function waitForProcessExit(pid: number, timeoutMs = 2500): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -562,9 +480,6 @@ async function stopProjectRuntime(
   projectRoot: string,
 ): Promise<{ projectServiceStopped: boolean; tmuxSessionsKilled: string[] }> {
   const tmux = new TmuxRuntimeManager();
-  if (tmux.isAvailable()) {
-    persistProjectRuntimeSnapshotsBeforeTmuxStop(projectRoot, tmux);
-  }
   const projectServiceResponse = await requestCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
   const projectService = projectServiceResponse.result.project;
   if (projectService?.pid) {

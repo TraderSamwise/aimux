@@ -39,6 +39,8 @@ Node launcher when a matching daemon is already running:
 | `aimux doctor versions`, `aimux doctor tmux`            | `CUT`  | daemon                   | Uses `/core/doctor/*-text`; diagnostics are computed by the long-lived daemon in the healthy path.     |
 | `aimux logs path`, `tail`, `clear`                      | `CUT`  | daemon/filesystem        | Uses `/core/logs/*-text`; diagnostic log access stays local but no longer starts a fresh Node process. |
 | `aimux repair ...`                                      | `CUT`  | daemon + tmux            | Uses `/core/repair-text`; explicit repair runs inside the daemon and may focus tmux with `--open`.     |
+| `aimux dashboard-reload [--open]`                       | `CUT`  | daemon + caller tmux     | Uses `/core/dashboard-reload-text`; stale daemon fallback may bootstrap, healthy reload stays daemon-owned. |
+| `aimux restart-runtime [--project-root <path>]`          | `CUT`  | daemon + tmux            | Uses `/core/runtime-restart-text`; stale daemon fallback may bootstrap, healthy repair stays daemon-owned. |
 | `aimux serve`                                           | `CUT`  | daemon                   | Uses `/core/project-serve-text`; ensures the current project service without a fresh Node process.     |
 | `aimux host stop`, `host kill`, `host restart [--serve|--open]` | `CUT`  | daemon + caller tmux     | Uses `/core/project-*-text`; daemon owns service lifecycle, caller supplies `--open` focus context.    |
 | `aimux worktree ...`                                    | `CUT`  | daemon + project service | Uses `/core/worktree/*-text`; daemon forwards to project-service worktree APIs.                       |
@@ -83,13 +85,14 @@ No commands currently live in this category.
 | `aimux doctor versions`, `aimux doctor tmux`, `aimux repair` | `CUT`       | daemon + tmux   | Healthy installed diagnostics/repair run inside the daemon; stale daemon falls back to bootstrap.      |
 | `aimux logs path`, `tail`, `clear`                        | `CUT`       | daemon/filesystem | Healthy installed diagnostic log access uses daemon text routes; stale daemon falls back to bootstrap. |
 | `aimux serve`, `aimux host stop/kill/restart`              | `CUT`       | daemon          | Project-service management uses daemon text routes in the healthy installed path.                      |
+| `aimux dashboard-reload`, `aimux restart-runtime`          | `CUT`       | daemon + tmux   | Advanced dashboard/runtime repair commands use daemon text routes in the healthy installed path.       |
 
 ## Local Runtime And Developer Plumbing
 
 | Family                                                                  | Status      | Owner                  | Notes                                                                                |
 | ----------------------------------------------------------------------- | ----------- | ---------------------- | ------------------------------------------------------------------------------------ |
-| `aimux dashboard-reload`                                                | `BOOTSTRAP` | daemon + tmux          | Advanced recovery command; normal users should use `aimux restart`.                  |
-| `aimux restart-runtime`                                                 | `BOOTSTRAP` | daemon + tmux          | Advanced runtime repair; normal restart should decide when this is needed.           |
+| `aimux dashboard-reload`                                                | `CUT`       | daemon + caller tmux   | Advanced recovery command uses `/core/dashboard-reload-text`; normal users should use `aimux restart`. |
+| `aimux restart-runtime`                                                 | `CUT`       | daemon + tmux          | Advanced runtime repair uses `/core/runtime-restart-text`; normal restart should decide when needed.   |
 | `aimux repair`                                                          | `CUT`       | daemon + tmux          | Explicit advanced repair uses `/core/repair-text`; stale daemon fallback may bootstrap.               |
 | `aimux host ui`, `host serve`                                           | `INTERNAL`  | daemon                 | Developer service entrypoints; not normal user recovery commands.                    |
 | `aimux host stop`, `host kill`, `host restart [--serve|--open]`          | `CUT`       | daemon + caller tmux   | Healthy installed path uses `/core/project-*-text`; `--open` sends caller tmux context to the daemon. |
