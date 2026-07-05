@@ -88,7 +88,7 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     [ -n "$write_status" ] && printf '%s' "\${AUTH_WAIT_STATUS:-200}"
     exit 0
     ;;
-	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
+	  */core/daemon-ensure-text*|*/core/daemon-status-text*|*/core/daemon-projects-text*|*/core/host-status-text*|*/core/host-agent-read-text*|*/core/host-agent-stream-text*|*/core/project-ensure-text*|*/core/projects-list-text*|*/core/remote-status-text*|*/core/remote-enable-text*|*/core/remote-disable-text*|*/core/whoami-text*|*/core/logout-text*|*/core/login-text*|*/core/security-unlock-text*|*/core/lifecycle/spawn-text*|*/core/lifecycle/stop-text*|*/core/lifecycle/kill-text*|*/core/lifecycle/fork-text*|*/core/loop/add-text*|*/core/loop/remove-text*|*/core/loop/done-text*|*/core/loop/block-text*|*/core/overseer/start-text*|*/core/overseer/clear-text*|*/core/notifications/list-text*|*/core/notifications/send-text*|*/core/notifications/read-text*|*/core/notifications/clear-text*|*/core/team/show-text*|*/core/team/init-text*|*/core/team/add-text*|*/core/team/remove-text*|*/core/team/default-text*|*/core/worktree/list-text*|*/core/worktree/create-text*|*/core/worktree/remove-text*|*/core/worktree/graveyard-text*|*/core/worktree/resurrect-text*|*/core/worktree/delete-graveyard-text*|*/core/graveyard/list-text*|*/core/graveyard/send-text*|*/core/graveyard/resurrect-text*|*/core/graveyard/cleanup-text*|*/core/threads/list-text*|*/core/thread/list-text*|*/core/thread/show-text*|*/core/thread/open-text*|*/core/thread/send-text*|*/core/thread/mark-seen-text*|*/core/thread/status-text*|*/core/message/send-text*|*/core/handoff/send-text*|*/core/handoff/accept-text*|*/core/handoff/complete-text*|*/core/task/list-text*|*/core/task/show-text*|*/core/task/assign-text*|*/core/task/accept-text*|*/core/task/block-text*|*/core/task/complete-text*|*/core/task/reopen-text*|*/core/review/approve-text*|*/core/review/request-changes-text*)
     [ -f "$TEXT_ROUTE_FILE" ] || exit 22
     [ -n "\${CURL_FORCE_EXIT:-}" ] && exit "$CURL_FORCE_EXIT"
     text_status="\${TEXT_ROUTE_STATUS:-200}"
@@ -726,6 +726,63 @@ describe("installed aimux shim", () => {
     expect(curlLog).toContain("reviewedBy=reviewer\n");
     expect(curlLog).toContain("canEdit=1\n");
     expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("serves notification commands from a matching daemon without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "notifications ok\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(
+      fixture.run([
+        "notify",
+        "--project=/repo",
+        "--title",
+        "Heads up",
+        "--subtitle=Agent",
+        "--body",
+        "Ready",
+        "--session=claude-1",
+        "--kind=attention",
+        "--json",
+      ]).stdout,
+    ).toBe("notifications ok\n");
+    expect(fixture.run(["list-notifications", "--project=/repo", "--unread", "--session", "claude-1"]).stdout).toBe(
+      "notifications ok\n",
+    );
+    expect(fixture.run(["read-notifications", "--project", "/repo", "--session=claude-1", "--json"]).stdout).toBe(
+      "notifications ok\n",
+    );
+    expect(fixture.run(["clear-notifications", "--project=/repo", "--session", "claude-1"]).stdout).toBe(
+      "notifications ok\n",
+    );
+
+    const curlLog = readFileSync(fixture.curlLog, "utf8");
+    expect(curlLog).toContain("/core/notifications/send-text?json=1");
+    expect(curlLog).toContain("/core/notifications/list-text");
+    expect(curlLog).toContain("/core/notifications/read-text?json=1");
+    expect(curlLog).toContain("/core/notifications/clear-text");
+    expect(curlLog).toContain("project=/repo\n");
+    expect(curlLog).toContain("title=Heads up\n");
+    expect(curlLog).toContain("subtitle=Agent\n");
+    expect(curlLog).toContain("body=Ready\n");
+    expect(curlLog).toContain("sessionId=claude-1\n");
+    expect(curlLog).toContain("kind=attention\n");
+    expect(curlLog).toContain("unread=1\n");
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
+  it("falls back to the Node launcher for stale notification daemon health", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "notifications ok\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    expect(fixture.run(["list-notifications", "--unread"], { NODE_EXIT: "46" }).status).toBe(46);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js list-notifications --unread\n`,
+    );
   });
 
   it("falls back to the Node launcher for stale loop and overseer daemon health", () => {
