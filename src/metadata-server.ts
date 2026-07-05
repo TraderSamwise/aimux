@@ -104,7 +104,15 @@ import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
 import { TMUX_DASHBOARD_READY_OPTION } from "./runtime-owner.js";
-import { isTeammateSession, loadTeamConfig, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
+import {
+  getDefaultTeamConfig,
+  isTeammateSession,
+  loadTeamConfig,
+  saveTeamConfig,
+  selectDirectTeammates,
+  type RoleConfig,
+  type SessionTeamMetadata,
+} from "./team.js";
 import { resolveOrchestrationRecipients, type RoutingCandidate } from "./orchestration-routing.js";
 import {
   listSwitchableAgentItems,
@@ -1240,6 +1248,75 @@ export class MetadataServer {
 
   private currentProjectRoot(): string {
     return this.projectRoot ?? process.cwd();
+  }
+
+  private readTeamConfigResponse(): { ok: true; config: ReturnType<typeof loadTeamConfig> } {
+    return { ok: true, config: loadTeamConfig() };
+  }
+
+  private addTeamRole(input: {
+    role?: unknown;
+    description?: unknown;
+    reviewedBy?: unknown;
+    canEdit?: unknown;
+  }):
+    | { ok: true; config: ReturnType<typeof loadTeamConfig>; role: string }
+    | { ok: false; status: number; error: string } {
+    const role = typeof input.role === "string" ? input.role.trim() : "";
+    if (!role) return { ok: false, status: 400, error: "role is required" };
+    const config = loadTeamConfig();
+    const nextRole: RoleConfig = {
+      description:
+        typeof input.description === "string" && input.description.trim()
+          ? input.description.trim()
+          : (config.roles[role]?.description ?? `${role} agent`),
+    };
+    if (typeof input.reviewedBy === "string" && input.reviewedBy.trim()) nextRole.reviewedBy = input.reviewedBy.trim();
+    if (input.canEdit === true) nextRole.canEdit = true;
+    config.roles[role] = nextRole;
+    saveTeamConfig(config);
+    this.notifyProjectChanged({ views: ["team"], reason: "team-role-add" });
+    return { ok: true, config, role };
+  }
+
+  private removeTeamRole(input: {
+    role?: unknown;
+  }):
+    | { ok: true; config: ReturnType<typeof loadTeamConfig>; role: string }
+    | { ok: false; status: number; error: string } {
+    const role = typeof input.role === "string" ? input.role.trim() : "";
+    if (!role) return { ok: false, status: 400, error: "role is required" };
+    const config = loadTeamConfig();
+    if (!config.roles[role]) return { ok: false, status: 404, error: `Role "${role}" not found.` };
+    delete config.roles[role];
+    if (config.defaultRole === role) config.defaultRole = Object.keys(config.roles)[0] ?? "coder";
+    saveTeamConfig(config);
+    this.notifyProjectChanged({ views: ["team"], reason: "team-role-remove" });
+    return { ok: true, config, role };
+  }
+
+  private setDefaultTeamRole(input: {
+    role?: unknown;
+  }):
+    | { ok: true; config: ReturnType<typeof loadTeamConfig>; role: string }
+    | { ok: false; status: number; error: string } {
+    const role = typeof input.role === "string" ? input.role.trim() : "";
+    if (!role) return { ok: false, status: 400, error: "role is required" };
+    const config = loadTeamConfig();
+    if (!config.roles[role]) {
+      return { ok: false, status: 404, error: `Role "${role}" not found. Add it first with: aimux team add ${role}` };
+    }
+    config.defaultRole = role;
+    saveTeamConfig(config);
+    this.notifyProjectChanged({ views: ["team"], reason: "team-default-role" });
+    return { ok: true, config, role };
+  }
+
+  private initTeamConfig(): { ok: true; config: ReturnType<typeof getDefaultTeamConfig> } {
+    const config = getDefaultTeamConfig();
+    saveTeamConfig(config);
+    this.notifyProjectChanged({ views: ["team"], reason: "team-init" });
+    return { ok: true, config };
   }
 
   /** Pending interaction requests (permission/input prompts) the loop watcher
@@ -3818,6 +3895,34 @@ export class MetadataServer {
         const result = await this.options.lifecycle.spawnAgent(body);
         this.notifyChange();
         send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.team.config) {
+        send(res, 200, this.readTeamConfigResponse());
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.team.init) {
+        send(res, 200, this.initTeamConfig());
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.team.addRole) {
+        const result = this.addTeamRole((await readJson(req)) as Record<string, unknown>);
+        send(res, result.ok ? 200 : result.status, result);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.team.removeRole) {
+        const result = this.removeTeamRole((await readJson(req)) as Record<string, unknown>);
+        send(res, result.ok ? 200 : result.status, result);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.team.defaultRole) {
+        const result = this.setDefaultTeamRole((await readJson(req)) as Record<string, unknown>);
+        send(res, result.ok ? 200 : result.status, result);
         return;
       }
 

@@ -45,6 +45,11 @@ import {
   renderCoreOverseerStartLines,
   renderCoreProjectEnsureLines,
   renderCoreProjectsListLines,
+  renderCoreTeamAddLines,
+  renderCoreTeamDefaultLines,
+  renderCoreTeamInitLines,
+  renderCoreTeamRemoveLines,
+  renderCoreTeamShowLines,
   renderCoreReviewRequestChangesLines,
   renderCoreRemoteDisableLines,
   renderCoreRemoteEnableLines,
@@ -89,6 +94,7 @@ import {
   type CoreTaskListTextPayload,
   type CoreTaskMutationTextPayload,
   type CoreTaskShowTextPayload,
+  type CoreTeamTextPayload,
   type CoreThreadListTextPayload,
   type CoreThreadOpenTextPayload,
   type CoreThreadSendTextPayload,
@@ -156,6 +162,11 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.messageSendText,
   CORE_API_ROUTES.overseerClearText,
   CORE_API_ROUTES.overseerStartText,
+  CORE_API_ROUTES.teamAddText,
+  CORE_API_ROUTES.teamDefaultText,
+  CORE_API_ROUTES.teamInitText,
+  CORE_API_ROUTES.teamRemoveText,
+  CORE_API_ROUTES.teamShowText,
   CORE_API_ROUTES.reviewApproveText,
   CORE_API_ROUTES.reviewRequestChangesText,
   CORE_API_ROUTES.taskAcceptText,
@@ -1569,6 +1580,77 @@ export class AimuxDaemon {
     return this.textOrJsonLines(routeUrl, payload, renderCoreOverseerClearLines(payload));
   }
 
+  private teamPayloadFromResult(
+    result: ProjectServiceJsonResult,
+    action: string,
+    role?: string,
+  ): CoreTeamTextPayload | DaemonRouteResponse {
+    if (!result.ok) return result.response;
+    const config = this.requiredProjectServiceObject(result.json, action, "config");
+    if (this.isRouteResponse(config)) return config;
+    const roles = config.roles;
+    if (!roles || typeof roles !== "object" || Array.isArray(roles)) {
+      return this.textError(
+        502,
+        `Error: project service returned invalid ${action} response: config.roles is required`,
+      );
+    }
+    const defaultRole = config.defaultRole;
+    if (typeof defaultRole !== "string") {
+      return this.textError(
+        502,
+        `Error: project service returned invalid ${action} response: config.defaultRole is required`,
+      );
+    }
+    return {
+      ok: true,
+      projectRoot: result.projectRoot,
+      config: { roles: roles as CoreTeamTextPayload["config"]["roles"], defaultRole },
+      ...(role ? { role } : {}),
+    };
+  }
+
+  private async teamShowTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const result = await this.getProjectServiceJson(project, PROJECT_API_ROUTES.team.config);
+    const payload = this.teamPayloadFromResult(result, "team show");
+    if (this.isRouteResponse(payload)) return payload;
+    return this.textOrJsonLines(routeUrl, payload, renderCoreTeamShowLines(payload));
+  }
+
+  private async teamInitTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.team.init, {});
+    const payload = this.teamPayloadFromResult(result, "team init");
+    if (this.isRouteResponse(payload)) return payload;
+    return this.textOrJsonLines(routeUrl, payload, renderCoreTeamInitLines(payload));
+  }
+
+  private async teamRoleTextRoute(
+    routeUrl: URL,
+    body: unknown,
+    input: {
+      action: string;
+      routePath: string;
+      extraBody?: (role: string) => Record<string, unknown>;
+      render: (payload: CoreTeamTextPayload) => string[];
+    },
+  ): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const role = this.requiredParam(routeUrl, body, "role");
+    if (typeof role !== "string") return role;
+    const result = await this.postProjectServiceJson(project, input.routePath, {
+      role,
+      ...(input.extraBody ? input.extraBody(role) : {}),
+    });
+    const payload = this.teamPayloadFromResult(result, input.action, role);
+    if (this.isRouteResponse(payload)) return payload;
+    return this.textOrJsonLines(routeUrl, payload, input.render(payload));
+  }
+
   private async runAuthTextRoute(opts: {
     action?: "security-unlock";
     render: (payload: { userId: string; relay: CoreRelaySnapshot }) => string[];
@@ -2123,6 +2205,48 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.overseerClearText) {
       return this.overseerClearTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.teamShowText) {
+      return this.teamShowTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.teamInitText) {
+      return this.teamInitTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.teamAddText) {
+      return this.teamRoleTextRoute(routeUrl, body, {
+        action: "team add",
+        routePath: PROJECT_API_ROUTES.team.addRole,
+        extraBody: () => {
+          const description = this.stringParam(routeUrl, body, "description") || undefined;
+          const reviewedBy = this.stringParam(routeUrl, body, "reviewedBy") || undefined;
+          const canEdit = this.booleanParam(routeUrl, body, "canEdit", false);
+          return {
+            ...(description ? { description } : {}),
+            ...(reviewedBy ? { reviewedBy } : {}),
+            ...(canEdit ? { canEdit: true } : {}),
+          };
+        },
+        render: renderCoreTeamAddLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.teamRemoveText) {
+      return this.teamRoleTextRoute(routeUrl, body, {
+        action: "team remove",
+        routePath: PROJECT_API_ROUTES.team.removeRole,
+        render: renderCoreTeamRemoveLines,
+      });
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.teamDefaultText) {
+      return this.teamRoleTextRoute(routeUrl, body, {
+        action: "team default",
+        routePath: PROJECT_API_ROUTES.team.defaultRole,
+        render: renderCoreTeamDefaultLines,
+      });
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.worktreeListText) {
