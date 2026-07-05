@@ -100,6 +100,11 @@ aimux_args_include_help() {
   return 1
 }
 
+aimux_metadata_help_requested() {
+  [ "${2:-}" = "help" ] && return 0
+  aimux_args_include_help "$@"
+}
+
 aimux_try_daemon_ensure() {
   port="$(aimux_matching_daemon_port)" || return 1
   json="$(aimux_health_json "$port")"
@@ -2058,7 +2063,7 @@ case "${1:-} ${2:-}" in
     fi
     ;;
   "metadata "*)
-    if aimux_args_include_help "$@"; then
+    if aimux_metadata_help_requested "$@"; then
       :
     elif aimux_try_metadata "$@"; then
       exit 0
