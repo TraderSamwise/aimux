@@ -3433,10 +3433,17 @@ metadataCmd
   .option("--label <label>", "Progress label")
   .description("Set per-session progress")
   .action(async (session: string, current: string, total: string, opts: { label?: string }) => {
+    const currentNum = Number(current);
+    const totalNum = Number(total);
+    if (!Number.isFinite(currentNum) || !Number.isFinite(totalNum)) {
+      console.error("metadata set-progress requires numeric <current> and <total>");
+      process.exitCode = 1;
+      return;
+    }
     await postRuntimeMetadata(PROJECT_API_ROUTES.runtime.setProgress, {
       session,
-      current: Number(current),
-      total: Number(total),
+      current: currentNum,
+      total: totalNum,
       label: opts.label,
     });
   });

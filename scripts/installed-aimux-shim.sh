@@ -101,6 +101,7 @@ aimux_args_include_help() {
 }
 
 aimux_metadata_help_requested() {
+  [ "$#" -eq 1 ] && return 0
   [ "${2:-}" = "help" ] && return 0
   aimux_args_include_help "$@"
 }

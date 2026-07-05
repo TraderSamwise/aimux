@@ -3020,21 +3020,21 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setContext) {
         const body = (await readJson(req)) as {
           session: string;
-          context: SessionContextMetadata;
+          context?: SessionContextMetadata | null;
         };
         updateSessionMetadata(body.session, (current) => {
           const pr =
-            current.context?.pr || body.context.pr
+            current.context?.pr || body.context?.pr
               ? {
                   ...(current.context?.pr ?? {}),
-                  ...(body.context.pr ?? {}),
+                  ...(body.context?.pr ?? {}),
                 }
               : undefined;
           return {
             ...current,
             context: {
               ...(current.context ?? {}),
-              ...body.context,
+              ...(body.context ?? {}),
               ...(pr ? { pr } : {}),
             },
           };

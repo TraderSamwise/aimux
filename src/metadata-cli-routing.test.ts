@@ -16,6 +16,24 @@ describe("parseRuntimeMetadataCliArgs", () => {
     });
   });
 
+  it("parses dash-prefixed status text after an option terminator", () => {
+    expect(parseRuntimeMetadataCliArgs(["metadata", "set-status", "claude-1", "--", "-starting"])).toEqual({
+      ok: true,
+      command: "post",
+      routePath: PROJECT_API_ROUTES.runtime.setStatus,
+      body: { session: "claude-1", text: "-starting", tone: "info" },
+    });
+  });
+
+  it("parses dash-prefixed log messages after an option terminator", () => {
+    expect(parseRuntimeMetadataCliArgs(["metadata", "log", "claude-1", "--", "-message"])).toEqual({
+      ok: true,
+      command: "post",
+      routePath: PROJECT_API_ROUTES.runtime.log,
+      body: { session: "claude-1", message: "-message" },
+    });
+  });
+
   it("parses context mutations with nested PR data", () => {
     expect(
       parseRuntimeMetadataCliArgs([

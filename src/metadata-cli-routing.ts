@@ -9,6 +9,12 @@ function stripCommand(args: string[]): string[] {
   return args[0] === "metadata" ? args.slice(1) : args;
 }
 
+function stripOptionTerminator(args: string[]): string[] {
+  const terminatorIndex = args.indexOf("--");
+  if (terminatorIndex === -1) return args;
+  return [...args.slice(0, terminatorIndex), ...args.slice(terminatorIndex + 1)];
+}
+
 function optionValue(args: string[], index: number, name: string): { value: string; nextIndex: number } | null {
   const arg = args[index];
   if (arg.startsWith(`${name}=`)) {
@@ -25,7 +31,7 @@ function compactRecord(record: Record<string, unknown>): Record<string, unknown>
 }
 
 export function parseRuntimeMetadataCliArgs(rawArgs: string[]): MetadataCliResult {
-  const args = stripCommand(rawArgs);
+  const args = stripOptionTerminator(stripCommand(rawArgs));
   const subcommand = args[0] ?? "";
   if (subcommand === "endpoint" && args.length === 1) return { ok: true, command: "endpoint" };
 
