@@ -55,6 +55,11 @@ aimux_require_inline_value() {
   AIMUX_ARG_VALUE="$1"
 }
 
+aimux_require_inline_arg_value() {
+  aimux_require_inline_value "$1" || return 1
+  case "$AIMUX_ARG_VALUE" in -*) return 1 ;; esac
+}
+
 aimux_require_any_arg_value() {
   [ "$#" -gt 0 ] || return 1
   [ -n "$1" ] || return 1
@@ -783,7 +788,7 @@ aimux_try_dashboard_reload() {
         client_tty="$AIMUX_ARG_VALUE"
         ;;
       --client-tty=*)
-        aimux_require_inline_value "${1#--client-tty=}" || return 1
+        aimux_require_inline_arg_value "${1#--client-tty=}" || return 1
         client_tty="$AIMUX_ARG_VALUE"
         ;;
       --current-client-session)
@@ -792,7 +797,7 @@ aimux_try_dashboard_reload() {
         current_client_session="$AIMUX_ARG_VALUE"
         ;;
       --current-client-session=*)
-        aimux_require_inline_value "${1#--current-client-session=}" || return 1
+        aimux_require_inline_arg_value "${1#--current-client-session=}" || return 1
         current_client_session="$AIMUX_ARG_VALUE"
         ;;
       *)
@@ -836,7 +841,7 @@ aimux_try_runtime_restart() {
         project_root="$AIMUX_ARG_VALUE"
         ;;
       --project-root=*)
-        aimux_require_inline_value "${1#--project-root=}" || return 1
+        aimux_require_inline_arg_value "${1#--project-root=}" || return 1
         project_root="$AIMUX_ARG_VALUE"
         ;;
       --open)
@@ -848,7 +853,7 @@ aimux_try_runtime_restart() {
         client_tty="$AIMUX_ARG_VALUE"
         ;;
       --client-tty=*)
-        aimux_require_inline_value "${1#--client-tty=}" || return 1
+        aimux_require_inline_arg_value "${1#--client-tty=}" || return 1
         client_tty="$AIMUX_ARG_VALUE"
         ;;
       --current-client-session)
@@ -857,7 +862,7 @@ aimux_try_runtime_restart() {
         current_client_session="$AIMUX_ARG_VALUE"
         ;;
       --current-client-session=*)
-        aimux_require_inline_value "${1#--current-client-session=}" || return 1
+        aimux_require_inline_arg_value "${1#--current-client-session=}" || return 1
         current_client_session="$AIMUX_ARG_VALUE"
         ;;
       --json)

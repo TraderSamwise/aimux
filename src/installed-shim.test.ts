@@ -600,7 +600,12 @@ describe("installed aimux shim", () => {
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     expectInvalidNoNode(fixture, ["dashboard-reload", "--json"]);
+    expectInvalidNoNode(fixture, ["dashboard-reload", "--client-tty=-x"]);
+    expectInvalidNoNode(fixture, ["dashboard-reload", "--current-client-session=-x"]);
     expectInvalidNoNode(fixture, ["restart-runtime", "--project-root"]);
+    expectInvalidNoNode(fixture, ["restart-runtime", "--project-root=-x"]);
+    expectInvalidNoNode(fixture, ["restart-runtime", "--client-tty=-x"]);
+    expectInvalidNoNode(fixture, ["restart-runtime", "--current-client-session=-x"]);
     expectInvalidNoNode(fixture, ["restart-runtime", "--bad"]);
     const openJson = fixture.run(["restart-runtime", "--open", "--json"], { NODE_EXIT: "99" });
     expect(openJson.status).toBe(1);

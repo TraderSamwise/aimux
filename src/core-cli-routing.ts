@@ -104,7 +104,7 @@ function consumeOptionalTextFlag(args: string[], index: number, flag: string): n
   }
   if (arg.startsWith(`${flag}=`)) {
     const value = arg.slice(flag.length + 1);
-    return value ? index : null;
+    return value && !value.startsWith("-") ? index : null;
   }
   return undefined;
 }
