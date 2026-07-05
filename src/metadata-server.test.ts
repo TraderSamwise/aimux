@@ -136,6 +136,20 @@ describe("MetadataServer threads API", () => {
     const stored = JSON.parse(readFileSync(join(repoRoot, ".aimux", "team.json"), "utf8"));
     expect(stored.roles.planner).toEqual({ description: "Plans work", reviewedBy: "reviewer", canEdit: true });
 
+    const updated = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.addRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        role: "planner",
+        description: "Plans revised",
+      }),
+    }).then((res) => res.json());
+    expect(updated.config.roles.planner).toEqual({
+      description: "Plans revised",
+      reviewedBy: "reviewer",
+      canEdit: true,
+    });
+
     const defaulted = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.defaultRole}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -168,6 +182,24 @@ describe("MetadataServer threads API", () => {
     expect(initialized).toMatchObject({
       ok: true,
       config: { defaultRole: "coder", roles: { coder: expect.any(Object), reviewer: expect.any(Object) } },
+    });
+
+    const reviewerRemoved = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.removeRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "reviewer" }),
+    }).then((res) => res.json());
+    expect(reviewerRemoved.config.defaultRole).toBe("coder");
+
+    const lastRoleRemoved = await fetch(`${baseUrl}${PROJECT_API_ROUTES.team.removeRole}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "coder" }),
+    });
+    expect(lastRoleRemoved.status).toBe(400);
+    await expect(lastRoleRemoved.json()).resolves.toMatchObject({
+      ok: false,
+      error: "cannot remove the last team role",
     });
   });
 

@@ -1058,9 +1058,9 @@ describe("daemon supervision", () => {
         reviewer: { description: "Reviews code", canEdit: true },
       },
     };
-    const calls: Array<{ url: string; body?: unknown }> = [];
-    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown }) => {
-      calls.push({ url, body: opts?.body });
+    const calls: Array<{ url: string; body?: unknown; timeoutMs?: number }> = [];
+    vi.mocked(requestJson).mockImplementation(async (url: string, opts?: { body?: unknown; timeoutMs?: number }) => {
+      calls.push({ url, body: opts?.body, timeoutMs: opts?.timeoutMs });
       if (url.endsWith(PROJECT_API_ROUTES.team.config)) {
         return { status: 200, json: { ok: true, config } };
       }
@@ -1116,12 +1116,16 @@ describe("daemon supervision", () => {
       reviewedBy: "reviewer",
       canEdit: true,
     });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.addRole))?.timeoutMs).toBe(120_000);
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.defaultRole))?.body).toEqual({
       role: "planner",
     });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.defaultRole))?.timeoutMs).toBe(120_000);
     expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.removeRole))?.body).toEqual({
       role: "planner",
     });
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.removeRole))?.timeoutMs).toBe(120_000);
+    expect(calls.find((call) => call.url.endsWith(PROJECT_API_ROUTES.team.init))?.timeoutMs).toBe(120_000);
   });
 
   it("rejects malformed lifecycle project-service responses", async () => {
