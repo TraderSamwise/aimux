@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { resolve as pathResolve } from "node:path";
-import { ensureProjectPaths, getProjectIdFor } from "./paths.js";
+import { ensureProjectPaths, getProjectIdFor, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
@@ -114,10 +114,20 @@ import {
 } from "./core-text.js";
 import { runLoginFlow } from "./login-flow.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { renderRuntimeRestartResult, restartAimuxControlPlane } from "./runtime-restart.js";
+import { resolveDashboardTarget } from "./dashboard/targets.js";
 import { isAimuxProjectServiceProcess, isPidAlive } from "./process-inspector.js";
+import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import { CoreProjectActor } from "./core-project-actor.js";
 import { findMainRepo } from "./worktree.js";
+import {
+  buildTmuxDoctorReport,
+  renderTmuxDoctorReport,
+  renderTmuxRepairResult,
+  repairTmuxRuntime,
+} from "./tmux/doctor.js";
+import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -149,6 +159,8 @@ const LOCAL_AUTH_ROUTES = new Set<string>([
   CORE_API_ROUTES.securityUnlockText,
 ]);
 const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
+  CORE_API_ROUTES.doctorTmuxText,
+  CORE_API_ROUTES.doctorVersionsText,
   CORE_API_ROUTES.graveyardCleanupText,
   CORE_API_ROUTES.graveyardListText,
   CORE_API_ROUTES.graveyardResurrectText,
@@ -178,6 +190,7 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.teamInitText,
   CORE_API_ROUTES.teamRemoveText,
   CORE_API_ROUTES.teamShowText,
+  CORE_API_ROUTES.repairText,
   CORE_API_ROUTES.reviewApproveText,
   CORE_API_ROUTES.reviewRequestChangesText,
   CORE_API_ROUTES.taskAcceptText,
@@ -2064,6 +2077,64 @@ export class AimuxDaemon {
     };
   }
 
+  private async doctorVersionsTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
+    try {
+      const report = await buildRuntimeCoherenceReport();
+      return this.textOrJsonLines(routeUrl, report, renderRuntimeCoherenceReport(report).split("\n"));
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async doctorTmuxTextRoute(routeUrl: URL): Promise<DaemonRouteResponse> {
+    const projectParam = routeUrl.searchParams.get("projectRoot");
+    if (!projectParam) {
+      return this.textError(400, "projectRoot query is required");
+    }
+    const projectRoot = this.resolveProjectRoot(pathResolve(projectParam));
+    try {
+      await initPaths(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      const report = buildTmuxDoctorReport(tmux, {
+        projectRoot,
+        sessionName: routeUrl.searchParams.get("session") ?? undefined,
+        windowId: routeUrl.searchParams.get("windowId") ?? undefined,
+      });
+      return this.textOrJsonLines(routeUrl, report, renderTmuxDoctorReport(report).split("\n"));
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async repairTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const projectParam = this.stringParam(routeUrl, body, "projectRoot");
+    if (!projectParam) {
+      return this.textError(400, "projectRoot query is required");
+    }
+    const projectRoot = this.resolveProjectRoot(pathResolve(projectParam));
+    try {
+      await initPaths(projectRoot);
+      await this.ensureProject(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      const result = repairTmuxRuntime(tmux, { projectRoot });
+      const backendReconcile = reconcileOfflineBackendSessionIds(projectRoot);
+      if (this.booleanParam(routeUrl, body, "open", false)) {
+        const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
+        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+      }
+      const lines = renderTmuxRepairResult(result).split("\n");
+      if (backendReconcile.reconciled.length > 0) {
+        lines.push(`Recovered backend session id for ${backendReconcile.reconciled.length} offline agent(s):`);
+        for (const entry of backendReconcile.reconciled) {
+          lines.push(`  ${entry.id} -> ${entry.backendSessionId}`);
+        }
+      }
+      return this.textOrJsonLines(routeUrl, { ...result, backendReconcile }, lines);
+    } catch (error) {
+      return this.textError(500, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private async routeCoreCommand(body: unknown): Promise<{ status: number; body: CoreCommandResponse }> {
     const envelope = body as CoreCommandEnvelope | undefined;
     const id =
@@ -2258,6 +2329,18 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.hostAgentReadText) {
       return this.hostAgentReadTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.doctorVersionsText) {
+      return this.doctorVersionsTextRoute(routeUrl);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.doctorTmuxText) {
+      return this.doctorTmuxTextRoute(routeUrl);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.repairText) {
+      return this.repairTextRoute(routeUrl, body);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.restartText) {
