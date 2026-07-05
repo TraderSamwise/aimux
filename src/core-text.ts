@@ -46,6 +46,7 @@ export interface CoreDashboardReloadTextPayload {
 }
 
 export interface CoreRuntimeRestartTextPayload extends CoreDashboardReloadTextPayload {
+  dashboardSession: string;
   project: CoreProjectServiceState;
   tmuxSessionsKilled: string[];
 }
