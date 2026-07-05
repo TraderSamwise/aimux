@@ -770,6 +770,7 @@ describe("installed aimux shim", () => {
       `${fixture.aimuxRoot}/dist/launcher-bin.js team show --project=/repo --json\n` +
         `${fixture.aimuxRoot}/dist/launcher-bin.js team add --project=/repo --json -d Plans work planner --reviewed-by reviewer --can-edit\n`,
     );
+    expect(readFileSync(fixture.curlLog, "utf8")).toContain("/health");
   });
 
   it("falls back to the Node launcher for invalid loop and overseer arguments", () => {

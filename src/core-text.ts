@@ -357,15 +357,18 @@ export function renderCoreTeamShowLines(payload: CoreTeamTextPayload): string[] 
 }
 
 export function renderCoreTeamAddLines(payload: CoreTeamTextPayload): string[] {
-  return [`Role "${payload.role}" saved.`];
+  const role = requiredCoreTeamRole(payload);
+  return role ? [`Role "${role}" saved.`] : ["Error: role is required for this operation."];
 }
 
 export function renderCoreTeamRemoveLines(payload: CoreTeamTextPayload): string[] {
-  return [`Role "${payload.role}" removed.`];
+  const role = requiredCoreTeamRole(payload);
+  return role ? [`Role "${role}" removed.`] : ["Error: role is required for this operation."];
 }
 
 export function renderCoreTeamDefaultLines(payload: CoreTeamTextPayload): string[] {
-  return [`Default role set to "${payload.role}".`];
+  const role = requiredCoreTeamRole(payload);
+  return role ? [`Default role set to "${role}".`] : ["Error: role is required for this operation."];
 }
 
 export function renderCoreTeamInitLines(payload: CoreTeamTextPayload): string[] {
@@ -374,6 +377,10 @@ export function renderCoreTeamInitLines(payload: CoreTeamTextPayload): string[] 
     lines.push(`  ${name}: ${role.description}`);
   }
   return lines;
+}
+
+function requiredCoreTeamRole(payload: CoreTeamTextPayload): string | undefined {
+  return typeof payload.role === "string" && payload.role.trim() ? payload.role.trim() : undefined;
 }
 
 export function renderCoreWorktreeListLines(payload: CoreWorktreeSummaryTextPayload): string[] {

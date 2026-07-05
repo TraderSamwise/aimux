@@ -1265,14 +1265,17 @@ export class MetadataServer {
     const role = typeof input.role === "string" ? input.role.trim() : "";
     if (!role) return { ok: false, status: 400, error: "role is required" };
     const config = loadTeamConfig();
+    const existing = config.roles[role];
     const nextRole: RoleConfig = {
       description:
         typeof input.description === "string" && input.description.trim()
           ? input.description.trim()
-          : (config.roles[role]?.description ?? `${role} agent`),
+          : (existing?.description ?? `${role} agent`),
     };
-    if (typeof input.reviewedBy === "string" && input.reviewedBy.trim()) nextRole.reviewedBy = input.reviewedBy.trim();
-    if (input.canEdit === true) nextRole.canEdit = true;
+    const reviewedBy =
+      typeof input.reviewedBy === "string" && input.reviewedBy.trim() ? input.reviewedBy.trim() : existing?.reviewedBy;
+    if (reviewedBy) nextRole.reviewedBy = reviewedBy;
+    if (input.canEdit === true || (input.canEdit === undefined && existing?.canEdit)) nextRole.canEdit = true;
     config.roles[role] = nextRole;
     saveTeamConfig(config);
     this.notifyProjectChanged({ views: ["team"], reason: "team-role-add" });
@@ -1288,8 +1291,15 @@ export class MetadataServer {
     if (!role) return { ok: false, status: 400, error: "role is required" };
     const config = loadTeamConfig();
     if (!config.roles[role]) return { ok: false, status: 404, error: `Role "${role}" not found.` };
+    if (Object.keys(config.roles).length <= 1) {
+      return { ok: false, status: 400, error: "cannot remove the last team role" };
+    }
     delete config.roles[role];
-    if (config.defaultRole === role) config.defaultRole = Object.keys(config.roles)[0] ?? "coder";
+    if (config.defaultRole === role) {
+      const defaultRole = getDefaultTeamConfig().defaultRole;
+      const nextDefault = config.roles[defaultRole] ? defaultRole : Object.keys(config.roles)[0];
+      config.defaultRole = nextDefault;
+    }
     saveTeamConfig(config);
     this.notifyProjectChanged({ views: ["team"], reason: "team-role-remove" });
     return { ok: true, config, role };

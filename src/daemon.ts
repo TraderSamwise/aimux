@@ -1622,7 +1622,14 @@ export class AimuxDaemon {
   private async teamInitTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
     const project = this.requiredParam(routeUrl, body, "project");
     if (typeof project !== "string") return project;
-    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.team.init, {});
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.team.init,
+      {},
+      {
+        timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS,
+      },
+    );
     const payload = this.teamPayloadFromResult(result, "team init");
     if (this.isRouteResponse(payload)) return payload;
     return this.textOrJsonLines(routeUrl, payload, renderCoreTeamInitLines(payload));
@@ -1642,10 +1649,15 @@ export class AimuxDaemon {
     if (typeof project !== "string") return project;
     const role = this.requiredParam(routeUrl, body, "role");
     if (typeof role !== "string") return role;
-    const result = await this.postProjectServiceJson(project, input.routePath, {
-      role,
-      ...(input.extraBody ? input.extraBody(role) : {}),
-    });
+    const result = await this.postProjectServiceJson(
+      project,
+      input.routePath,
+      {
+        role,
+        ...(input.extraBody ? input.extraBody(role) : {}),
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
     const payload = this.teamPayloadFromResult(result, input.action, role);
     if (this.isRouteResponse(payload)) return payload;
     return this.textOrJsonLines(routeUrl, payload, input.render(payload));
