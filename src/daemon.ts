@@ -41,6 +41,10 @@ import {
   renderCoreHandoffMutationLines,
   renderCoreHandoffSendLines,
   renderCoreMessageSendLines,
+  renderCoreNotificationClearLines,
+  renderCoreNotificationReadLines,
+  renderCoreNotificationsListLines,
+  renderCoreNotificationSendLines,
   renderCoreOverseerClearLines,
   renderCoreOverseerStartLines,
   renderCoreProjectEnsureLines,
@@ -88,6 +92,9 @@ import {
   type CoreLifecycleStopTextPayload,
   type CoreLoopTextPayload,
   type CoreMessageSendTextPayload,
+  type CoreNotificationClearTextPayload,
+  type CoreNotificationReadTextPayload,
+  type CoreNotificationsListTextPayload,
   type CoreOverseerTextPayload,
   type CoreRemoteStatusTextPayload,
   type CoreReviewRequestChangesTextPayload,
@@ -160,6 +167,10 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
   CORE_API_ROUTES.loopDoneText,
   CORE_API_ROUTES.loopRemoveText,
   CORE_API_ROUTES.messageSendText,
+  CORE_API_ROUTES.notificationClearText,
+  CORE_API_ROUTES.notificationListText,
+  CORE_API_ROUTES.notificationReadText,
+  CORE_API_ROUTES.notificationSendText,
   CORE_API_ROUTES.overseerClearText,
   CORE_API_ROUTES.overseerStartText,
   CORE_API_ROUTES.teamAddText,
@@ -614,6 +625,42 @@ export class AimuxDaemon {
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  private notificationIdsParam(routeUrl: URL, body: unknown): string[] | DaemonRouteResponse | undefined {
+    const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    if (Object.prototype.hasOwnProperty.call(record, "ids")) {
+      const value = record.ids;
+      if (Array.isArray(value) && value.every((id) => typeof id === "string")) {
+        return value.map((id) => id.trim()).filter(Boolean);
+      }
+      if (typeof value === "string")
+        return value
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean);
+      return this.textError(400, "ids must be an array of strings");
+    }
+    const queryValues = routeUrl.searchParams.getAll("ids");
+    if (queryValues.length === 0) return undefined;
+    return queryValues.flatMap((value) =>
+      value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    );
+  }
+
+  private notificationMutationPayload(routeUrl: URL, body: unknown): Record<string, unknown> | DaemonRouteResponse {
+    const payload: Record<string, unknown> = {};
+    const id = this.stringParam(routeUrl, body, "id")?.trim();
+    const ids = this.notificationIdsParam(routeUrl, body);
+    if (this.isRouteResponse(ids)) return ids;
+    const sessionId = this.stringParam(routeUrl, body, "sessionId")?.trim();
+    if (id) payload.id = id;
+    if (ids !== undefined) payload.ids = ids;
+    if (sessionId) payload.sessionId = sessionId;
+    return payload;
   }
 
   private async getProjectServiceJson(
@@ -1580,6 +1627,84 @@ export class AimuxDaemon {
     return this.textOrJsonLines(routeUrl, payload, renderCoreOverseerClearLines(payload));
   }
 
+  private async notificationListTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const params = new URLSearchParams();
+    if (this.booleanParam(routeUrl, body, "unread", false)) params.set("unread", "1");
+    const sessionId = this.stringParam(routeUrl, body, "sessionId")?.trim();
+    if (sessionId) params.set("sessionId", sessionId);
+    const query = params.toString();
+    const result = await this.getProjectServiceJson(
+      project,
+      `${PROJECT_API_ROUTES.notifications.list}${query ? `?${query}` : ""}`,
+    );
+    if (!result.ok) return result.response;
+    const notifications = this.requiredProjectServiceArray(result.json, "notifications list", "notifications");
+    if (this.isRouteResponse(notifications)) return notifications;
+    const unreadCount = typeof result.json.unreadCount === "number" ? result.json.unreadCount : 0;
+    const payload: CoreNotificationsListTextPayload = {
+      notifications: notifications as CoreNotificationsListTextPayload["notifications"],
+      unreadCount,
+    };
+    return this.textOrJsonLines(routeUrl, payload, renderCoreNotificationsListLines(payload));
+  }
+
+  private async notificationSendTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const title = this.requiredParam(routeUrl, body, "title");
+    if (typeof title !== "string") return title;
+    const message = this.stringParam(routeUrl, body, "body")?.trim() || title.trim();
+    const result = await this.postProjectServiceJson(
+      project,
+      PROJECT_API_ROUTES.runtime.notify,
+      {
+        title: title.trim(),
+        subtitle: this.stringParam(routeUrl, body, "subtitle")?.trim() || undefined,
+        message,
+        sessionId: this.stringParam(routeUrl, body, "sessionId")?.trim() || undefined,
+        kind: this.stringParam(routeUrl, body, "kind")?.trim() || "notification",
+        force: true,
+      },
+      { timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS },
+    );
+    if (!result.ok) return result.response;
+    return this.textOrJsonLines(routeUrl, { ok: true }, renderCoreNotificationSendLines({ title: title.trim() }));
+  }
+
+  private async notificationReadTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const mutationPayload = this.notificationMutationPayload(routeUrl, body);
+    if (this.isRouteResponse(mutationPayload)) return mutationPayload;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.notifications.read, mutationPayload, {
+      timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS,
+    });
+    if (!result.ok) return result.response;
+    const responsePayload: CoreNotificationReadTextPayload = {
+      ok: true,
+      updated: typeof result.json.updated === "number" ? result.json.updated : 0,
+    };
+    return this.textOrJsonLines(routeUrl, responsePayload, renderCoreNotificationReadLines(responsePayload));
+  }
+
+  private async notificationClearTextRoute(routeUrl: URL, body: unknown): Promise<DaemonRouteResponse> {
+    const project = this.requiredParam(routeUrl, body, "project");
+    if (typeof project !== "string") return project;
+    const mutationPayload = this.notificationMutationPayload(routeUrl, body);
+    if (this.isRouteResponse(mutationPayload)) return mutationPayload;
+    const result = await this.postProjectServiceJson(project, PROJECT_API_ROUTES.notifications.clear, mutationPayload, {
+      timeoutMs: CLI_PROJECT_MUTATION_TIMEOUT_MS,
+    });
+    if (!result.ok) return result.response;
+    const responsePayload: CoreNotificationClearTextPayload = {
+      ok: true,
+      cleared: typeof result.json.cleared === "number" ? result.json.cleared : 0,
+    };
+    return this.textOrJsonLines(routeUrl, responsePayload, renderCoreNotificationClearLines(responsePayload));
+  }
+
   private teamPayloadFromResult(
     result: ProjectServiceJsonResult,
     action: string,
@@ -2217,6 +2342,22 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === CORE_API_ROUTES.overseerClearText) {
       return this.overseerClearTextRoute(routeUrl, body);
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.notificationListText) {
+      return this.notificationListTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.notificationSendText) {
+      return this.notificationSendTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.notificationReadText) {
+      return this.notificationReadTextRoute(routeUrl, body);
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.notificationClearText) {
+      return this.notificationClearTextRoute(routeUrl, body);
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.teamShowText) {

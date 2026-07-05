@@ -31,6 +31,7 @@ Node launcher when a matching daemon is already running:
 | `aimux fork <sourceSessionId> --tool <tool> ...`        | `CUT`  | daemon + project service | Uses `/core/lifecycle/fork-text`; daemon keeps shell transport thin.                                   |
 | `aimux loop ...`                                        | `CUT`  | daemon + project service | Uses `/core/loop/*-text`; loop membership and exit events stay project-service owned.                  |
 | `aimux overseer ...`                                    | `CUT`  | daemon + project service | Uses `/core/overseer/*-text`; overseer spawn/clear goes through project-service agent APIs.            |
+| `aimux notify`, `list/read/clear-notifications`         | `CUT`  | daemon + project service | Uses `/core/notifications/*-text`; project service owns notification reads and mutations.              |
 | `aimux team ...`                                        | `CUT`  | daemon + project service | Uses `/core/team/*-text`; project service owns role config reads and writes.                           |
 | `aimux worktree ...`                                    | `CUT`  | daemon + project service | Uses `/core/worktree/*-text`; daemon forwards to project-service worktree APIs.                       |
 | `aimux graveyard ...`                                   | `CUT`  | daemon + project service | Uses `/core/graveyard/*-text`; daemon forwards to project-service graveyard APIs.                     |
@@ -64,6 +65,7 @@ No commands currently live in this category.
 | `aimux thread ...`, `aimux message ...`                   | `CUT`       | project service | Exchange/thread commands use daemon text routes to project-service APIs in the healthy installed path. |
 | `aimux task ...`, `aimux handoff ...`, `aimux review ...` | `CUT`       | project service | Workflow commands use daemon text routes to project-service APIs in the healthy installed path.        |
 | `aimux loop ...`, `aimux overseer ...`                    | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service agent APIs.                          |
+| `aimux notify`, `list/read/clear-notifications`           | `CUT`       | project service | Healthy installed path uses daemon text routes to project-service notification APIs.                   |
 | `aimux team ...`                                          | `CUT`       | project service | Team role config is read and written by project-service team APIs.                                     |
 | `aimux whoami`, `aimux logout`                            | `CUT`       | daemon          | Installed shim uses daemon text routes; stale daemon falls back to the core CLI.                       |
 | `aimux login`, `aimux security unlock`                    | `CUT`       | daemon          | Plain auth commands use daemon text routes; custom auth flags remain bootstrap cleanup.                |
@@ -81,6 +83,7 @@ No commands currently live in this category.
 | `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |
 | `aimux doctor ...`                                                      | `INTERNAL`  | daemon/project service | Diagnostics should read daemon/project-service reports, not recompute truth locally. |
+| `aimux notifications test`                                              | `INTERNAL`  | desktop notifier        | Desktop delivery diagnostic; not a normal project-state command.                    |
 | `aimux logs ...`                                                        | `INTERNAL`  | daemon/filesystem      | Debug log access; may stay explicitly internal.                                      |
 | `aimux metadata ...`                                                    | `INTERNAL`  | project service        | Agent/runtime integration plumbing, not a user-facing state authority.               |
 
