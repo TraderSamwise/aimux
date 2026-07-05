@@ -31,7 +31,28 @@ const runtimeRestartMock = vi.hoisted(() => ({
   renderRuntimeRestartResult: vi.fn(),
 }));
 const ensureProjectPathsMock = vi.hoisted(() => vi.fn());
+const initPathsMock = vi.hoisted(() => vi.fn());
 const loginFlowMock = vi.hoisted(() => vi.fn());
+const runtimeCoherenceMock = vi.hoisted(() => ({
+  buildRuntimeCoherenceReport: vi.fn(),
+  renderRuntimeCoherenceReport: vi.fn(),
+}));
+const tmuxDoctorMock = vi.hoisted(() => ({
+  buildTmuxDoctorReport: vi.fn(),
+  renderTmuxDoctorReport: vi.fn(),
+  repairTmuxRuntime: vi.fn(),
+  renderTmuxRepairResult: vi.fn(),
+}));
+const backendReconcileMock = vi.hoisted(() => ({
+  reconcileOfflineBackendSessionIds: vi.fn(),
+}));
+const dashboardTargetMock = vi.hoisted(() => ({
+  resolveDashboardTarget: vi.fn(),
+}));
+const tmuxRuntimeMock = vi.hoisted(() => ({
+  openTarget: vi.fn(),
+  isInsideTmux: vi.fn(),
+}));
 
 vi.mock("node:child_process", () => ({
   execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
@@ -49,6 +70,7 @@ vi.mock("./paths.js", () => ({
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
   ensureProjectPaths: ensureProjectPathsMock,
+  initPaths: initPathsMock,
 }));
 
 vi.mock("./project-scanner.js", () => ({
@@ -107,6 +129,38 @@ vi.mock("./core-project-actor.js", () => ({
 vi.mock("./runtime-restart.js", () => ({
   restartAimuxControlPlane: runtimeRestartMock.restartAimuxControlPlane,
   renderRuntimeRestartResult: runtimeRestartMock.renderRuntimeRestartResult,
+}));
+
+vi.mock("./runtime-coherence.js", () => ({
+  buildRuntimeCoherenceReport: runtimeCoherenceMock.buildRuntimeCoherenceReport,
+  renderRuntimeCoherenceReport: runtimeCoherenceMock.renderRuntimeCoherenceReport,
+}));
+
+vi.mock("./tmux/doctor.js", () => ({
+  buildTmuxDoctorReport: tmuxDoctorMock.buildTmuxDoctorReport,
+  renderTmuxDoctorReport: tmuxDoctorMock.renderTmuxDoctorReport,
+  repairTmuxRuntime: tmuxDoctorMock.repairTmuxRuntime,
+  renderTmuxRepairResult: tmuxDoctorMock.renderTmuxRepairResult,
+}));
+
+vi.mock("./runtime-core/backend-id-reconcile.js", () => ({
+  reconcileOfflineBackendSessionIds: backendReconcileMock.reconcileOfflineBackendSessionIds,
+}));
+
+vi.mock("./dashboard/targets.js", () => ({
+  resolveDashboardTarget: dashboardTargetMock.resolveDashboardTarget,
+}));
+
+vi.mock("./tmux/runtime-manager.js", () => ({
+  TmuxRuntimeManager: class {
+    isInsideTmux() {
+      return tmuxRuntimeMock.isInsideTmux();
+    }
+
+    openTarget(...args: unknown[]) {
+      return tmuxRuntimeMock.openTarget(...args);
+    }
+  },
 }));
 
 vi.mock("./login-flow.js", () => ({
@@ -263,6 +317,44 @@ describe("daemon supervision", () => {
     runtimeRestartMock.renderRuntimeRestartResult.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReturnValue("Aimux Restart\n  failures: 0");
     ensureProjectPathsMock.mockReset();
+    initPathsMock.mockReset();
+    initPathsMock.mockResolvedValue(undefined);
+    runtimeCoherenceMock.buildRuntimeCoherenceReport.mockReset();
+    runtimeCoherenceMock.renderRuntimeCoherenceReport.mockReset();
+    runtimeCoherenceMock.buildRuntimeCoherenceReport.mockResolvedValue({
+      generatedAt: "now",
+      projects: [],
+      summary: { projects: 0 },
+    });
+    runtimeCoherenceMock.renderRuntimeCoherenceReport.mockReturnValue("Runtime Coherence\n  ok");
+    tmuxDoctorMock.buildTmuxDoctorReport.mockReset();
+    tmuxDoctorMock.renderTmuxDoctorReport.mockReset();
+    tmuxDoctorMock.repairTmuxRuntime.mockReset();
+    tmuxDoctorMock.renderTmuxRepairResult.mockReset();
+    tmuxDoctorMock.buildTmuxDoctorReport.mockReturnValue({
+      projectRoot,
+      sessionName: "aimux-test",
+      tmux: { available: true },
+    });
+    tmuxDoctorMock.renderTmuxDoctorReport.mockReturnValue("Tmux Doctor\n  ok");
+    tmuxDoctorMock.repairTmuxRuntime.mockReturnValue({
+      projectRoot,
+      sessionName: "aimux-test",
+      repairedSessions: ["aimux-test"],
+      repairedWindows: ["@1"],
+      dashboardWindowId: "@2",
+      dashboardSessionName: "aimux-test",
+    });
+    tmuxDoctorMock.renderTmuxRepairResult.mockReturnValue("Tmux Repair\n  ok");
+    backendReconcileMock.reconcileOfflineBackendSessionIds.mockReset();
+    backendReconcileMock.reconcileOfflineBackendSessionIds.mockReturnValue({ reconciled: [] });
+    dashboardTargetMock.resolveDashboardTarget.mockReset();
+    dashboardTargetMock.resolveDashboardTarget.mockReturnValue({
+      dashboardTarget: { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+    });
+    tmuxRuntimeMock.openTarget.mockReset();
+    tmuxRuntimeMock.isInsideTmux.mockReset();
+    tmuxRuntimeMock.isInsideTmux.mockReturnValue(false);
     loginFlowMock.mockReset();
     loginFlowMock.mockResolvedValue({ userId: "user_123" });
     execFileSyncMock.mockReset();
@@ -451,6 +543,116 @@ describe("daemon supervision", () => {
     expect(response.status).toBe(500);
     expect(response.contentType).toBe("text/plain; charset=utf-8");
     expect(response.body).toBe("aimux restart is already running\n");
+  });
+
+  it("serves daemon-owned doctor versions text and JSON routes", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const text = await daemon.routeRequest("GET", CORE_API_ROUTES.doctorVersionsText);
+    const json = await daemon.routeRequest("GET", `${CORE_API_ROUTES.doctorVersionsText}?json=1`);
+
+    expect(text).toMatchObject({
+      status: 200,
+      contentType: "text/plain; charset=utf-8",
+      body: "Runtime Coherence\n  ok\n",
+    });
+    expect(JSON.parse(json.body as string)).toEqual({
+      generatedAt: "now",
+      projects: [],
+      summary: { projects: 0 },
+    });
+    expect(runtimeCoherenceMock.buildRuntimeCoherenceReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves daemon-owned tmux doctor routes with explicit project context", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "GET",
+      `${CORE_API_ROUTES.doctorTmuxText}?projectRoot=${encodeURIComponent(
+        projectRoot,
+      )}&session=aimux-test&windowId=%401`,
+    );
+
+    expect(response).toMatchObject({
+      status: 200,
+      contentType: "text/plain; charset=utf-8",
+      body: "Tmux Doctor\n  ok\n",
+    });
+    expect(initPathsMock).toHaveBeenCalledWith(projectRoot);
+    expect(tmuxDoctorMock.buildTmuxDoctorReport).toHaveBeenCalledWith(expect.anything(), {
+      projectRoot,
+      sessionName: "aimux-test",
+      windowId: "@1",
+    });
+  });
+
+  it("serves daemon-owned repair route and focuses tmux when requested", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.repairText}?projectRoot=${encodeURIComponent(projectRoot)}&open=1`,
+    );
+
+    expect(response).toMatchObject({
+      status: 200,
+      contentType: "text/plain; charset=utf-8",
+      body: "Tmux Repair\n  ok\n",
+    });
+    expect(initPathsMock).toHaveBeenCalledWith(projectRoot);
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(tmuxDoctorMock.repairTmuxRuntime).toHaveBeenCalledWith(expect.anything(), { projectRoot });
+    expect(tmuxRuntimeMock.openTarget).toHaveBeenCalledWith(
+      { sessionName: "aimux-test", windowId: "@2", windowIndex: 0, windowName: "dashboard" },
+      { insideTmux: false, alreadyResolved: true },
+    );
+  });
+
+  it("serves repair route form bodies from the installed shell shim", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.repairText, {
+      projectRoot,
+      open: "1",
+    });
+
+    expect(response).toMatchObject({ status: 200, body: "Tmux Repair\n  ok\n" });
+    expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
+    expect(tmuxRuntimeMock.openTarget).toHaveBeenCalled();
+  });
+
+  it("includes backend session reconciliation in repair output", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    backendReconcileMock.reconcileOfflineBackendSessionIds.mockReturnValueOnce({
+      reconciled: [{ id: "claude-1", backendSessionId: "backend-1" }],
+    });
+
+    const response = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.repairText}?projectRoot=${encodeURIComponent(projectRoot)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toContain("Recovered backend session id for 1 offline agent(s):");
+    expect(response.body).toContain("  claude-1 -> backend-1");
+  });
+
+  it("rejects tmux doctor and repair routes without a project root", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const doctor = await daemon.routeRequest("GET", CORE_API_ROUTES.doctorTmuxText);
+    const repair = await daemon.routeRequest("POST", CORE_API_ROUTES.repairText);
+
+    expect(doctor).toMatchObject({ status: 400, body: "projectRoot query is required\n" });
+    expect(repair).toMatchObject({ status: 400, body: "projectRoot query is required\n" });
+    expect(initPathsMock).not.toHaveBeenCalled();
   });
 
   it("serves daemon status text for the installed shell shim", async () => {
@@ -1518,9 +1720,18 @@ describe("daemon supervision", () => {
       undefined,
       headers,
     );
+    const doctor = await daemon.routeRequest("GET", CORE_API_ROUTES.doctorVersionsText, undefined, headers);
+    const repair = await daemon.routeRequest(
+      "POST",
+      `${CORE_API_ROUTES.repairText}?projectRoot=${encodeURIComponent(projectRoot)}`,
+      undefined,
+      headers,
+    );
 
     expect(spawn).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(worktrees).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
+    expect(doctor).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
+    expect(repair).toMatchObject({ status: 403, body: "core text routes are loopback-only\n" });
     expect(coreActorMock.starts).not.toHaveBeenCalled();
   });
 

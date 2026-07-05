@@ -347,6 +347,116 @@ aimux_try_host_agent_stream() {
   return 2
 }
 
+aimux_try_doctor() {
+  shift
+  subcommand="${1:-}"
+  case "$subcommand" in
+    versions)
+      shift
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --json) json=1 ;;
+          *) return 1 ;;
+        esac
+        shift
+      done
+      path="/core/doctor/versions-text"
+      [ "$json" -eq 1 ] && path="/core/doctor/versions-text?json=1"
+      aimux_curl_text_route "$path"
+      ;;
+    tmux)
+      shift
+      project_root="$(pwd -P 2>/dev/null)" || return 1
+      session=""
+      window_id=""
+      json=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project-root)
+            shift
+            aimux_require_arg_value "$@" || return 1
+            project_root="$AIMUX_ARG_VALUE"
+            ;;
+          --project-root=*)
+            aimux_require_inline_value "${1#--project-root=}" || return 1
+            project_root="$AIMUX_ARG_VALUE"
+            ;;
+          --session)
+            shift
+            aimux_require_arg_value "$@" || return 1
+            session="$AIMUX_ARG_VALUE"
+            ;;
+          --session=*)
+            aimux_require_inline_value "${1#--session=}" || return 1
+            session="$AIMUX_ARG_VALUE"
+            ;;
+          --window-id)
+            shift
+            aimux_require_arg_value "$@" || return 1
+            window_id="$AIMUX_ARG_VALUE"
+            ;;
+          --window-id=*)
+            aimux_require_inline_value "${1#--window-id=}" || return 1
+            window_id="$AIMUX_ARG_VALUE"
+            ;;
+          --json)
+            json=1
+            ;;
+          *)
+            return 1
+            ;;
+        esac
+        shift
+      done
+      project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+      path="/core/doctor/tmux-text"
+      [ "$json" -eq 1 ] && path="/core/doctor/tmux-text?json=1"
+      set -- --data-urlencode "projectRoot=$project_root"
+      [ -n "$session" ] && set -- "$@" --data-urlencode "session=$session"
+      [ -n "$window_id" ] && set -- "$@" --data-urlencode "windowId=$window_id"
+      aimux_get_query_text_route "$path" 60 "$@"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+aimux_try_repair() {
+  shift
+  project_root="$(pwd -P 2>/dev/null)" || return 1
+  open=0
+  json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project-root)
+        shift
+        aimux_require_arg_value "$@" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --project-root=*)
+        aimux_require_inline_value "${1#--project-root=}" || return 1
+        project_root="$AIMUX_ARG_VALUE"
+        ;;
+      --open)
+        open=1
+        ;;
+      --json)
+        json=1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
+  path="/core/repair-text"
+  [ "$json" -eq 1 ] && path="/core/repair-text?json=1"
+  aimux_post_query_text_route "$path" 120 --data-urlencode "projectRoot=$project_root" --data-urlencode "open=$open"
+}
+
 aimux_resolve_project_arg() {
   project_arg="$1"
   if [ -d "$project_arg" ]; then
@@ -1941,6 +2051,26 @@ case "${1:-} ${2:-}" in
         if [ "$code" -eq 2 ]; then
           exit 1
         fi
+      fi
+    fi
+    ;;
+  "doctor versions" | "doctor tmux")
+    if aimux_try_doctor "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
+      fi
+    fi
+    ;;
+  "repair " | "repair --"*)
+    if aimux_try_repair "$@"; then
+      exit 0
+    else
+      code="$?"
+      if [ "$code" -eq 2 ]; then
+        exit 1
       fi
     fi
     ;;
