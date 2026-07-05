@@ -756,6 +756,11 @@ describe("daemon supervision", () => {
     expect(dashboardTargetMock.resolveDashboardTarget).toHaveBeenCalledWith(projectRoot, expect.anything(), {
       forceReload: true,
     });
+    expect(statuslineArtifactsMock.rewriteDashboardStatuslineArtifacts).toHaveBeenCalledWith(
+      projectRoot,
+      expect.anything(),
+      "aimux-test",
+    );
   });
 
   it("rejects dashboard reload and runtime restart routes without a project root", async () => {
@@ -768,6 +773,19 @@ describe("daemon supervision", () => {
     expect(reload).toMatchObject({ status: 400, body: "projectRoot query is required\n" });
     expect(restart).toMatchObject({ status: 400, body: "projectRoot query is required\n" });
     expect(initPathsMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to project when explicit projectRoot is blank", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.dashboardReloadText, {
+      projectRoot: "",
+      project: projectRoot,
+    });
+
+    expect(response.status).toBe(200);
+    expect(initPathsMock).toHaveBeenCalledWith(projectRoot);
   });
 
   it("includes backend session reconciliation in repair output", async () => {
