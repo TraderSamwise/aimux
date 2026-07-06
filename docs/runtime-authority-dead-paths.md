@@ -224,5 +224,6 @@ A hard-cut phase is not complete until:
 
 - the relevant audit commands have no authority-bearing matches outside the new topology/exchange/projection stores;
 - remaining matches are named as projection/cache/importer/exporter/test/fail-closed compatibility;
+- no normal client, CLI, or TUI path silently writes through a retired authority;
 - source verification passes with `yarn typecheck && yarn lint && yarn test`;
 - runtime verification is run when `src/*.ts` behavior changes, including `yarn build` before manual runtime testing.
