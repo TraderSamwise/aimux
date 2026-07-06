@@ -16,6 +16,7 @@ export const APP_PROJECT_API_VIEW_REGISTRY = {
   notifications: { projectApiViews: true, desktopState: false, notificationFeed: true },
   "project-observability": { projectApiViews: true, desktopState: false, notificationFeed: false },
   services: { projectApiViews: true, desktopState: true, notificationFeed: false },
+  team: { projectApiViews: true, desktopState: false, notificationFeed: false },
   tasks: { projectApiViews: true, desktopState: false, notificationFeed: false },
   threads: { projectApiViews: true, desktopState: false, notificationFeed: false },
   topology: { projectApiViews: true, desktopState: false, notificationFeed: false },

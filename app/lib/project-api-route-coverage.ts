@@ -11,6 +11,8 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/events": "client-stream",
   "/health": "client-api",
   "/diagnostics": "client-api",
+  "/hooks/claude": "internal-runtime",
+  "/hooks/codex": "internal-runtime",
   "/state": "client-api",
   "/desktop-state": "client-api",
   "/coordination-worklist": "client-api",
