@@ -339,11 +339,13 @@ async function waitForRenderedDashboardServiceState(
   pendingAction?: PendingServiceActionKind,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  let hasFreshSnapshot = false;
   while (Date.now() < deadline) {
-    await refreshDashboardModelForSettlement(host, modelLifecycle);
+    const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
+    hasFreshSnapshot ||= refreshed;
     const renderedService = getDashboardServiceEntry(host, serviceId);
     const settlement = getDashboardServiceSettlementEntry(host, serviceId);
-    if (settlement.known && predicate(settlement.service)) {
+    if (hasFreshSnapshot && settlement.known && predicate(settlement.service)) {
       if (
         isLiveDashboardServiceEntry(settlement.service) &&
         (renderedService?.status !== "running" || renderedService?.pendingAction === "starting")
@@ -361,7 +363,7 @@ async function waitForRenderedDashboardServiceState(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const settlement = getDashboardServiceSettlementEntry(host, serviceId);
-  return settlement.known && predicate(settlement.service);
+  return hasFreshSnapshot && settlement.known && predicate(settlement.service);
 }
 
 async function waitForDashboardServiceStopSettle(
