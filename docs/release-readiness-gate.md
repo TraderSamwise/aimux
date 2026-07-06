@@ -13,9 +13,10 @@ Run from a clean checkout on the candidate branch:
 yarn release:readiness
 ```
 
-This runs the normal source verification plus the north-star tracker verifier.
-It does not replace runtime rehearsal because the live daemon, project services,
-tmux windows, and installed bundle are outside source-only tests.
+This runs the normal root source verification, app verification, and the
+north-star tracker verifier. It does not replace runtime rehearsal because the
+live daemon, project services, tmux windows, and installed bundle are outside
+source-only tests.
 
 ## Runtime Rehearsal
 

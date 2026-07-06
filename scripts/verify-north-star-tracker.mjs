@@ -33,10 +33,12 @@ const tracker = "docs/north-star-completion-tracker.md";
 expectIncludes("docs/core-sidecar-north-star.md", "[north-star-completion-tracker.md](north-star-completion-tracker.md)", "tracker link");
 expectIncludes(tracker, "[release-readiness-gate.md](release-readiness-gate.md)", "release readiness gate link");
 expectIncludes("docs/release-readiness-gate.md", "yarn release:readiness", "automated readiness command");
+expectIncludes("docs/release-readiness-gate.md", "app verification", "app verification scope");
 expectIncludes("docs/release-readiness-gate.md", "aimux doctor versions", "version coherence check");
 expectIncludes("docs/release-readiness-gate.md", "aimux restart", "single recovery command");
 expectIncludes("docs/command-ownership-inventory.md", "No commands currently live in this category.", "empty shim gap marker");
 expectIncludes("docs/runtime-authority-dead-paths.md", "## Completion Gate", "runtime authority completion gate");
+expectIncludes(".github/workflows/release.yml", "yarn release:readiness", "release workflow readiness gate");
 
 for (const epic of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]) {
   expectIncludes(tracker, `### Epic ${epic}:`, `Epic ${epic}`);
@@ -60,7 +62,8 @@ for (const area of [
 }
 
 expectPackageScript("verify:north-star", "./scripts/verify-north-star-tracker.mjs");
-expectPackageScript("release:readiness", "yarn verify && yarn verify:north-star");
+expectPackageScript("verify:app", "yarn --cwd app typecheck && yarn --cwd app lint && yarn --cwd app test");
+expectPackageScript("release:readiness", "yarn verify && yarn verify:app && yarn verify:north-star");
 
 if (failures.length > 0) {
   console.error("North-star tracker verification failed:");
