@@ -225,3 +225,5 @@ to stay coherent.
 
 The command-level working inventory lives in
 [command-ownership-inventory.md](command-ownership-inventory.md).
+The cross-epic completion tracker lives in
+[north-star-completion-tracker.md](north-star-completion-tracker.md).

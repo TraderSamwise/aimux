@@ -8,6 +8,13 @@ Use this file with [runtime-authority-inventory.md](runtime-authority-inventory.
 
 Every future implementation phase should run the relevant `rg` commands before planning, after implementation, and before commit. A match is acceptable only when the code is a projection/cache, a one-way importer/exporter, a test asserting the cut, or an intentionally blocked compatibility route.
 
+## Completion Gate
+
+An authority area is complete only when its audit commands show old paths are
+gone or explicitly classified as projection/cache, importer/exporter, tests, or
+fail-closed compatibility. No normal client, CLI, or TUI path may silently write
+through a retired authority.
+
 ## Agent Lifecycle
 
 Audit commands:
