@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -203,7 +203,7 @@ export default function ProjectScreen() {
     }),
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const requestTracker = requestTrackerRef.current;
     requestTracker.update({
       projectPath: projectPathKey,
