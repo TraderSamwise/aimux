@@ -2561,10 +2561,14 @@ describe("MetadataServer threads API", () => {
         resumeService: () => {
           throw new Error("resume failed");
         },
-        createWorktree: ({ name }) =>
-          new Promise<{ path: string }>((resolve) => {
+        createWorktree: ({ name }) => {
+          if (name === "feature-sync") {
+            return { path: `/repo/.aimux/worktrees/${name}`, status: "creating" };
+          }
+          return new Promise<{ path: string }>((resolve) => {
             resolveCreateWorktree = () => resolve({ path: `/repo/.aimux/worktrees/${name}` });
-          }),
+          });
+        },
         removeWorktree: () => {
           throw new Error("remove failed");
         },
@@ -2626,6 +2630,21 @@ describe("MetadataServer threads API", () => {
       phase: "settling",
     });
     resolveCreateWorktree?.();
+
+    const syncPendingWorktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "feature-sync" });
+    expect(syncPendingWorktree.status).toBe(202);
+    expect(syncPendingWorktree.body).toMatchObject({
+      ok: true,
+      path: "/repo/.aimux/worktrees/feature-sync",
+      status: "creating",
+      transition: {
+        operation: "worktree.create",
+        targetKind: "worktree",
+        targetId: "feature-sync",
+        targetPath: "/repo/.aimux/worktrees/feature-sync",
+        phase: "settling",
+      },
+    });
 
     const graveyardWorktree = await post(PROJECT_API_ROUTES.worktreeActions.graveyard, {
       path: "/repo/.aimux/worktrees/feature-a",
