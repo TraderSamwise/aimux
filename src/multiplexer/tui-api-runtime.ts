@@ -1,3 +1,5 @@
+import { recordDashboardRepairNotice } from "./repair-notices.js";
+
 export type TuiApiConnectionState =
   | "ready"
   | "refreshing"
@@ -469,16 +471,32 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   host.tuiApiRecoveryPending = false;
   host.tuiApiRecoveryInFlight = true;
   host.tuiApiRuntime?.beginRecovery?.();
+  recordDashboardRepairNotice(host, {
+    kind: "tui-api-recovery",
+    phase: "started",
+    message: "Aimux API recovery started",
+  });
   try {
     const result = host.refreshRuntimeGuard?.();
     if (result && typeof result.then === "function") await result;
     const refreshResult = host.tuiApiRuntime?.refreshCriticalResources?.();
     if (refreshResult && typeof refreshResult.then === "function") await refreshResult;
     host.tuiApiRuntime?.finishRecovery?.();
+    recordDashboardRepairNotice(host, {
+      kind: "tui-api-recovery",
+      phase: "succeeded",
+      message: "Aimux API recovery complete",
+    });
   } catch (error) {
     host.tuiApiRecoveryLastError = error;
     host.tuiApiRecoveryPending = true;
     host.tuiApiRuntime?.markRecoveryFailed?.(error);
+    recordDashboardRepairNotice(host, {
+      kind: "tui-api-recovery",
+      phase: "failed",
+      message: "Aimux API recovery failed",
+      error,
+    });
   } finally {
     host.tuiApiRecoveryInFlight = false;
     host.tuiApiLastRecoveryAt = Date.now();

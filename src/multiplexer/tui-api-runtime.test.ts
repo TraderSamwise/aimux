@@ -534,6 +534,19 @@ describe("TuiApiRuntime", () => {
       expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
       expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
       expect(runtime.getConnectionState()).toBe("ready");
+      expect(host.dashboardRepairNotices).toMatchObject([
+        {
+          kind: "tui-api-recovery",
+          phase: "started",
+          message: "Aimux API recovery started",
+        },
+        {
+          kind: "tui-api-recovery",
+          phase: "succeeded",
+          message: "Aimux API recovery complete",
+        },
+      ]);
+      expect(host.footerFlash).toBe("Aimux API recovery complete");
     } finally {
       vi.useRealTimers();
     }
@@ -561,6 +574,20 @@ describe("TuiApiRuntime", () => {
       expect(host.tuiApiRecoveryLastError).toBeInstanceOf(Error);
       expect(runtime.getConnectionState()).toBe("failed");
       expect(states).toEqual(["repairing", "failed"]);
+      expect(host.dashboardRepairNotices).toMatchObject([
+        {
+          kind: "tui-api-recovery",
+          phase: "started",
+          message: "Aimux API recovery started",
+        },
+        {
+          kind: "tui-api-recovery",
+          phase: "failed",
+          message: "Aimux API recovery failed",
+          error: "repair failed",
+        },
+      ]);
+      expect(host.footerFlash).toBe("Aimux API recovery failed");
     } finally {
       vi.useRealTimers();
     }
