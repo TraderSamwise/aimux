@@ -96,6 +96,7 @@ What triggers what:
 - Keep transient UI-only state in `app/stores/ui.ts`.
 - Keep per-session chat/output state in `app/stores/chat.ts`.
 - Keep project selection and daemon project snapshots in `app/stores/projects.ts`.
+- Keep selected-project API resources in `app/stores/project.ts` resource lifecycle atoms; do not add screen-local fetch/loading/error state for shared project data.
 
 ### What The App Is Not
 

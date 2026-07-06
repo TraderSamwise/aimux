@@ -13,24 +13,34 @@ import {
   applyProjectGraveyardSuccessAtom,
   applyProjectObservabilityFailureAtom,
   applyProjectObservabilitySuccessAtom,
+  applyProjectPlanActionFailureAtom,
+  applyProjectPlanFailureAtom,
+  applyProjectPlanSaveSuccessAtom,
+  applyProjectPlanSuccessAtom,
   applyProjectTasksFailureAtom,
   applyProjectTasksSuccessAtom,
   applyProjectThreadsFailureAtom,
   applyProjectThreadsSuccessAtom,
   beginProjectGraveyardRefreshAtom,
   beginProjectObservabilityRefreshAtom,
+  beginProjectPlanRefreshAtom,
   beginProjectTasksRefreshAtom,
   beginProjectThreadsRefreshAtom,
   clearProjectGraveyardResourceAtom,
   clearProjectObservabilityResourceAtom,
+  clearProjectPlanResourceAtom,
   clearProjectTasksResourceAtom,
   clearProjectThreadsResourceAtom,
+  editProjectPlanDraftAtom,
   emptyProjectObservability,
   isCurrentProjectResourceRequest,
   projectObservabilityFamily,
   projectObservabilityResourceFamily,
   projectGraveyardFamily,
   projectGraveyardResourceFamily,
+  projectPlanFamily,
+  projectPlanResourceFamily,
+  projectPlanResourceKey,
   projectResourceRequestKey,
   projectTasksFamily,
   projectTasksResourceFamily,
@@ -40,10 +50,12 @@ import {
   removeProjectGraveyardWorktreeAtom,
   settleProjectGraveyardRefreshAtom,
   settleProjectObservabilityRefreshAtom,
+  settleProjectPlanRefreshAtom,
   settleProjectTasksRefreshAtom,
   settleProjectThreadsRefreshAtom,
   type ProjectGraveyardValue,
   type ProjectObservabilityValue,
+  type ProjectPlanValue,
   type ProjectTasksValue,
   type ProjectThreadsValue,
 } from "./project";
@@ -134,6 +146,16 @@ function graveyard(overrides: Partial<ProjectGraveyardValue> = {}): ProjectGrave
   };
 }
 
+function plan(overrides: Partial<ProjectPlanValue> = {}): ProjectPlanValue {
+  return {
+    sessionId: "session-1",
+    content: "# Plan",
+    savedContent: "# Plan",
+    fetchedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 type TestStore = ReturnType<typeof createStore>;
 
 function putObservability(
@@ -196,6 +218,26 @@ function putGraveyard(
     projectPath,
     requestKey,
     graveyard: value,
+    updatedAt,
+  });
+}
+
+function putPlan(
+  store: TestStore,
+  planKey: string,
+  value: ProjectPlanValue,
+  requestKey = "seed-plan",
+  updatedAt = 10,
+) {
+  store.set(beginProjectPlanRefreshAtom, { planKey, requestKey });
+  store.set(applyProjectPlanSuccessAtom, {
+    planKey,
+    requestKey,
+    plan: {
+      sessionId: value.sessionId,
+      content: value.savedContent,
+      fetchedAt: value.fetchedAt,
+    },
     updatedAt,
   });
 }
@@ -640,6 +682,172 @@ describe("project resource lifecycle", () => {
     });
   });
 
+  it("keeps stale project plan drafts after a refresh failure", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const requestKey = "request-1";
+
+    putPlan(store, planKey, plan());
+    store.set(editProjectPlanDraftAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Edited",
+    });
+    store.set(beginProjectPlanRefreshAtom, { planKey, requestKey });
+    store.set(applyProjectPlanFailureAtom, {
+      planKey,
+      requestKey,
+      error: "service unavailable",
+    });
+
+    expect(store.get(projectPlanFamily(planKey))).toMatchObject({
+      content: "# Edited",
+      savedContent: "# Plan",
+    });
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      error: "service unavailable",
+      pending: false,
+      pendingRequestKey: null,
+      stale: true,
+    });
+  });
+
+  it("clears project plan resources when the project service endpoint disappears", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+
+    putPlan(store, planKey, plan());
+    store.set(clearProjectPlanResourceAtom, planKey);
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toEqual({
+      value: null,
+      error: null,
+      pending: false,
+      pendingRequestKey: null,
+      stale: false,
+      updatedAt: null,
+    });
+  });
+
+  it("keeps unsaved project plan drafts when a refresh succeeds", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const requestKey = "refresh";
+
+    putPlan(store, planKey, plan());
+    store.set(editProjectPlanDraftAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Unsaved draft",
+    });
+    store.set(beginProjectPlanRefreshAtom, { planKey, requestKey });
+    store.set(applyProjectPlanSuccessAtom, {
+      planKey,
+      requestKey,
+      plan: {
+        sessionId: "session-1",
+        content: "# Server update",
+        fetchedAt: "2026-01-01T01:00:00.000Z",
+      },
+      updatedAt: 20,
+    });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: {
+        content: "# Unsaved draft",
+        savedContent: "# Server update",
+        fetchedAt: "2026-01-01T01:00:00.000Z",
+      },
+      error: null,
+      pending: false,
+      pendingRequestKey: null,
+      stale: false,
+      updatedAt: 20,
+    });
+  });
+
+  it("records project plan action errors without stealing refresh ownership", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const requestKey = "refresh-in-flight";
+
+    putPlan(store, planKey, plan());
+    store.set(beginProjectPlanRefreshAtom, { planKey, requestKey });
+    store.set(applyProjectPlanActionFailureAtom, {
+      planKey,
+      error: "save failed",
+    });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      error: "save failed",
+      pending: true,
+      pendingRequestKey: requestKey,
+      stale: true,
+    });
+  });
+
+  it("marks a project plan clean after save succeeds", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+
+    putPlan(store, planKey, plan());
+    store.set(editProjectPlanDraftAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Saved draft",
+    });
+    store.set(applyProjectPlanSaveSuccessAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Saved draft",
+      updatedAt: 30,
+    });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: {
+        content: "# Saved draft",
+        savedContent: "# Saved draft",
+      },
+      error: null,
+      stale: false,
+      updatedAt: 30,
+    });
+  });
+
+  it("settles only the pending project plan request that owns the marker", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const staleRequest = projectResourceRequestKey(
+      { projectPath: planKey, endpointKey: "127.0.0.1:43190", generation: 1 },
+      1,
+    );
+    const currentRequest = projectResourceRequestKey(
+      { projectPath: planKey, endpointKey: "127.0.0.1:43191", generation: 2 },
+      2,
+    );
+
+    putPlan(store, planKey, plan());
+    store.set(beginProjectPlanRefreshAtom, { planKey, requestKey: staleRequest });
+    store.set(beginProjectPlanRefreshAtom, { planKey, requestKey: currentRequest });
+    store.set(settleProjectPlanRefreshAtom, { planKey, requestKey: staleRequest });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: plan(),
+      pending: true,
+      pendingRequestKey: currentRequest,
+      stale: true,
+    });
+
+    store.set(settleProjectPlanRefreshAtom, { planKey, requestKey: currentRequest });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: plan(),
+      pending: false,
+      pendingRequestKey: null,
+      stale: true,
+    });
+  });
+
   it("ignores stale project resource success and failure requests", () => {
     const store = createStore();
     const projectPath = "/repo";
@@ -647,6 +855,8 @@ describe("project resource lifecycle", () => {
     const currentTasksRequest = "tasks-current";
     const currentThreadsRequest = "threads-current";
     const currentGraveyardRequest = "graveyard-current";
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+    const currentPlanRequest = "plan-current";
 
     store.set(beginProjectObservabilityRefreshAtom, {
       projectPath,
@@ -680,6 +890,22 @@ describe("project resource lifecycle", () => {
       requestKey: "graveyard-stale",
       error: "old failure",
     });
+    store.set(beginProjectPlanRefreshAtom, { planKey, requestKey: currentPlanRequest });
+    store.set(applyProjectPlanSuccessAtom, {
+      planKey,
+      requestKey: "plan-stale",
+      plan: {
+        sessionId: "session-1",
+        content: "# Old",
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      },
+      updatedAt: 10,
+    });
+    store.set(applyProjectPlanFailureAtom, {
+      planKey,
+      requestKey: "plan-stale",
+      error: "old failure",
+    });
 
     expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
       value: null,
@@ -704,6 +930,12 @@ describe("project resource lifecycle", () => {
       error: null,
       pending: true,
       pendingRequestKey: currentGraveyardRequest,
+    });
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: null,
+      error: null,
+      pending: true,
+      pendingRequestKey: currentPlanRequest,
     });
   });
 });
