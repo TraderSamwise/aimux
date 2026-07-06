@@ -33,7 +33,7 @@ Use these labels consistently:
 | Command no-spawn healthy paths | Mostly done | Medium | Medium | `command-ownership-inventory.md` says no normal command is still `SIDECAR`. Need release-gate no-spawn audit. |
 | Daemon/project-service ownership | Mostly done | Medium | Medium | Core command families route through daemon/project-service; diagnostics and internal paths still need periodic audit. |
 | TUI shared state API boundary | Mostly done | High | High | TUI reads/mutations are largely API-backed, but connection/retry/repair behavior is still not one central contract. |
-| TUI transition stability | Partial | High | High | Pending-action protections exist; repeated start/stop/revive churn still needs focused smoke and regression tests. |
+| TUI transition stability | Partial | High | High | Agent/service pending actions now survive transient settlement misses; canonical API transition records and churn smoke remain. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Partial | Medium | High | Some push exists; remote clients still need complete change events for all API-backed views. |
 | Runtime topology authority | Partial | Medium | High | Agents/services/worktrees are partly topology-owned; old caches and fail-closed lifecycle paths remain. |
@@ -145,9 +145,12 @@ Remaining:
 - [ ] Ensure lifecycle mutations return or emit enough state for clients to
   render pending rows without guessing.
 - [ ] Reconcile optimistic client state only against fresh API-backed state.
-- [ ] Preserve pending transition display during transient refresh failures.
-- [ ] Prevent stale refreshes from clearing pending rows before matching
-  settlement.
+- [x] Preserve TUI agent/service pending transition display during transient
+  refresh failures.
+- [x] Prevent stale TUI agent/service refreshes from clearing pending rows
+  before matching settlement.
+- [ ] Extend the same settlement contract to worktree operations and app/mobile
+  lifecycle views.
 - [ ] Add fast churn tests for create/start/stop/revive/retry in TUI and app
   stores.
 - [ ] Document which transitions are tmux-substrate actions versus product-state
