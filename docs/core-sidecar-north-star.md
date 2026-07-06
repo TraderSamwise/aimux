@@ -181,6 +181,8 @@ Project, project Threads, Graveyard, Plan Editor, and the global inbox surfaces
 all preserve the last good snapshot across transient refresh failures and expose
 pending/stale/error metadata. Plan editing also keeps draft-vs-saved content in
 the project resource store so late refreshes cannot clobber unsaved edits.
+Service detail also uses the shared `desktop-state` resource instead of owning
+its own desktop-state fetch/retry loop.
 App screens that still keep ad hoc fetch state should move to the same resource
 contract instead of clearing useful data during service churn.
 
