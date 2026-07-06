@@ -728,9 +728,16 @@ export interface ProjectLifecycleTransition {
   error?: string;
 }
 
-export interface ProjectLifecycleTransitionResponse extends ProjectApiOk {
+export interface ProjectLifecycleTransitionEnvelope {
   transition?: ProjectLifecycleTransition;
 }
+
+export interface ProjectLifecycleTransitionErrorResponse extends ProjectLifecycleTransitionEnvelope {
+  ok: false;
+  error: string;
+}
+
+export interface ProjectLifecycleTransitionResponse extends ProjectApiOk, ProjectLifecycleTransitionEnvelope {}
 
 export interface CreateServiceInput {
   command?: string;
