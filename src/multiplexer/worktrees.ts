@@ -11,10 +11,9 @@ import {
 } from "../tui/screens/overlay-renderers.js";
 import { renderOverlayBox } from "../tui/render/box.js";
 import { style } from "../tui/render/theme.js";
-import { postToProjectService as postToProjectServiceTransport } from "./dashboard-control.js";
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
-import { isRecoverableTuiApiError, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
+import { isRecoverableTuiApiError } from "./tui-api-runtime.js";
 import type { WorktreeGroup } from "../dashboard/index.js";
 import {
   captureDashboardLifecycle,
@@ -22,7 +21,7 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type WorktreeHost = any;
 type DashboardWorktreeCreateSettleResult =
@@ -36,7 +35,7 @@ function postWorktreeMutation(
   body: unknown,
   opts?: { timeoutMs?: number },
 ): Promise<any> {
-  return postJsonWithTuiApiRuntime(host, path, body, opts, postToProjectServiceTransport);
+  return mutateDashboardApi(host, path, body, opts);
 }
 
 interface DashboardWorktreeMutationOptions {

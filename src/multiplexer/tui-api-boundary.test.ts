@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 
 const sourceRoots = ["src/multiplexer", "src/dashboard", "src/tui"];
 
-const allowedTransportFiles = new Set(["src/multiplexer/dashboard-control.ts", "src/multiplexer/tui-api-runtime.ts"]);
+const allowedTransportFiles = new Set([
+  "src/multiplexer/dashboard-actions-methods.ts",
+  "src/multiplexer/dashboard-api-client.ts",
+  "src/multiplexer/dashboard-control.ts",
+  "src/multiplexer/tui-api-runtime.ts",
+]);
 
 const forbiddenTransportPatterns: Array<{ label: string; pattern: RegExp }> = [
   {
@@ -18,6 +23,11 @@ const forbiddenTransportPatterns: Array<{ label: string; pattern: RegExp }> = [
   {
     label: "low-level project-service request loop",
     pattern: /\brequestProjectService\s*\(/g,
+  },
+  {
+    label: "raw dashboard-control transport import",
+    pattern:
+      /import\s*{[^}]*\b(getFromProjectService|postToProjectService|requestProjectService)\b[^}]*}\s*from\s*["']\.\/dashboard-control\.js["']/gs,
   },
 ];
 
