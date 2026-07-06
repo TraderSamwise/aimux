@@ -1087,6 +1087,56 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("surfaces teammate restore warnings after late reconciliation settle", async () => {
+    vi.useFakeTimers();
+    const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
+    let allowSettle = false;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => ({
+        ok: true,
+        teammateFailures: [{ sessionId: "codex-1", error: "missing backend session id" }],
+      })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [
+        allowSettle
+          ? { ...session, status: "waiting", tmuxWindowId: "@21" }
+          : { ...session, status: "offline", pendingAction: "starting" },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const restore = resumeOfflineSessionWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await expect(restore).resolves.toBe("pending");
+
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      allowSettle = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("parent-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.showDashboardError).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).toHaveBeenCalledWith('Restored "claude" with teammate issues', [
+      "codex-1: missing backend session id",
+    ]);
+  });
+
   it("uses a live tmux agent window as resume evidence while waiting for the API row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     let refreshCount = 0;

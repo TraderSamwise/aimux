@@ -943,6 +943,14 @@ export async function resumeOfflineSessionWithFeedback(
     host.footerFlashTicks = 3;
     host.setPendingDashboardSessionAction(session.id, "starting", { sessionSeed });
     host.renderDashboard();
+    let restoreWarningsShown = false;
+    const showRestoreWarnings = () => {
+      if (restoreWarningsShown) return;
+      const warningLines = restoreWarningLines(resumeResult);
+      if (warningLines.length === 0) return;
+      restoreWarningsShown = true;
+      host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
+    };
     const mutationResult =
       (await enqueueDashboardAgentRestore(host, session.id, async () =>
         runDashboardSessionMutation(host, {
@@ -964,15 +972,12 @@ export async function resumeOfflineSessionWithFeedback(
           },
           settle: (modelLifecycle, renderLifecycle) =>
             waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
+          onAfterSettle: showRestoreWarnings,
           successFlash: { message: `Restored ${label}` },
           onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
           errorTitle: `Failed to restore "${label}"`,
         }),
       )) ?? "pending";
-    const warningLines = restoreWarningLines(resumeResult);
-    if (mutationResult === "settled" && warningLines.length > 0 && isDashboardLifecycleCurrent(host, lifecycle)) {
-      host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
-    }
     return mutationResult;
   }
   await runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
