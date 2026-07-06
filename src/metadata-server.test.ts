@@ -2512,17 +2512,35 @@ describe("MetadataServer threads API", () => {
       ok: true,
       sessionId: "child",
       teammateSessionId: "child",
+      transition: {
+        operation: "agent.stop",
+        targetKind: "agent",
+        targetId: "child",
+        phase: "succeeded",
+      },
     });
     expect((await (await request("/agents/teammates/resume")).json()) as Record<string, unknown>).toMatchObject({
       ok: true,
       sessionId: "child",
       teammateSessionId: "child",
+      transition: {
+        operation: "agent.resume",
+        targetKind: "agent",
+        targetId: "child",
+        phase: "succeeded",
+      },
     });
     expect((await (await request("/agents/teammates/kill")).json()) as Record<string, unknown>).toMatchObject({
       ok: true,
       sessionId: "child",
       teammateSessionId: "child",
       status: "graveyard",
+      transition: {
+        operation: "agent.kill",
+        targetKind: "agent",
+        targetId: "child",
+        phase: "succeeded",
+      },
     });
 
     const foreign = await request("/agents/teammates/stop", "other-child");
@@ -2540,6 +2558,9 @@ describe("MetadataServer threads API", () => {
         resumeAgent: ({ sessionId }) => ({ sessionId, status: "running" as const }),
         createService: ({ serviceId }) => ({ serviceId: serviceId ?? "svc-1" }),
         stopService: ({ serviceId }) => ({ serviceId, status: "stopped" as const }),
+        resumeService: () => {
+          throw new Error("resume failed");
+        },
         createWorktree: ({ name }) =>
           new Promise<{ path: string }>((resolve) => {
             resolveCreateWorktree = () => resolve({ path: `/repo/.aimux/worktrees/${name}` });
@@ -2611,6 +2632,20 @@ describe("MetadataServer threads API", () => {
       targetKind: "worktree",
       targetPath: "/repo/.aimux/worktrees/feature-a",
       phase: "succeeded",
+    });
+
+    const failedService = await post(PROJECT_API_ROUTES.services.resume, { serviceId: "missing-service" });
+    expect(failedService.status).toBe(500);
+    expect(failedService.body).toMatchObject({
+      ok: false,
+      error: "resume failed",
+      transition: {
+        operation: "service.resume",
+        targetKind: "service",
+        targetId: "missing-service",
+        phase: "failed",
+        error: "resume failed",
+      },
     });
   });
 
@@ -2889,6 +2924,12 @@ describe("MetadataServer threads API", () => {
         assignedTo: "reviewer-1",
         description: "Review the patch",
         prompt: "Review the patch and report blockers first.",
+      },
+      transition: {
+        operation: "agent.spawn",
+        targetKind: "agent",
+        targetId: "reviewer-1",
+        phase: "succeeded",
       },
     });
     expect(body.thread?.kind).toBe("task");

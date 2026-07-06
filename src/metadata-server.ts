@@ -183,6 +183,8 @@ function lifecycleOk<T extends object>(
   return { ...result, ok: true, transition: buildLifecycleTransition(input) };
 }
 
+type LifecycleTransitionInput = Parameters<typeof buildLifecycleTransition>[0];
+
 function buildTopologyWorktreesFromDesktopState(state: {
   sessions?: any[];
   teammates?: any[];
@@ -2498,6 +2500,14 @@ export class MetadataServer {
       return;
     }
 
+    let activeLifecycleTransition: LifecycleTransitionInput | undefined;
+    const runLifecycle = async <T>(input: LifecycleTransitionInput, action: () => Promise<T> | T): Promise<T> => {
+      activeLifecycleTransition = input;
+      const result = await action();
+      activeLifecycleTransition = undefined;
+      return result;
+    };
+
     try {
       const planRoutePrefix = `${PROJECT_API_ROUTES.plans}/`;
       if (req.method === "GET" && url.pathname.startsWith(planRoutePrefix)) {
@@ -3946,7 +3956,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.spawnAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.spawnAgent!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4038,17 +4051,21 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "teammate creation not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.createTeammateAgent({
-          parentSessionId: body.parentSessionId,
-          role: body.role,
-          label: body.label,
-          tool: body.tool,
-          sessionId: body.sessionId,
-          worktreePath: body.worktreePath,
-          open: body.open,
-          extraArgs: body.extraArgs,
-          order: body.order,
-        });
+        const result = await runLifecycle(
+          { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
+          () =>
+            this.options.lifecycle!.createTeammateAgent!({
+              parentSessionId: body.parentSessionId,
+              role: body.role,
+              label: body.label,
+              tool: body.tool,
+              sessionId: body.sessionId,
+              worktreePath: body.worktreePath,
+              open: body.open,
+              extraArgs: body.extraArgs,
+              order: body.order,
+            }),
+        );
         const taskResult =
           body.initialTask && initialTaskPrompt
             ? await assignTask({
@@ -4150,7 +4167,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.stopAgent({ sessionId: resolved.teammate.id });
+        const result = await runLifecycle(
+          { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
+          () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
+        );
         this.notifyChange();
         send(res, 200, {
           parentSessionId: resolved.parent.id,
@@ -4180,10 +4200,14 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeAgent({
-          sessionId: resolved.teammate.id,
-          session: resolved.teammate,
-        });
+        const result = await runLifecycle(
+          { operation: "agent.resume", targetKind: "agent", targetId: resolved.teammate.id },
+          () =>
+            this.options.desktop!.resumeAgent!({
+              sessionId: resolved.teammate.id,
+              session: resolved.teammate,
+            }),
+        );
         this.notifyChange();
         send(res, 200, {
           parentSessionId: resolved.parent.id,
@@ -4213,9 +4237,13 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.killAgent({
-          sessionId: resolved.teammate.id,
-        });
+        const result = await runLifecycle(
+          { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
+          () =>
+            this.options.lifecycle!.killAgent!({
+              sessionId: resolved.teammate.id,
+            }),
+        );
         this.notifyChange();
         send(res, 200, {
           parentSessionId: resolved.parent.id,
@@ -4245,7 +4273,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent graveyard resurrection not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
+        const result = await runLifecycle(
+          { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: resolved.teammate.id },
+          () => this.options.desktop!.resurrectGraveyard!({ sessionId: resolved.teammate.id }),
+        );
         this.notifyChange();
         send(res, 200, {
           parentSessionId: resolved.parent.id,
@@ -4275,7 +4306,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent fork not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.forkAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.fork", targetKind: "agent", targetId: body.targetSessionId },
+          () => this.options.lifecycle!.forkAgent!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4295,7 +4329,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.stopAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.stop", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.stopAgent!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4315,7 +4352,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
+        const result = await runLifecycle(
+          { operation: "agent.resume", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.desktop!.resumeAgent!({ sessionId: body.sessionId }),
+        );
         this.notifyChange();
         send(
           res,
@@ -4355,7 +4395,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.interruptAgent({ sessionId });
+        const result = await runLifecycle(
+          { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId },
+          () => this.options.lifecycle!.interruptAgent!({ sessionId }),
+        );
         this.notifyChange();
         send(res, 200, lifecycleOk(result, { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId }));
         return;
@@ -4397,7 +4440,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent rename not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.renameAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.rename", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.renameAgent!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4417,7 +4463,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent migrate not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.migrateAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.migrate", targetKind: "agent", targetId: body.sessionId, targetPath: body.worktreePath },
+          () => this.options.lifecycle!.migrateAgent!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4438,7 +4487,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
+        const result = await runLifecycle(
+          { operation: "agent.kill", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.killAgent!({ sessionId: body.sessionId }),
+        );
         this.notifyChange();
         send(
           res,
@@ -4812,7 +4864,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.graveyardWorktree(body);
+        const result = await runLifecycle(
+          { operation: "worktree.graveyard", targetKind: "worktree", targetPath: body.path },
+          () => this.options.desktop!.graveyardWorktree!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4832,7 +4887,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service create not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.createService(body);
+        const result = await runLifecycle(
+          { operation: "service.create", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.createService!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4852,7 +4910,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service stop not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.stopService(body);
+        const result = await runLifecycle(
+          { operation: "service.stop", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.stopService!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4872,7 +4933,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeService(body);
+        const result = await runLifecycle(
+          { operation: "service.resume", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.resumeService!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4892,7 +4956,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service remove not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.removeService(body);
+        const result = await runLifecycle(
+          { operation: "service.remove", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.removeService!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4917,7 +4984,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent graveyard resurrection not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resurrectGraveyard({ sessionId });
+        const result = await runLifecycle(
+          { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: sessionId },
+          () => this.options.desktop!.resurrectGraveyard!({ sessionId }),
+        );
         this.notifyChange();
         send(
           res,
@@ -4937,7 +5007,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree graveyard resurrection not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resurrectGraveyardWorktree(body);
+        const result = await runLifecycle(
+          { operation: "graveyard.worktree.resurrect", targetKind: "worktree", targetPath: body.path },
+          () => this.options.desktop!.resurrectGraveyardWorktree!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -4957,7 +5030,10 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.deleteGraveyardWorktree(body);
+        const result = await runLifecycle(
+          { operation: "graveyard.worktree.delete", targetKind: "worktree", targetPath: body.path },
+          () => this.options.desktop!.deleteGraveyardWorktree!(body),
+        );
         this.notifyChange();
         send(
           res,
@@ -5037,7 +5113,20 @@ export class MetadataServer {
         return;
       }
     } catch (error) {
-      send(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      if (activeLifecycleTransition) {
+        send(res, 500, {
+          ok: false,
+          error: message,
+          transition: buildLifecycleTransition({
+            ...activeLifecycleTransition,
+            phase: "failed",
+            error: message,
+          }),
+        });
+        return;
+      }
+      send(res, 400, { ok: false, error: message });
       return;
     }
 

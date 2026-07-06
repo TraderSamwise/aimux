@@ -45,6 +45,7 @@ import {
   type LivePaneAttachRequest,
   type LivePaneAttachResponse,
   type LivePaneInputResponse,
+  type LivePaneInterruptResponse,
   type LivePaneOutputResponse,
   type LivePaneResizeResponse,
   type LibraryResponse,
@@ -516,7 +517,7 @@ export async function interruptLivePane(
   endpoint: ServiceEndpoint,
   sessionId: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; sessionId: string }> {
+): Promise<LivePaneInterruptResponse> {
   return callProjectJson(endpoint, "POST", PROJECT_API_ROUTES.livePane.interrupt, opts, {
     sessionId,
   });

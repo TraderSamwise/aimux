@@ -254,7 +254,7 @@ export interface LivePaneInputResponse extends ProjectApiOk {
   accepted: true;
 }
 
-export interface LivePaneInterruptResponse extends ProjectApiOk {
+export interface LivePaneInterruptResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
 }
 
@@ -971,7 +971,7 @@ export interface CreateTeammateInput {
   order?: number;
 }
 
-export interface CreateTeammateResponse extends ProjectApiOk {
+export interface CreateTeammateResponse extends ProjectLifecycleTransitionResponse {
   parentSessionId?: string;
   sessionId?: string;
   task?: unknown;
@@ -994,7 +994,7 @@ export interface TeammateLifecycleInput {
   teammateSessionId: string;
 }
 
-export interface TeammateLifecycleResponse extends ProjectApiOk {
+export interface TeammateLifecycleResponse extends ProjectLifecycleTransitionResponse {
   parentSessionId: string;
   teammateSessionId: string;
   [k: string]: unknown;
