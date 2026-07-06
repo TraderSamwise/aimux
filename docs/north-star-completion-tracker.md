@@ -357,7 +357,7 @@ Update this table after each epic PR.
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-06 | #339 | App resource lifecycle | Partial | Mostly done | Project tab observability/tasks moved to resource actions; route/endpoint stale response race fixed; app focused tests and PR checks passed. |
 | 2026-07-06 | #344 | TUI connection contract | Partial | Partial | Dashboard model refresh now returns `applied/stale/skipped/failed` outcomes; `TuiApiRuntime` blocks mutation wrappers while the critical `desktop-state` resource is reconnecting; focused TUI API tests and typecheck passed. |
-| 2026-07-06 | pending | TUI repair observability | Partial | Partial | API recovery and runtime-guard repair now record bounded `dashboardRepairNotices`, flash visible recovery notices, and keep focused regression coverage for repair start/success/failure. |
+| 2026-07-06 | #345 | TUI repair observability | Partial | Partial | API recovery and runtime-guard repair now record bounded `dashboardRepairNotices`, flash visible recovery notices, and keep focused regression coverage for repair start/success/failure. |
 
 ## How To Measure Progress
 
