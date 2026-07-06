@@ -4172,17 +4172,14 @@ export class MetadataServer {
           () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
         );
         this.notifyChange();
-        send(res, 200, {
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-          ok: true,
-          transition: buildLifecycleTransition({
-            operation: "agent.stop",
-            targetKind: "agent",
-            targetId: resolved.teammate.id,
-          }),
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4209,17 +4206,14 @@ export class MetadataServer {
             }),
         );
         this.notifyChange();
-        send(res, 200, {
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-          ok: true,
-          transition: buildLifecycleTransition({
-            operation: "agent.resume",
-            targetKind: "agent",
-            targetId: resolved.teammate.id,
-          }),
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "agent.resume", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4245,17 +4239,14 @@ export class MetadataServer {
             }),
         );
         this.notifyChange();
-        send(res, 200, {
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-          ok: true,
-          transition: buildLifecycleTransition({
-            operation: "agent.kill",
-            targetKind: "agent",
-            targetId: resolved.teammate.id,
-          }),
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4278,17 +4269,14 @@ export class MetadataServer {
           () => this.options.desktop!.resurrectGraveyard!({ sessionId: resolved.teammate.id }),
         );
         this.notifyChange();
-        send(res, 200, {
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-          ok: true,
-          transition: buildLifecycleTransition({
-            operation: "graveyard.agent.resurrect",
-            targetKind: "agent",
-            targetId: resolved.teammate.id,
-          }),
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
