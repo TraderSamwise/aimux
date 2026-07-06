@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -15,6 +15,15 @@ import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
+import {
+  applyTopologyFailureAtom,
+  applyTopologySuccessAtom,
+  beginTopologyRefreshAtom,
+  clearTopologyResourceAtom,
+  isCurrentTopologyRequest,
+  topologyResourceFamily,
+  type TopologyRequestScope,
+} from "@/stores/topology";
 import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
@@ -197,63 +206,86 @@ function RowsList({
 
 export default function TopologyScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const topologyRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("topology"));
+  const resource = useAtomValue(topologyResourceFamily(projectPathKey));
+  const beginTopologyRefresh = useSetAtom(beginTopologyRefreshAtom);
+  const applyTopologySuccess = useSetAtom(applyTopologySuccessAtom);
+  const applyTopologyFailure = useSetAtom(applyTopologyFailureAtom);
+  const clearTopologyResource = useSetAtom(clearTopologyResourceAtom);
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
     project?: string | string[];
   }>();
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
   const { getToken } = useAuth();
   const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
-  const [topology, setTopology] = useState<ProjectTopologyModel | null>(null);
-  const [topologyKey, setTopologyKey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [errorKey, setErrorKey] = useState<string | null>(null);
   const getTokenRef = useRef(getToken);
   const endpointRef = useRef(endpoint);
-  const viewKeyRef = useRef(viewKey);
+  const endpointKeyRef = useRef(endpointKey);
+  const projectPathRef = useRef(projectPathKey);
   const refreshSeqRef = useRef(0);
+  const refreshGenerationRef = useRef(0);
+  const requestScopeRef = useRef<TopologyRequestScope>({
+    projectPath: projectPathKey,
+    endpointKey,
+    generation: 0,
+  });
 
   useEffect(() => {
     getTokenRef.current = getToken;
     endpointRef.current = endpoint;
-    viewKeyRef.current = viewKey;
-  }, [endpoint, getToken, viewKey]);
+  }, [endpoint, getToken]);
+
+  useEffect(() => {
+    refreshGenerationRef.current += 1;
+    endpointKeyRef.current = endpointKey;
+    projectPathRef.current = projectPathKey;
+    requestScopeRef.current = {
+      projectPath: projectPathKey,
+      endpointKey,
+      generation: refreshGenerationRef.current,
+    };
+  }, [endpointKey, projectPathKey]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentViewKey = viewKeyRef.current;
+    const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
     if (!currentEndpoint) {
-      setTopology(null);
-      setTopologyKey(null);
-      setError(null);
-      setErrorKey(null);
-      setLoading(false);
+      clearTopologyResource(currentProjectPath);
       return;
     }
-    setLoading(true);
+    beginTopologyRefresh(currentProjectPath);
     try {
       const token = await getTokenRef.current();
       const response = await getProjectTopology(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
-      setTopology(response.topology);
-      setTopologyKey(currentViewKey);
-      setError(null);
-      setErrorKey(null);
+      if (!isCurrentTopologyRequest(requestScope, requestScopeRef.current)) return;
+      applyTopologySuccess({
+        projectPath: currentProjectPath,
+        topology: {
+          ...response.topology,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
-      setError(err instanceof Error ? err.message : String(err));
-      setErrorKey(currentViewKey);
-    } finally {
-      if (seq === refreshSeqRef.current) setLoading(false);
+      if (!isCurrentTopologyRequest(requestScope, requestScopeRef.current)) return;
+      applyTopologyFailure({
+        projectPath: currentProjectPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, []);
+  }, [applyTopologyFailure, applyTopologySuccess, beginTopologyRefresh, clearTopologyResource]);
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
@@ -261,10 +293,10 @@ export default function TopologyScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, serializedRefresh, topologyRefreshNonce]);
+  }, [endpointKey, projectPathKey, serializedRefresh, topologyRefreshNonce]);
 
-  const visibleTopology = topologyKey === viewKey ? topology : null;
-  const visibleError = errorKey === viewKey ? error : null;
+  const visibleTopology = resource.value;
+  const visibleError = resource.error;
   const leafRows = useMemo(
     () => visibleTopology?.rows.filter((row) => row.kind !== "worktree") ?? [],
     [visibleTopology],
@@ -296,11 +328,11 @@ export default function TopologyScreen() {
           title="Project host not running"
           body="Start the host to see worktree and agent topology."
         />
-      ) : visibleError ? (
+      ) : visibleError && !resource.value && !resource.pending ? (
         <PageStateCard title="Unable to load topology" body={visibleError} tone="danger" />
       ) : !visibleTopology ? (
         <PageStateCard
-          title={loading ? "Loading topology..." : "No topology"}
+          title={resource.pending ? "Loading topology..." : "No topology"}
           body="Fetching project runtime state."
         />
       ) : (
