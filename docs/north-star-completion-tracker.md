@@ -33,7 +33,7 @@ Use these labels consistently:
 | Command no-spawn healthy paths | Mostly done | Medium | Medium | `command-ownership-inventory.md` says no normal command is still `SIDECAR`. Need release-gate no-spawn audit. |
 | Daemon/project-service ownership | Mostly done | Medium | Medium | Core command families route through daemon/project-service; diagnostics and internal paths still need periodic audit. |
 | TUI shared state API boundary | Done | Medium | Low | Production TUI API request sites are guarded by `tui-api-boundary.test.ts`; reconnect, stale snapshot, mutation blocking, and repair notice behavior route through the shared TUI API runtime. |
-| TUI transition stability | Partial | High | High | Agent/service pending actions now survive transient settlement misses; canonical API transition records and churn smoke remain. |
+| TUI transition stability | Partial | High | High | Lifecycle mutation responses now include canonical transition records; client adoption and churn smoke remain. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Partial | Medium | High | Some push exists; remote clients still need complete change events for all API-backed views. |
 | Runtime topology authority | Partial | Medium | High | Agents/services/worktrees are partly topology-owned; old caches and fail-closed lifecycle paths remain. |
@@ -151,9 +151,9 @@ Status: `Partial`
 
 Remaining:
 
-- [ ] Define canonical transition records in the project-service API response:
+- [x] Define canonical transition records in the project-service API response:
   operation id, target id/path, kind, phase, startedAt, updatedAt, error.
-- [ ] Ensure lifecycle mutations return or emit enough state for clients to
+- [x] Ensure lifecycle mutations return or emit enough state for clients to
   render pending rows without guessing.
 - [ ] Reconcile optimistic client state only against fresh API-backed state.
 - [x] Preserve TUI agent/service pending transition display during transient
