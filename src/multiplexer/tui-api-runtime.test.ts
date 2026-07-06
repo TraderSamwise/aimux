@@ -505,6 +505,9 @@ describe("TuiApiRuntime", () => {
 
       expect(states).toContain("repairing");
       expect(states).toContain("repaired");
+      expect(states.indexOf("repairing")).toBeLessThan(states.indexOf("repaired"));
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+      expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
       expect(runtime.getConnectionState()).toBe("ready");
     } finally {
       vi.useRealTimers();
