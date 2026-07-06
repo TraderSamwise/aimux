@@ -118,8 +118,8 @@ Work should focus on making the client/API/tmux boundary boring:
 
 - one TUI connection adapter owns refresh, reconnect, stale snapshots, repair
   notices, and lifecycle transition settlement
-- critical view resources such as `desktop-state` remain degraded until that
-  resource recovers, even when unrelated API calls succeed
+- critical view resources such as `desktop-state` stay `stale`/`reconnecting`
+  until that resource recovers, even when unrelated API calls succeed
 - optimistic state is presentation-only and never proves that a mutation settled
 - daemon/project-service APIs expose enough transition state for TUI, web, and
   mobile to render the same lifecycle without flicker
