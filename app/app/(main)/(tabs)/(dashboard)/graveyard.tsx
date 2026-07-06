@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View } from "react-native";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { GitBranch, RotateCcw, Trash2 } from "lucide-react-native";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
@@ -16,6 +16,7 @@ import {
   type WorktreeGraveyardEntryResponse,
 } from "@/lib/api";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 
 type GraveyardState = {
   endpointKey: string | null;
@@ -35,6 +36,7 @@ export default function GraveyardScreen() {
   });
   const [busyId, setBusyId] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
+  const graveyardRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("graveyard"));
 
   const endpointHost = endpoint?.host;
   const endpointPort = endpoint?.port;
@@ -72,7 +74,7 @@ export default function GraveyardScreen() {
     return () => {
       cancelled = true;
     };
-  }, [endpointHost, endpointKey, endpointPort, getToken]);
+  }, [endpointHost, endpointKey, endpointPort, getToken, graveyardRefreshNonce]);
 
   async function resurrect(entry: GraveyardEntryResponse) {
     if (!endpoint || !endpointKey || busyId) return;
