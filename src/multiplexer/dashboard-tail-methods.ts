@@ -51,6 +51,7 @@ import {
   wrapKeyValueForHost,
   wrapTextForHost,
 } from "./dashboard-ops.js";
+import type { DashboardMutationResult } from "./dashboard-ops.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
@@ -235,11 +236,14 @@ export type DashboardTailMethods = {
   basename(this: Multiplexer, value: string): string;
   listAllWorktrees(this: Multiplexer): Array<{ name: string; branch: string; path: string; isBare: boolean }>;
   graveyardSessionWithFeedback(this: Multiplexer, sessionId: string, hasWorktrees: boolean): Promise<void>;
-  resumeOfflineServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
+  resumeOfflineServiceWithFeedback(
+    this: Multiplexer,
+    service: Pick<DashboardService, "id" | "label">,
+  ): Promise<DashboardMutationResult>;
   createDashboardServiceWithFeedback(this: Multiplexer, commandLine: string, worktreePath?: string): Promise<void>;
   stopDashboardServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
   removeDashboardServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
-  resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<void>;
+  resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<DashboardMutationResult>;
   waitForSessionStart(this: Multiplexer, sessionId: string, timeoutMs?: number): Promise<boolean>;
   dashboardSessionActionDeps(this: Multiplexer): ReturnType<typeof dashboardSessionActionDepsImpl>;
   migrateSessionWithFeedback(
@@ -524,7 +528,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     await graveyardSessionWithFeedbackImpl(this, sessionId, hasWorktrees);
   },
   async resumeOfflineServiceWithFeedback(service) {
-    await resumeOfflineServiceWithFeedbackImpl(this, service);
+    return resumeOfflineServiceWithFeedbackImpl(this, service);
   },
   async createDashboardServiceWithFeedback(commandLine, worktreePath) {
     await createDashboardServiceWithFeedbackImpl(this, commandLine, worktreePath);
@@ -536,7 +540,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     await removeDashboardServiceWithFeedbackImpl(this, service);
   },
   async resumeOfflineSessionWithFeedback(session) {
-    await resumeOfflineSessionWithFeedbackImpl(this, session);
+    return resumeOfflineSessionWithFeedbackImpl(this, session);
   },
   async waitForSessionStart(sessionId, timeoutMs = 8000) {
     return waitForSessionStartForHost(this, sessionId, timeoutMs);

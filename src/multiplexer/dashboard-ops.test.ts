@@ -100,7 +100,65 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("does not settle service create from the optimistic pending row", async () => {
+  it("keeps service create pending across a slow API snapshot and clears after late settlement", async () => {
+    vi.useFakeTimers();
+    let createdServiceId = "";
+    let allowSettle = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [] as any[],
+      dashboardModelServiceRefreshError: new Error("temporary reconnect"),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+        this.serviceSeed = opts?.serviceSeed;
+      },
+      serviceSeed: undefined as any,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        createdServiceId = body.serviceId;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshError = allowSettle ? undefined : new Error("temporary reconnect");
+        host.dashboardRawServicesCache = allowSettle ? [{ id: createdServiceId, status: "running" }] : [];
+        return allowSettle;
+      }),
+      getDashboardServices: vi.fn(() =>
+        allowSettle
+          ? [{ id: createdServiceId, status: "running" }]
+          : createdServiceId && host.dashboardPendingActions.getServiceAction(createdServiceId) === "creating"
+            ? [{ id: createdServiceId, status: "running", pendingAction: "creating", optimistic: true }]
+            : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = createDashboardServiceWithFeedback(host, "", "/repo");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+
+      expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
+      expect(host.footerFlash).toBe("creating is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      allowSettle = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.footerFlash).toBe("◆ Created service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("escalates a service create that never reconciles", async () => {
     vi.useFakeTimers();
     let createdServiceId = "";
     const host = {
@@ -135,6 +193,11 @@ describe("dashboard-ops", () => {
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(11_000);
       await action;
+      expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(75_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull());
     } finally {
       vi.useRealTimers();
     }
@@ -142,7 +205,8 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull();
     expect(host.footerFlash).not.toBe("◆ Created service shell");
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
-      "creating did not settle before timing out",
+      "creating is still not reflected by the project service after extended reconciliation",
+      "Run aimux restart if it does not recover automatically.",
     ]);
   });
 
@@ -247,8 +311,9 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("does not settle service stop from stale raw state without a fresh snapshot", async () => {
+  it("keeps service stop pending instead of failing on a stale raw snapshot", async () => {
     vi.useFakeTimers();
+    let allowSettle = false;
     const host = {
       dashboardInputEpoch: 0,
       dashboardRawServicesCache: [{ id: "svc-1", status: "offline" }],
@@ -262,9 +327,14 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshError = allowSettle ? undefined : new Error("temporary reconnect");
+        return allowSettle;
+      }),
       getDashboardServices: vi.fn(() => [
-        { id: "svc-1", label: "shell", status: "running", pendingAction: "stopping", optimistic: true },
+        allowSettle
+          ? { id: "svc-1", label: "shell", status: "offline" }
+          : { id: "svc-1", label: "shell", status: "running", pendingAction: "stopping", optimistic: true },
       ]),
       showDashboardError: vi.fn(),
     };
@@ -274,15 +344,21 @@ describe("dashboard-ops", () => {
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(11_000);
       await action;
+
+      expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("stopping is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      allowSettle = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull());
     } finally {
       vi.useRealTimers();
     }
 
     expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
-    expect(host.footerFlash).not.toBe("◆ Stopped service shell");
-    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to stop service", [
-      "stopping did not settle before timing out",
-    ]);
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
@@ -923,7 +999,7 @@ describe("dashboard-ops", () => {
     );
   });
 
-  it("clears pending and reports restore failure when the service snapshot is unreachable", async () => {
+  it("keeps restore pending before escalating when the service snapshot stays unreachable", async () => {
     vi.useFakeTimers();
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
@@ -951,6 +1027,13 @@ describe("dashboard-ops", () => {
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(11_000);
       await action;
+
+      expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("starting");
+      expect(host.footerFlash).toBe("starting is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(75_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
     } finally {
       vi.useRealTimers();
     }
@@ -958,7 +1041,8 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.waitForSessionStart).toHaveBeenCalled();
     expect(host.showDashboardError).toHaveBeenCalledWith('Failed to restore "codex"', [
-      "starting did not settle before timing out",
+      "starting is still not reflected by the project service after extended reconciliation",
+      "Run aimux restart if it does not recover automatically.",
     ]);
   });
 
@@ -1001,6 +1085,56 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored codex");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces teammate restore warnings after late reconciliation settle", async () => {
+    vi.useFakeTimers();
+    const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
+    let allowSettle = false;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => ({
+        ok: true,
+        teammateFailures: [{ sessionId: "codex-1", error: "missing backend session id" }],
+      })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [
+        allowSettle
+          ? { ...session, status: "waiting", tmuxWindowId: "@21" }
+          : { ...session, status: "offline", pendingAction: "starting" },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const restore = resumeOfflineSessionWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await expect(restore).resolves.toBe("pending");
+
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      allowSettle = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("parent-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.showDashboardError).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).toHaveBeenCalledWith('Restored "claude" with teammate issues', [
+      "codex-1: missing backend session id",
+    ]);
   });
 
   it("uses a live tmux agent window as resume evidence while waiting for the API row", async () => {
