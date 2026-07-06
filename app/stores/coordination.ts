@@ -26,6 +26,12 @@ export interface ApplyCoordinationWorklistFailureInput {
   error: string;
 }
 
+export interface CoordinationWorklistRequestScope {
+  projectPath: string;
+  endpointKey: string | null;
+  generation: number;
+}
+
 const emptyCoordinationWorklistResource = (): CoordinationWorklistResource => ({
   value: null,
   error: null,
@@ -87,3 +93,14 @@ export const clearCoordinationWorklistResourceAtom = atom(
     set(coordinationWorklistResourceFamily(projectPath), emptyCoordinationWorklistResource());
   },
 );
+
+export function isCurrentCoordinationWorklistRequest(
+  request: CoordinationWorklistRequestScope,
+  current: CoordinationWorklistRequestScope,
+): boolean {
+  return (
+    request.projectPath === current.projectPath &&
+    request.endpointKey === current.endpointKey &&
+    request.generation === current.generation
+  );
+}

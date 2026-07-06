@@ -10,6 +10,7 @@ import {
   coordinationWorklistErrorFamily,
   coordinationWorklistFamily,
   coordinationWorklistResourceFamily,
+  isCurrentCoordinationWorklistRequest,
   type CoordinationWorklistValue,
 } from "./coordination";
 
@@ -131,5 +132,21 @@ describe("coordination worklist resource lifecycle", () => {
       stale: false,
       updatedAt: null,
     });
+  });
+
+  it("rejects in-flight worklist results from an old endpoint generation", () => {
+    expect(
+      isCurrentCoordinationWorklistRequest(
+        { projectPath: "/repo", endpointKey: "127.0.0.1:43190", generation: 1 },
+        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+      ),
+    ).toBe(false);
+
+    expect(
+      isCurrentCoordinationWorklistRequest(
+        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+        { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
+      ),
+    ).toBe(true);
   });
 });
