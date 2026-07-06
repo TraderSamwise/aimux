@@ -19,8 +19,10 @@ import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
-  desktopStateErrorFamily,
-  desktopStateFamily,
+  applyDesktopStateFailureAtom,
+  applyDesktopStateSuccessAtom,
+  beginDesktopStateRefreshAtom,
+  clearDesktopStateResourceAtom,
   kickDesktopStateRefreshAtom,
   desktopStateRefreshNonceAtom,
 } from "@/stores/desktopState";
@@ -78,6 +80,10 @@ export default function MainLayout() {
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
   const notificationSettings = useAtomValue(notificationSettingsAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  const beginDesktopStateRefresh = useSetAtom(beginDesktopStateRefreshAtom);
+  const applyDesktopStateSuccess = useSetAtom(applyDesktopStateSuccessAtom);
+  const applyDesktopStateFailure = useSetAtom(applyDesktopStateFailureAtom);
+  const clearDesktopStateResource = useSetAtom(clearDesktopStateResourceAtom);
   const kickDesktopStateRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectApiViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const kickNotificationFeedRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
@@ -223,8 +229,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) {
-      store.set(desktopStateFamily(effectiveProjectPath), null);
-      store.set(desktopStateErrorFamily(effectiveProjectPath), null);
+      clearDesktopStateResource(effectiveProjectPath);
       return;
     }
     let cancelled = false;
@@ -232,16 +237,16 @@ export default function MainLayout() {
 
     async function poll() {
       if (cancelled) return;
+      beginDesktopStateRefresh(effectiveProjectPath!);
       try {
         const token = await getTokenRef.current();
         const state = await getDesktopState(endpoint!, { token });
         if (cancelled) return;
-        store.set(desktopStateFamily(effectiveProjectPath!), state);
-        store.set(desktopStateErrorFamily(effectiveProjectPath!), null);
+        applyDesktopStateSuccess({ projectPath: effectiveProjectPath!, state });
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
-          store.set(desktopStateErrorFamily(effectiveProjectPath!), msg);
+          applyDesktopStateFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("desktop-state fetch failed:", err);
           }
@@ -258,7 +263,17 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeShare, effectiveProjectPath, endpointKey, refreshNonce, relayReadyForRequests, store]);
+  }, [
+    activeShare,
+    applyDesktopStateFailure,
+    applyDesktopStateSuccess,
+    beginDesktopStateRefresh,
+    clearDesktopStateResource,
+    effectiveProjectPath,
+    endpointKey,
+    refreshNonce,
+    relayReadyForRequests,
+  ]);
 
   // Poll durable notifications for the selected project. This mirrors
   // desktop-state polling but uses the daemon's notification records as the
