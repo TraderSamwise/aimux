@@ -93,6 +93,7 @@ import {
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { log } from "./debug.js";
 import { loadLibraryEntries } from "./library.js";
+import { getWorktreeCreatePath } from "./worktree.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
@@ -4777,12 +4778,19 @@ export class MetadataServer {
           () => this.notifyChange(),
           () => this.notifyChange(),
         );
+        const targetPath = getWorktreeCreatePath(body.name, this.projectRoot);
         send(
           res,
           202,
           lifecycleOk(
-            { path: body.name, status: "creating" },
-            { operation: "worktree.create", targetKind: "worktree", targetId: body.name, phase: "settling" },
+            { path: targetPath, status: "creating" },
+            {
+              operation: "worktree.create",
+              targetKind: "worktree",
+              targetId: body.name,
+              targetPath,
+              phase: "settling",
+            },
           ),
         );
         return;

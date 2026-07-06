@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
@@ -2552,8 +2553,14 @@ describe("MetadataServer threads API", () => {
 
   it("returns canonical lifecycle transitions for mutation responses", async () => {
     server?.stop();
+    rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    const canonicalRepoRoot = realpathSync(repoRoot);
     let resolveCreateWorktree: (() => void) | null = null;
+    const featureAPath = join(canonicalRepoRoot, ".aimux", "worktrees", "feature-a");
+    const featureSyncPath = join(canonicalRepoRoot, ".aimux", "worktrees", "feature-sync");
     server = new MetadataServer({
+      projectRoot: repoRoot,
       desktop: {
         resumeAgent: ({ sessionId }) => ({ sessionId, status: "running" as const }),
         createService: ({ serviceId }) => ({ serviceId: serviceId ?? "svc-1" }),
@@ -2563,10 +2570,10 @@ describe("MetadataServer threads API", () => {
         },
         createWorktree: ({ name }) => {
           if (name === "feature-sync") {
-            return { path: `/repo/.aimux/worktrees/${name}`, status: "creating" };
+            return { path: featureSyncPath, status: "creating" };
           }
           return new Promise<{ path: string }>((resolve) => {
-            resolveCreateWorktree = () => resolve({ path: `/repo/.aimux/worktrees/${name}` });
+            resolveCreateWorktree = () => resolve({ path: join(repoRoot, ".aimux", "worktrees", name) });
           });
         },
         removeWorktree: () => {
@@ -2623,11 +2630,17 @@ describe("MetadataServer threads API", () => {
 
     const pendingWorktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "feature-a" });
     expect(pendingWorktree.status).toBe(202);
-    expect(pendingWorktree.body.transition).toMatchObject({
-      operation: "worktree.create",
-      targetKind: "worktree",
-      targetId: "feature-a",
-      phase: "settling",
+    expect(pendingWorktree.body).toMatchObject({
+      ok: true,
+      path: featureAPath,
+      status: "creating",
+      transition: {
+        operation: "worktree.create",
+        targetKind: "worktree",
+        targetId: "feature-a",
+        targetPath: featureAPath,
+        phase: "settling",
+      },
     });
     resolveCreateWorktree?.();
 
@@ -2635,13 +2648,13 @@ describe("MetadataServer threads API", () => {
     expect(syncPendingWorktree.status).toBe(202);
     expect(syncPendingWorktree.body).toMatchObject({
       ok: true,
-      path: "/repo/.aimux/worktrees/feature-sync",
+      path: featureSyncPath,
       status: "creating",
       transition: {
         operation: "worktree.create",
         targetKind: "worktree",
         targetId: "feature-sync",
-        targetPath: "/repo/.aimux/worktrees/feature-sync",
+        targetPath: featureSyncPath,
         phase: "settling",
       },
     });
