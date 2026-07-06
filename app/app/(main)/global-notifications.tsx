@@ -79,7 +79,6 @@ export default function GlobalNotificationsScreen() {
   const onlineProjectsRef = useRef(onlineProjects);
   const onlineProjectKeyRef = useRef(onlineProjectKey);
   const resourceRef = useRef(resource);
-  const refreshSeqRef = useRef(0);
   const rows = resource.value?.rows ?? [];
   const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
   const loading = resource.pending;
@@ -95,10 +94,9 @@ export default function GlobalNotificationsScreen() {
   const hasFetchError = errors.length > 0;
 
   const refresh = useCallback(async () => {
-    const requestId = ++refreshSeqRef.current;
     const projectSnapshot = onlineProjectsRef.current;
     const requestSourceKey = onlineProjectKeyRef.current;
-    const requestKey = globalInboxRequestKey("notifications", requestSourceKey, requestId);
+    const requestKey = globalInboxRequestKey("notifications", requestSourceKey);
     beginRefresh({ requestKey });
     try {
       const token = await getTokenRef.current();
@@ -128,7 +126,7 @@ export default function GlobalNotificationsScreen() {
           nextErrors.push(`${project?.name ?? "Project"}: ${String(result.reason)}`);
         }
       });
-      if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
+      if (onlineProjectKeyRef.current !== requestSourceKey) {
         settleRefresh({ requestKey });
         return;
       }
@@ -147,7 +145,7 @@ export default function GlobalNotificationsScreen() {
         },
       });
     } catch (error) {
-      if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
+      if (onlineProjectKeyRef.current !== requestSourceKey) {
         settleRefresh({ requestKey });
         return;
       }

@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { PrimitiveAtom } from "jotai";
 import type { NotificationRecord, ThreadSummaryResponse } from "@/lib/api";
 
 export interface GlobalNotificationRow {
@@ -47,6 +48,9 @@ export interface ApplyGlobalInboxFailureInput {
 export interface SettleGlobalInboxRefreshInput {
   requestKey: string;
 }
+
+const globalInboxRequestScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+let globalInboxRequestSequence = 0;
 
 const emptyGlobalInboxResource = <T>(): GlobalInboxResource<T> => ({
   value: null,
@@ -122,96 +126,50 @@ function settleGlobalInboxRefresh<T>(
   };
 }
 
-export const beginGlobalNotificationRefreshAtom = atom(
-  null,
-  (get, set, { requestKey }: BeginGlobalInboxRefreshInput) => {
-    set(
-      globalNotificationResourceAtom,
-      beginGlobalInboxRefresh(get(globalNotificationResourceAtom), requestKey),
-    );
-  },
-);
+function createGlobalInboxActionAtoms<T>(resourceAtom: PrimitiveAtom<GlobalInboxResource<T>>) {
+  return {
+    beginRefreshAtom: atom(null, (get, set, { requestKey }: BeginGlobalInboxRefreshInput) => {
+      set(resourceAtom, beginGlobalInboxRefresh(get(resourceAtom), requestKey));
+    }),
+    applySuccessAtom: atom(
+      null,
+      (get, set, { requestKey, value, updatedAt }: ApplyGlobalInboxSuccessInput<T>) => {
+        set(resourceAtom, applyGlobalInboxSuccess(get(resourceAtom), requestKey, value, updatedAt));
+      },
+    ),
+    applyFailureAtom: atom(
+      null,
+      (get, set, { requestKey, error }: ApplyGlobalInboxFailureInput) => {
+        set(resourceAtom, applyGlobalInboxFailure(get(resourceAtom), requestKey, error));
+      },
+    ),
+    settleRefreshAtom: atom(null, (get, set, { requestKey }: SettleGlobalInboxRefreshInput) => {
+      set(resourceAtom, settleGlobalInboxRefresh(get(resourceAtom), requestKey));
+    }),
+  };
+}
 
-export const applyGlobalNotificationSuccessAtom = atom(
-  null,
-  (
-    get,
-    set,
-    { requestKey, value, updatedAt }: ApplyGlobalInboxSuccessInput<GlobalNotificationRow>,
-  ) => {
-    set(
-      globalNotificationResourceAtom,
-      applyGlobalInboxSuccess(get(globalNotificationResourceAtom), requestKey, value, updatedAt),
-    );
-  },
+const globalNotificationActions = createGlobalInboxActionAtoms<GlobalNotificationRow>(
+  globalNotificationResourceAtom,
 );
+const globalThreadActions = createGlobalInboxActionAtoms<GlobalThreadRow>(globalThreadResourceAtom);
 
-export const applyGlobalNotificationFailureAtom = atom(
-  null,
-  (get, set, { requestKey, error }: ApplyGlobalInboxFailureInput) => {
-    set(
-      globalNotificationResourceAtom,
-      applyGlobalInboxFailure(get(globalNotificationResourceAtom), requestKey, error),
-    );
-  },
-);
+export const beginGlobalNotificationRefreshAtom = globalNotificationActions.beginRefreshAtom;
+export const applyGlobalNotificationSuccessAtom = globalNotificationActions.applySuccessAtom;
+export const applyGlobalNotificationFailureAtom = globalNotificationActions.applyFailureAtom;
+export const settleGlobalNotificationRefreshAtom = globalNotificationActions.settleRefreshAtom;
 
-export const settleGlobalNotificationRefreshAtom = atom(
-  null,
-  (get, set, { requestKey }: SettleGlobalInboxRefreshInput) => {
-    set(
-      globalNotificationResourceAtom,
-      settleGlobalInboxRefresh(get(globalNotificationResourceAtom), requestKey),
-    );
-  },
-);
-
-export const beginGlobalThreadRefreshAtom = atom(
-  null,
-  (get, set, { requestKey }: BeginGlobalInboxRefreshInput) => {
-    set(
-      globalThreadResourceAtom,
-      beginGlobalInboxRefresh(get(globalThreadResourceAtom), requestKey),
-    );
-  },
-);
-
-export const applyGlobalThreadSuccessAtom = atom(
-  null,
-  (get, set, { requestKey, value, updatedAt }: ApplyGlobalInboxSuccessInput<GlobalThreadRow>) => {
-    set(
-      globalThreadResourceAtom,
-      applyGlobalInboxSuccess(get(globalThreadResourceAtom), requestKey, value, updatedAt),
-    );
-  },
-);
-
-export const applyGlobalThreadFailureAtom = atom(
-  null,
-  (get, set, { requestKey, error }: ApplyGlobalInboxFailureInput) => {
-    set(
-      globalThreadResourceAtom,
-      applyGlobalInboxFailure(get(globalThreadResourceAtom), requestKey, error),
-    );
-  },
-);
-
-export const settleGlobalThreadRefreshAtom = atom(
-  null,
-  (get, set, { requestKey }: SettleGlobalInboxRefreshInput) => {
-    set(
-      globalThreadResourceAtom,
-      settleGlobalInboxRefresh(get(globalThreadResourceAtom), requestKey),
-    );
-  },
-);
+export const beginGlobalThreadRefreshAtom = globalThreadActions.beginRefreshAtom;
+export const applyGlobalThreadSuccessAtom = globalThreadActions.applySuccessAtom;
+export const applyGlobalThreadFailureAtom = globalThreadActions.applyFailureAtom;
+export const settleGlobalThreadRefreshAtom = globalThreadActions.settleRefreshAtom;
 
 export function globalInboxRequestKey(
   kind: "notifications" | "threads",
   sourceKey: string,
-  sequence: number,
+  sequence = ++globalInboxRequestSequence,
 ): string {
-  return `${kind}\u0000${sourceKey}\u0000${sequence}`;
+  return `${kind}\u0000${sourceKey}\u0000${globalInboxRequestScope}\u0000${sequence}`;
 }
 
 export function mergeGlobalRowsWithPrevious<T extends { projectPath: string }>(
