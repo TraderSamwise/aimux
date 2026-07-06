@@ -151,6 +151,22 @@ function hasDashboardModelServiceRefreshError(host: DashboardOpsHost): boolean {
   return Boolean(host.dashboardModelServiceRefreshError);
 }
 
+function hasPendingDashboardSessionAction(
+  host: DashboardOpsHost,
+  sessionId: string,
+  kind: PendingSessionActionKind,
+): boolean {
+  return host.dashboardPendingActions?.getSessionAction?.(sessionId) === kind;
+}
+
+function hasPendingDashboardServiceAction(
+  host: DashboardOpsHost,
+  serviceId: string,
+  kind: PendingServiceActionKind,
+): boolean {
+  return host.dashboardPendingActions?.getServiceAction?.(serviceId) === kind;
+}
+
 async function waitForStableDashboardSessionAbsence(
   host: DashboardOpsHost,
   sessionId: string,
@@ -248,7 +264,6 @@ async function waitForDashboardSessionResumeSettle(
     if (isAttachableDashboardSessionEntry(entry) || hasLiveManagedAgentWindow(host, sessionId)) {
       renderDashboardDuringSettlement(host, renderLifecycle);
     }
-    if (hasDashboardModelServiceRefreshError(host) && !hasLiveManagedAgentWindow(host, sessionId)) return false;
     if (
       typeof host.waitForSessionStart === "function" &&
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
@@ -256,6 +271,9 @@ async function waitForDashboardSessionResumeSettle(
       await refreshDashboardModelForSettlement(host, modelLifecycle);
       renderDashboardDuringSettlement(host, renderLifecycle);
       if (isDashboardSessionResumeSettled(host, sessionId)) return true;
+    }
+    if (hasDashboardModelServiceRefreshError(host) && !hasPendingDashboardSessionAction(host, sessionId, "starting")) {
+      return false;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -274,9 +292,11 @@ async function waitForDashboardSessionStopSettle(
     await refreshDashboardModelForSettlement(host, modelLifecycle);
     const entry = getDashboardSessionEntry(host, sessionId);
     if (isDashboardSessionStopSettled(host, sessionId)) return true;
-    if (hasDashboardModelServiceRefreshError(host)) return false;
     if (entry?.pendingAction === "stopping") {
       renderDashboardDuringSettlement(host, renderLifecycle);
+    }
+    if (hasDashboardModelServiceRefreshError(host) && !hasPendingDashboardSessionAction(host, sessionId, "stopping")) {
+      return false;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -298,6 +318,17 @@ function getRawDashboardServiceEntry(host: DashboardOpsHost, serviceId: string):
   return services?.find((entry: any) => entry.id === serviceId);
 }
 
+function getDashboardServiceSettlementEntry(
+  host: DashboardOpsHost,
+  serviceId: string,
+): { known: boolean; service?: any } {
+  const services = Array.isArray(host.dashboardRawServicesCache) ? host.dashboardRawServicesCache : undefined;
+  if (services) return { known: true, service: services.find((entry: any) => entry.id === serviceId) };
+  const service = getDashboardServiceEntry(host, serviceId);
+  if (service?.optimistic || service?.pendingAction) return { known: false };
+  return { known: true, service };
+}
+
 async function waitForRenderedDashboardServiceState(
   host: DashboardOpsHost,
   serviceId: string,
@@ -305,24 +336,34 @@ async function waitForRenderedDashboardServiceState(
   timeoutMs = 10_000,
   modelLifecycle?: DashboardLifecycleToken,
   renderLifecycle?: DashboardLifecycleToken,
+  pendingAction?: PendingServiceActionKind,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  let hasFreshSnapshot = false;
   while (Date.now() < deadline) {
-    await refreshDashboardModelForSettlement(host, modelLifecycle);
-    const service = getDashboardServiceEntry(host, serviceId);
-    if (predicate(service)) {
+    const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
+    hasFreshSnapshot ||= refreshed;
+    const renderedService = getDashboardServiceEntry(host, serviceId);
+    const settlement = getDashboardServiceSettlementEntry(host, serviceId);
+    if (hasFreshSnapshot && settlement.known && predicate(settlement.service)) {
       if (
-        isLiveDashboardServiceEntry(service) &&
-        (service?.status !== "running" || service?.pendingAction === "starting")
+        isLiveDashboardServiceEntry(settlement.service) &&
+        (renderedService?.status !== "running" || renderedService?.pendingAction === "starting")
       ) {
         renderDashboardDuringSettlement(host, renderLifecycle);
       }
       return true;
     }
-    if (hasDashboardModelServiceRefreshError(host)) return false;
+    if (
+      hasDashboardModelServiceRefreshError(host) &&
+      (!pendingAction || !hasPendingDashboardServiceAction(host, serviceId, pendingAction))
+    ) {
+      return false;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return predicate(getDashboardServiceEntry(host, serviceId));
+  const settlement = getDashboardServiceSettlementEntry(host, serviceId);
+  return hasFreshSnapshot && settlement.known && predicate(settlement.service);
 }
 
 async function waitForDashboardServiceStopSettle(
@@ -337,6 +378,8 @@ async function waitForDashboardServiceStopSettle(
     (entry) => !entry || entry.status !== "running",
     timeoutMs,
     modelLifecycle,
+    undefined,
+    "stopping",
   );
 }
 
@@ -351,7 +394,13 @@ async function waitForStableDashboardServiceAbsence(
   let missingSince: number | null = null;
   while (Date.now() < deadline) {
     const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
-    if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
+    if (
+      !refreshed &&
+      hasDashboardModelServiceRefreshError(host) &&
+      !hasPendingDashboardServiceAction(host, serviceId, "removing")
+    ) {
+      return false;
+    }
     const service = getRawDashboardServiceEntry(host, serviceId);
     if (service) {
       missingSince = null;
@@ -858,6 +907,7 @@ export async function resumeOfflineServiceWithFeedback(
           10_000,
           modelLifecycle,
           renderLifecycle,
+          "starting",
         ),
       successFlash: { message: `◆ Started service ${service.label ?? service.id}` },
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
@@ -926,6 +976,7 @@ export async function createDashboardServiceWithFeedback(
         10_000,
         modelLifecycle,
         renderLifecycle,
+        "creating",
       ),
     successFlash: { message: `◆ Created service ${label}` },
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),

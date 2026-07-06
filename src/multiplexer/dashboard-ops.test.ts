@@ -100,6 +100,52 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("does not settle service create from the optimistic pending row", async () => {
+    vi.useFakeTimers();
+    let createdServiceId = "";
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [] as any[],
+      dashboardModelServiceRefreshError: new Error("temporary reconnect"),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+        this.serviceSeed = opts?.serviceSeed;
+      },
+      serviceSeed: undefined as any,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        createdServiceId = body.serviceId;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      getDashboardServices: vi.fn(() =>
+        createdServiceId && host.dashboardPendingActions.getServiceAction(createdServiceId) === "creating"
+          ? [{ id: createdServiceId, status: "running", pendingAction: "creating", optimistic: true }]
+          : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = createDashboardServiceWithFeedback(host, "", "/repo");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull();
+    expect(host.footerFlash).not.toBe("◆ Created service shell");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
+      "creating did not settle before timing out",
+    ]);
+  });
+
   it("shows optimistic starting state and clears it on successful service resume", async () => {
     const services = [[], [{ id: "svc-1", status: "running" }]];
     let serviceIndex = 0;
@@ -199,6 +245,44 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Stopped service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not settle service stop from stale raw state without a fresh snapshot", async () => {
+    vi.useFakeTimers();
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [{ id: "svc-1", status: "offline" }],
+      dashboardModelServiceRefreshError: new Error("temporary reconnect"),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      getDashboardServices: vi.fn(() => [
+        { id: "svc-1", label: "shell", status: "running", pendingAction: "stopping", optimistic: true },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
+    expect(host.footerFlash).not.toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to stop service", [
+      "stopping did not settle before timing out",
+    ]);
   });
 
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
@@ -840,6 +924,7 @@ describe("dashboard-ops", () => {
   });
 
   it("clears pending and reports restore failure when the service snapshot is unreachable", async () => {
+    vi.useFakeTimers();
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
       mode: "dashboard",
@@ -861,13 +946,61 @@ describe("dashboard-ops", () => {
       showDashboardError: vi.fn(),
     };
 
-    await resumeOfflineSessionWithFeedback(host, session);
+    try {
+      const action = resumeOfflineSessionWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
-    expect(host.waitForSessionStart).not.toHaveBeenCalled();
+    expect(host.waitForSessionStart).toHaveBeenCalled();
     expect(host.showDashboardError).toHaveBeenCalledWith('Failed to restore "codex"', [
       "starting did not settle before timing out",
     ]);
+  });
+
+  it("keeps restore pending across a transient service snapshot miss", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
+    let refreshCount = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshError: undefined as Error | undefined,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount === 1) {
+          host.dashboardModelServiceRefreshError = new Error("temporary reconnect");
+          return false;
+        }
+        host.dashboardModelServiceRefreshError = undefined;
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() =>
+        refreshCount < 2
+          ? [{ ...session, status: "offline", pendingAction: "starting" }]
+          : [{ ...session, status: "waiting", tmuxWindowId: "@21" }],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored codex");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("uses a live tmux agent window as resume evidence while waiting for the API row", async () => {
