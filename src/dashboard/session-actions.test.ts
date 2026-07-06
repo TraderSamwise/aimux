@@ -31,25 +31,27 @@ describe("dashboard-session-actions", () => {
     const setFooterFlash = vi.fn();
     const renderDashboard = vi.fn();
 
-    await resumeOfflineSessionWithFeedback(
-      {
-        getSessionLabel: () => "main",
-        getPendingAction: () => "starting",
-        setPendingAction,
-        stopSessionToOffline: vi.fn(),
-        isGraveyardAfterStop: vi.fn(),
-        sendAgentToGraveyard: vi.fn(),
-        resumeOfflineSession,
-        refreshLocalDashboardModel: vi.fn(),
-        adjustAfterRemove: vi.fn(),
-        renderDashboard,
-        showDashboardError: vi.fn(),
-        setFooterFlash,
-        getRuntimeById: vi.fn(),
-        isSessionRuntimeLive: vi.fn(),
-      },
-      { id: "sess-1", command: "codex", label: "main" },
-    );
+    await expect(
+      resumeOfflineSessionWithFeedback(
+        {
+          getSessionLabel: () => "main",
+          getPendingAction: () => "starting",
+          setPendingAction,
+          stopSessionToOffline: vi.fn(),
+          isGraveyardAfterStop: vi.fn(),
+          sendAgentToGraveyard: vi.fn(),
+          resumeOfflineSession,
+          refreshLocalDashboardModel: vi.fn(),
+          adjustAfterRemove: vi.fn(),
+          renderDashboard,
+          showDashboardError: vi.fn(),
+          setFooterFlash,
+          getRuntimeById: vi.fn(),
+          isSessionRuntimeLive: vi.fn(),
+        },
+        { id: "sess-1", command: "codex", label: "main" },
+      ),
+    ).resolves.toBe("pending");
 
     expect(resumeOfflineSession).not.toHaveBeenCalled();
     expect(setPendingAction).not.toHaveBeenCalled();
@@ -135,25 +137,27 @@ describe("dashboard-session-actions", () => {
     const setFooterFlash = vi.fn();
     const renderDashboard = vi.fn();
 
-    await resumeOfflineSessionWithFeedback(
-      {
-        getSessionLabel: () => "shell",
-        getPendingAction: vi.fn(),
-        setPendingAction,
-        stopSessionToOffline: vi.fn(),
-        isGraveyardAfterStop: vi.fn(),
-        sendAgentToGraveyard: vi.fn(),
-        resumeOfflineSession,
-        refreshLocalDashboardModel,
-        adjustAfterRemove: vi.fn(),
-        renderDashboard,
-        showDashboardError: vi.fn(),
-        setFooterFlash,
-        getRuntimeById: vi.fn().mockReturnValue({ id: "svc-1" }),
-        isSessionRuntimeLive: vi.fn().mockReturnValue(true),
-      },
-      { id: "svc-1", command: "shell", label: "shell" },
-    );
+    await expect(
+      resumeOfflineSessionWithFeedback(
+        {
+          getSessionLabel: () => "shell",
+          getPendingAction: vi.fn(),
+          setPendingAction,
+          stopSessionToOffline: vi.fn(),
+          isGraveyardAfterStop: vi.fn(),
+          sendAgentToGraveyard: vi.fn(),
+          resumeOfflineSession,
+          refreshLocalDashboardModel,
+          adjustAfterRemove: vi.fn(),
+          renderDashboard,
+          showDashboardError: vi.fn(),
+          setFooterFlash,
+          getRuntimeById: vi.fn().mockReturnValue({ id: "svc-1" }),
+          isSessionRuntimeLive: vi.fn().mockReturnValue(true),
+        },
+        { id: "svc-1", command: "shell", label: "shell" },
+      ),
+    ).resolves.toBe("settled");
 
     expect(setPendingAction).toHaveBeenNthCalledWith(1, "svc-1", "starting");
     expect(resumeOfflineSession).toHaveBeenCalledWith({ id: "svc-1", command: "shell", label: "shell" });
@@ -169,30 +173,67 @@ describe("dashboard-session-actions", () => {
     const setFooterFlash = vi.fn();
     const renderDashboard = vi.fn();
 
-    await resumeOfflineSessionWithFeedback(
-      {
-        getSessionLabel: () => "main",
-        getPendingAction: vi.fn(),
-        setPendingAction,
-        stopSessionToOffline: vi.fn(),
-        isGraveyardAfterStop: vi.fn(),
-        sendAgentToGraveyard: vi.fn(),
-        resumeOfflineSession: vi.fn().mockRejectedValue(new Error("boom")),
-        refreshLocalDashboardModel,
-        adjustAfterRemove: vi.fn(),
-        renderDashboard,
-        showDashboardError: vi.fn(),
-        setFooterFlash,
-        getRuntimeById: vi.fn(),
-        isSessionRuntimeLive: vi.fn(),
-      },
-      { id: "sess-1", command: "codex", label: "main" },
-    );
+    await expect(
+      resumeOfflineSessionWithFeedback(
+        {
+          getSessionLabel: () => "main",
+          getPendingAction: vi.fn(),
+          setPendingAction,
+          stopSessionToOffline: vi.fn(),
+          isGraveyardAfterStop: vi.fn(),
+          sendAgentToGraveyard: vi.fn(),
+          resumeOfflineSession: vi.fn().mockRejectedValue(new Error("boom")),
+          refreshLocalDashboardModel,
+          adjustAfterRemove: vi.fn(),
+          renderDashboard,
+          showDashboardError: vi.fn(),
+          setFooterFlash,
+          getRuntimeById: vi.fn(),
+          isSessionRuntimeLive: vi.fn(),
+        },
+        { id: "sess-1", command: "codex", label: "main" },
+      ),
+    ).resolves.toBe("failed");
 
     expect(setPendingAction).toHaveBeenNthCalledWith(1, "sess-1", "starting");
     expect(setPendingAction).toHaveBeenNthCalledWith(2, "sess-1", null);
     expect(refreshLocalDashboardModel).toHaveBeenCalledOnce();
     expect(setFooterFlash).toHaveBeenLastCalledWith("Failed to restore main", 4);
+    expect(renderDashboard).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns failed when resume completes but no live runtime appears", async () => {
+    const setPendingAction = vi.fn();
+    const refreshLocalDashboardModel = vi.fn();
+    const setFooterFlash = vi.fn();
+    const renderDashboard = vi.fn();
+
+    await expect(
+      resumeOfflineSessionWithFeedback(
+        {
+          getSessionLabel: () => "main",
+          getPendingAction: vi.fn(),
+          setPendingAction,
+          stopSessionToOffline: vi.fn(),
+          isGraveyardAfterStop: vi.fn(),
+          sendAgentToGraveyard: vi.fn(),
+          resumeOfflineSession: vi.fn().mockResolvedValue(undefined),
+          refreshLocalDashboardModel,
+          adjustAfterRemove: vi.fn(),
+          renderDashboard,
+          showDashboardError: vi.fn(),
+          setFooterFlash,
+          getRuntimeById: vi.fn(),
+          isSessionRuntimeLive: vi.fn(),
+        },
+        { id: "sess-1", command: "codex", label: "main" },
+      ),
+    ).resolves.toBe("failed");
+
+    expect(setPendingAction).toHaveBeenNthCalledWith(1, "sess-1", "starting");
+    expect(setPendingAction).toHaveBeenNthCalledWith(2, "sess-1", null);
+    expect(refreshLocalDashboardModel).toHaveBeenCalledOnce();
+    expect(setFooterFlash).toHaveBeenLastCalledWith("Failed to restore main", 3);
     expect(renderDashboard).toHaveBeenCalledTimes(2);
   });
 });

@@ -26,6 +26,7 @@ import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
 type DashboardSessionMutationPendingAction = Exclude<PendingSessionActionKind, "renaming">;
+export type DashboardMutationResult = "settled" | "pending" | "failed";
 
 const dashboardAgentRestoreQueues = new WeakMap<object, Promise<void>>();
 const dashboardQueuedAgentRestores = new WeakMap<object, Set<string>>();
@@ -39,22 +40,29 @@ function queuedAgentRestoresFor(host: object): Set<string> {
   return queued;
 }
 
-async function enqueueDashboardAgentRestore(host: object, sessionId: string, work: () => Promise<void>): Promise<void> {
+async function enqueueDashboardAgentRestore<T>(
+  host: object,
+  sessionId: string,
+  work: () => Promise<T>,
+): Promise<T | undefined> {
   const queued = queuedAgentRestoresFor(host);
-  if (queued.has(sessionId)) return;
+  if (queued.has(sessionId)) return undefined;
   queued.add(sessionId);
   const previous = dashboardAgentRestoreQueues.get(host) ?? Promise.resolve();
-  const current = previous
-    .catch(() => undefined)
-    .then(work)
+  const current = previous.catch(() => undefined).then(work);
+  const tracked = current
+    .then(
+      () => undefined,
+      () => undefined,
+    )
     .finally(() => {
       queued.delete(sessionId);
-      if (dashboardAgentRestoreQueues.get(host) === current) {
+      if (dashboardAgentRestoreQueues.get(host) === tracked) {
         dashboardAgentRestoreQueues.delete(host);
       }
     });
-  dashboardAgentRestoreQueues.set(host, current);
-  await current;
+  dashboardAgentRestoreQueues.set(host, tracked);
+  return current;
 }
 
 function buildPendingSessionSeed(input: {
@@ -104,6 +112,20 @@ interface DashboardServiceMutationOptions {
   errorTitle: string;
 }
 
+interface DashboardMutationReconcileOptions {
+  targetKind: "session" | "service";
+  targetId: string;
+  pendingAction: PendingSessionActionKind | PendingServiceActionKind;
+  settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
+  modelLifecycle: DashboardLifecycleToken;
+  renderLifecycle: DashboardLifecycleToken;
+  clearPending: () => void;
+  onAfterSettle?: () => void;
+  onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
+  successFlash?: { message: string; ticks?: number };
+  errorTitle: string;
+}
+
 function restoreWarningLines(result: any): string[] {
   const warning = typeof result?.warning === "string" ? result.warning.trim() : "";
   const failures = Array.isArray(result?.teammateFailures)
@@ -125,12 +147,6 @@ function restoreWarningLines(result: any): string[] {
   if (failures.length > 0) return Array.from(new Set(failures));
   if (!warning) return [];
   return Array.from(new Set([warning, "Stale teammates remain offline; create a new team to replace them."]));
-}
-
-function assertDashboardMutationSettled(settled: boolean, action: string): void {
-  if (!settled) {
-    throw new Error(`${action} did not settle before timing out`);
-  }
 }
 
 async function refreshDashboardModelAfterMutationError(
@@ -165,6 +181,53 @@ function hasPendingDashboardServiceAction(
   kind: PendingServiceActionKind,
 ): boolean {
   return host.dashboardPendingActions?.getServiceAction?.(serviceId) === kind;
+}
+
+function hasPendingDashboardMutationAction(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
+  return opts.targetKind === "session"
+    ? hasPendingDashboardSessionAction(host, opts.targetId, opts.pendingAction as PendingSessionActionKind)
+    : hasPendingDashboardServiceAction(host, opts.targetId, opts.pendingAction as PendingServiceActionKind);
+}
+
+function applyDashboardMutationSuccess(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): void {
+  opts.clearPending();
+  if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+  opts.onAfterSettle?.();
+  if (opts.successFlash) {
+    host.footerFlash = opts.successFlash.message;
+    host.footerFlashTicks = opts.successFlash.ticks ?? 3;
+  }
+  host.renderDashboard();
+}
+
+function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): void {
+  const startedAt = Date.now();
+  const maxReconcileMs = 60_000;
+  if (isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+    host.footerFlash = `${opts.pendingAction} is still settling`;
+    host.footerFlashTicks = 4;
+    host.renderDashboard();
+  }
+  void (async () => {
+    while (Date.now() - startedAt < maxReconcileMs && hasPendingDashboardMutationAction(host, opts)) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (!(await opts.settle(opts.modelLifecycle, opts.renderLifecycle))) continue;
+      applyDashboardMutationSuccess(host, opts);
+      return;
+    }
+    if (!hasPendingDashboardMutationAction(host, opts)) return;
+    opts.clearPending();
+    await opts.onError?.(opts.modelLifecycle);
+    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+    host.showDashboardError(opts.errorTitle, [
+      `${opts.pendingAction} is still not reflected by the project service after extended reconciliation`,
+      "Run aimux restart if it does not recover automatically.",
+    ]);
+  })().catch((error: unknown) => {
+    opts.clearPending();
+    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+    host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+  });
 }
 
 async function waitForStableDashboardSessionAbsence(
@@ -416,7 +479,7 @@ async function waitForStableDashboardServiceAbsence(
 async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
-): Promise<void> {
+): Promise<DashboardMutationResult> {
   const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
   const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
@@ -437,29 +500,51 @@ async function runDashboardSessionMutation(
     await opts.request();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) {
       clearPending();
-      return;
+      return "failed";
     }
-    assertDashboardMutationSettled(await opts.settle(modelLifecycle, lifecycle), opts.pendingAction);
-    clearPending();
-    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
-    opts.onAfterSettle?.();
-    if (opts.successFlash) {
-      host.footerFlash = opts.successFlash.message;
-      host.footerFlashTicks = opts.successFlash.ticks ?? 3;
+    if (await opts.settle(modelLifecycle, lifecycle)) {
+      applyDashboardMutationSuccess(host, {
+        targetKind: "session",
+        targetId: opts.sessionId,
+        pendingAction: opts.pendingAction,
+        settle: opts.settle,
+        modelLifecycle,
+        renderLifecycle: lifecycle,
+        clearPending,
+        onAfterSettle: opts.onAfterSettle,
+        onError: opts.onError,
+        successFlash: opts.successFlash,
+        errorTitle: opts.errorTitle,
+      });
+      return "settled";
     }
-    host.renderDashboard();
+    scheduleDashboardMutationReconcile(host, {
+      targetKind: "session",
+      targetId: opts.sessionId,
+      pendingAction: opts.pendingAction,
+      settle: opts.settle,
+      modelLifecycle,
+      renderLifecycle: lifecycle,
+      clearPending,
+      onAfterSettle: opts.onAfterSettle,
+      onError: opts.onError,
+      successFlash: opts.successFlash,
+      errorTitle: opts.errorTitle,
+    });
+    return "pending";
   } catch (error) {
     clearPending();
     await opts.onError?.(modelLifecycle);
-    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+    return "failed";
   }
 }
 
 async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
-): Promise<void> {
+): Promise<DashboardMutationResult> {
   const lifecycle = captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
   const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
@@ -480,22 +565,44 @@ async function runDashboardServiceMutation(
     await opts.request();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) {
       clearPending();
-      return;
+      return "failed";
     }
-    assertDashboardMutationSettled(await opts.settle(modelLifecycle, lifecycle), opts.pendingAction);
-    clearPending();
-    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
-    opts.onAfterSettle?.();
-    if (opts.successFlash) {
-      host.footerFlash = opts.successFlash.message;
-      host.footerFlashTicks = opts.successFlash.ticks ?? 3;
+    if (await opts.settle(modelLifecycle, lifecycle)) {
+      applyDashboardMutationSuccess(host, {
+        targetKind: "service",
+        targetId: opts.serviceId,
+        pendingAction: opts.pendingAction,
+        settle: opts.settle,
+        modelLifecycle,
+        renderLifecycle: lifecycle,
+        clearPending,
+        onAfterSettle: opts.onAfterSettle,
+        onError: opts.onError,
+        successFlash: opts.successFlash,
+        errorTitle: opts.errorTitle,
+      });
+      return "settled";
     }
-    host.renderDashboard();
+    scheduleDashboardMutationReconcile(host, {
+      targetKind: "service",
+      targetId: opts.serviceId,
+      pendingAction: opts.pendingAction,
+      settle: opts.settle,
+      modelLifecycle,
+      renderLifecycle: lifecycle,
+      clearPending,
+      onAfterSettle: opts.onAfterSettle,
+      onError: opts.onError,
+      successFlash: opts.successFlash,
+      errorTitle: opts.errorTitle,
+    });
+    return "pending";
   } catch (error) {
     clearPending();
     await opts.onError?.(modelLifecycle);
-    if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+    return "failed";
   }
 }
 
@@ -806,7 +913,10 @@ export async function graveyardSessionWithFeedback(
   await runGraveyardSessionWithFeedback(dashboardSessionActionDeps(host), session, sessionId, hasWorktrees);
 }
 
-export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
+export async function resumeOfflineSessionWithFeedback(
+  host: DashboardOpsHost,
+  session: any,
+): Promise<DashboardMutationResult> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
     const lifecycle = captureDashboardLifecycle(host);
@@ -814,7 +924,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
       host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
       queuedAgentRestoresFor(host).has(session.id)
     ) {
-      return;
+      return "pending";
     }
     const sessionSeed =
       host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
@@ -833,46 +943,52 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
     host.footerFlashTicks = 3;
     host.setPendingDashboardSessionAction(session.id, "starting", { sessionSeed });
     host.renderDashboard();
-    await enqueueDashboardAgentRestore(host, session.id, async () => {
-      await runDashboardSessionMutation(host, {
-        sessionId: session.id,
-        pendingAction: "starting",
-        sessionSeed,
-        lifecycle,
-        onBeforeRequest: () => {
-          host.footerFlash = `Restoring ${label}`;
-          host.footerFlashTicks = 3;
-        },
-        request: async () => {
-          resumeResult = await mutateDashboardApi(
-            host,
-            PROJECT_API_ROUTES.agents.resume,
-            { sessionId: session.id },
-            { timeoutMs: 60_000 },
-          );
-        },
-        settle: (modelLifecycle, renderLifecycle) =>
-          waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
-        successFlash: { message: `Restored ${label}` },
-        onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
-        errorTitle: `Failed to restore "${label}"`,
-      });
-    });
-    const warningLines = restoreWarningLines(resumeResult);
-    if (warningLines.length > 0 && isDashboardLifecycleCurrent(host, lifecycle)) {
+    let restoreWarningsShown = false;
+    const showRestoreWarnings = () => {
+      if (restoreWarningsShown) return;
+      const warningLines = restoreWarningLines(resumeResult);
+      if (warningLines.length === 0) return;
+      restoreWarningsShown = true;
       host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
-    }
-    return;
+    };
+    const mutationResult =
+      (await enqueueDashboardAgentRestore(host, session.id, async () =>
+        runDashboardSessionMutation(host, {
+          sessionId: session.id,
+          pendingAction: "starting",
+          sessionSeed,
+          lifecycle,
+          onBeforeRequest: () => {
+            host.footerFlash = `Restoring ${label}`;
+            host.footerFlashTicks = 3;
+          },
+          request: async () => {
+            resumeResult = await mutateDashboardApi(
+              host,
+              PROJECT_API_ROUTES.agents.resume,
+              { sessionId: session.id },
+              { timeoutMs: 60_000 },
+            );
+          },
+          settle: (modelLifecycle, renderLifecycle) =>
+            waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
+          onAfterSettle: showRestoreWarnings,
+          successFlash: { message: `Restored ${label}` },
+          onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
+          errorTitle: `Failed to restore "${label}"`,
+        }),
+      )) ?? "pending";
+    return mutationResult;
   }
-  await runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
+  return runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
 }
 
 export async function resumeOfflineServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
-): Promise<void> {
+): Promise<DashboardMutationResult> {
   if (host.dashboardPendingActions.getServiceAction(service.id) === "starting") {
-    return;
+    return "pending";
   }
   if (host.mode === "dashboard") {
     const serviceSeed = host.getDashboardServices?.().find((entry: any) => entry.id === service.id) ?? {
@@ -883,7 +999,7 @@ export async function resumeOfflineServiceWithFeedback(
       active: false,
       label: service.label,
     };
-    await runDashboardServiceMutation(host, {
+    return runDashboardServiceMutation(host, {
       serviceId: service.id,
       pendingAction: "starting",
       serviceSeed,
@@ -913,7 +1029,6 @@ export async function resumeOfflineServiceWithFeedback(
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: "Failed to start service",
     });
-    return;
   }
   host.setPendingDashboardServiceAction(service.id, "starting");
   host.footerFlash = `Restoring ${service.label ?? service.id}`;
@@ -925,10 +1040,12 @@ export async function resumeOfflineServiceWithFeedback(
     host.footerFlash = `◆ Started service ${service.label ?? service.id}`;
     host.footerFlashTicks = 3;
     host.renderDashboard();
+    return "settled";
   } catch (error) {
     host.setPendingDashboardServiceAction(service.id, null);
     host.refreshLocalDashboardModel();
     host.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
+    return "failed";
   }
 }
 

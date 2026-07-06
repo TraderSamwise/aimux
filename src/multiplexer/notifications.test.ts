@@ -71,7 +71,7 @@ describe("notification target open", () => {
       notificationTargetState: vi.fn(() => "offline"),
       postToProjectService: notificationServiceDouble(),
       activateDashboardService: vi.fn(async () => undefined),
-      resumeOfflineServiceWithFeedback: vi.fn(async () => undefined),
+      resumeOfflineServiceWithFeedback: vi.fn(async () => "settled"),
       resumeOfflineServiceById: vi.fn(),
       waitAndOpenLiveTmuxWindowForService: vi.fn(),
       showDashboardError: vi.fn(),
@@ -123,6 +123,18 @@ describe("notification target open", () => {
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
   });
 
+  it("keeps a service notification unread without failure UI when activation is still pending", async () => {
+    host.activateDashboardService = vi.fn(async () => "pending");
+
+    handleCoordinationKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
+
+    expect(unreadInboxEntries("service-1")).toHaveLength(1);
+    expect(host.footerFlash).toBe("");
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.renderCoordination).not.toHaveBeenCalled();
+  });
+
   it("suppresses stale activation failure UI after newer dashboard input", async () => {
     let rejectOpen!: (error: unknown) => void;
     host.activateDashboardService = vi.fn(
@@ -151,6 +163,25 @@ describe("notification target open", () => {
 
     expect(unreadInboxEntries("service-1")).toHaveLength(1);
     expect(host.footerFlash).toBe("Failed to open notification target");
+  });
+
+  it("keeps a session notification unread without failure UI when activation is still pending", async () => {
+    addExchangeNotification("agent-1", "Open agent");
+    host.getDashboardSessions = vi.fn(() => [{ id: "agent-1", status: "offline", label: "codex", command: "codex" }]);
+    host.activateDashboardEntry = vi.fn(async () => "pending");
+    applyServiceLikeCoordinationPayload(host);
+    host.coordinationIndex = host.coordinationWorklist.findIndex((item: any) => item.sessionId === "agent-1");
+
+    handleCoordinationKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.activateDashboardEntry).toHaveBeenCalled());
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-1" }), {
+      preserveDashboardSelection: false,
+    });
+    expect(unreadInboxEntries("agent-1")).toHaveLength(1);
+    expect(host.footerFlash).toBe("");
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.renderCoordination).not.toHaveBeenCalled();
   });
 
   it("does not throw when notification settle fails before refresh wiring exists", async () => {

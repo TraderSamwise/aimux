@@ -7,6 +7,8 @@ export interface DashboardOfflineEntryLike {
   label?: string;
 }
 
+export type DashboardSessionResumeResult = "settled" | "pending" | "failed";
+
 interface DashboardActionDeps {
   getSessionLabel(sessionId: string): string | undefined;
   getPendingAction(sessionId: string): PendingSessionActionKind | undefined;
@@ -99,10 +101,10 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(
   deps: DashboardActionDeps,
   session: DashboardOfflineEntryLike,
-): Promise<void> {
+): Promise<DashboardSessionResumeResult> {
   const label = session.label ?? session.command;
   if (deps.getPendingAction(session.id) === "starting") {
-    return;
+    return "pending";
   }
   deps.setPendingAction(session.id, "starting");
   deps.setFooterFlash(`Restoring ${label}`, 3);
@@ -114,10 +116,12 @@ export async function resumeOfflineSessionWithFeedback(
     deps.refreshLocalDashboardModel();
     deps.setFooterFlash(started ? `Restored ${label}` : `Failed to restore ${label}`, 3);
     deps.renderDashboard();
+    return started ? "settled" : "failed";
   } catch {
     deps.setPendingAction(session.id, null);
     deps.refreshLocalDashboardModel();
     deps.setFooterFlash(`Failed to restore ${label}`, 4);
     deps.renderDashboard();
+    return "failed";
   }
 }
