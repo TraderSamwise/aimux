@@ -398,7 +398,13 @@ export async function initTeamConfig(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<TeamConfigResponse> {
-  return callProjectJson<TeamConfigResponse>(endpoint, "POST", PROJECT_API_ROUTES.team.init, opts, {});
+  return callProjectJson<TeamConfigResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.team.init,
+    opts,
+    {},
+  );
 }
 
 export async function addTeamRole(
@@ -420,7 +426,13 @@ export async function removeTeamRole(
   role: string,
   opts?: ApiOpts,
 ): Promise<TeamConfigResponse> {
-  return callProjectJson<TeamConfigResponse>(endpoint, "POST", PROJECT_API_ROUTES.team.removeRole, opts, { role });
+  return callProjectJson<TeamConfigResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.team.removeRole,
+    opts,
+    { role },
+  );
 }
 
 export async function setDefaultTeamRole(
@@ -428,7 +440,13 @@ export async function setDefaultTeamRole(
   role: string,
   opts?: ApiOpts,
 ): Promise<TeamConfigResponse> {
-  return callProjectJson<TeamConfigResponse>(endpoint, "POST", PROJECT_API_ROUTES.team.defaultRole, opts, { role });
+  return callProjectJson<TeamConfigResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.team.defaultRole,
+    opts,
+    { role },
+  );
 }
 
 export type AgentOutputResponse = LivePaneOutputResponse & { parsed?: ParsedAgentOutput };
