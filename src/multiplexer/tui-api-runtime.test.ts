@@ -91,6 +91,30 @@ describe("TuiApiRuntime", () => {
     expect(states).toContain("reconnecting");
   });
 
+  it("blocks follow-up mutations while reconnecting unless the caller is a recovery probe", async () => {
+    const mutate = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("offline"), { code: "ECONNREFUSED" }))
+      .mockResolvedValueOnce({ ok: true });
+    const runtime = new TuiApiRuntime({ request: vi.fn(), mutate });
+
+    await expect(runtime.mutateJson("/notifications/read", {}, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error: expect.any(Error),
+    });
+    await expect(runtime.mutateJson("/agents/stop", {}, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error: expect.any(TuiApiMutationBlockedError),
+    });
+    await expect(
+      runtime.mutateJson("/controls/open-notification-target", {}, (value) => value, {
+        allowDuringReconnect: true,
+      }),
+    ).resolves.toEqual({ ok: true, value: { ok: true } });
+
+    expect(mutate).toHaveBeenCalledTimes(2);
+  });
+
   it("does not reconnect or recover for semantic mutation failures", async () => {
     const states: string[] = [];
     const failures = vi.fn();

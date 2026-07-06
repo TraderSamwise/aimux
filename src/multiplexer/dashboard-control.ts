@@ -989,6 +989,7 @@ async function openProjectServiceNotificationTarget(
       { sessionId, focus: false },
       {
         timeoutMs,
+        allowDuringReconnect: true,
       },
     );
     if (!dashboardActivationStillCurrent(host, activationToken)) return "missing";
@@ -997,7 +998,7 @@ async function openProjectServiceNotificationTarget(
       host,
       PROJECT_API_ROUTES.controls.openNotificationTarget,
       { sessionId, focus: true, ...context },
-      { timeoutMs: focusTimeoutMs },
+      { timeoutMs: focusTimeoutMs, allowDuringReconnect: true },
     );
     return "opened";
   } catch (error) {
