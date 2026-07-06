@@ -108,6 +108,29 @@ The TUI should not have separate bespoke reconnection logic per screen. It needs
 one adapter that owns request lifecycle, reconnect, repair, stale snapshots, and
 transition reconciliation.
 
+## Current Focus
+
+The broad command migration is no longer the main risk. Most normal installed
+command families now route through daemon/project-service core routes in the
+healthy path. The remaining risk is client reliability under churn.
+
+Work should focus on making the client/API/tmux boundary boring:
+
+- one TUI connection adapter owns refresh, reconnect, stale snapshots, repair
+  notices, and lifecycle transition settlement
+- critical view resources such as `desktop-state` remain degraded until that
+  resource recovers, even when unrelated API calls succeed
+- optimistic state is presentation-only and never proves that a mutation settled
+- daemon/project-service APIs expose enough transition state for TUI, web, and
+  mobile to render the same lifecycle without flicker
+- project-service `/events` provides push parity for remote clients
+- tmux remains execution/focus/pane transport, not product-state authority
+- diagnostics and smoke tests target fast repeated lifecycle transitions
+
+Do not spend the next epics chasing isolated dashboard symptoms unless they
+feed back into that central contract. A bug fix should either harden the shared
+adapter, improve the API contract, or delete an old bypass.
+
 ## Done Means
 
 This migration is done when:
@@ -125,7 +148,7 @@ This migration is done when:
 
 ## Current Progress
 
-As of 2026-07-05, the normal installed CLI path has been cut over for the core
+As of 2026-07-06, the normal installed CLI path has been cut over for the core
 user command families that should be sidecar-backed:
 
 - daemon restart/status/project ensure
@@ -148,10 +171,12 @@ installed aimux shim -> global daemon core route -> project service or daemon ow
 
 The TUI dashboard now routes shared lifecycle mutations through the project API
 and keeps API refresh glitches from clearing in-flight start/stop/create/remove
-state while the matching pending action still owns the transition.
+state while the matching pending action still owns the transition. Service
+transition settlement requires fresh API-backed state; optimistic/pending rows
+may stabilize rendering, but they cannot prove mutation success.
 
 The remaining work is not "make more fallback paths." The remaining work is to
-shrink the exceptional surface:
+shrink the exceptional surface and centralize the client connection contract:
 
 - keep bootstrap/repair/dashboard entry as the only normal paths allowed to
   start Node
@@ -159,25 +184,30 @@ shrink the exceptional surface:
   daemon-owned model
 - make diagnostics read daemon/project-service truth instead of recomputing
   product state locally
-- continue moving client state transitions into API-backed lifecycle contracts
-  so TUI, web, and mobile see the same state machine
+- move client state transitions into one API-backed lifecycle contract so TUI,
+  web, and mobile see the same state machine
+- make `/events` carry enough change signals for remote clients to avoid polling
+  or stale UI
 - remove dead direct-writer and direct-computation paths as each owner cut lands
 
 ## Path Forward
 
-Work should proceed by command and client-surface families, not random one-off
-patches:
+Work should proceed by connection-contract and client-surface families, not
+random one-off patches:
 
-1. Maintain a command ownership inventory.
-2. Add or extend enforcement tests before each migration.
-3. Move one coherent command family behind daemon/project-service APIs.
-4. Hard-cut old direct paths and dead code.
-5. Verify healthy no-spawn, stale fallback, output parity, and runtime behavior.
-6. Open a PR, run CodeRabbit plus independent review, merge, then cut the next
+1. Maintain the command ownership inventory.
+2. Maintain a client connection-state inventory for TUI, web, and mobile.
+3. Add or extend enforcement tests before each migration.
+4. Move one coherent transition or client surface behind the shared contract.
+5. Hard-cut old direct paths and dead code.
+6. Verify no-spawn, stale fallback, event/reconnect behavior, output parity, and
+   runtime behavior.
+7. Open a PR, run CodeRabbit plus independent review, merge, then cut the next
    branch.
 
 The aim is not to preserve every old internal command path. The aim is a smaller
-system with one obvious owner for each behavior.
+system with one obvious owner for each behavior and one boring way for clients
+to stay coherent.
 
 The command-level working inventory lives in
 [command-ownership-inventory.md](command-ownership-inventory.md).
