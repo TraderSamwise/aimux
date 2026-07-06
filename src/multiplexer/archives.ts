@@ -2,7 +2,7 @@ import { debug } from "../debug.js";
 import { commandKey, parseKeys } from "../key-parser.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { renderGraveyardDetails, renderGraveyardScreen } from "../tui/screens/subscreen-renderers.js";
-import { postToProjectService as postToProjectServiceTransport } from "./dashboard-control.js";
+import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import {
   captureDashboardLifecycle,
   type DashboardApiViewRefreshOptions,
@@ -10,8 +10,7 @@ import {
   isDashboardLifecycleCurrent,
 } from "./dashboard-lifecycle.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
-import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport } from "./tui-api-runtime.js";
 
 type ArchivesHost = any;
 const GRAVEYARD_RESOURCE = "graveyard";
@@ -22,7 +21,7 @@ function postGraveyardMutation(
   body: unknown,
   opts?: { timeoutMs?: number },
 ): Promise<any> {
-  return postJsonWithTuiApiRuntime(host, path, body, opts, postToProjectServiceTransport);
+  return mutateDashboardApi(host, path, body, opts);
 }
 
 export function showGraveyard(host: ArchivesHost): void {
@@ -292,7 +291,7 @@ export async function refreshGraveyardEntriesFromService(
   host: ArchivesHost,
   options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
-  if (typeof host.getFromProjectService !== "function") {
+  if (!hasTuiApiRuntimeReadTransport(host)) {
     if (isRefreshLifecycleCurrent(host, options) && !isGraveyardViewModel(host.graveyardViewModel)) {
       applyGraveyardPayload(host, emptyGraveyardPayload());
     }

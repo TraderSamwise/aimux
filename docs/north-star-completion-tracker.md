@@ -32,7 +32,7 @@ Use these labels consistently:
 | --- | --- | --- | --- | --- |
 | Command no-spawn healthy paths | Mostly done | Medium | Medium | `command-ownership-inventory.md` says no normal command is still `SIDECAR`. Need release-gate no-spawn audit. |
 | Daemon/project-service ownership | Mostly done | Medium | Medium | Core command families route through daemon/project-service; diagnostics and internal paths still need periodic audit. |
-| TUI shared state API boundary | Mostly done | High | High | TUI reads/mutations are largely API-backed, but connection/retry/repair behavior is still not one central contract. |
+| TUI shared state API boundary | Done | Medium | Low | Production TUI API request sites are guarded by `tui-api-boundary.test.ts`; reconnect, stale snapshot, mutation blocking, and repair notice behavior route through the shared TUI API runtime. |
 | TUI transition stability | Partial | High | High | Agent/service pending actions now survive transient settlement misses; canonical API transition records and churn smoke remain. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Partial | Medium | High | Some push exists; remote clients still need complete change events for all API-backed views. |
@@ -105,15 +105,15 @@ Done when:
 Goal: the TUI has one API connection adapter for refresh, reconnect, repair,
 stale snapshots, and lifecycle transition settlement.
 
-Status: `Partial`
+Status: `Done`
 
 Remaining:
 
-- [ ] Inventory current TUI service/API request sites and overlays.
+- [x] Inventory current TUI service/API request sites and overlays.
 - [x] Define one connection state machine:
   `ready`, `refreshing`, `stale`, `reconnecting`, `repairing`, `repaired`,
   `failed`.
-- [ ] Route screen refreshes through the shared adapter instead of screen-local
+- [x] Route screen refreshes through the shared adapter instead of screen-local
   retry/overlay logic.
 - [x] Keep last coherent snapshot visible while reconnecting unless the specific
   resource is known invalid.
@@ -137,6 +137,9 @@ Repair notices:
 - The same events are written to the Aimux debug log through the `runtime`
   channel, and dashboard-visible recovery paths flash the footer or show the
   existing busy/error overlay.
+- Production TUI source is scanned by `src/multiplexer/tui-api-boundary.test.ts`
+  so raw project-service transports stay confined to the shared runtime/control
+  layer.
 
 ### Epic D: Lifecycle Transition Contract
 
@@ -358,6 +361,7 @@ Update this table after each epic PR.
 | 2026-07-06 | #339 | App resource lifecycle | Partial | Mostly done | Project tab observability/tasks moved to resource actions; route/endpoint stale response race fixed; app focused tests and PR checks passed. |
 | 2026-07-06 | #344 | TUI connection contract | Partial | Partial | Dashboard model refresh now returns `applied/stale/skipped/failed` outcomes; `TuiApiRuntime` blocks mutation wrappers while the critical `desktop-state` resource is reconnecting; focused TUI API tests and typecheck passed. |
 | 2026-07-06 | #345 | TUI repair observability | Partial | Partial | API recovery and runtime-guard repair now record bounded `dashboardRepairNotices`, flash visible recovery notices, and keep focused regression coverage for repair start/success/failure. |
+| 2026-07-06 | #346 | TUI API boundary enforcement | Partial | Done | Raw project-service transport checks moved into `tui-api-runtime`; production TUI source scan now fails if screens bypass the shared API runtime. |
 
 ## How To Measure Progress
 
