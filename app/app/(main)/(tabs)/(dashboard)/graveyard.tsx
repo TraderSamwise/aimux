@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { useAtomValue, useSetAtom } from "jotai";
 import { GitBranch, RotateCcw, Trash2 } from "lucide-react-native";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
+import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
+import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import {
   deleteGraveyardWorktree,
@@ -16,141 +18,208 @@ import {
   type WorktreeGraveyardEntryResponse,
 } from "@/lib/api";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import {
+  applyProjectGraveyardActionFailureAtom,
+  applyProjectGraveyardFailureAtom,
+  applyProjectGraveyardSuccessAtom,
+  beginProjectGraveyardRefreshAtom,
+  clearProjectGraveyardResourceAtom,
+  isCurrentProjectResourceRequest,
+  projectGraveyardResourceFamily,
+  projectResourceRequestKey,
+  removeProjectGraveyardAgentAtom,
+  removeProjectGraveyardWorktreeAtom,
+  settleProjectGraveyardRefreshAtom,
+  type ProjectResourceRequestScope,
+} from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
-
-type GraveyardState = {
-  endpointKey: string | null;
-  entries: GraveyardEntryResponse[];
-  worktrees: WorktreeGraveyardEntryResponse[];
-  error: string | null;
-};
 
 export default function GraveyardScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const { getToken } = useAuth();
-  const [graveyardState, setGraveyardState] = useState<GraveyardState>({
-    endpointKey: null,
-    entries: [],
-    worktrees: [],
-    error: null,
-  });
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const resource = useAtomValue(projectGraveyardResourceFamily(projectPathKey));
+  const [busyMarker, setBusyMarker] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
+  const beginGraveyardRefresh = useSetAtom(beginProjectGraveyardRefreshAtom);
+  const applyGraveyardSuccess = useSetAtom(applyProjectGraveyardSuccessAtom);
+  const applyGraveyardFailure = useSetAtom(applyProjectGraveyardFailureAtom);
+  const applyGraveyardActionFailure = useSetAtom(applyProjectGraveyardActionFailureAtom);
+  const clearGraveyardResource = useSetAtom(clearProjectGraveyardResourceAtom);
+  const settleGraveyardRefresh = useSetAtom(settleProjectGraveyardRefreshAtom);
+  const removeGraveyardAgent = useSetAtom(removeProjectGraveyardAgentAtom);
+  const removeGraveyardWorktree = useSetAtom(removeProjectGraveyardWorktreeAtom);
   const graveyardRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("graveyard"));
 
-  const endpointHost = endpoint?.host;
-  const endpointPort = endpoint?.port;
-  const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;
-  const entries = graveyardState.endpointKey === endpointKey ? graveyardState.entries : [];
-  const worktrees = graveyardState.endpointKey === endpointKey ? graveyardState.worktrees : [];
-  const error = graveyardState.endpointKey === endpointKey ? graveyardState.error : null;
+  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const busyScope = `${projectPathKey}:${endpointKey ?? "no-endpoint"}`;
+  const busyId = busyMarker?.startsWith(`${busyScope}:`)
+    ? busyMarker.slice(busyScope.length + 1)
+    : null;
+  const endpointRef = useRef(endpoint);
+  const projectPathRef = useRef(projectPathKey);
+  const endpointKeyRef = useRef<string | null>(endpointKey);
+  const getTokenRef = useRef(getToken);
+  const refreshSeqRef = useRef(0);
+  const refreshGenerationRef = useRef(0);
+  const requestScopeRef = useRef<ProjectResourceRequestScope>({
+    projectPath: projectPathKey,
+    endpointKey,
+    generation: 0,
+  });
+  const entries = resource.value?.entries ?? [];
+  const worktrees = resource.value?.worktrees ?? [];
+  const error = resource.error;
 
   useEffect(() => {
-    if (!endpointHost || !endpointPort || !endpointKey) return;
-    const currentEndpoint = { host: endpointHost, port: endpointPort };
-    let cancelled = false;
-    (async () => {
-      try {
-        const token = await getToken();
-        const data = await listGraveyard(currentEndpoint, { token });
-        if (cancelled) return;
-        setGraveyardState({
-          endpointKey,
+    endpointRef.current = endpoint;
+    getTokenRef.current = getToken;
+  }, [endpoint, getToken]);
+
+  useEffect(() => {
+    refreshGenerationRef.current += 1;
+    endpointKeyRef.current = endpointKey;
+    projectPathRef.current = projectPathKey;
+    requestScopeRef.current = {
+      projectPath: projectPathKey,
+      endpointKey,
+      generation: refreshGenerationRef.current,
+    };
+  }, [endpointKey, projectPathKey]);
+
+  const refresh = useCallback(async () => {
+    const seq = ++refreshSeqRef.current;
+    const currentEndpoint = endpointRef.current;
+    const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
+    const requestKey = projectResourceRequestKey(requestScope);
+    if (!currentEndpoint) {
+      clearGraveyardResource(currentProjectPath);
+      return;
+    }
+    beginGraveyardRefresh({ projectPath: currentProjectPath, requestKey });
+    try {
+      const token = await getTokenRef.current();
+      const data = await listGraveyard(currentEndpoint, { token });
+      if (
+        seq !== refreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleGraveyardRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
+      applyGraveyardSuccess({
+        projectPath: currentProjectPath,
+        requestKey,
+        graveyard: {
           entries: Array.isArray(data.entries) ? data.entries : [],
           worktrees: Array.isArray(data.worktrees) ? data.worktrees : [],
-          error: null,
-        });
-      } catch (err) {
-        if (!cancelled) {
-          setGraveyardState({
-            endpointKey,
-            entries: [],
-            worktrees: [],
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+          fetchedAt: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      if (
+        seq !== refreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleGraveyardRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
       }
-    })();
+      applyGraveyardFailure({
+        projectPath: currentProjectPath,
+        requestKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [
+    applyGraveyardFailure,
+    applyGraveyardSuccess,
+    beginGraveyardRefresh,
+    clearGraveyardResource,
+    settleGraveyardRefresh,
+  ]);
+  const serializedRefresh = useSerializedProjectApiRefresh(refresh);
+
+  useEffect(() => {
+    void serializedRefresh();
+  }, [endpointKey, graveyardRefreshNonce, projectPathKey, serializedRefresh]);
+
+  useEffect(() => {
     return () => {
-      cancelled = true;
+      refreshSeqRef.current += 1;
+      refreshGenerationRef.current += 1;
+      requestScopeRef.current = {
+        projectPath: projectPathRef.current,
+        endpointKey: endpointKeyRef.current,
+        generation: refreshGenerationRef.current,
+      };
     };
-  }, [endpointHost, endpointKey, endpointPort, getToken, graveyardRefreshNonce]);
+  }, []);
 
   async function resurrect(entry: GraveyardEntryResponse) {
     if (!endpoint || !endpointKey || busyId) return;
-    setBusyId(entry.id);
-    setGraveyardState((current) =>
-      current.endpointKey === endpointKey ? { ...current, error: null } : current,
-    );
+    const marker = `${busyScope}:${entry.id}`;
+    setBusyMarker(marker);
     try {
       const token = await getToken();
       await resurrectGraveyardAgent(endpoint, entry.id, { token });
-      setGraveyardState((current) =>
-        current.endpointKey === endpointKey
-          ? { ...current, entries: current.entries.filter((item) => item.id !== entry.id) }
-          : current,
-      );
+      refreshSeqRef.current += 1;
+      removeGraveyardAgent({ projectPath: projectPathKey, id: entry.id });
       kickRefresh();
+      void serializedRefresh();
     } catch (err) {
-      setGraveyardState((current) =>
-        current.endpointKey === endpointKey
-          ? { ...current, error: err instanceof Error ? err.message : String(err) }
-          : current,
-      );
+      applyGraveyardActionFailure({
+        projectPath: projectPathKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
-      setBusyId(null);
+      setBusyMarker((current) => (current === marker ? null : current));
     }
   }
 
   async function resurrectWorktree(entry: WorktreeGraveyardEntryResponse) {
     if (!endpoint || !endpointKey || busyId) return;
-    setBusyId(`worktree:${entry.path}`);
-    setGraveyardState((current) =>
-      current.endpointKey === endpointKey ? { ...current, error: null } : current,
-    );
+    const marker = `${busyScope}:worktree:${entry.path}`;
+    setBusyMarker(marker);
     try {
       const token = await getToken();
       await resurrectGraveyardWorktree(endpoint, entry.path, { token });
-      setGraveyardState((current) =>
-        current.endpointKey === endpointKey
-          ? { ...current, worktrees: current.worktrees.filter((item) => item.path !== entry.path) }
-          : current,
-      );
+      refreshSeqRef.current += 1;
+      removeGraveyardWorktree({ projectPath: projectPathKey, path: entry.path });
       kickRefresh();
+      void serializedRefresh();
     } catch (err) {
-      setGraveyardState((current) =>
-        current.endpointKey === endpointKey
-          ? { ...current, error: err instanceof Error ? err.message : String(err) }
-          : current,
-      );
+      applyGraveyardActionFailure({
+        projectPath: projectPathKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
-      setBusyId(null);
+      setBusyMarker((current) => (current === marker ? null : current));
     }
   }
 
   async function deleteWorktree(entry: WorktreeGraveyardEntryResponse) {
     if (!endpoint || !endpointKey || busyId) return;
-    setBusyId(`delete-worktree:${entry.path}`);
-    setGraveyardState((current) =>
-      current.endpointKey === endpointKey ? { ...current, error: null } : current,
-    );
+    const marker = `${busyScope}:delete-worktree:${entry.path}`;
+    setBusyMarker(marker);
     try {
       const token = await getToken();
       await deleteGraveyardWorktree(endpoint, entry.path, { token });
-      setGraveyardState((current) =>
-        current.endpointKey === endpointKey
-          ? { ...current, worktrees: current.worktrees.filter((item) => item.path !== entry.path) }
-          : current,
-      );
+      refreshSeqRef.current += 1;
+      removeGraveyardWorktree({ projectPath: projectPathKey, path: entry.path });
       kickRefresh();
+      void serializedRefresh();
     } catch (err) {
-      setGraveyardState((current) =>
-        current.endpointKey === endpointKey
-          ? { ...current, error: err instanceof Error ? err.message : String(err) }
-          : current,
-      );
+      applyGraveyardActionFailure({
+        projectPath: projectPathKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
-      setBusyId(null);
+      setBusyMarker((current) => (current === marker ? null : current));
     }
   }
 
@@ -176,15 +245,25 @@ export default function GraveyardScreen() {
           title="Project host offline"
           body="Start the project host to load dead agents and worktrees."
         />
-      ) : error ? (
+      ) : error && entries.length === 0 && worktrees.length === 0 && !resource.pending ? (
         <PageStateCard title="Unable to load graveyard" body={error} tone="danger" />
       ) : entries.length === 0 && worktrees.length === 0 ? (
         <PageStateCard
-          title="No dead agents or worktrees"
+          title={resource.pending ? "Loading graveyard..." : "No dead agents or worktrees"}
           body="Stopped resources will appear here when available."
         />
       ) : (
         <>
+          {resource.stale && error ? (
+            <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10 p-3">
+              <Text className="text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+                Graveyard refresh failed
+              </Text>
+              <Text className="mt-1 text-[12px] text-muted-foreground">
+                Showing the last successful graveyard snapshot. {error}
+              </Text>
+            </Card>
+          ) : null}
           {worktrees.length > 0 ? (
             <View className="mb-3">
               <Text className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
