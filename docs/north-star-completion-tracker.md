@@ -110,17 +110,17 @@ Status: `Partial`
 Remaining:
 
 - [ ] Inventory current TUI service/API request sites and overlays.
-- [ ] Define one connection state machine:
+- [x] Define one connection state machine:
   `ready`, `refreshing`, `stale`, `reconnecting`, `repairing`, `repaired`,
   `failed`.
 - [ ] Route screen refreshes through the shared adapter instead of screen-local
   retry/overlay logic.
-- [ ] Keep last coherent snapshot visible while reconnecting unless the specific
+- [x] Keep last coherent snapshot visible while reconnecting unless the specific
   resource is known invalid.
 - [ ] Block only unsafe mutating actions while disconnected; keep local
   navigation instant.
 - [ ] Emit user-visible repair notices whenever automatic repair happens.
-- [ ] Add regression tests for route/service drift, service restart, slow API,
+- [x] Add regression tests for route/service drift, service restart, slow API,
   stale snapshot preservation, and failed repair.
 
 Done when:
