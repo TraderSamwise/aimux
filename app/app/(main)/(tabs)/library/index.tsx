@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { BookOpen, FileText, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { DetailPanel } from "@/components/DetailPanel";
@@ -15,6 +15,15 @@ import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
+import {
+  applyLibraryFailureAtom,
+  applyLibrarySuccessAtom,
+  beginLibraryRefreshAtom,
+  clearLibraryResourceAtom,
+  isCurrentLibraryRequest,
+  libraryResourceFamily,
+  type LibraryRequestScope,
+} from "@/stores/library";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 
 function formatBytes(size: number): string {
@@ -57,33 +66,47 @@ export default function LibraryScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const libraryRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("library"));
+  const resource = useAtomValue(libraryResourceFamily(projectPathKey));
+  const beginLibraryRefresh = useSetAtom(beginLibraryRefreshAtom);
+  const applyLibrarySuccess = useSetAtom(applyLibrarySuccessAtom);
+  const applyLibraryFailure = useSetAtom(applyLibraryFailureAtom);
+  const clearLibraryResource = useSetAtom(clearLibraryResourceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
   const selectedDocumentId = cleanSearchValue(searchParams.document);
-  const [documents, setDocuments] = useState<LibraryDocument[]>([]);
-  const [documentsKey, setDocumentsKey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [errorKey, setErrorKey] = useState<string | null>(null);
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
-  const viewKeyRef = useRef(viewKey);
+  const endpointKeyRef = useRef(endpointKey);
+  const projectPathRef = useRef(projectPathKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
+  const refreshGenerationRef = useRef(0);
+  const requestScopeRef = useRef<LibraryRequestScope>({
+    projectPath: projectPathKey,
+    endpointKey,
+    generation: 0,
+  });
 
   useEffect(() => {
     endpointRef.current = endpoint;
-    viewKeyRef.current = viewKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken, viewKey]);
+  }, [endpoint, getToken]);
 
-  const visibleDocuments = useMemo(
-    () => (documentsKey === viewKey ? documents : []),
-    [documents, documentsKey, viewKey],
-  );
+  useEffect(() => {
+    refreshGenerationRef.current += 1;
+    endpointKeyRef.current = endpointKey;
+    projectPathRef.current = projectPathKey;
+    requestScopeRef.current = {
+      projectPath: projectPathKey,
+      endpointKey,
+      generation: refreshGenerationRef.current,
+    };
+  }, [endpointKey, projectPathKey]);
+
+  const visibleDocuments = useMemo(() => resource.value?.documents ?? [], [resource.value]);
 
   const selectedDocument = useMemo(
     () =>
@@ -96,32 +119,38 @@ export default function LibraryScreen() {
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentViewKey = viewKeyRef.current;
+    const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
     if (!currentEndpoint) {
-      setDocuments([]);
-      setDocumentsKey(null);
-      setError(null);
-      setErrorKey(null);
-      setLoading(false);
+      clearLibraryResource(currentProjectPath);
       return;
     }
-    setLoading(true);
+    beginLibraryRefresh(currentProjectPath);
     try {
       const token = await getTokenRef.current();
       const response = await listProjectLibrary(currentEndpoint, { token });
       if (seq !== refreshSeqRef.current) return;
-      setDocuments(response.documents);
-      setDocumentsKey(currentViewKey);
-      setError(null);
-      setErrorKey(null);
+      if (!isCurrentLibraryRequest(requestScope, requestScopeRef.current)) return;
+      applyLibrarySuccess({
+        projectPath: currentProjectPath,
+        library: {
+          documents: response.documents,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
-      setError(err instanceof Error ? err.message : String(err));
-      setErrorKey(currentViewKey);
-    } finally {
-      if (seq === refreshSeqRef.current) setLoading(false);
+      if (!isCurrentLibraryRequest(requestScope, requestScopeRef.current)) return;
+      applyLibraryFailure({
+        projectPath: currentProjectPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, []);
+  }, [applyLibraryFailure, applyLibrarySuccess, beginLibraryRefresh, clearLibraryResource]);
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
@@ -129,9 +158,9 @@ export default function LibraryScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, libraryRefreshNonce, serializedRefresh]);
+  }, [endpointKey, libraryRefreshNonce, projectPathKey, serializedRefresh]);
 
-  const visibleError = errorKey === viewKey ? error : null;
+  const visibleError = resource.error;
 
   return (
     <Page>
@@ -149,7 +178,7 @@ export default function LibraryScreen() {
           <Button
             variant="outline"
             size="icon"
-            disabled={!endpoint || loading}
+            disabled={!endpoint || resource.pending}
             onPress={() => void serializedRefresh()}
             accessibilityLabel="Refresh library"
           >
@@ -167,11 +196,11 @@ export default function LibraryScreen() {
           title="Project host offline"
           body="Start the project host to load library documents."
         />
-      ) : visibleError ? (
+      ) : visibleError && !resource.value && !resource.pending ? (
         <PageStateCard title="Library failed" body={visibleError} tone="danger" />
       ) : visibleDocuments.length === 0 ? (
         <PageStateCard
-          title={loading ? "Loading library..." : "No library documents"}
+          title={resource.pending ? "Loading library..." : "No library documents"}
           body="Durable project instruction files will appear here when present."
         />
       ) : (
