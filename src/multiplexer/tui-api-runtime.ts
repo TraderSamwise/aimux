@@ -49,6 +49,10 @@ export interface TuiApiMutationResult<T> {
 }
 
 interface ResourceState<T = unknown> extends TuiApiResourceSnapshot<T> {
+  lastRefresh?: {
+    load: () => Promise<T>;
+    opts: TuiApiRefreshOptions;
+  };
   pendingPromise?: Promise<TuiApiRefreshResult<T>>;
 }
 
@@ -171,6 +175,7 @@ export class TuiApiRuntime {
     if (state.pendingPromise && !opts.supersede) return state.pendingPromise;
 
     const generation = state.generation + 1;
+    state.lastRefresh = { load, opts };
     state.generation = generation;
     state.pending = true;
     state.stale = state.value !== undefined;
@@ -209,6 +214,17 @@ export class TuiApiRuntime {
 
     state.pendingPromise = promise;
     return promise;
+  }
+
+  async refreshCriticalResources(): Promise<void> {
+    if (this.disposed) return;
+    const refreshes: Promise<TuiApiRefreshResult<unknown>>[] = [];
+    for (const resource of this.criticalResources) {
+      const state = this.resources.get(resource);
+      if (!state?.lastRefresh || state.error === undefined) continue;
+      refreshes.push(this.refresh(resource, state.lastRefresh.load, { ...state.lastRefresh.opts, supersede: true }));
+    }
+    await Promise.allSettled(refreshes);
   }
 
   dispose(): void {
@@ -337,6 +353,8 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   try {
     const result = host.refreshRuntimeGuard?.();
     if (result && typeof result.then === "function") await result;
+    const refreshResult = host.tuiApiRuntime?.refreshCriticalResources?.();
+    if (refreshResult && typeof refreshResult.then === "function") await refreshResult;
   } catch (error) {
     host.tuiApiRecoveryLastError = error;
     host.tuiApiRecoveryPending = true;

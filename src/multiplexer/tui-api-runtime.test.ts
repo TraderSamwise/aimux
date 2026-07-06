@@ -420,6 +420,38 @@ describe("TuiApiRuntime", () => {
     }
   });
 
+  it("refreshes failed critical resources after a recovery probe succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+        getFromProjectService: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("desktop-state offline"))
+          .mockResolvedValueOnce({ ok: true, recovered: true }),
+      };
+      const runtime = getOrCreateTuiApiRuntime(host);
+
+      await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+        ok: false,
+      });
+      expect(runtime.getConnectionState()).toBe("degraded");
+
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
+
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+      expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
+      expect(runtime.getConnectionState()).toBe("connected");
+      expect(runtime.getSnapshot("desktop-state")).toMatchObject({
+        value: { ok: true, recovered: true },
+        error: undefined,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("cooldowns repeated runtime guard recovery probes", async () => {
     vi.useFakeTimers();
     try {
