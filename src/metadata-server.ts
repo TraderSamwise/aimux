@@ -4582,7 +4582,7 @@ export class MetadataServer {
         }
         if (earlyResult.kind === "rejected") {
           const message = earlyResult.error instanceof Error ? earlyResult.error.message : String(earlyResult.error);
-          send(res, 500, { ok: false, error: message });
+          send(res, 422, { ok: false, error: message });
           return;
         }
         this.notifyChange();
