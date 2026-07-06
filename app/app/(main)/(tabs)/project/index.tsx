@@ -253,7 +253,7 @@ export default function ProjectScreen() {
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
-    const requestKey = projectResourceRequestKey(requestScope, seq);
+    const requestKey = projectResourceRequestKey(requestScope);
     if (!currentEndpoint) {
       clearProjectObservabilityResource(currentProjectPath);
       return;
@@ -271,6 +271,7 @@ export default function ProjectScreen() {
       }
       applyProjectObservabilitySuccess({
         projectPath: currentProjectPath,
+        requestKey,
         observability: {
           project: response.project,
           fetchedAt: new Date().toISOString(),
@@ -286,6 +287,7 @@ export default function ProjectScreen() {
       }
       applyProjectObservabilityFailure({
         projectPath: currentProjectPath,
+        requestKey,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -306,7 +308,7 @@ export default function ProjectScreen() {
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
-    const requestKey = projectResourceRequestKey(requestScope, seq);
+    const requestKey = projectResourceRequestKey(requestScope);
     if (!currentEndpoint) {
       clearProjectTasksResource(currentProjectPath);
       return;
@@ -324,6 +326,7 @@ export default function ProjectScreen() {
       }
       applyProjectTasksSuccess({
         projectPath: currentProjectPath,
+        requestKey,
         tasks: {
           tasks: response.tasks,
           fetchedAt: new Date().toISOString(),
@@ -339,6 +342,7 @@ export default function ProjectScreen() {
       }
       applyProjectTasksFailure({
         projectPath: currentProjectPath,
+        requestKey,
         error: err instanceof Error ? err.message : String(err),
       });
     }

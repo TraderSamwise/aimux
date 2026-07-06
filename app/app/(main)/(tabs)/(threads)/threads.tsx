@@ -1,82 +1,148 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
+import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ThreadWorkflowActions } from "@/components/workflow-actions";
 import { useAuth } from "@/lib/auth";
-import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
+import { listThreads } from "@/lib/api";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
+import {
+  applyProjectThreadsFailureAtom,
+  applyProjectThreadsSuccessAtom,
+  beginProjectThreadsRefreshAtom,
+  clearProjectThreadsResourceAtom,
+  isCurrentProjectResourceRequest,
+  projectResourceRequestKey,
+  projectThreadsResourceFamily,
+  settleProjectThreadsRefreshAtom,
+  type ProjectResourceRequestScope,
+} from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { cn } from "@/lib/utils";
 
 export default function ThreadsScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("threads"));
+  const threadsResource = useAtomValue(projectThreadsResourceFamily(projectPathKey));
+  const beginThreadsRefresh = useSetAtom(beginProjectThreadsRefreshAtom);
+  const applyThreadsSuccess = useSetAtom(applyProjectThreadsSuccessAtom);
+  const applyThreadsFailure = useSetAtom(applyProjectThreadsFailureAtom);
+  const clearThreadsResource = useSetAtom(clearProjectThreadsResourceAtom);
+  const settleThreadsRefresh = useSetAtom(settleProjectThreadsRefreshAtom);
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ threadId?: string | string[] }>();
   const selectedThreadId = cleanSearchValue(searchParams.threadId);
-  const [threads, setThreads] = useState<ThreadSummaryResponse[]>([]);
-  const [threadsKey, setThreadsKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [errorKey, setErrorKey] = useState<string | null>(null);
 
   const endpointRef = useRef(endpoint);
+  const projectPathRef = useRef(projectPathKey);
   const endpointKeyRef = useRef<string | null>(null);
   const refreshSeqRef = useRef(0);
-  const endpointHost = endpoint?.host;
-  const endpointPort = endpoint?.port;
-  const endpointKey =
-    endpointHost && endpointPort ? `${projectPath ?? ""}|${endpointHost}:${endpointPort}` : null;
-  const visibleThreads = threadsKey === endpointKey ? threads : [];
-  const visibleError = errorKey === endpointKey ? error : null;
+  const refreshGenerationRef = useRef(0);
+  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const requestScopeRef = useRef<ProjectResourceRequestScope>({
+    projectPath: projectPathKey,
+    endpointKey,
+    generation: 0,
+  });
+  const visibleThreads = threadsResource.value?.threads ?? [];
+  const visibleError = threadsResource.error;
 
   useEffect(() => {
     getTokenRef.current = getToken;
     endpointRef.current = endpoint;
+  }, [endpoint, getToken]);
+
+  useEffect(() => {
+    refreshGenerationRef.current += 1;
     endpointKeyRef.current = endpointKey;
-    refreshSeqRef.current += 1;
-    return () => {
-      refreshSeqRef.current += 1;
+    projectPathRef.current = projectPathKey;
+    requestScopeRef.current = {
+      projectPath: projectPathKey,
+      endpointKey,
+      generation: refreshGenerationRef.current,
     };
-  }, [endpoint, endpointKey, getToken]);
+  }, [endpointKey, projectPathKey]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentEndpointKey = endpointKeyRef.current;
-    if (!currentEndpoint || !currentEndpointKey) {
-      setThreads([]);
-      setThreadsKey(null);
-      setError(null);
-      setErrorKey(null);
+    const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
+    const requestKey = projectResourceRequestKey(requestScope);
+    if (!currentEndpoint) {
+      clearThreadsResource(currentProjectPath);
       return;
     }
+    beginThreadsRefresh({ projectPath: currentProjectPath, requestKey });
     try {
       const token = await getTokenRef.current();
       const data = await listThreads(currentEndpoint, undefined, { token });
-      if (seq !== refreshSeqRef.current) return;
-      setThreads(Array.isArray(data) ? data : []);
-      setThreadsKey(currentEndpointKey);
-      setError(null);
-      setErrorKey(null);
+      if (
+        seq !== refreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleThreadsRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
+      applyThreadsSuccess({
+        projectPath: currentProjectPath,
+        requestKey,
+        threads: {
+          threads: Array.isArray(data) ? data : [],
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (err) {
-      if (seq !== refreshSeqRef.current) return;
-      setError(err instanceof Error ? err.message : String(err));
-      setErrorKey(currentEndpointKey);
+      if (
+        seq !== refreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleThreadsRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
+      applyThreadsFailure({
+        projectPath: currentProjectPath,
+        requestKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, []);
+  }, [
+    applyThreadsFailure,
+    applyThreadsSuccess,
+    beginThreadsRefresh,
+    clearThreadsResource,
+    settleThreadsRefresh,
+  ]);
 
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
     void serializedRefresh();
-  }, [endpointKey, refreshNonce, serializedRefresh]);
+  }, [endpointKey, projectPathKey, refreshNonce, serializedRefresh]);
+
+  useEffect(() => {
+    return () => {
+      refreshSeqRef.current += 1;
+      refreshGenerationRef.current += 1;
+      requestScopeRef.current = {
+        projectPath: projectPathRef.current,
+        endpointKey: endpointKeyRef.current,
+        generation: refreshGenerationRef.current,
+      };
+    };
+  }, []);
 
   return (
     <Page>
@@ -100,50 +166,65 @@ export default function ThreadsScreen() {
           title="Project host offline"
           body="Start the project host to load threads."
         />
-      ) : visibleError ? (
+      ) : visibleError && visibleThreads.length === 0 && !threadsResource.pending ? (
         <PageStateCard title="Unable to load threads" body={visibleError} tone="danger" />
       ) : visibleThreads.length === 0 ? (
-        <PageStateCard title="No threads" body="Thread conversations will appear here." />
+        <PageStateCard
+          title={threadsResource.pending ? "Loading threads..." : "No threads"}
+          body="Thread conversations will appear here."
+        />
       ) : (
-        visibleThreads.map((t) => {
-          const selected = t.thread.id === selectedThreadId;
-          return (
-            <View
-              key={t.thread.id}
-              className={cn(
-                "mb-2 rounded-lg border border-border bg-card p-3",
-                selected && "border-ring bg-secondary",
-              )}
-            >
-              <Pressable
-                accessibilityRole="link"
-                accessibilityLabel={`Open thread ${t.thread.title || t.thread.id}`}
-                accessibilityState={{ selected }}
-                onPress={() =>
-                  router.replace(
-                    buildViewHref("/threads", {
-                      project: projectPath,
-                      threadId: t.thread.id,
-                    }),
-                  )
-                }
+        <>
+          {threadsResource.stale && visibleError ? (
+            <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10 p-3">
+              <Text className="text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+                Threads refresh failed
+              </Text>
+              <Text className="mt-1 text-[12px] text-muted-foreground">
+                Showing the last successful thread snapshot. {visibleError}
+              </Text>
+            </Card>
+          ) : null}
+          {visibleThreads.map((t) => {
+            const selected = t.thread.id === selectedThreadId;
+            return (
+              <View
+                key={t.thread.id}
+                className={cn(
+                  "mb-2 rounded-lg border border-border bg-card p-3",
+                  selected && "border-ring bg-secondary",
+                )}
               >
-                <Text className="text-base font-medium text-foreground">
-                  {t.thread.title || t.thread.id}
-                </Text>
-                <Text className="text-xs text-muted-foreground">
-                  {t.thread.kind ?? "thread"} · {t.thread.status ?? ""}
-                </Text>
-                {t.latestMessage?.body ? (
-                  <Text className="mt-1 text-sm text-foreground" numberOfLines={2}>
-                    {t.latestMessage.body}
+                <Pressable
+                  accessibilityRole="link"
+                  accessibilityLabel={`Open thread ${t.thread.title || t.thread.id}`}
+                  accessibilityState={{ selected }}
+                  onPress={() =>
+                    router.replace(
+                      buildViewHref("/threads", {
+                        project: projectPath,
+                        threadId: t.thread.id,
+                      }),
+                    )
+                  }
+                >
+                  <Text className="text-base font-medium text-foreground">
+                    {t.thread.title || t.thread.id}
                   </Text>
-                ) : null}
-              </Pressable>
-              {selected ? <ThreadWorkflowActions endpoint={endpoint} thread={t} /> : null}
-            </View>
-          );
-        })
+                  <Text className="text-xs text-muted-foreground">
+                    {t.thread.kind ?? "thread"} · {t.thread.status ?? ""}
+                  </Text>
+                  {t.latestMessage?.body ? (
+                    <Text className="mt-1 text-sm text-foreground" numberOfLines={2}>
+                      {t.latestMessage.body}
+                    </Text>
+                  ) : null}
+                </Pressable>
+                {selected ? <ThreadWorkflowActions endpoint={endpoint} thread={t} /> : null}
+              </View>
+            );
+          })}
+        </>
       )}
     </Page>
   );
