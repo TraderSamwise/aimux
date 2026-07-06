@@ -15,7 +15,7 @@ import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
-import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -57,7 +57,7 @@ export default function LibraryScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
+  const libraryRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("library"));
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
@@ -129,7 +129,7 @@ export default function LibraryScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
+  }, [endpointKey, libraryRefreshNonce, serializedRefresh]);
 
   const visibleError = errorKey === viewKey ? error : null;
 

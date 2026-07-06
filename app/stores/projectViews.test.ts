@@ -1,8 +1,12 @@
+import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 
 import { PROJECT_API_VIEWS, type ProjectApiView } from "../../src/project-api-contract";
 import {
   APP_PROJECT_API_VIEW_REGISTRY,
+  kickProjectApiViewRefreshAtom,
+  projectApiViewRefreshNonceFamily,
+  projectApiViewsForRefresh,
   projectUpdateTouchesDesktopState,
   projectUpdateTouchesNotificationFeed,
   projectUpdateTouchesProjectApiView,
@@ -64,5 +68,36 @@ describe("project API view refresh registry", () => {
     expect(projectUpdateTouchesProjectApiView(["future-view"])).toBe(true);
     expect(projectUpdateTouchesDesktopState(["future-view"])).toBe(false);
     expect(projectUpdateTouchesNotificationFeed(["future-view"])).toBe(false);
+  });
+
+  it("maps project update views to view-scoped refreshes", () => {
+    expect(projectApiViewsForRefresh(["threads", "tasks"])).toEqual(["threads", "tasks"]);
+    expect(projectApiViewsForRefresh(["threads", "threads"])).toEqual(["threads"]);
+    expect(projectApiViewsForRefresh()).toEqual([...PROJECT_API_VIEWS]);
+    expect(projectApiViewsForRefresh(["future-view"])).toEqual([...PROJECT_API_VIEWS]);
+  });
+
+  it("bumps only requested project API view refresh nonces", () => {
+    const store = createStore();
+
+    store.set(kickProjectApiViewRefreshAtom, ["threads", "tasks"]);
+
+    expect(store.get(projectApiViewRefreshNonceFamily("threads"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("tasks"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("library"))).toBe(0);
+  });
+
+  it("expands unknown or omitted project API view refreshes to every view", () => {
+    const store = createStore();
+
+    store.set(kickProjectApiViewRefreshAtom, ["future-view"]);
+    for (const view of PROJECT_API_VIEWS) {
+      expect(store.get(projectApiViewRefreshNonceFamily(view))).toBe(1);
+    }
+
+    store.set(kickProjectApiViewRefreshAtom);
+    for (const view of PROJECT_API_VIEWS) {
+      expect(store.get(projectApiViewRefreshNonceFamily(view))).toBe(2);
+    }
   });
 });

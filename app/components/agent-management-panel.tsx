@@ -57,7 +57,14 @@ export function AgentManagementPanel({
     try {
       await fn();
       kickDesktopRefresh();
-      kickProjectViewRefresh();
+      kickProjectViewRefresh([
+        "agents",
+        "project-observability",
+        "topology",
+        "coordination-worklist",
+        "team",
+        "worktrees",
+      ]);
       setStatus(actionStatus(action));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
