@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 export function createSerializedProjectApiRefresh(
   refresh: () => Promise<void> | void,
@@ -32,7 +32,7 @@ export function useSerializedProjectApiRefresh(
   const inFlightRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     refreshRef.current = refresh;
   }, [refresh]);
 
