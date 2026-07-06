@@ -156,6 +156,10 @@ function activationSucceeded(result: unknown): boolean {
   return result === undefined || result === "opened";
 }
 
+function activationPending(result: unknown): boolean {
+  return result === "pending";
+}
+
 export function notificationTargetLabel(host: NotificationHost, sessionId?: string): string | null {
   if (!sessionId) return null;
   const session = findNotificationSessionTarget(host, sessionId);
@@ -250,6 +254,7 @@ export async function openCoordinationNotification(host: NotificationHost, item:
     if (offline) host.setDashboardScreen("dashboard");
     try {
       const result = await host.activateDashboardEntry(session, { preserveDashboardSelection: Boolean(session.team) });
+      if (activationPending(result)) return;
       if (!activationSucceeded(result)) {
         failOpen();
         return;
@@ -271,6 +276,7 @@ export async function openCoordinationNotification(host: NotificationHost, item:
   if (offline) host.setDashboardScreen("dashboard");
   try {
     const result = await host.activateDashboardService(service);
+    if (activationPending(result)) return;
     if (!activationSucceeded(result)) {
       failOpen();
       return;
