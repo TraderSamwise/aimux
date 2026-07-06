@@ -55,7 +55,7 @@ describe("TuiApiRuntime", () => {
       stale: true,
       pending: false,
     });
-    expect(states).toContain("degraded");
+    expect(states).toContain("stale");
   });
 
   it("does not coalesce mutations", async () => {
@@ -72,7 +72,7 @@ describe("TuiApiRuntime", () => {
     expect(mutate).toHaveBeenCalledTimes(2);
   });
 
-  it("reports degraded state when a mutation fails", async () => {
+  it("reports reconnecting state when a mutation fails", async () => {
     const states: string[] = [];
     const runtime = new TuiApiRuntime({
       request: vi.fn(),
@@ -87,10 +87,10 @@ describe("TuiApiRuntime", () => {
       error: expect.any(Error),
     });
 
-    expect(states).toContain("degraded");
+    expect(states).toContain("reconnecting");
   });
 
-  it("does not degrade or recover for semantic mutation failures", async () => {
+  it("does not reconnect or recover for semantic mutation failures", async () => {
     const states: string[] = [];
     const failures = vi.fn();
     const error = Object.assign(new Error("session is already stopped"), {
@@ -111,7 +111,7 @@ describe("TuiApiRuntime", () => {
       error,
     });
 
-    expect(runtime.getConnectionState()).toBe("connected");
+    expect(runtime.getConnectionState()).toBe("ready");
     expect(states).toEqual([]);
     expect(failures).not.toHaveBeenCalled();
   });
@@ -136,12 +136,12 @@ describe("TuiApiRuntime", () => {
       error,
     });
 
-    expect(runtime.getConnectionState()).toBe("degraded");
-    expect(states).toEqual(["degraded"]);
+    expect(runtime.getConnectionState()).toBe("reconnecting");
+    expect(states).toEqual(["reconnecting"]);
     expect(failures).toHaveBeenCalledWith(error);
   });
 
-  it("keeps refresh failures degraded while scheduling recovery", async () => {
+  it("keeps refresh failures reconnecting while scheduling recovery", async () => {
     const states: string[] = [];
     const failures = vi.fn();
     const error = new Error("invalid coordination payload");
@@ -160,8 +160,8 @@ describe("TuiApiRuntime", () => {
       error,
     });
 
-    expect(runtime.getConnectionState()).toBe("degraded");
-    expect(states).toEqual(["degraded"]);
+    expect(runtime.getConnectionState()).toBe("reconnecting");
+    expect(states).toEqual(["refreshing", "reconnecting"]);
     expect(failures).toHaveBeenCalledWith(error);
   });
 
@@ -182,7 +182,7 @@ describe("TuiApiRuntime", () => {
     slow.reject(new Error("late timeout"));
     await expect(slowRead).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(runtime.getConnectionState()).toBe("connected");
+    expect(runtime.getConnectionState()).toBe("ready");
     expect(failures).not.toHaveBeenCalled();
   });
 
@@ -211,7 +211,7 @@ describe("TuiApiRuntime", () => {
     second.reject(new Error("middle timeout"));
     await expect(middle).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(runtime.getConnectionState()).toBe("connected");
+    expect(runtime.getConnectionState()).toBe("ready");
     expect(failures).not.toHaveBeenCalled();
   });
 
@@ -233,7 +233,7 @@ describe("TuiApiRuntime", () => {
     slow.reject(new Error("late timeout"));
     await expect(slowMutation).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(runtime.getConnectionState()).toBe("connected");
+    expect(runtime.getConnectionState()).toBe("ready");
     expect(failures).not.toHaveBeenCalled();
   });
 
@@ -254,11 +254,11 @@ describe("TuiApiRuntime", () => {
     slow.reject(new Error("late timeout"));
     await expect(refresh).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(runtime.getConnectionState()).toBe("connected");
+    expect(runtime.getConnectionState()).toBe("ready");
     expect(failures).not.toHaveBeenCalled();
   });
 
-  it("keeps critical resource failures degraded until that resource refreshes", async () => {
+  it("keeps critical resource failures reconnecting until that resource refreshes", async () => {
     const critical = deferred<unknown>();
     const health = deferred<unknown>();
     const recovered = deferred<unknown>();
@@ -283,7 +283,7 @@ describe("TuiApiRuntime", () => {
     critical.reject(new Error("late desktop-state timeout"));
     await expect(refresh).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(runtime.getConnectionState()).toBe("degraded");
+    expect(runtime.getConnectionState()).toBe("reconnecting");
     expect(failures).toHaveBeenCalledTimes(1);
 
     const recoveryRefresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
@@ -293,8 +293,8 @@ describe("TuiApiRuntime", () => {
       value: { ok: true, recovered: true },
     });
 
-    expect(runtime.getConnectionState()).toBe("connected");
-    expect(states).toEqual(["degraded", "connected"]);
+    expect(runtime.getConnectionState()).toBe("ready");
+    expect(states).toEqual(["refreshing", "ready", "reconnecting", "ready"]);
   });
 
   it("routes wrapper reads through the shared runtime transport", async () => {
@@ -307,7 +307,7 @@ describe("TuiApiRuntime", () => {
     });
 
     expect(request).toHaveBeenCalledWith(host, "/desktop-state", { timeoutMs: 5000 });
-    expect(host.tuiApiRuntime.getConnectionState()).toBe("connected");
+    expect(host.tuiApiRuntime.getConnectionState()).toBe("ready");
   });
 
   it("keeps wrapper read failures thrown for existing callers", async () => {
@@ -319,10 +319,10 @@ describe("TuiApiRuntime", () => {
     await expect(getJsonWithTuiApiRuntime(host, "/desktop-state", undefined, request)).rejects.toThrow("offline");
 
     expect(request).toHaveBeenCalledWith(host, "/desktop-state", undefined);
-    expect(host.tuiApiConnectionState).toBe("degraded");
+    expect(host.tuiApiConnectionState).toBe("reconnecting");
   });
 
-  it("keeps dashboard critical refresh failures degraded after wrapper success", async () => {
+  it("keeps dashboard critical refresh failures reconnecting after wrapper success", async () => {
     const desktopState = deferred<unknown>();
     const host: any = {
       mode: "dashboard",
@@ -340,8 +340,8 @@ describe("TuiApiRuntime", () => {
     desktopState.reject(new Error("desktop-state failed"));
     await expect(refresh).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(host.tuiApiConnectionState).toBe("degraded");
-    expect(runtime.getConnectionState()).toBe("degraded");
+    expect(host.tuiApiConnectionState).toBe("reconnecting");
+    expect(runtime.getConnectionState()).toBe("reconnecting");
   });
 
   it("routes wrapper mutations through the shared runtime transport", async () => {
@@ -353,7 +353,7 @@ describe("TuiApiRuntime", () => {
     ).resolves.toEqual({ ok: true, warning: "kept" });
 
     expect(mutate).toHaveBeenCalledWith(host, "/agents/resume", { sessionId: "claude-1" }, { timeoutMs: 60_000 });
-    expect(host.tuiApiRuntime.getConnectionState()).toBe("connected");
+    expect(host.tuiApiRuntime.getConnectionState()).toBe("ready");
   });
 
   it("keeps wrapper mutation failures thrown for existing callers", async () => {
@@ -367,7 +367,7 @@ describe("TuiApiRuntime", () => {
     ).rejects.toThrow("offline");
 
     expect(mutate).toHaveBeenCalledWith(host, "/agents/stop", { sessionId: "claude-1" }, undefined);
-    expect(host.tuiApiConnectionState).toBe("degraded");
+    expect(host.tuiApiConnectionState).toBe("reconnecting");
   });
 
   it("does not run recovery for best-effort mutation failures", async () => {
@@ -387,7 +387,7 @@ describe("TuiApiRuntime", () => {
       }),
     ).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
 
-    expect(runtime.getConnectionState()).toBe("connected");
+    expect(runtime.getConnectionState()).toBe("ready");
     expect(failures).not.toHaveBeenCalled();
   });
 
@@ -436,17 +436,106 @@ describe("TuiApiRuntime", () => {
       await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
         ok: false,
       });
-      expect(runtime.getConnectionState()).toBe("degraded");
+      expect(runtime.getConnectionState()).toBe("reconnecting");
 
       await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
 
       expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
       expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
-      expect(runtime.getConnectionState()).toBe("connected");
+      expect(runtime.getConnectionState()).toBe("ready");
       expect(runtime.getSnapshot("desktop-state")).toMatchObject({
         value: { ok: true, recovered: true },
         error: undefined,
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("exposes a connection snapshot for stale cached resource failures", async () => {
+    const error = new Error("timeout");
+    const request = vi.fn().mockResolvedValueOnce({ ok: true }).mockRejectedValueOnce(error);
+    const runtime = new TuiApiRuntime({ request, criticalResources: ["desktop-state"] });
+
+    await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+      ok: false,
+      stale: true,
+    });
+
+    expect(runtime.getConnectionSnapshot()).toMatchObject({
+      state: "stale",
+      pendingResources: [],
+      staleResources: ["desktop-state"],
+      failedResources: ["desktop-state"],
+      failedCriticalResources: ["desktop-state"],
+      lastError: error,
+    });
+  });
+
+  it("reports repairing, repaired, and ready around successful scheduled recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      const states: string[] = [];
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+        getFromProjectService: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("desktop-state offline"))
+          .mockResolvedValueOnce({ ok: true, recovered: true }),
+      };
+      const runtime = new TuiApiRuntime({
+        request: (path, opts) => host.getFromProjectService(path, opts),
+        criticalResources: ["desktop-state"],
+        onConnectionStateChange: (state) => {
+          states.push(state);
+          host.tuiApiConnectionState = state;
+        },
+        onRequestFailure: () => scheduleTuiApiRecovery(host),
+      });
+      host.tuiApiRuntime = runtime;
+
+      await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+        ok: false,
+      });
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
+
+      expect(states).toContain("repairing");
+      expect(states).toContain("repaired");
+      expect(states.indexOf("repairing")).toBeLessThan(states.indexOf("repaired"));
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+      expect(host.getFromProjectService).toHaveBeenCalledTimes(2);
+      expect(runtime.getConnectionState()).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports failed when scheduled recovery rejects", async () => {
+    vi.useFakeTimers();
+    try {
+      const states: string[] = [];
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => {
+          throw new Error("repair failed");
+        }),
+      };
+      const runtime = new TuiApiRuntime({
+        request: vi.fn(),
+        onConnectionStateChange: (state) => states.push(state),
+      });
+      host.tuiApiRuntime = runtime;
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(host.tuiApiRecoveryLastError).toBeInstanceOf(Error);
+      expect(runtime.getConnectionState()).toBe("failed");
+      expect(states).toEqual(["repairing", "failed"]);
     } finally {
       vi.useRealTimers();
     }
