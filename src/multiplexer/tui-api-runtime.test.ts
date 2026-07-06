@@ -258,6 +258,45 @@ describe("TuiApiRuntime", () => {
     expect(failures).not.toHaveBeenCalled();
   });
 
+  it("keeps critical resource failures degraded until that resource refreshes", async () => {
+    const critical = deferred<unknown>();
+    const health = deferred<unknown>();
+    const recovered = deferred<unknown>();
+    const failures = vi.fn();
+    const states: string[] = [];
+    const runtime = new TuiApiRuntime({
+      request: vi
+        .fn()
+        .mockReturnValueOnce(critical.promise)
+        .mockReturnValueOnce(health.promise)
+        .mockReturnValueOnce(recovered.promise),
+      criticalResources: ["desktop-state"],
+      onConnectionStateChange: (state) => states.push(state),
+      onRequestFailure: failures,
+    });
+
+    const refresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    const read = runtime.requestJson("/health", (value) => value);
+
+    health.resolve({ ok: true });
+    await expect(read).resolves.toEqual({ ok: true, value: { ok: true } });
+    critical.reject(new Error("late desktop-state timeout"));
+    await expect(refresh).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(runtime.getConnectionState()).toBe("degraded");
+    expect(failures).toHaveBeenCalledTimes(1);
+
+    const recoveryRefresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    recovered.resolve({ ok: true, recovered: true });
+    await expect(recoveryRefresh).resolves.toMatchObject({
+      ok: true,
+      value: { ok: true, recovered: true },
+    });
+
+    expect(runtime.getConnectionState()).toBe("connected");
+    expect(states).toEqual(["degraded", "connected"]);
+  });
+
   it("routes wrapper reads through the shared runtime transport", async () => {
     const host: any = {};
     const request = vi.fn(async () => ({ ok: true, value: 1 }));
@@ -281,6 +320,28 @@ describe("TuiApiRuntime", () => {
 
     expect(request).toHaveBeenCalledWith(host, "/desktop-state", undefined);
     expect(host.tuiApiConnectionState).toBe("degraded");
+  });
+
+  it("keeps dashboard critical refresh failures degraded after wrapper success", async () => {
+    const desktopState = deferred<unknown>();
+    const host: any = {
+      mode: "dashboard",
+      refreshRuntimeGuard: vi.fn(),
+      getFromProjectService: vi.fn(() => desktopState.promise),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    const wrapperRead = vi.fn(async () => ({ ok: true, value: "health" }));
+
+    const refresh = runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    await expect(getJsonWithTuiApiRuntime(host, "/health", undefined, wrapperRead)).resolves.toEqual({
+      ok: true,
+      value: "health",
+    });
+    desktopState.reject(new Error("desktop-state failed"));
+    await expect(refresh).resolves.toMatchObject({ ok: false, error: expect.any(Error) });
+
+    expect(host.tuiApiConnectionState).toBe("degraded");
+    expect(runtime.getConnectionState()).toBe("degraded");
   });
 
   it("routes wrapper mutations through the shared runtime transport", async () => {
