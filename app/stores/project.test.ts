@@ -15,8 +15,11 @@ import {
   isCurrentProjectResourceRequest,
   projectObservabilityFamily,
   projectObservabilityResourceFamily,
+  projectResourceRequestKey,
   projectTasksFamily,
   projectTasksResourceFamily,
+  settleProjectObservabilityRefreshAtom,
+  settleProjectTasksRefreshAtom,
   type ProjectObservabilityValue,
   type ProjectTasksValue,
 } from "./project";
@@ -67,7 +70,7 @@ describe("project resource lifecycle", () => {
       observability: current,
       updatedAt: 10,
     });
-    store.set(beginProjectObservabilityRefreshAtom, projectPath);
+    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: "request-1" });
     store.set(applyProjectObservabilityFailureAtom, {
       projectPath,
       error: "service unavailable",
@@ -78,6 +81,7 @@ describe("project resource lifecycle", () => {
       value: current,
       error: "service unavailable",
       pending: false,
+      pendingRequestKey: null,
       stale: true,
     });
   });
@@ -92,7 +96,7 @@ describe("project resource lifecycle", () => {
       tasks: current,
       updatedAt: 10,
     });
-    store.set(beginProjectTasksRefreshAtom, projectPath);
+    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: "request-1" });
     store.set(applyProjectTasksFailureAtom, {
       projectPath,
       error: "service unavailable",
@@ -103,6 +107,7 @@ describe("project resource lifecycle", () => {
       value: current,
       error: "service unavailable",
       pending: false,
+      pendingRequestKey: null,
       stale: true,
     });
   });
@@ -144,6 +149,7 @@ describe("project resource lifecycle", () => {
       value: recoveredObservability,
       error: null,
       pending: false,
+      pendingRequestKey: null,
       stale: false,
       updatedAt: 20,
     });
@@ -151,6 +157,7 @@ describe("project resource lifecycle", () => {
       value: recoveredTasks,
       error: null,
       pending: false,
+      pendingRequestKey: null,
       stale: false,
       updatedAt: 20,
     });
@@ -177,6 +184,7 @@ describe("project resource lifecycle", () => {
       value: null,
       error: null,
       pending: false,
+      pendingRequestKey: null,
       stale: false,
       updatedAt: null,
     });
@@ -184,6 +192,7 @@ describe("project resource lifecycle", () => {
       value: null,
       error: null,
       pending: false,
+      pendingRequestKey: null,
       stale: false,
       updatedAt: null,
     });
@@ -203,5 +212,83 @@ describe("project resource lifecycle", () => {
         { projectPath: "/repo", endpointKey: "127.0.0.1:43191", generation: 2 },
       ),
     ).toBe(true);
+  });
+
+  it("settles only the pending project observability request that owns the marker", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const current = observability();
+    const staleRequest = projectResourceRequestKey(
+      { projectPath, endpointKey: "127.0.0.1:43190", generation: 1 },
+      1,
+    );
+    const currentRequest = projectResourceRequestKey(
+      { projectPath, endpointKey: "127.0.0.1:43191", generation: 2 },
+      2,
+    );
+
+    store.set(applyProjectObservabilitySuccessAtom, {
+      projectPath,
+      observability: current,
+      updatedAt: 10,
+    });
+    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: staleRequest });
+    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: currentRequest });
+    store.set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey: staleRequest });
+
+    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+      value: current,
+      pending: true,
+      pendingRequestKey: currentRequest,
+      stale: true,
+    });
+
+    store.set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey: currentRequest });
+
+    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+      value: current,
+      pending: false,
+      pendingRequestKey: null,
+      stale: true,
+    });
+  });
+
+  it("settles only the pending project tasks request that owns the marker", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const current = tasks();
+    const staleRequest = projectResourceRequestKey(
+      { projectPath, endpointKey: "127.0.0.1:43190", generation: 1 },
+      1,
+    );
+    const currentRequest = projectResourceRequestKey(
+      { projectPath, endpointKey: "127.0.0.1:43191", generation: 2 },
+      2,
+    );
+
+    store.set(applyProjectTasksSuccessAtom, {
+      projectPath,
+      tasks: current,
+      updatedAt: 10,
+    });
+    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: staleRequest });
+    store.set(beginProjectTasksRefreshAtom, { projectPath, requestKey: currentRequest });
+    store.set(settleProjectTasksRefreshAtom, { projectPath, requestKey: staleRequest });
+
+    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+      value: current,
+      pending: true,
+      pendingRequestKey: currentRequest,
+      stale: true,
+    });
+
+    store.set(settleProjectTasksRefreshAtom, { projectPath, requestKey: currentRequest });
+
+    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+      value: current,
+      pending: false,
+      pendingRequestKey: null,
+      stale: true,
+    });
   });
 });
