@@ -11,6 +11,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type WorktreeAction = "create" | "remove";
@@ -18,10 +19,12 @@ type WorktreeAction = "create" | "remove";
 export function WorktreeManagementPanel({
   endpoint,
   token,
+  projectPath,
   groups,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  projectPath: string;
   groups: WorktreeBucket[];
 }) {
   const [name, setName] = useState("");
@@ -30,6 +33,7 @@ export function WorktreeManagementPanel({
   const [error, setError] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
   const removableWorktrees = useMemo(
     () =>
@@ -38,6 +42,8 @@ export function WorktreeManagementPanel({
           (group) =>
             !group.isMainCheckout &&
             group.path &&
+            !group.pending &&
+            !group.removing &&
             group.sessions.length === 0 &&
             group.services.length === 0,
         )
@@ -98,7 +104,13 @@ export function WorktreeManagementPanel({
               disabled={!canAct || !trimmedName}
               onPress={() =>
                 runAction("create", async () => {
-                  await createWorktree(endpoint, trimmedName, { token });
+                  const response = await createWorktree(endpoint, trimmedName, { token });
+                  recordTransition({
+                    projectPath,
+                    transition: response.transition,
+                    worktreeName: trimmedName,
+                    worktreePath: response.path,
+                  });
                   setName("");
                 })
               }
@@ -140,7 +152,12 @@ export function WorktreeManagementPanel({
               onPress={() =>
                 removePath
                   ? runAction("remove", async () => {
-                      await removeWorktree(endpoint, removePath, { token });
+                      const response = await removeWorktree(endpoint, removePath, { token });
+                      recordTransition({
+                        projectPath,
+                        transition: response.transition,
+                        worktreePath: removePath,
+                      });
                       setRemovePath(null);
                     })
                   : undefined

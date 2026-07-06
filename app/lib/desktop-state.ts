@@ -79,6 +79,8 @@ export interface WorktreeBucket {
   branch: string;
   path: string | null;
   isMainCheckout: boolean;
+  pending?: boolean;
+  removing?: boolean;
   sessions: DesktopSession[];
   services: DesktopService[];
 }
@@ -113,6 +115,8 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
       branch: wt.branch,
       path: wt.path,
       isMainCheckout: false,
+      pending: wt.pending,
+      removing: wt.removing,
       sessions: [],
       services: [],
     });

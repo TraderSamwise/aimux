@@ -7,10 +7,12 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { migrateAgent, renameAgent, setAgentLoop, setAgentOverseer } from "@/lib/api";
+import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type AgentManagementAction = "rename" | "migrate" | "loop" | "overseer";
@@ -19,11 +21,13 @@ export function AgentManagementPanel({
   session,
   endpoint,
   token,
+  projectPath,
   groups,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  projectPath: string;
   groups: WorktreeBucket[];
 }) {
   const [label, setLabel] = useState(session.label || "");
@@ -34,6 +38,7 @@ export function AgentManagementPanel({
   const [status, setStatus] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
   const worktreeChoices = useMemo(
     () =>
@@ -73,6 +78,23 @@ export function AgentManagementPanel({
     }
   }
 
+  async function runLifecycleAction(
+    action: AgentManagementAction,
+    fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
+    next: { label?: string; worktreePath?: string },
+  ) {
+    return runAction(action, async () => {
+      const response = await fn();
+      recordTransition({
+        projectPath,
+        transition: response.transition,
+        label: next.label ?? session.label ?? session.id,
+        tool: session.toolConfigKey,
+        worktreePath: next.worktreePath ?? session.worktreePath,
+      });
+    });
+  }
+
   const canAct = Boolean(endpoint) && !busyAction;
   const trimmedLabel = label.trim();
   const trimmedGoal = loopGoal.trim();
@@ -109,8 +131,15 @@ export function AgentManagementPanel({
               size="sm"
               disabled={!canRename}
               onPress={() =>
-                runAction("rename", () =>
-                  renameAgent(endpoint, { sessionId: session.id, label: trimmedLabel }, { token }),
+                runLifecycleAction(
+                  "rename",
+                  () =>
+                    renameAgent(
+                      endpoint,
+                      { sessionId: session.id, label: trimmedLabel },
+                      { token },
+                    ),
+                  { label: trimmedLabel },
                 )
               }
             >
@@ -143,12 +172,15 @@ export function AgentManagementPanel({
               disabled={!canMigrate}
               onPress={() =>
                 selectedWorktreePath
-                  ? runAction("migrate", () =>
-                      migrateAgent(
-                        endpoint,
-                        { sessionId: session.id, worktreePath: selectedWorktreePath },
-                        { token },
-                      ),
+                  ? runLifecycleAction(
+                      "migrate",
+                      () =>
+                        migrateAgent(
+                          endpoint,
+                          { sessionId: session.id, worktreePath: selectedWorktreePath },
+                          { token },
+                        ),
+                      { worktreePath: selectedWorktreePath },
                     )
                   : undefined
               }

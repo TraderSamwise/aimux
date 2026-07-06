@@ -33,7 +33,7 @@ Use these labels consistently:
 | Command no-spawn healthy paths | Mostly done | Medium | Medium | `command-ownership-inventory.md` says no normal command is still `SIDECAR`. Need release-gate no-spawn audit. |
 | Daemon/project-service ownership | Mostly done | Medium | Medium | Core command families route through daemon/project-service; diagnostics and internal paths still need periodic audit. |
 | TUI shared state API boundary | Done | Medium | Low | Production TUI API request sites are guarded by `tui-api-boundary.test.ts`; reconnect, stale snapshot, mutation blocking, and repair notice behavior route through the shared TUI API runtime. |
-| TUI transition stability | Partial | High | High | Lifecycle mutation responses now include canonical transition records; client adoption and churn smoke remain. |
+| TUI transition stability | Mostly done | Medium | Medium | Lifecycle mutation responses include canonical transition records; TUI and app core lifecycle controls now reconcile against API-backed state. Churn smoke remains. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Partial | Medium | High | Some push exists; remote clients still need complete change events for all API-backed views. |
 | Runtime topology authority | Partial | Medium | High | Agents/services/worktrees are partly topology-owned; old caches and fail-closed lifecycle paths remain. |
@@ -147,7 +147,7 @@ Goal: start, stop, revive, create, kill, fork, migrate, service start/stop, and
 worktree operations render the same transition state in TUI, web, mobile, and
 CLI.
 
-Status: `Partial`
+Status: `Mostly done`
 
 Remaining:
 
@@ -155,17 +155,17 @@ Remaining:
   operation id, target id/path, kind, phase, startedAt, updatedAt, error.
 - [x] Ensure lifecycle mutations return or emit enough state for clients to
   render pending rows without guessing.
-- [ ] Reconcile optimistic client state only against fresh API-backed state.
+- [x] Reconcile optimistic client state only against fresh API-backed state.
 - [x] Preserve TUI agent/service pending transition display during transient
   refresh failures.
 - [x] Prevent stale TUI agent/service refreshes from clearing pending rows
   before matching settlement.
 - [x] Extend the same settlement contract to TUI worktree create/graveyard
   operations.
-- [ ] Extend the same settlement contract to app/mobile lifecycle views.
+- [x] Extend the same settlement contract to app/mobile lifecycle views.
 - [ ] Add fast churn tests for create/start/stop/revive/retry in TUI and app
   stores.
-- [ ] Document which transitions are tmux-substrate actions versus product-state
+- [x] Document which transitions are tmux-substrate actions versus product-state
   actions.
 
 Done when:
@@ -173,6 +173,18 @@ Done when:
 - The same API state explains every lifecycle transition shown by TUI and app.
 - Clients do not infer success from local optimism alone.
 - Repeated lifecycle churn does not flicker backward or lose rows.
+
+App adoption notes:
+
+- Dashboard, sidebar, agent chat, service detail, worktree management,
+  graveyard, and teammate lifecycle controls record project-service transition
+  envelopes into the shared desktop-state projection.
+- Active transition records overlay stale `desktop-state` snapshots for agents,
+  services, and worktrees, then settle only when a fresh API-backed snapshot
+  reaches the expected target state.
+- tmux-substrate lifecycle operations remain local execution mechanics under
+  the project service; app/mobile render their product-state transition through
+  the same API envelope and never infer settlement from local optimism alone.
 
 ### Epic E: App/Web/Mobile Resource Contract
 
