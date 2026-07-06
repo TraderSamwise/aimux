@@ -1414,6 +1414,7 @@ describe("startRuntimeGuardRepair", () => {
     startRuntimeGuardRepair(firstHost as never, { kind: "stale", reason: "service-mismatch" });
     startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
     startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
+    startRuntimeGuardRepair(secondHost as never, { kind: "runtime-rebuild-required" });
 
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
     expect(secondHost.dashboardBusyState).toBeNull();
