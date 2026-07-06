@@ -247,6 +247,44 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("does not settle service stop from stale raw state without a fresh snapshot", async () => {
+    vi.useFakeTimers();
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [{ id: "svc-1", status: "offline" }],
+      dashboardModelServiceRefreshError: new Error("temporary reconnect"),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      getDashboardServices: vi.fn(() => [
+        { id: "svc-1", label: "shell", status: "running", pendingAction: "stopping", optimistic: true },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
+    expect(host.footerFlash).not.toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to stop service", [
+      "stopping did not settle before timing out",
+    ]);
+  });
+
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
     const services = [[{ id: "svc-1", status: "offline" }], []];
     let serviceIndex = 0;
