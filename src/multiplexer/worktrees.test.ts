@@ -786,6 +786,7 @@ describe("worktrees dashboard mutation protocol", () => {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
       dashboardWorktreeMutationReconcileMaxMs: 5_000,
       worktreeInputBuffer: "demo",
       clearDashboardOverlay: vi.fn(),
@@ -1070,6 +1071,7 @@ describe("worktrees dashboard mutation protocol", () => {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
       dashboardWorktreeMutationReconcileMaxMs: 5_000,
       worktreeRemovalJob: null,
       dashboardPendingActions: pending,
@@ -1113,6 +1115,7 @@ describe("worktrees dashboard mutation protocol", () => {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeStableSettleMs: 0,
       dashboardWorktreeMutationReconcileMaxMs: 5_000,
       worktreeRemovalJob: null,
       dashboardPendingActions: pending,
@@ -1140,8 +1143,9 @@ describe("worktrees dashboard mutation protocol", () => {
     host.mode = "session";
 
     await vi.waitFor(() => expect(host.worktreeRemovalJob).toBeNull(), { timeout: 3000 });
+    expect(pending.state.get(`worktree:${path}`)).toBe("graveyarding");
 
-    expect(pending.state.get(`worktree:${path}`)).toBeNull();
+    await vi.waitFor(() => expect(pending.state.get(`worktree:${path}`)).toBeNull(), { timeout: 3000 });
     expect(host.footerFlash).toBe("worktree graveyarding is still settling");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
