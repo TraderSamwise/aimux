@@ -24,6 +24,8 @@ import {
   beginCoordinationWorklistRefreshAtom,
   clearCoordinationWorklistResourceAtom,
   coordinationWorklistResourceFamily,
+  isCurrentCoordinationWorklistRequest,
+  type CoordinationWorklistRequestScope,
 } from "@/stores/coordination";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
@@ -134,20 +136,42 @@ export default function CoordinationScreen() {
   const pathname = usePathname();
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   const endpointRef = useRef(endpoint);
+  const endpointKeyRef = useRef(endpointKey);
   const projectPathRef = useRef(projectPathKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
+  const refreshGenerationRef = useRef(0);
+  const requestScopeRef = useRef<CoordinationWorklistRequestScope>({
+    projectPath: projectPathKey,
+    endpointKey,
+    generation: 0,
+  });
 
   useEffect(() => {
     endpointRef.current = endpoint;
-    projectPathRef.current = projectPathKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken, projectPathKey]);
+  }, [endpoint, getToken]);
+
+  useEffect(() => {
+    refreshGenerationRef.current += 1;
+    endpointKeyRef.current = endpointKey;
+    projectPathRef.current = projectPathKey;
+    requestScopeRef.current = {
+      projectPath: projectPathKey,
+      endpointKey,
+      generation: refreshGenerationRef.current,
+    };
+  }, [endpointKey, projectPathKey]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
     const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
     if (!currentEndpoint) {
       clearCoordinationWorklistResource(currentProjectPath);
       return;
@@ -157,6 +181,7 @@ export default function CoordinationScreen() {
       const token = await getTokenRef.current();
       const response = await getCoordinationWorklist(currentEndpoint, "user", { token });
       if (seq !== refreshSeqRef.current) return;
+      if (!isCurrentCoordinationWorklistRequest(requestScope, requestScopeRef.current)) return;
       applyCoordinationWorklistSuccess({
         projectPath: currentProjectPath,
         worklist: {
@@ -166,6 +191,7 @@ export default function CoordinationScreen() {
       });
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
+      if (!isCurrentCoordinationWorklistRequest(requestScope, requestScopeRef.current)) return;
       applyCoordinationWorklistFailure({
         projectPath: currentProjectPath,
         error: err instanceof Error ? err.message : String(err),
