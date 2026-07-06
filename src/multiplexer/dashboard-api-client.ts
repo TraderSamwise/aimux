@@ -1,9 +1,24 @@
 import { isDashboardLifecycleCurrent, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
-import { getOrCreateTuiApiRuntime, type TuiApiRequestOptions } from "./tui-api-runtime.js";
+import {
+  getOrCreateTuiApiRuntime,
+  isTuiApiConnectionMutationBlocked,
+  type TuiApiConnectionSnapshot,
+  type TuiApiRequestOptions,
+} from "./tui-api-runtime.js";
 
 type DashboardApiHost = any;
 interface DashboardModelApiRefreshOptions extends DashboardApiViewRefreshOptions {
   allowInactive?: boolean;
+}
+
+export type DashboardModelRefreshStatus = "applied" | "stale" | "skipped" | "failed";
+
+export interface DashboardModelRefreshOutcome {
+  ok: boolean;
+  status: DashboardModelRefreshStatus;
+  stale: boolean;
+  connection: TuiApiConnectionSnapshot;
+  error?: unknown;
 }
 
 interface DashboardApiResourceRefreshConfig<T> {
@@ -28,6 +43,34 @@ export function isDashboardApiRenderLifecycleCurrent(
 ): boolean {
   const lifecycle = options.renderLifecycle ?? options.lifecycle;
   return !lifecycle || isDashboardLifecycleCurrent(host, lifecycle);
+}
+
+export function getDashboardApiConnectionSnapshot(host: DashboardApiHost): TuiApiConnectionSnapshot {
+  return getOrCreateTuiApiRuntime(host).getConnectionSnapshot();
+}
+
+export function isDashboardApiMutationBlocked(host: DashboardApiHost): boolean {
+  return isTuiApiConnectionMutationBlocked(getDashboardApiConnectionSnapshot(host));
+}
+
+export function isDashboardModelRefreshUsable(outcome: DashboardModelRefreshOutcome): boolean {
+  return outcome.ok || outcome.stale;
+}
+
+function dashboardModelRefreshOutcome(
+  host: DashboardApiHost,
+  status: DashboardModelRefreshStatus,
+  error?: unknown,
+): DashboardModelRefreshOutcome {
+  const runtime = getOrCreateTuiApiRuntime(host);
+  const desktopSnapshot = runtime.getSnapshot("desktop-state");
+  return {
+    ok: status === "applied",
+    status,
+    stale: desktopSnapshot.stale && desktopSnapshot.value !== undefined,
+    connection: runtime.getConnectionSnapshot(),
+    error,
+  };
 }
 
 export async function refreshDashboardApiResource<T>(
@@ -61,9 +104,13 @@ export async function refreshDashboardApiResource<T>(
 export async function refreshDashboardModelThroughApi(
   host: DashboardApiHost,
   options: DashboardModelApiRefreshOptions = {},
-): Promise<boolean> {
-  if (!options.allowInactive && !isDashboardApiLifecycleCurrent(host, options)) return false;
-  if (typeof host.refreshDashboardModelFromService !== "function") return false;
+): Promise<DashboardModelRefreshOutcome> {
+  if (!options.allowInactive && !isDashboardApiLifecycleCurrent(host, options)) {
+    return dashboardModelRefreshOutcome(host, "skipped");
+  }
+  if (typeof host.refreshDashboardModelFromService !== "function") {
+    return dashboardModelRefreshOutcome(host, "failed", new Error("dashboard model service refresh unavailable"));
+  }
   const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
   try {
     const refreshOptions =
@@ -73,11 +120,18 @@ export async function refreshDashboardModelThroughApi(
           ? { lifecycle: options.lifecycle }
           : undefined;
     const result = await host.refreshDashboardModelFromService(options.force === true, refreshOptions);
-    if (!options.allowInactive && !isDashboardApiLifecycleCurrent(host, options)) return false;
-    if (host.dashboardModelServiceRefreshError) return false;
-    return result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh;
-  } catch {
-    return false;
+    if (!options.allowInactive && !isDashboardApiLifecycleCurrent(host, options)) {
+      return dashboardModelRefreshOutcome(host, "skipped");
+    }
+    if (host.dashboardModelServiceRefreshError) {
+      return dashboardModelRefreshOutcome(host, "stale", host.dashboardModelServiceRefreshError);
+    }
+    if (result !== false || (host.dashboardModelServiceRefreshedAt ?? 0) > beforeRefresh) {
+      return dashboardModelRefreshOutcome(host, "applied");
+    }
+    return dashboardModelRefreshOutcome(host, "skipped");
+  } catch (error) {
+    return dashboardModelRefreshOutcome(host, "failed", error);
   }
 }
 

@@ -5,6 +5,7 @@ import {
   getOrCreateTuiApiRuntime,
   postJsonWithTuiApiRuntime,
   scheduleTuiApiRecovery,
+  TuiApiMutationBlockedError,
   TuiApiRuntime,
   TUI_API_RECOVERY_COOLDOWN_MS,
   TUI_API_RECOVERY_DEBOUNCE_MS,
@@ -88,6 +89,30 @@ describe("TuiApiRuntime", () => {
     });
 
     expect(states).toContain("reconnecting");
+  });
+
+  it("blocks follow-up mutations while reconnecting unless the caller is a recovery probe", async () => {
+    const mutate = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("offline"), { code: "ECONNREFUSED" }))
+      .mockResolvedValueOnce({ ok: true });
+    const runtime = new TuiApiRuntime({ request: vi.fn(), mutate });
+
+    await expect(runtime.mutateJson("/notifications/read", {}, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error: expect.any(Error),
+    });
+    await expect(runtime.mutateJson("/agents/stop", {}, (value) => value)).resolves.toMatchObject({
+      ok: false,
+      error: expect.any(TuiApiMutationBlockedError),
+    });
+    await expect(
+      runtime.mutateJson("/controls/open-notification-target", {}, (value) => value, {
+        allowDuringReconnect: true,
+      }),
+    ).resolves.toEqual({ ok: true, value: { ok: true } });
+
+    expect(mutate).toHaveBeenCalledTimes(2);
   });
 
   it("does not reconnect or recover for semantic mutation failures", async () => {
@@ -410,7 +435,7 @@ describe("TuiApiRuntime", () => {
         postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "claude-1" }, undefined, async () => {
           throw new Error("still offline");
         }),
-      ).rejects.toThrow("still offline");
+      ).rejects.toBeInstanceOf(TuiApiMutationBlockedError);
 
       expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
@@ -705,6 +730,24 @@ describe("TuiApiRuntime", () => {
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "b" });
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "c" }, opts);
+  });
+
+  it("blocks wrapper mutations while a critical resource is reconnecting", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(async () => ({ ok: true, sessions: [] })),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    host.getFromProjectService.mockRejectedValue(Object.assign(new Error("offline"), { code: "ECONNREFUSED" }));
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value, { supersede: true });
+    const mutate = vi.fn(async () => ({ ok: true }));
+
+    await expect(
+      postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "a" }, undefined, mutate),
+    ).rejects.toBeInstanceOf(TuiApiMutationBlockedError);
+    expect(mutate).not.toHaveBeenCalled();
+    expect(host.postToProjectService).not.toHaveBeenCalled();
   });
 
   it("bootstraps direct resource refreshes through the dashboard GET wrapper", async () => {

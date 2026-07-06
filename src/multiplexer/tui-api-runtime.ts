@@ -11,6 +11,7 @@ export type TuiApiConnectionState =
 export interface TuiApiRequestOptions {
   timeoutMs?: number;
   recoverOnFailure?: boolean;
+  allowDuringReconnect?: boolean;
 }
 
 export interface TuiApiRuntimeOptions {
@@ -50,6 +51,30 @@ export interface TuiApiConnectionSnapshot {
   failedResources: string[];
   failedCriticalResources: string[];
   lastError?: unknown;
+}
+
+export class TuiApiMutationBlockedError extends Error {
+  readonly connection: TuiApiConnectionSnapshot;
+
+  constructor(connection: TuiApiConnectionSnapshot) {
+    super("Aimux is reconnecting the project service");
+    this.name = "TuiApiMutationBlockedError";
+    this.connection = connection;
+  }
+}
+
+export function isTuiApiConnectionMutationBlocked(
+  snapshot: TuiApiConnectionSnapshot,
+  opts: TuiApiRequestOptions = {},
+): boolean {
+  if (opts.allowDuringReconnect === true) return false;
+  if (snapshot.failedCriticalResources.length > 0) return true;
+  return (
+    snapshot.state === "failed" ||
+    snapshot.state === "reconnecting" ||
+    snapshot.state === "stale" ||
+    snapshot.state === "repairing"
+  );
 }
 
 export interface TuiApiRefreshResult<T> {
@@ -185,6 +210,10 @@ export class TuiApiRuntime {
     }
     if (!mutate) {
       return { ok: false, error: new Error("TUI API mutation transport unavailable") };
+    }
+    const connection = this.getConnectionSnapshot();
+    if (isTuiApiConnectionMutationBlocked(connection, opts)) {
+      return { ok: false, error: new TuiApiMutationBlockedError(connection) };
     }
     const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
     const generation = ++this.requestGeneration;
