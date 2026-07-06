@@ -980,8 +980,7 @@ export async function resumeOfflineSessionWithFeedback(
       )) ?? "pending";
     return mutationResult;
   }
-  await runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
-  return "settled";
+  return runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
 }
 
 export async function resumeOfflineServiceWithFeedback(
