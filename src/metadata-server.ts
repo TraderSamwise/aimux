@@ -342,7 +342,9 @@ export interface MetadataServerOptions {
     listWorktrees?: () => unknown[];
     getSessionDisplayContext?: (sessionId: string) => SessionAlertDisplayContext | undefined;
     refreshStatusline?: (input?: { sessionId?: string; force?: boolean }) => Promise<{ ok: true }> | { ok: true };
-    createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
+    createWorktree?: (input: {
+      name: string;
+    }) => Promise<{ path: string; status?: string }> | { path: string; status?: string };
     removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
     graveyardWorktree?: (input: {
       path: string;
@@ -4739,15 +4741,18 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
+          const status = typeof earlyResult.result.status === "string" ? earlyResult.result.status : undefined;
+          const phase = status === "creating" ? "settling" : "succeeded";
           this.notifyChange();
           send(
             res,
-            200,
+            phase === "settling" ? 202 : 200,
             lifecycleOk(earlyResult.result, {
               operation: "worktree.create",
               targetKind: "worktree",
               targetId: body.name,
               targetPath: earlyResult.result.path,
+              phase,
             }),
           );
           return;
