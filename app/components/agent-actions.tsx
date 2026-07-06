@@ -15,6 +15,15 @@ import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type LucideIcon = typeof Square;
 
+const AGENT_ACTION_REFRESH_VIEWS = [
+  "agents",
+  "project-observability",
+  "topology",
+  "coordination-worklist",
+  "team",
+  "worktrees",
+] as const;
+
 export function AgentActions({
   session,
   endpoint,
@@ -56,7 +65,9 @@ export function AgentActions({
       try {
         await fn();
         kickDesktopRefresh();
-        kickProjectViewRefresh();
+        kickProjectViewRefresh(
+          opts?.isKill ? [...AGENT_ACTION_REFRESH_VIEWS, "graveyard"] : AGENT_ACTION_REFRESH_VIEWS,
+        );
         if (opts?.isKill) onKilled?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

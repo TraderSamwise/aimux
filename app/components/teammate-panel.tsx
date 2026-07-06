@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import {
   kickProjectApiViewRefreshAtom,
-  projectApiViewRefreshNonceAtom,
+  projectApiViewRefreshNonceFamily,
 } from "@/stores/projectViews";
 
 type Teammate = TeammateListResponse["teammates"][number];
@@ -46,7 +46,7 @@ export function TeammatePanel({
   const [status, setStatus] = useState<string | null>(null);
   const actionRef = useRef<TeammateAction | null>(null);
   const listRequestSeqRef = useRef(0);
-  const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
+  const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("team"));
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
 
@@ -131,7 +131,14 @@ export function TeammatePanel({
     try {
       await fn();
       kickDesktopRefresh();
-      kickProjectViewRefresh();
+      kickProjectViewRefresh([
+        "team",
+        "agents",
+        "tasks",
+        "threads",
+        "coordination-worklist",
+        "project-observability",
+      ]);
       setStatus(nextStatus);
       try {
         const result = await listTeammates(endpoint, session.id, { token });

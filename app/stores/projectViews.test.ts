@@ -1,8 +1,12 @@
+import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 
 import { PROJECT_API_VIEWS, type ProjectApiView } from "../../src/project-api-contract";
 import {
   APP_PROJECT_API_VIEW_REGISTRY,
+  kickProjectApiViewRefreshAtom,
+  projectApiViewRefreshNonceFamily,
+  projectApiViewsForRefresh,
   projectUpdateTouchesDesktopState,
   projectUpdateTouchesNotificationFeed,
   projectUpdateTouchesProjectApiView,
@@ -64,5 +68,62 @@ describe("project API view refresh registry", () => {
     expect(projectUpdateTouchesProjectApiView(["future-view"])).toBe(true);
     expect(projectUpdateTouchesDesktopState(["future-view"])).toBe(false);
     expect(projectUpdateTouchesNotificationFeed(["future-view"])).toBe(false);
+  });
+
+  it("maps project update views to view-scoped refreshes", () => {
+    expect(projectApiViewsForRefresh(["threads", "tasks"])).toEqual([
+      "coordination-worklist",
+      "project-observability",
+      "threads",
+      "tasks",
+    ]);
+    expect(projectApiViewsForRefresh(["threads", "threads"])).toEqual([
+      "coordination-worklist",
+      "project-observability",
+      "threads",
+    ]);
+    expect(projectApiViewsForRefresh(["notifications"])).toEqual([
+      "coordination-worklist",
+      "notifications",
+      "project-observability",
+    ]);
+    expect(projectApiViewsForRefresh(["desktop-state"])).toEqual([
+      "agents",
+      "desktop-state",
+      "graveyard",
+      "project-observability",
+      "services",
+      "team",
+      "topology",
+      "worktrees",
+    ]);
+    expect(projectApiViewsForRefresh()).toEqual([...PROJECT_API_VIEWS]);
+    expect(projectApiViewsForRefresh(["future-view"])).toEqual([...PROJECT_API_VIEWS]);
+  });
+
+  it("bumps requested project API views and their app dependencies", () => {
+    const store = createStore();
+
+    store.set(kickProjectApiViewRefreshAtom, ["threads", "tasks"]);
+
+    expect(store.get(projectApiViewRefreshNonceFamily("coordination-worklist"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("project-observability"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("threads"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("tasks"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("library"))).toBe(0);
+  });
+
+  it("expands unknown or omitted project API view refreshes to every view", () => {
+    const store = createStore();
+
+    store.set(kickProjectApiViewRefreshAtom, ["future-view"]);
+    for (const view of PROJECT_API_VIEWS) {
+      expect(store.get(projectApiViewRefreshNonceFamily(view))).toBe(1);
+    }
+
+    store.set(kickProjectApiViewRefreshAtom);
+    for (const view of PROJECT_API_VIEWS) {
+      expect(store.get(projectApiViewRefreshNonceFamily(view))).toBe(2);
+    }
   });
 });

@@ -18,7 +18,7 @@ import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
-import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
 
 function reachabilityLabel(reachability: CoordinationReachability): string {
@@ -114,7 +114,7 @@ export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
+  const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("coordination-worklist"));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const { getToken } = useAuth();
   const router = useRouter();

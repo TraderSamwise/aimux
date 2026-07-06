@@ -10,12 +10,12 @@ import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
-import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { cn } from "@/lib/utils";
 
 export default function ThreadsScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const refreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
+  const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("threads"));
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   const router = useRouter();
