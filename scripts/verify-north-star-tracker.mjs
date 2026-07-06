@@ -62,7 +62,7 @@ for (const area of [
 }
 
 expectPackageScript("verify:north-star", "./scripts/verify-north-star-tracker.mjs");
-expectPackageScript("verify:app", "yarn --cwd app typecheck && yarn --cwd app lint && yarn --cwd app test");
+expectPackageScript("verify:app", "yarn --cwd app typecheck && yarn --cwd app lint --max-warnings=0 && yarn --cwd app test");
 expectPackageScript("release:readiness", "yarn verify && yarn verify:app && yarn verify:north-star");
 
 if (failures.length > 0) {
