@@ -8,13 +8,6 @@ Use this file with [runtime-authority-inventory.md](runtime-authority-inventory.
 
 Every future implementation phase should run the relevant `rg` commands before planning, after implementation, and before commit. A match is acceptable only when the code is a projection/cache, a one-way importer/exporter, a test asserting the cut, or an intentionally blocked compatibility route.
 
-## Completion Gate
-
-An authority area is complete only when its audit commands show old paths are
-gone or explicitly classified as projection/cache, importer/exporter, tests, or
-fail-closed compatibility. No normal client, CLI, or TUI path may silently write
-through a retired authority.
-
 ## Agent Lifecycle
 
 Audit commands:
@@ -231,5 +224,6 @@ A hard-cut phase is not complete until:
 
 - the relevant audit commands have no authority-bearing matches outside the new topology/exchange/projection stores;
 - remaining matches are named as projection/cache/importer/exporter/test/fail-closed compatibility;
+- no normal client, CLI, or TUI path silently writes through a retired authority;
 - source verification passes with `yarn typecheck && yarn lint && yarn test`;
 - runtime verification is run when `src/*.ts` behavior changes, including `yarn build` before manual runtime testing.

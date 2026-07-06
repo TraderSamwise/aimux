@@ -40,7 +40,7 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "verify": "yarn typecheck && yarn lint && yarn test",
-    "verify:app": "yarn --cwd app typecheck && yarn --cwd app lint && yarn --cwd app test",
+    "verify:app": "yarn --cwd app typecheck && yarn --cwd app lint --max-warnings=0 && yarn --cwd app test",
     "verify:codex-instructions": "bash scripts/verify-codex-developer-instructions.sh",
     "verify:north-star": "./scripts/verify-north-star-tracker.mjs",
     "release:readiness": "yarn verify && yarn verify:app && yarn verify:north-star",
