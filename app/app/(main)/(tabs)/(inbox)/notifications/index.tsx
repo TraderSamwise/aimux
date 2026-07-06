@@ -31,6 +31,9 @@ import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-l
 import { useRouteProject } from "@/lib/use-route-project";
 import { desktopStateFamily } from "@/stores/desktopState";
 import {
+  applyNotificationFeedFailureAtom,
+  applyNotificationFeedSuccessAtom,
+  beginNotificationFeedRefreshAtom,
   kickNotificationFeedRefreshAtom,
   notificationFeedErrorFamily,
   notificationFeedFamily,
@@ -268,8 +271,9 @@ export default function NotificationsScreen() {
   const feed = useAtomValue(notificationFeedFamily(projectPathKey));
   const feedError = useAtomValue(notificationFeedErrorFamily(projectPathKey));
   const desktopState = useAtomValue(desktopStateFamily(projectPathKey));
-  const setFeed = useSetAtom(notificationFeedFamily(projectPathKey));
-  const setFeedError = useSetAtom(notificationFeedErrorFamily(projectPathKey));
+  const beginNotificationFeedRefresh = useSetAtom(beginNotificationFeedRefreshAtom);
+  const applyNotificationFeedSuccess = useSetAtom(applyNotificationFeedSuccessAtom);
+  const applyNotificationFeedFailure = useSetAtom(applyNotificationFeedFailureAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const kickRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
   const securityEvents = useAtomValue(securityEventsAtom);
@@ -301,22 +305,32 @@ export default function NotificationsScreen() {
   const refresh = useCallback(async () => {
     if (!endpoint) return;
     setBusy("refresh");
+    beginNotificationFeedRefresh(projectPathKey);
     try {
       const token = await getToken();
       const next = await listNotifications(endpoint, { token });
-      setFeed({
-        notifications: next.notifications,
-        unreadCount: next.unreadCount,
-        fetchedAt: new Date().toISOString(),
+      applyNotificationFeedSuccess({
+        projectPath: projectPathKey,
+        feed: {
+          notifications: next.notifications,
+          unreadCount: next.unreadCount,
+          fetchedAt: new Date().toISOString(),
+        },
       });
-      setFeedError(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setFeedError(msg);
+      applyNotificationFeedFailure({ projectPath: projectPathKey, error: msg });
     } finally {
       setBusy(null);
     }
-  }, [endpoint, getToken, setFeed, setFeedError]);
+  }, [
+    applyNotificationFeedFailure,
+    applyNotificationFeedSuccess,
+    beginNotificationFeedRefresh,
+    endpoint,
+    getToken,
+    projectPathKey,
+  ]);
 
   const mutate = useCallback(
     async (
@@ -333,22 +347,33 @@ export default function NotificationsScreen() {
         } else {
           await clearNotifications(endpoint, input, { token });
         }
+        beginNotificationFeedRefresh(projectPathKey);
         const next = await listNotifications(endpoint, { token });
-        setFeed({
-          notifications: next.notifications,
-          unreadCount: next.unreadCount,
-          fetchedAt: new Date().toISOString(),
+        applyNotificationFeedSuccess({
+          projectPath: projectPathKey,
+          feed: {
+            notifications: next.notifications,
+            unreadCount: next.unreadCount,
+            fetchedAt: new Date().toISOString(),
+          },
         });
-        setFeedError(null);
         kickRefresh();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setFeedError(msg);
+        applyNotificationFeedFailure({ projectPath: projectPathKey, error: msg });
       } finally {
         setBusy(null);
       }
     },
-    [endpoint, getToken, kickRefresh, setFeed, setFeedError],
+    [
+      applyNotificationFeedFailure,
+      applyNotificationFeedSuccess,
+      beginNotificationFeedRefresh,
+      endpoint,
+      getToken,
+      kickRefresh,
+      projectPathKey,
+    ],
   );
 
   async function openCard(card: ForYouCard) {
