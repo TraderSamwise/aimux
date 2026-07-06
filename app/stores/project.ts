@@ -1,6 +1,10 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai/utils";
-import type { ProjectObservabilityResponse, TaskSummaryResponse } from "@/lib/api";
+import type {
+  ProjectObservabilityResponse,
+  TaskSummaryResponse,
+  ThreadSummaryResponse,
+} from "@/lib/api";
 
 export type ProjectObservabilityModel = ProjectObservabilityResponse["project"];
 
@@ -11,6 +15,11 @@ export interface ProjectObservabilityValue {
 
 export interface ProjectTasksValue {
   tasks: TaskSummaryResponse[];
+  fetchedAt: string;
+}
+
+export interface ProjectThreadsValue {
+  threads: ThreadSummaryResponse[];
   fetchedAt: string;
 }
 
@@ -31,12 +40,14 @@ export interface ProjectResourceRequestScope {
 
 export interface ApplyProjectObservabilitySuccessInput {
   projectPath: string;
+  requestKey: string;
   observability: ProjectObservabilityValue;
   updatedAt?: number;
 }
 
 export interface ApplyProjectResourceFailureInput {
   projectPath: string;
+  requestKey: string;
   error: string;
 }
 
@@ -52,9 +63,22 @@ export interface SettleProjectResourceRefreshInput {
 
 export interface ApplyProjectTasksSuccessInput {
   projectPath: string;
+  requestKey: string;
   tasks: ProjectTasksValue;
   updatedAt?: number;
 }
+
+export interface ApplyProjectThreadsSuccessInput {
+  projectPath: string;
+  requestKey: string;
+  threads: ProjectThreadsValue;
+  updatedAt?: number;
+}
+
+const projectResourceRequestScope = `${Date.now().toString(36)}-${Math.random()
+  .toString(36)
+  .slice(2)}`;
+let projectResourceRequestSequence = 0;
 
 export function emptyProjectObservability(): ProjectObservabilityModel {
   return {
@@ -98,12 +122,20 @@ export const projectTasksResourceFamily = atomFamily((_projectPath: string) =>
   atom<ProjectResource<ProjectTasksValue>>(emptyResource<ProjectTasksValue>()),
 );
 
+export const projectThreadsResourceFamily = atomFamily((_projectPath: string) =>
+  atom<ProjectResource<ProjectThreadsValue>>(emptyResource<ProjectThreadsValue>()),
+);
+
 export const projectObservabilityFamily = atomFamily((projectPath: string) =>
   atom((get) => get(projectObservabilityResourceFamily(projectPath)).value),
 );
 
 export const projectTasksFamily = atomFamily((projectPath: string) =>
   atom((get) => get(projectTasksResourceFamily(projectPath)).value),
+);
+
+export const projectThreadsFamily = atomFamily((projectPath: string) =>
+  atom((get) => get(projectThreadsResourceFamily(projectPath)).value),
 );
 
 export const beginProjectObservabilityRefreshAtom = atom(
@@ -132,9 +164,28 @@ export const beginProjectTasksRefreshAtom = atom(
   },
 );
 
+export const beginProjectThreadsRefreshAtom = atom(
+  null,
+  (get, set, { projectPath, requestKey }: BeginProjectResourceRefreshInput) => {
+    const current = get(projectThreadsResourceFamily(projectPath));
+    set(projectThreadsResourceFamily(projectPath), {
+      ...current,
+      pending: true,
+      pendingRequestKey: requestKey,
+      stale: current.value !== null,
+    });
+  },
+);
+
 export const applyProjectObservabilitySuccessAtom = atom(
   null,
-  (_get, set, { projectPath, observability, updatedAt }: ApplyProjectObservabilitySuccessInput) => {
+  (
+    get,
+    set,
+    { projectPath, requestKey, observability, updatedAt }: ApplyProjectObservabilitySuccessInput,
+  ) => {
+    const current = get(projectObservabilityResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
     set(projectObservabilityResourceFamily(projectPath), {
       value: observability,
       error: null,
@@ -148,7 +199,9 @@ export const applyProjectObservabilitySuccessAtom = atom(
 
 export const applyProjectTasksSuccessAtom = atom(
   null,
-  (_get, set, { projectPath, tasks, updatedAt }: ApplyProjectTasksSuccessInput) => {
+  (get, set, { projectPath, requestKey, tasks, updatedAt }: ApplyProjectTasksSuccessInput) => {
+    const current = get(projectTasksResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
     set(projectTasksResourceFamily(projectPath), {
       value: tasks,
       error: null,
@@ -160,10 +213,27 @@ export const applyProjectTasksSuccessAtom = atom(
   },
 );
 
+export const applyProjectThreadsSuccessAtom = atom(
+  null,
+  (get, set, { projectPath, requestKey, threads, updatedAt }: ApplyProjectThreadsSuccessInput) => {
+    const current = get(projectThreadsResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
+    set(projectThreadsResourceFamily(projectPath), {
+      value: threads,
+      error: null,
+      pending: false,
+      pendingRequestKey: null,
+      stale: false,
+      updatedAt: updatedAt ?? Date.now(),
+    });
+  },
+);
+
 export const applyProjectObservabilityFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyProjectResourceFailureInput) => {
+  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
     const current = get(projectObservabilityResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
     set(projectObservabilityResourceFamily(projectPath), {
       ...current,
       error,
@@ -176,9 +246,25 @@ export const applyProjectObservabilityFailureAtom = atom(
 
 export const applyProjectTasksFailureAtom = atom(
   null,
-  (get, set, { projectPath, error }: ApplyProjectResourceFailureInput) => {
+  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
     const current = get(projectTasksResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
     set(projectTasksResourceFamily(projectPath), {
+      ...current,
+      error,
+      pending: false,
+      pendingRequestKey: null,
+      stale: current.value !== null,
+    });
+  },
+);
+
+export const applyProjectThreadsFailureAtom = atom(
+  null,
+  (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
+    const current = get(projectThreadsResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
+    set(projectThreadsResourceFamily(projectPath), {
       ...current,
       error,
       pending: false,
@@ -197,6 +283,10 @@ export const clearProjectObservabilityResourceAtom = atom(
 
 export const clearProjectTasksResourceAtom = atom(null, (_get, set, projectPath: string) => {
   set(projectTasksResourceFamily(projectPath), emptyResource());
+});
+
+export const clearProjectThreadsResourceAtom = atom(null, (_get, set, projectPath: string) => {
+  set(projectThreadsResourceFamily(projectPath), emptyResource());
 });
 
 export const settleProjectObservabilityRefreshAtom = atom(
@@ -227,6 +317,20 @@ export const settleProjectTasksRefreshAtom = atom(
   },
 );
 
+export const settleProjectThreadsRefreshAtom = atom(
+  null,
+  (get, set, { projectPath, requestKey }: SettleProjectResourceRefreshInput) => {
+    const current = get(projectThreadsResourceFamily(projectPath));
+    if (current.pendingRequestKey !== requestKey) return;
+    set(projectThreadsResourceFamily(projectPath), {
+      ...current,
+      pending: false,
+      pendingRequestKey: null,
+      stale: current.value !== null,
+    });
+  },
+);
+
 export function isCurrentProjectResourceRequest(
   request: ProjectResourceRequestScope,
   current: ProjectResourceRequestScope,
@@ -240,7 +344,7 @@ export function isCurrentProjectResourceRequest(
 
 export function projectResourceRequestKey(
   request: ProjectResourceRequestScope,
-  sequence: number,
+  sequence = ++projectResourceRequestSequence,
 ): string {
-  return `${request.projectPath}\u0000${request.endpointKey ?? ""}\u0000${request.generation}\u0000${sequence}`;
+  return `${request.projectPath}\u0000${request.endpointKey ?? ""}\u0000${request.generation}\u0000${projectResourceRequestScope}\u0000${sequence}`;
 }
