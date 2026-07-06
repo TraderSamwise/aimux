@@ -2,6 +2,9 @@ import { isDashboardLifecycleCurrent, type DashboardApiViewRefreshOptions } from
 import { getOrCreateTuiApiRuntime, type TuiApiRequestOptions } from "./tui-api-runtime.js";
 
 type DashboardApiHost = any;
+interface DashboardModelApiRefreshOptions extends DashboardApiViewRefreshOptions {
+  allowInactive?: boolean;
+}
 
 interface DashboardApiResourceRefreshConfig<T> {
   resource: string;
@@ -57,13 +60,16 @@ export async function refreshDashboardApiResource<T>(
 
 export async function refreshDashboardModelThroughApi(
   host: DashboardApiHost,
-  options: DashboardApiViewRefreshOptions = {},
+  options: DashboardModelApiRefreshOptions = {},
 ): Promise<boolean> {
   if (!isDashboardApiLifecycleCurrent(host, options)) return false;
   if (typeof host.refreshDashboardModelFromService !== "function") return false;
   const beforeRefresh = host.dashboardModelServiceRefreshedAt ?? 0;
   try {
-    const refreshOptions = options.lifecycle ? { lifecycle: options.lifecycle } : undefined;
+    const refreshOptions =
+      options.lifecycle || options.allowInactive
+        ? { lifecycle: options.lifecycle, allowInactive: options.allowInactive }
+        : undefined;
     const result = await host.refreshDashboardModelFromService(options.force === true, refreshOptions);
     if (!isDashboardApiLifecycleCurrent(host, options)) return false;
     if (host.dashboardModelServiceRefreshError) return false;

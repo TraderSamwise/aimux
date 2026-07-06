@@ -1078,7 +1078,8 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardRawWorktreeGroupsCache: [worktree],
       dashboardWorktreeGroupsCache: [worktree],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
-      refreshDashboardModelFromService: vi.fn(async () => {
+      refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
+        expect(opts?.allowInactive).toBe(true);
         refreshCount += 1;
         if (refreshCount < 3) {
           applyRawWorktrees(host, pending, [worktree]);

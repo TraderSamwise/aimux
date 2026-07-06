@@ -61,7 +61,7 @@ async function refreshDashboardModelForWorktreeSettlement(
   host: WorktreeHost,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
-  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+  return refreshDashboardModelThroughApi(host, { force: true, lifecycle, allowInactive: true });
 }
 
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
