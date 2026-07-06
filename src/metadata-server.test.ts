@@ -789,9 +789,13 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId: "claude-1" }),
     });
-    const body = (await res.json()) as { ok: boolean; sessionId: string };
+    const body = (await res.json()) as Record<string, unknown>;
     expect(res.ok).toBe(true);
-    expect(body).toEqual({ ok: true, sessionId: "claude-1" });
+    expect(body).toMatchObject({
+      ok: true,
+      sessionId: "claude-1",
+      transition: { operation: "agent.interrupt", targetKind: "agent", targetId: "claude-1" },
+    });
   });
 
   it("drives live pane control endpoints over HTTP", async () => {
@@ -2528,6 +2532,88 @@ describe("MetadataServer threads API", () => {
     expect(calls).toEqual(["stop:child", "resume:child", "kill:child"]);
   });
 
+  it("returns canonical lifecycle transitions for mutation responses", async () => {
+    server?.stop();
+    let resolveCreateWorktree: (() => void) | null = null;
+    server = new MetadataServer({
+      desktop: {
+        resumeAgent: ({ sessionId }) => ({ sessionId, status: "running" as const }),
+        createService: ({ serviceId }) => ({ serviceId: serviceId ?? "svc-1" }),
+        stopService: ({ serviceId }) => ({ serviceId, status: "stopped" as const }),
+        createWorktree: ({ name }) =>
+          new Promise<{ path: string }>((resolve) => {
+            resolveCreateWorktree = () => resolve({ path: `/repo/.aimux/worktrees/${name}` });
+          }),
+        graveyardWorktree: ({ path }) => ({ path, status: "graveyarded" as const }),
+      },
+      lifecycle: {
+        spawnAgent: ({ sessionId }) => ({ sessionId: sessionId ?? "claude-new" }),
+        stopAgent: ({ sessionId }) => ({ sessionId, status: "offline" as const }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const spawn = await post(PROJECT_API_ROUTES.agents.spawn, { tool: "claude" });
+    expect(spawn.status).toBe(200);
+    expect(spawn.body.transition).toMatchObject({
+      operation: "agent.spawn",
+      targetKind: "agent",
+      targetId: "claude-new",
+      phase: "succeeded",
+      operationId: expect.any(String),
+      startedAt: expect.any(String),
+      updatedAt: expect.any(String),
+    });
+
+    const resume = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "claude-old" });
+    expect(resume.body.transition).toMatchObject({
+      operation: "agent.resume",
+      targetKind: "agent",
+      targetId: "claude-old",
+      phase: "succeeded",
+    });
+
+    const service = await post(PROJECT_API_ROUTES.services.stop, { serviceId: "svc-1" });
+    expect(service.body.transition).toMatchObject({
+      operation: "service.stop",
+      targetKind: "service",
+      targetId: "svc-1",
+      phase: "succeeded",
+    });
+
+    const pendingWorktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "feature-a" });
+    expect(pendingWorktree.status).toBe(202);
+    expect(pendingWorktree.body.transition).toMatchObject({
+      operation: "worktree.create",
+      targetKind: "worktree",
+      targetId: "feature-a",
+      phase: "settling",
+    });
+    resolveCreateWorktree?.();
+
+    const graveyardWorktree = await post(PROJECT_API_ROUTES.worktreeActions.graveyard, {
+      path: "/repo/.aimux/worktrees/feature-a",
+    });
+    expect(graveyardWorktree.body.transition).toMatchObject({
+      operation: "worktree.graveyard",
+      targetKind: "worktree",
+      targetPath: "/repo/.aimux/worktrees/feature-a",
+      phase: "succeeded",
+    });
+  });
+
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
     server?.stop();
     const calls: string[] = [];
@@ -2919,9 +3005,14 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId: "claude-1" }),
     });
-    const body = (await res.json()) as { ok: boolean; sessionId: string; status: string };
+    const body = (await res.json()) as Record<string, unknown>;
     expect(res.ok).toBe(true);
-    expect(body).toEqual({ ok: true, sessionId: "claude-1", status: "running" });
+    expect(body).toMatchObject({
+      ok: true,
+      sessionId: "claude-1",
+      status: "running",
+      transition: { operation: "agent.resume", targetKind: "agent", targetId: "claude-1" },
+    });
   });
 
   it("persists the current live window as the preferred dashboard selection when reopening dashboard", async () => {

@@ -692,6 +692,46 @@ export interface WorkflowMutationResponse extends ProjectApiOk {
   followUpTask?: unknown;
 }
 
+export type ProjectLifecycleTransitionTargetKind = "agent" | "service" | "worktree";
+
+export type ProjectLifecycleTransitionPhase = "queued" | "started" | "settling" | "succeeded" | "failed";
+
+export type ProjectLifecycleTransitionOperation =
+  | "agent.spawn"
+  | "agent.fork"
+  | "agent.stop"
+  | "agent.resume"
+  | "agent.kill"
+  | "agent.rename"
+  | "agent.migrate"
+  | "agent.interrupt"
+  | "service.create"
+  | "service.stop"
+  | "service.resume"
+  | "service.remove"
+  | "worktree.create"
+  | "worktree.remove"
+  | "worktree.graveyard"
+  | "graveyard.agent.resurrect"
+  | "graveyard.worktree.resurrect"
+  | "graveyard.worktree.delete";
+
+export interface ProjectLifecycleTransition {
+  operationId: string;
+  operation: ProjectLifecycleTransitionOperation;
+  targetKind: ProjectLifecycleTransitionTargetKind;
+  phase: ProjectLifecycleTransitionPhase;
+  startedAt: string;
+  updatedAt: string;
+  targetId?: string;
+  targetPath?: string;
+  error?: string;
+}
+
+export interface ProjectLifecycleTransitionResponse extends ProjectApiOk {
+  transition?: ProjectLifecycleTransition;
+}
+
 export interface CreateServiceInput {
   command?: string;
   worktreePath?: string;
@@ -702,21 +742,21 @@ export interface ServiceActionInput {
   serviceId: string;
 }
 
-export interface CreateServiceResponse extends ProjectApiOk {
+export interface CreateServiceResponse extends ProjectLifecycleTransitionResponse {
   serviceId: string;
 }
 
-export interface StopServiceResponse extends ProjectApiOk {
+export interface StopServiceResponse extends ProjectLifecycleTransitionResponse {
   serviceId: string;
   status: "stopped";
 }
 
-export interface ResumeServiceResponse extends ProjectApiOk {
+export interface ResumeServiceResponse extends ProjectLifecycleTransitionResponse {
   serviceId: string;
   status: "running";
 }
 
-export interface RemoveServiceResponse extends ProjectApiOk {
+export interface RemoveServiceResponse extends ProjectLifecycleTransitionResponse {
   serviceId: string;
   status: "removed";
 }
@@ -744,7 +784,7 @@ export interface WorktreePathInput {
   path: string;
 }
 
-export interface WorktreePathResponse extends ProjectApiOk {
+export interface WorktreePathResponse extends ProjectLifecycleTransitionResponse {
   path: string;
 }
 
@@ -797,25 +837,25 @@ export interface AgentSessionInput {
   sessionId: string;
 }
 
-export interface StopAgentResponse extends ProjectApiOk {
+export interface StopAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "offline";
 }
 
-export interface ResumeAgentResponse extends ProjectApiOk {
+export interface ResumeAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "running" | "offline";
   warning?: string;
   teammateFailures?: Array<{ sessionId?: string; error?: string; message?: string }>;
 }
 
-export interface KillAgentResponse extends ProjectApiOk {
+export interface KillAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "graveyard";
   previousStatus: "running" | "offline";
 }
 
-export interface ResurrectAgentResponse extends ProjectApiOk {
+export interface ResurrectAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   status: "offline";
 }
@@ -850,7 +890,7 @@ export interface SpawnAgentInput {
   overseer?: boolean;
 }
 
-export interface SpawnAgentResponse extends ProjectApiOk {
+export interface SpawnAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId?: string;
   [k: string]: unknown;
 }
@@ -865,7 +905,7 @@ export interface ForkAgentInput {
   launchOverride?: unknown;
 }
 
-export interface ForkAgentResponse extends ProjectApiOk {
+export interface ForkAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId?: string;
   sourceSessionId?: string;
   [k: string]: unknown;
@@ -875,7 +915,7 @@ export interface RenameAgentInput extends AgentSessionInput {
   label?: string;
 }
 
-export interface RenameAgentResponse extends ProjectApiOk {
+export interface RenameAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   label?: string;
   [k: string]: unknown;
@@ -885,7 +925,7 @@ export interface MigrateAgentInput extends AgentSessionInput {
   worktreePath: string;
 }
 
-export interface MigrateAgentResponse extends ProjectApiOk {
+export interface MigrateAgentResponse extends ProjectLifecycleTransitionResponse {
   sessionId: string;
   worktreePath?: string;
   [k: string]: unknown;
