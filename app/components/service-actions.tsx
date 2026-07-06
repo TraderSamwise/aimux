@@ -5,10 +5,12 @@ import { Play, Square, Trash2 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { removeService, resumeService, stopService } from "@/lib/api";
+import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type LucideIcon = typeof Square;
@@ -17,12 +19,14 @@ export function ServiceActions({
   service,
   endpoint,
   token,
+  projectPath,
   compact = false,
   onRemoved,
 }: {
   service: DesktopService;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  projectPath: string;
   compact?: boolean;
   onRemoved?: () => void;
 }) {
@@ -30,16 +34,26 @@ export function ServiceActions({
   const [error, setError] = useState<string | null>(null);
   const kickRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
   const canAct = !!endpoint && !busy;
 
-  function runAction(fn: () => Promise<unknown>, opts?: { isRemove?: boolean }) {
+  function runAction(
+    fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
+    opts?: { isRemove?: boolean },
+  ) {
     return async () => {
       if (!endpoint) return;
       setBusy(true);
       setError(null);
       try {
-        await fn();
+        const response = await fn();
+        recordTransition({
+          projectPath,
+          transition: response.transition,
+          label: service.label || service.id,
+          worktreePath: service.worktreePath,
+        });
         kickRefresh();
         kickProjectViewRefresh(["services", "project-observability", "topology"]);
         if (opts?.isRemove) onRemoved?.();

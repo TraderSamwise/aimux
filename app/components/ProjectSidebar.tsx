@@ -259,6 +259,7 @@ function WorktreeTree({
     <View className="px-2 pb-2">
       <WorktreeList
         groups={groups}
+        projectPath={projectPath}
         endpoint={endpoint}
         token={token}
         padded={false}

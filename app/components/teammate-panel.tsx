@@ -15,10 +15,12 @@ import {
   stopTeammate,
   type TeammateListResponse,
 } from "@/lib/api";
+import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import {
   kickProjectApiViewRefreshAtom,
   projectApiViewRefreshNonceFamily,
@@ -31,10 +33,12 @@ export function TeammatePanel({
   session,
   endpoint,
   token,
+  projectPath,
 }: {
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  projectPath: string;
 }) {
   const [teammates, setTeammates] = useState<Teammate[]>([]);
   const [role, setRole] = useState("coder");
@@ -49,6 +53,7 @@ export function TeammatePanel({
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("team"));
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
   const selectedTeammate = useMemo(
     () => teammates.find((teammate) => teammate.id === selectedTeammateId) ?? teammates[0] ?? null,
@@ -158,12 +163,34 @@ export function TeammatePanel({
     }
   }
 
+  async function runLifecycleMutation(
+    action: TeammateAction,
+    fn: () => Promise<{ sessionId?: string; transition?: ProjectLifecycleTransition }>,
+    nextStatus: string,
+    next: { label?: string; tool?: string; worktreePath?: string },
+  ): Promise<boolean> {
+    return runMutation(
+      action,
+      async () => {
+        const response = await fn();
+        recordTransition({
+          projectPath,
+          transition: response.transition,
+          label: next.label ?? response.sessionId,
+          tool: next.tool,
+          worktreePath: next.worktreePath,
+        });
+      },
+      nextStatus,
+    );
+  }
+
   async function handleCreateTeammate() {
     if (!endpoint || !canCreate) return;
     const initialTask = trimmedTask
       ? { body: trimmedTask, worktreePath: session.worktreePath }
       : undefined;
-    const created = await runMutation(
+    const created = await runLifecycleMutation(
       "create",
       () =>
         createTeammate(
@@ -179,6 +206,11 @@ export function TeammatePanel({
           { token },
         ),
       initialTask ? "Teammate created and tasked." : "Teammate created.",
+      {
+        label: trimmedLabel || undefined,
+        tool: "teammate",
+        worktreePath: session.worktreePath,
+      },
     );
     if (created) {
       setLabel("");
@@ -304,10 +336,15 @@ export function TeammatePanel({
               busy={busyAction === "stop"}
               onPress={() =>
                 selectedTeammate
-                  ? void runMutation(
+                  ? void runLifecycleMutation(
                       "stop",
                       () => stopTeammate(endpoint, session.id, selectedTeammate.id, { token }),
                       "Teammate stopped.",
+                      {
+                        label: displayTeammateName(selectedTeammate),
+                        tool: selectedTeammate.tool,
+                        worktreePath: selectedTeammate.worktreePath ?? session.worktreePath,
+                      },
                     )
                   : undefined
               }
@@ -318,10 +355,15 @@ export function TeammatePanel({
               busy={busyAction === "resume"}
               onPress={() =>
                 selectedTeammate
-                  ? void runMutation(
+                  ? void runLifecycleMutation(
                       "resume",
                       () => resumeTeammate(endpoint, session.id, selectedTeammate.id, { token }),
                       "Teammate resumed.",
+                      {
+                        label: displayTeammateName(selectedTeammate),
+                        tool: selectedTeammate.tool,
+                        worktreePath: selectedTeammate.worktreePath ?? session.worktreePath,
+                      },
                     )
                   : undefined
               }
@@ -333,10 +375,15 @@ export function TeammatePanel({
               busy={busyAction === "kill"}
               onPress={() =>
                 selectedTeammate
-                  ? void runMutation(
+                  ? void runLifecycleMutation(
                       "kill",
                       () => killTeammate(endpoint, session.id, selectedTeammate.id, { token }),
                       "Teammate killed.",
+                      {
+                        label: displayTeammateName(selectedTeammate),
+                        tool: selectedTeammate.tool,
+                        worktreePath: selectedTeammate.worktreePath ?? session.worktreePath,
+                      },
                     )
                   : undefined
               }
