@@ -175,7 +175,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
         const modelLifecycle = captureDashboardLifecycle(host);
         const renderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
         void refreshDashboardModelThroughApi(host, { lifecycle: modelLifecycle })
-          .then((refreshed: boolean) => {
+          .then((refreshed) => {
             if (
               isDashboardLifecycleCurrent(host, renderLifecycle) &&
               host.isDashboardScreen?.("coordination") &&
@@ -190,7 +190,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
                 },
               );
             }
-            if (refreshed && isDashboardLifecycleCurrent(host, renderLifecycle)) {
+            if (refreshed.ok && isDashboardLifecycleCurrent(host, renderLifecycle)) {
               host.renderCurrentDashboardView();
             }
           })

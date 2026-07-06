@@ -78,7 +78,8 @@ export const dashboardViewMethods = {
         timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
           if (!isDashboardLifecycleCurrent(this, settleLifecycle)) return true;
-          await refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle });
+          const refreshed = await refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle });
+          if (!refreshed.ok) return false;
           if (pendingTarget === "worktree") {
             const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);

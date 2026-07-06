@@ -58,7 +58,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function refreshDashboardModelForWorktreeSettlement(host: WorktreeHost): Promise<boolean> {
-  return refreshDashboardModelThroughApi(host, { force: true, allowInactive: true });
+  return (await refreshDashboardModelThroughApi(host, { force: true, allowInactive: true })).ok;
 }
 
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
