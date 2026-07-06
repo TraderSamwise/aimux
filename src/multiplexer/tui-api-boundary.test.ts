@@ -27,7 +27,7 @@ const forbiddenTransportPatterns: Array<{ label: string; pattern: RegExp }> = [
   {
     label: "raw dashboard-control transport import",
     pattern:
-      /import\s*{[^}]*\b(getFromProjectService|postToProjectService|requestProjectService)\b[^}]*}\s*from\s*["']\.\/dashboard-control\.js["']/gs,
+      /import\s*{[^}]*\b(getFromProjectService|postToProjectService|requestProjectService)\b[^}]*}\s*from\s*["'][^"']*dashboard-control\.js["']/gs,
   },
 ];
 

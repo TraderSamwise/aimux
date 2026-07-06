@@ -84,11 +84,16 @@ import {
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
   type OrchestrationRouteOption,
+  type ProjectLifecycleTransition,
+  type ProjectLifecycleTransitionOperation,
+  type ProjectLifecycleTransitionPhase,
+  type ProjectLifecycleTransitionTargetKind,
   type ProjectApiView,
 } from "./project-api-contract.js";
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { log } from "./debug.js";
 import { loadLibraryEntries } from "./library.js";
+import { getWorktreeCreatePath } from "./worktree.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
@@ -148,6 +153,38 @@ const LIBRARY_DOC_ALLOWLIST = [
   { path: "CODEX.md", kind: "adapter", title: "CODEX.md" },
   { path: "README.md", kind: "project", title: "README.md" },
 ] as const;
+
+function buildLifecycleTransition(input: {
+  operation: ProjectLifecycleTransitionOperation;
+  targetKind: ProjectLifecycleTransitionTargetKind;
+  targetId?: string;
+  targetPath?: string;
+  phase?: ProjectLifecycleTransitionPhase;
+  error?: string;
+}): ProjectLifecycleTransition {
+  const now = new Date().toISOString();
+  const targetKey = input.targetId ?? input.targetPath ?? "unknown";
+  return {
+    operationId: `${input.operation}:${targetKey}:${randomUUID()}`,
+    operation: input.operation,
+    targetKind: input.targetKind,
+    phase: input.phase ?? "succeeded",
+    startedAt: now,
+    updatedAt: now,
+    ...(input.targetId ? { targetId: input.targetId } : {}),
+    ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+    ...(input.error ? { error: input.error } : {}),
+  };
+}
+
+function lifecycleOk<T extends object>(
+  result: T,
+  input: Parameters<typeof buildLifecycleTransition>[0],
+): { ok: true; transition: ProjectLifecycleTransition } & T {
+  return { ...result, ok: true, transition: buildLifecycleTransition(input) };
+}
+
+type LifecycleTransitionInput = Parameters<typeof buildLifecycleTransition>[0];
 
 function buildTopologyWorktreesFromDesktopState(state: {
   sessions?: any[];
@@ -306,7 +343,9 @@ export interface MetadataServerOptions {
     listWorktrees?: () => unknown[];
     getSessionDisplayContext?: (sessionId: string) => SessionAlertDisplayContext | undefined;
     refreshStatusline?: (input?: { sessionId?: string; force?: boolean }) => Promise<{ ok: true }> | { ok: true };
-    createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
+    createWorktree?: (input: {
+      name: string;
+    }) => Promise<{ path: string; status?: string }> | { path: string; status?: string };
     removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
     graveyardWorktree?: (input: {
       path: string;
@@ -2464,6 +2503,14 @@ export class MetadataServer {
       return;
     }
 
+    let activeLifecycleTransition: LifecycleTransitionInput | undefined;
+    const runLifecycle = async <T>(input: LifecycleTransitionInput, action: () => Promise<T> | T): Promise<T> => {
+      activeLifecycleTransition = input;
+      const result = await action();
+      activeLifecycleTransition = undefined;
+      return result;
+    };
+
     try {
       const planRoutePrefix = `${PROJECT_API_ROUTES.plans}/`;
       if (req.method === "GET" && url.pathname.startsWith(planRoutePrefix)) {
@@ -3912,9 +3959,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.spawnAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.spawnAgent!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.spawn",
+            targetKind: "agent",
+            targetId: result.sessionId ?? body.sessionId,
+          }),
+        );
         return;
       }
 
@@ -3996,17 +4054,21 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "teammate creation not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.createTeammateAgent({
-          parentSessionId: body.parentSessionId,
-          role: body.role,
-          label: body.label,
-          tool: body.tool,
-          sessionId: body.sessionId,
-          worktreePath: body.worktreePath,
-          open: body.open,
-          extraArgs: body.extraArgs,
-          order: body.order,
-        });
+        const result = await runLifecycle(
+          { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
+          () =>
+            this.options.lifecycle!.createTeammateAgent!({
+              parentSessionId: body.parentSessionId,
+              role: body.role,
+              label: body.label,
+              tool: body.tool,
+              sessionId: body.sessionId,
+              worktreePath: body.worktreePath,
+              open: body.open,
+              extraArgs: body.extraArgs,
+              order: body.order,
+            }),
+        );
         const taskResult =
           body.initialTask && initialTaskPrompt
             ? await assignTask({
@@ -4021,7 +4083,18 @@ export class MetadataServer {
           this.emitAssignedTaskAlert(taskResult);
         }
         this.notifyChange();
-        send(res, 200, { ok: true, ...result, task: taskResult?.task, thread: taskResult?.thread });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { ...result, task: taskResult?.task, thread: taskResult?.thread },
+            {
+              operation: "agent.spawn",
+              targetKind: "agent",
+              targetId: result.sessionId,
+            },
+          ),
+        );
         return;
       }
 
@@ -4097,14 +4170,19 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.stopAgent({ sessionId: resolved.teammate.id });
+        const result = await runLifecycle(
+          { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
+          () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
+        );
         this.notifyChange();
-        send(res, 200, {
-          ok: true,
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4122,17 +4200,23 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeAgent({
-          sessionId: resolved.teammate.id,
-          session: resolved.teammate,
-        });
+        const result = await runLifecycle(
+          { operation: "agent.resume", targetKind: "agent", targetId: resolved.teammate.id },
+          () =>
+            this.options.desktop!.resumeAgent!({
+              sessionId: resolved.teammate.id,
+              session: resolved.teammate,
+            }),
+        );
         this.notifyChange();
-        send(res, 200, {
-          ok: true,
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "agent.resume", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4150,16 +4234,22 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.killAgent({
-          sessionId: resolved.teammate.id,
-        });
+        const result = await runLifecycle(
+          { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
+          () =>
+            this.options.lifecycle!.killAgent!({
+              sessionId: resolved.teammate.id,
+            }),
+        );
         this.notifyChange();
-        send(res, 200, {
-          ok: true,
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "agent.kill", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4177,14 +4267,19 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent graveyard resurrection not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
+        const result = await runLifecycle(
+          { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: resolved.teammate.id },
+          () => this.options.desktop!.resurrectGraveyard!({ sessionId: resolved.teammate.id }),
+        );
         this.notifyChange();
-        send(res, 200, {
-          ok: true,
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-        });
+        send(
+          res,
+          200,
+          lifecycleOk(
+            { parentSessionId: resolved.parent.id, teammateSessionId: resolved.teammate.id, ...result },
+            { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: resolved.teammate.id },
+          ),
+        );
         return;
       }
 
@@ -4202,9 +4297,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent fork not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.forkAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.fork", targetKind: "agent", targetId: body.targetSessionId },
+          () => this.options.lifecycle!.forkAgent!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.fork",
+            targetKind: "agent",
+            targetId: result.sessionId ?? body.targetSessionId,
+          }),
+        );
         return;
       }
 
@@ -4214,9 +4320,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent stop not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.stopAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.stop", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.stopAgent!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.stop",
+            targetKind: "agent",
+            targetId: body.sessionId,
+          }),
+        );
         return;
       }
 
@@ -4226,9 +4343,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
+        const result = await runLifecycle(
+          { operation: "agent.resume", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.desktop!.resumeAgent!({ sessionId: body.sessionId }),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.resume",
+            targetKind: "agent",
+            targetId: body.sessionId,
+          }),
+        );
         return;
       }
 
@@ -4258,9 +4386,12 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.interruptAgent({ sessionId });
+        const result = await runLifecycle(
+          { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId },
+          () => this.options.lifecycle!.interruptAgent!({ sessionId }),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, lifecycleOk(result, { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId }));
         return;
       }
 
@@ -4300,9 +4431,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent rename not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.renameAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.rename", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.renameAgent!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.rename",
+            targetKind: "agent",
+            targetId: body.sessionId,
+          }),
+        );
         return;
       }
 
@@ -4312,9 +4454,21 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent migrate not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.migrateAgent(body);
+        const result = await runLifecycle(
+          { operation: "agent.migrate", targetKind: "agent", targetId: body.sessionId, targetPath: body.worktreePath },
+          () => this.options.lifecycle!.migrateAgent!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.migrate",
+            targetKind: "agent",
+            targetId: body.sessionId,
+            targetPath: body.worktreePath,
+          }),
+        );
         return;
       }
 
@@ -4324,9 +4478,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
+        const result = await runLifecycle(
+          { operation: "agent.kill", targetKind: "agent", targetId: body.sessionId },
+          () => this.options.lifecycle!.killAgent!({ sessionId: body.sessionId }),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "agent.kill",
+            targetKind: "agent",
+            targetId: body.sessionId,
+          }),
+        );
         return;
       }
 
@@ -4577,13 +4742,35 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
+          const status = typeof earlyResult.result.status === "string" ? earlyResult.result.status : undefined;
+          const phase = status === "creating" ? "settling" : "succeeded";
           this.notifyChange();
-          send(res, 200, { ok: true, ...earlyResult.result });
+          send(
+            res,
+            phase === "settling" ? 202 : 200,
+            lifecycleOk(earlyResult.result, {
+              operation: "worktree.create",
+              targetKind: "worktree",
+              targetId: body.name,
+              targetPath: earlyResult.result.path,
+              phase,
+            }),
+          );
           return;
         }
         if (earlyResult.kind === "rejected") {
           const message = earlyResult.error instanceof Error ? earlyResult.error.message : String(earlyResult.error);
-          send(res, 422, { ok: false, error: message });
+          send(res, 422, {
+            ok: false,
+            error: message,
+            transition: buildLifecycleTransition({
+              operation: "worktree.create",
+              targetKind: "worktree",
+              targetId: body.name,
+              phase: "failed",
+              error: message,
+            }),
+          });
           return;
         }
         this.notifyChange();
@@ -4591,7 +4778,21 @@ export class MetadataServer {
           () => this.notifyChange(),
           () => this.notifyChange(),
         );
-        send(res, 202, { ok: true, path: body.name, status: "creating" });
+        const targetPath = getWorktreeCreatePath(body.name, this.projectRoot);
+        send(
+          res,
+          202,
+          lifecycleOk(
+            { path: targetPath, status: "creating" },
+            {
+              operation: "worktree.create",
+              targetKind: "worktree",
+              targetId: body.name,
+              targetPath,
+              phase: "settling",
+            },
+          ),
+        );
         return;
       }
 
@@ -4601,7 +4802,8 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree remove not supported by this service" });
           return;
         }
-        const resultPromise = Promise.resolve(this.options.desktop.removeWorktree(body));
+        const desktop = this.options.desktop;
+        const resultPromise = Promise.resolve().then(() => desktop.removeWorktree!(body));
         const earlyResult:
           | { kind: "resolved"; result: any }
           | { kind: "rejected"; error: unknown }
@@ -4616,12 +4818,30 @@ export class MetadataServer {
         ]);
         if (earlyResult.kind === "resolved") {
           this.notifyChange();
-          send(res, 200, { ok: true, ...earlyResult.result });
+          send(
+            res,
+            200,
+            lifecycleOk(earlyResult.result, {
+              operation: "worktree.remove",
+              targetKind: "worktree",
+              targetPath: body.path,
+            }),
+          );
           return;
         }
         if (earlyResult.kind === "rejected") {
           const message = earlyResult.error instanceof Error ? earlyResult.error.message : String(earlyResult.error);
-          send(res, 500, { ok: false, error: message });
+          send(res, 422, {
+            ok: false,
+            error: message,
+            transition: buildLifecycleTransition({
+              operation: "worktree.remove",
+              targetKind: "worktree",
+              targetPath: body.path,
+              phase: "failed",
+              error: message,
+            }),
+          });
           return;
         }
         this.notifyChange();
@@ -4629,7 +4849,14 @@ export class MetadataServer {
           () => this.notifyChange(),
           () => this.notifyChange(),
         );
-        send(res, 202, { ok: true, path: body.path, status: "removing" });
+        send(
+          res,
+          202,
+          lifecycleOk(
+            { path: body.path, status: "removing" },
+            { operation: "worktree.remove", targetKind: "worktree", targetPath: body.path, phase: "settling" },
+          ),
+        );
         return;
       }
 
@@ -4639,9 +4866,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.graveyardWorktree(body);
+        const result = await runLifecycle(
+          { operation: "worktree.graveyard", targetKind: "worktree", targetPath: body.path },
+          () => this.options.desktop!.graveyardWorktree!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "worktree.graveyard",
+            targetKind: "worktree",
+            targetPath: body.path,
+          }),
+        );
         return;
       }
 
@@ -4651,9 +4889,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service create not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.createService(body);
+        const result = await runLifecycle(
+          { operation: "service.create", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.createService!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "service.create",
+            targetKind: "service",
+            targetId: result.serviceId ?? body.serviceId,
+          }),
+        );
         return;
       }
 
@@ -4663,9 +4912,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service stop not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.stopService(body);
+        const result = await runLifecycle(
+          { operation: "service.stop", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.stopService!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "service.stop",
+            targetKind: "service",
+            targetId: body.serviceId,
+          }),
+        );
         return;
       }
 
@@ -4675,9 +4935,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeService(body);
+        const result = await runLifecycle(
+          { operation: "service.resume", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.resumeService!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "service.resume",
+            targetKind: "service",
+            targetId: body.serviceId,
+          }),
+        );
         return;
       }
 
@@ -4687,9 +4958,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "service remove not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.removeService(body);
+        const result = await runLifecycle(
+          { operation: "service.remove", targetKind: "service", targetId: body.serviceId },
+          () => this.options.desktop!.removeService!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "service.remove",
+            targetKind: "service",
+            targetId: body.serviceId,
+          }),
+        );
         return;
       }
 
@@ -4704,9 +4986,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent graveyard resurrection not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resurrectGraveyard({ sessionId });
+        const result = await runLifecycle(
+          { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: sessionId },
+          () => this.options.desktop!.resurrectGraveyard!({ sessionId }),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "graveyard.agent.resurrect",
+            targetKind: "agent",
+            targetId: sessionId,
+          }),
+        );
         return;
       }
 
@@ -4716,9 +5009,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree graveyard resurrection not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resurrectGraveyardWorktree(body);
+        const result = await runLifecycle(
+          { operation: "graveyard.worktree.resurrect", targetKind: "worktree", targetPath: body.path },
+          () => this.options.desktop!.resurrectGraveyardWorktree!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "graveyard.worktree.resurrect",
+            targetKind: "worktree",
+            targetPath: body.path,
+          }),
+        );
         return;
       }
 
@@ -4728,9 +5032,20 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.deleteGraveyardWorktree(body);
+        const result = await runLifecycle(
+          { operation: "graveyard.worktree.delete", targetKind: "worktree", targetPath: body.path },
+          () => this.options.desktop!.deleteGraveyardWorktree!(body),
+        );
         this.notifyChange();
-        send(res, 200, { ok: true, ...result });
+        send(
+          res,
+          200,
+          lifecycleOk(result, {
+            operation: "graveyard.worktree.delete",
+            targetKind: "worktree",
+            targetPath: body.path,
+          }),
+        );
         return;
       }
 
@@ -4800,7 +5115,20 @@ export class MetadataServer {
         return;
       }
     } catch (error) {
-      send(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      if (activeLifecycleTransition) {
+        send(res, 500, {
+          ok: false,
+          error: message,
+          transition: buildLifecycleTransition({
+            ...activeLifecycleTransition,
+            phase: "failed",
+            error: message,
+          }),
+        });
+        return;
+      }
+      send(res, 400, { ok: false, error: message });
       return;
     }
 

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectStateDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
@@ -789,9 +790,13 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId: "claude-1" }),
     });
-    const body = (await res.json()) as { ok: boolean; sessionId: string };
+    const body = (await res.json()) as Record<string, unknown>;
     expect(res.ok).toBe(true);
-    expect(body).toEqual({ ok: true, sessionId: "claude-1" });
+    expect(body).toMatchObject({
+      ok: true,
+      sessionId: "claude-1",
+      transition: { operation: "agent.interrupt", targetKind: "agent", targetId: "claude-1" },
+    });
   });
 
   it("drives live pane control endpoints over HTTP", async () => {
@@ -2508,17 +2513,35 @@ describe("MetadataServer threads API", () => {
       ok: true,
       sessionId: "child",
       teammateSessionId: "child",
+      transition: {
+        operation: "agent.stop",
+        targetKind: "agent",
+        targetId: "child",
+        phase: "succeeded",
+      },
     });
     expect((await (await request("/agents/teammates/resume")).json()) as Record<string, unknown>).toMatchObject({
       ok: true,
       sessionId: "child",
       teammateSessionId: "child",
+      transition: {
+        operation: "agent.resume",
+        targetKind: "agent",
+        targetId: "child",
+        phase: "succeeded",
+      },
     });
     expect((await (await request("/agents/teammates/kill")).json()) as Record<string, unknown>).toMatchObject({
       ok: true,
       sessionId: "child",
       teammateSessionId: "child",
       status: "graveyard",
+      transition: {
+        operation: "agent.kill",
+        targetKind: "agent",
+        targetId: "child",
+        phase: "succeeded",
+      },
     });
 
     const foreign = await request("/agents/teammates/stop", "other-child");
@@ -2526,6 +2549,155 @@ describe("MetadataServer threads API", () => {
     expect(foreign.status).toBe(404);
     expect(foreignBody.error).toContain("not attached");
     expect(calls).toEqual(["stop:child", "resume:child", "kill:child"]);
+  });
+
+  it("returns canonical lifecycle transitions for mutation responses", async () => {
+    server?.stop();
+    rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    const canonicalRepoRoot = realpathSync(repoRoot);
+    let resolveCreateWorktree: (() => void) | null = null;
+    const featureAPath = join(canonicalRepoRoot, ".aimux", "worktrees", "feature-a");
+    const featureSyncPath = join(canonicalRepoRoot, ".aimux", "worktrees", "feature-sync");
+    server = new MetadataServer({
+      projectRoot: repoRoot,
+      desktop: {
+        resumeAgent: ({ sessionId }) => ({ sessionId, status: "running" as const }),
+        createService: ({ serviceId }) => ({ serviceId: serviceId ?? "svc-1" }),
+        stopService: ({ serviceId }) => ({ serviceId, status: "stopped" as const }),
+        resumeService: () => {
+          throw new Error("resume failed");
+        },
+        createWorktree: ({ name }) => {
+          if (name === "feature-sync") {
+            return { path: featureSyncPath, status: "creating" };
+          }
+          return new Promise<{ path: string }>((resolve) => {
+            resolveCreateWorktree = () => resolve({ path: join(repoRoot, ".aimux", "worktrees", name) });
+          });
+        },
+        removeWorktree: () => {
+          throw new Error("remove failed");
+        },
+        graveyardWorktree: ({ path }) => ({ path, status: "graveyarded" as const }),
+      },
+      lifecycle: {
+        spawnAgent: ({ sessionId }) => ({ sessionId: sessionId ?? "claude-new" }),
+        stopAgent: ({ sessionId }) => ({ sessionId, status: "offline" as const }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const post = async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    };
+
+    const spawn = await post(PROJECT_API_ROUTES.agents.spawn, { tool: "claude" });
+    expect(spawn.status).toBe(200);
+    expect(spawn.body.transition).toMatchObject({
+      operation: "agent.spawn",
+      targetKind: "agent",
+      targetId: "claude-new",
+      phase: "succeeded",
+      operationId: expect.any(String),
+      startedAt: expect.any(String),
+      updatedAt: expect.any(String),
+    });
+
+    const resume = await post(PROJECT_API_ROUTES.agents.resume, { sessionId: "claude-old" });
+    expect(resume.body.transition).toMatchObject({
+      operation: "agent.resume",
+      targetKind: "agent",
+      targetId: "claude-old",
+      phase: "succeeded",
+    });
+
+    const service = await post(PROJECT_API_ROUTES.services.stop, { serviceId: "svc-1" });
+    expect(service.body.transition).toMatchObject({
+      operation: "service.stop",
+      targetKind: "service",
+      targetId: "svc-1",
+      phase: "succeeded",
+    });
+
+    const pendingWorktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "feature-a" });
+    expect(pendingWorktree.status).toBe(202);
+    expect(pendingWorktree.body).toMatchObject({
+      ok: true,
+      path: featureAPath,
+      status: "creating",
+      transition: {
+        operation: "worktree.create",
+        targetKind: "worktree",
+        targetId: "feature-a",
+        targetPath: featureAPath,
+        phase: "settling",
+      },
+    });
+    resolveCreateWorktree?.();
+
+    const syncPendingWorktree = await post(PROJECT_API_ROUTES.worktreeActions.create, { name: "feature-sync" });
+    expect(syncPendingWorktree.status).toBe(202);
+    expect(syncPendingWorktree.body).toMatchObject({
+      ok: true,
+      path: featureSyncPath,
+      status: "creating",
+      transition: {
+        operation: "worktree.create",
+        targetKind: "worktree",
+        targetId: "feature-sync",
+        targetPath: featureSyncPath,
+        phase: "settling",
+      },
+    });
+
+    const graveyardWorktree = await post(PROJECT_API_ROUTES.worktreeActions.graveyard, {
+      path: "/repo/.aimux/worktrees/feature-a",
+    });
+    expect(graveyardWorktree.body.transition).toMatchObject({
+      operation: "worktree.graveyard",
+      targetKind: "worktree",
+      targetPath: "/repo/.aimux/worktrees/feature-a",
+      phase: "succeeded",
+    });
+
+    const failedService = await post(PROJECT_API_ROUTES.services.resume, { serviceId: "missing-service" });
+    expect(failedService.status).toBe(500);
+    expect(failedService.body).toMatchObject({
+      ok: false,
+      error: "resume failed",
+      transition: {
+        operation: "service.resume",
+        targetKind: "service",
+        targetId: "missing-service",
+        phase: "failed",
+        error: "resume failed",
+      },
+    });
+
+    const failedRemoveWorktree = await post(PROJECT_API_ROUTES.worktreeActions.remove, {
+      path: "/repo/.aimux/worktrees/missing-feature",
+    });
+    expect(failedRemoveWorktree.status).toBe(422);
+    expect(failedRemoveWorktree.body).toMatchObject({
+      ok: false,
+      error: "remove failed",
+      transition: {
+        operation: "worktree.remove",
+        targetKind: "worktree",
+        targetPath: "/repo/.aimux/worktrees/missing-feature",
+        phase: "failed",
+        error: "remove failed",
+      },
+    });
   });
 
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
@@ -2804,6 +2976,12 @@ describe("MetadataServer threads API", () => {
         description: "Review the patch",
         prompt: "Review the patch and report blockers first.",
       },
+      transition: {
+        operation: "agent.spawn",
+        targetKind: "agent",
+        targetId: "reviewer-1",
+        phase: "succeeded",
+      },
     });
     expect(body.thread?.kind).toBe("task");
     expect(body.thread?.waitingOn).toEqual(["reviewer-1"]);
@@ -2919,9 +3097,14 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId: "claude-1" }),
     });
-    const body = (await res.json()) as { ok: boolean; sessionId: string; status: string };
+    const body = (await res.json()) as Record<string, unknown>;
     expect(res.ok).toBe(true);
-    expect(body).toEqual({ ok: true, sessionId: "claude-1", status: "running" });
+    expect(body).toMatchObject({
+      ok: true,
+      sessionId: "claude-1",
+      status: "running",
+      transition: { operation: "agent.resume", targetKind: "agent", targetId: "claude-1" },
+    });
   });
 
   it("persists the current live window as the preferred dashboard selection when reopening dashboard", async () => {
