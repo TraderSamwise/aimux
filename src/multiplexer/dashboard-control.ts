@@ -59,6 +59,7 @@ import {
   type RuntimeGuardState,
 } from "./runtime-guard.js";
 import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
+import { recordDashboardRepairNotice } from "./repair-notices.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
@@ -513,7 +514,15 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
-    showDashboardFooterFlash(host, "Aimux repair already running", 3);
+    recordDashboardRepairNotice(
+      host,
+      {
+        kind: "runtime-guard-repair",
+        phase: "blocked",
+        message: "Aimux repair already running",
+      },
+      { ticks: 3 },
+    );
     renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
     return;
   }
@@ -527,6 +536,15 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     spinnerFrame: 0,
     startedAt: Date.now(),
   };
+  recordDashboardRepairNotice(
+    host,
+    {
+      kind: "runtime-guard-repair",
+      phase: "started",
+      message: "Aimux repair started",
+    },
+    { flash: false },
+  );
   renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
 
   let settled = false;
@@ -554,6 +572,16 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.dashboardBusyState = null;
       host.runtimeGuardRepairBusy = false;
     }
+    recordDashboardRepairNotice(
+      host,
+      {
+        kind: "runtime-guard-repair",
+        phase: "failed",
+        message: options.title ?? "Aimux repair failed",
+        error: message,
+      },
+      { flash: false },
+    );
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     showRuntimeGuardRepairFailure(host, options.title ?? "Aimux repair failed", message);
   };
@@ -594,6 +622,15 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.runtimeGuardRepairBusy = false;
     }
     host.runtimeGuardState = { kind: "ok" };
+    recordDashboardRepairNotice(
+      host,
+      {
+        kind: "runtime-guard-repair",
+        phase: "succeeded",
+        message: "Aimux repair complete",
+      },
+      { flash: isDashboardLifecycleCurrent(host, lifecycle) && !shouldReloadDashboard },
+    );
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     if (shouldReloadDashboard) {
       scheduleDashboardReloadAfterRuntimeGuardRepair(host, projectRoot);

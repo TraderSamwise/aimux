@@ -1340,6 +1340,13 @@ describe("startRuntimeGuardRepair", () => {
       }),
     );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
+    expect(host.dashboardRepairNotices).toMatchObject([
+      {
+        kind: "runtime-guard-repair",
+        phase: "started",
+        message: "Aimux repair started",
+      },
+    ]);
   });
 
   it("reloads a self-drifted dashboard only after repair cleanup", async () => {
@@ -1372,6 +1379,18 @@ describe("startRuntimeGuardRepair", () => {
     expect(existsSync(lockPath)).toBe(false);
     expect(reloadDashboardAfterRuntimeGuardRepair).toHaveBeenCalledWith("/repo/app");
     expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(renderCallsBeforeResolve);
+    expect(host.dashboardRepairNotices).toMatchObject([
+      {
+        kind: "runtime-guard-repair",
+        phase: "started",
+        message: "Aimux repair started",
+      },
+      {
+        kind: "runtime-guard-repair",
+        phase: "succeeded",
+        message: "Aimux repair complete",
+      },
+    ]);
   });
 
   it("does not block navigation while another dashboard owns the repair lock", async () => {
@@ -1400,6 +1419,13 @@ describe("startRuntimeGuardRepair", () => {
     expect(secondHost.footerFlash).toBe("Aimux repair already running");
     expect(secondHost.footerFlashTicks).toBe(3);
     expect(secondHost.runtimeGuardRepairBusy).toBe(true);
+    expect(secondHost.dashboardRepairNotices).toMatchObject([
+      {
+        kind: "runtime-guard-repair",
+        phase: "blocked",
+        message: "Aimux repair already running",
+      },
+    ]);
   });
 
   it("reclaims a repair lock owned by an exited repair process", async () => {
@@ -1518,6 +1544,19 @@ describe("startRuntimeGuardRepair", () => {
 
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair failed", ["repair failed"]);
+    expect(host.dashboardRepairNotices).toMatchObject([
+      {
+        kind: "runtime-guard-repair",
+        phase: "started",
+        message: "Aimux repair started",
+      },
+      {
+        kind: "runtime-guard-repair",
+        phase: "failed",
+        message: "Aimux repair failed",
+        error: "repair failed",
+      },
+    ]);
   });
 
   it("fails locally and keeps the dashboard repair lock while guarded repair hangs", async () => {
