@@ -4801,7 +4801,8 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree remove not supported by this service" });
           return;
         }
-        const resultPromise = Promise.resolve(this.options.desktop.removeWorktree(body));
+        const desktop = this.options.desktop;
+        const resultPromise = Promise.resolve().then(() => desktop.removeWorktree!(body));
         const earlyResult:
           | { kind: "resolved"; result: any }
           | { kind: "rejected"; error: unknown }
@@ -4829,7 +4830,7 @@ export class MetadataServer {
         }
         if (earlyResult.kind === "rejected") {
           const message = earlyResult.error instanceof Error ? earlyResult.error.message : String(earlyResult.error);
-          send(res, 500, {
+          send(res, 422, {
             ok: false,
             error: message,
             transition: buildLifecycleTransition({

@@ -2565,6 +2565,9 @@ describe("MetadataServer threads API", () => {
           new Promise<{ path: string }>((resolve) => {
             resolveCreateWorktree = () => resolve({ path: `/repo/.aimux/worktrees/${name}` });
           }),
+        removeWorktree: () => {
+          throw new Error("remove failed");
+        },
         graveyardWorktree: ({ path }) => ({ path, status: "graveyarded" as const }),
       },
       lifecycle: {
@@ -2645,6 +2648,22 @@ describe("MetadataServer threads API", () => {
         targetId: "missing-service",
         phase: "failed",
         error: "resume failed",
+      },
+    });
+
+    const failedRemoveWorktree = await post(PROJECT_API_ROUTES.worktreeActions.remove, {
+      path: "/repo/.aimux/worktrees/missing-feature",
+    });
+    expect(failedRemoveWorktree.status).toBe(422);
+    expect(failedRemoveWorktree.body).toMatchObject({
+      ok: false,
+      error: "remove failed",
+      transition: {
+        operation: "worktree.remove",
+        targetKind: "worktree",
+        targetPath: "/repo/.aimux/worktrees/missing-feature",
+        phase: "failed",
+        error: "remove failed",
       },
     });
   });
