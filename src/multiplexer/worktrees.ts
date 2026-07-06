@@ -25,6 +25,10 @@ import {
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type WorktreeHost = any;
+type DashboardWorktreeCreateSettleResult =
+  | { status: "settled" }
+  | { status: "pending" }
+  | { status: "failed"; error: Error };
 
 function postWorktreeMutation(
   host: WorktreeHost,
@@ -44,12 +48,6 @@ interface DashboardWorktreeMutationOptions {
   settle: (modelLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
-}
-
-function assertDashboardWorktreeMutationSettled(settled: boolean, action: PendingWorktreeActionKind): void {
-  if (!settled) {
-    throw new Error(`worktree ${action} did not settle before timing out`);
-  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -91,6 +89,54 @@ function sameWorktreePath(left: string | undefined, right: string | undefined): 
   return canonicalWorktreePath(left) === canonicalWorktreePath(right);
 }
 
+function hasPendingDashboardWorktreeAction(
+  host: WorktreeHost,
+  path: string | undefined,
+  kind: PendingWorktreeActionKind,
+): boolean {
+  return host.dashboardPendingActions?.getWorktreeAction?.(path) === kind;
+}
+
+function clearPendingDashboardWorktreeAction(
+  host: WorktreeHost,
+  path: string | undefined,
+  token: number | undefined,
+): boolean {
+  if (typeof token === "number") {
+    const clearIfToken = host.dashboardPendingActions?.clearWorktreeActionIfToken;
+    if (typeof clearIfToken === "function") {
+      if (clearIfToken.call(host.dashboardPendingActions, path, token)) {
+        host.reapplyDashboardPendingActions?.();
+        return true;
+      }
+      return false;
+    }
+  }
+  host.dashboardPendingActions.clearWorktreeAction(path);
+  host.reapplyDashboardPendingActions?.();
+  return true;
+}
+
+function refreshOptimisticDashboardWorktreeCreate(host: WorktreeHost): void {
+  host.reapplyDashboardPendingActions?.();
+  if (Array.isArray(host.dashboardWorktreeGroupsCache)) {
+    sortDashboardWorktrees(host.dashboardWorktreeGroupsCache);
+    host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
+  }
+}
+
+function isRecoverableWorktreeRequestError(error: unknown): boolean {
+  const recoverable = (error as { tuiApiRecoverable?: unknown })?.tuiApiRecoverable;
+  if (recoverable === true) return true;
+  if (recoverable === false) return false;
+  const status = (error as { status?: unknown })?.status;
+  if (typeof status === "number") {
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  return code === "ETIMEDOUT" || code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EPIPE";
+}
+
 async function waitForStableDashboardWorktreeAbsence(
   host: WorktreeHost,
   path: string,
@@ -117,24 +163,86 @@ async function waitForStableDashboardWorktreeAbsence(
 async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardWorktreeMutationOptions): Promise<void> {
   const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
-  host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction, {
+  const token = host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction, {
     worktreeSeed: opts.worktreeSeed,
   });
   host.reapplyDashboardPendingActions?.();
   renderDashboardIfCurrent(host, lifecycle, () => host.renderDashboard());
+  const clearPending = () => clearPendingDashboardWorktreeAction(host, opts.pendingPath, token);
   try {
     await opts.request();
-    assertDashboardWorktreeMutationSettled(await opts.settle(modelLifecycle), opts.pendingAction);
-    host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
-    host.reapplyDashboardPendingActions?.();
+    if (!isDashboardLifecycleCurrent(host, lifecycle)) {
+      clearPending();
+      return;
+    }
+    if (!(await opts.settle(modelLifecycle))) {
+      scheduleDashboardWorktreeMutationReconcile(host, {
+        ...opts,
+        modelLifecycle,
+        renderLifecycle: lifecycle,
+        clearPending,
+      });
+      return;
+    }
+    clearPending();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     opts.onSuccess?.();
   } catch (error) {
-    host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
-    host.reapplyDashboardPendingActions?.();
+    if (isRecoverableWorktreeRequestError(error)) {
+      scheduleDashboardWorktreeMutationReconcile(host, {
+        ...opts,
+        modelLifecycle,
+        renderLifecycle: lifecycle,
+        clearPending,
+      });
+      return;
+    }
+    clearPending();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     opts.onError?.(error);
   }
+}
+
+function scheduleDashboardWorktreeMutationReconcile(
+  host: WorktreeHost,
+  opts: DashboardWorktreeMutationOptions & {
+    modelLifecycle: DashboardLifecycleToken;
+    renderLifecycle: DashboardLifecycleToken;
+    clearPending: () => void;
+  },
+): void {
+  const startedAt = Date.now();
+  const maxReconcileMs = host.dashboardWorktreeMutationReconcileMaxMs ?? 60_000;
+  if (isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+    host.footerFlash = `worktree ${opts.pendingAction} is still settling`;
+    host.footerFlashTicks = 4;
+    host.renderDashboard?.();
+  }
+  void (async () => {
+    while (
+      Date.now() - startedAt < maxReconcileMs &&
+      hasPendingDashboardWorktreeAction(host, opts.pendingPath, opts.pendingAction)
+    ) {
+      await sleep(500);
+      if (!(await opts.settle(opts.modelLifecycle))) continue;
+      opts.clearPending();
+      if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+      opts.onSuccess?.();
+      return;
+    }
+    if (!hasPendingDashboardWorktreeAction(host, opts.pendingPath, opts.pendingAction)) return;
+    opts.clearPending();
+    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+    opts.onError?.(
+      new Error(
+        `worktree ${opts.pendingAction} is still not reflected by the project service after extended reconciliation`,
+      ),
+    );
+  })().catch((error: unknown) => {
+    opts.clearPending();
+    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+    opts.onError?.(error);
+  });
 }
 
 function sortDashboardWorktrees(worktrees: Array<any>): void {
@@ -156,9 +264,12 @@ function getOptimisticWorktreeCreatedAt(host: WorktreeHost, path: string): strin
   return createdAt;
 }
 
-function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string): string {
+function showOptimisticDashboardWorktreeCreate(
+  host: WorktreeHost,
+  name: string,
+): { targetPath: string; token?: number } {
   const targetPath = getWorktreeCreatePath(name);
-  host.dashboardPendingActions.setWorktreeAction(targetPath, "creating", {
+  const token = host.dashboardPendingActions.setWorktreeAction(targetPath, "creating", {
     worktreeSeed: {
       name,
       branch: name,
@@ -175,7 +286,7 @@ function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string)
   host.dashboardState.focusedWorktreePath = targetPath;
   host.dashboardUiStateStore.markSelectionDirty();
   host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
-  return targetPath;
+  return { targetPath, token: typeof token === "number" ? token : undefined };
 }
 
 function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): void {
@@ -235,55 +346,48 @@ async function waitForRenderedDashboardWorktreeCreate(
   timeoutMs = 180_000,
   modelLifecycle?: DashboardLifecycleToken,
   renderLifecycle?: DashboardLifecycleToken,
-): Promise<{ ok: true } | { ok: false; error: Error }> {
+): Promise<DashboardWorktreeCreateSettleResult> {
   const deadline = Date.now() + timeoutMs;
-  const snapshotUnavailableTimeoutMs = host.dashboardWorktreeSettlementSnapshotUnavailableTimeoutMs ?? 5_000;
-  let snapshotUnavailableSince: number | undefined;
   while (Date.now() < deadline) {
     if (!isDashboardLifecycleCurrent(host, modelLifecycle)) {
-      return { ok: true };
+      return { status: "settled" };
     }
     const existingFailure = findDashboardWorktreeCreateFailure(host, path);
     if (existingFailure) {
       const message = typeof existingFailure.message === "string" ? existingFailure.message : "worktree create failed";
-      return { ok: false, error: new Error(message) };
+      return { status: "failed", error: new Error(message) };
     }
     if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
-      return { ok: true };
+      return { status: "settled" };
     }
     if (!(await refreshDashboardModelForWorktreeSettlement(host, modelLifecycle))) {
       const failure = findDashboardWorktreeCreateFailure(host, path);
       if (failure) {
         const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
-        return { ok: false, error: new Error(message) };
+        return { status: "failed", error: new Error(message) };
       }
       if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
-        return { ok: true };
-      }
-      snapshotUnavailableSince ??= Date.now();
-      if (Date.now() - snapshotUnavailableSince >= snapshotUnavailableTimeoutMs) {
-        return { ok: false, error: new Error("project service snapshot unavailable") };
+        return { status: "settled" };
       }
       await sleep(250);
       continue;
     }
-    snapshotUnavailableSince = undefined;
     const failure = findDashboardWorktreeCreateFailure(host, path);
     if (failure) {
       const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
-      return { ok: false, error: new Error(message) };
+      return { status: "failed", error: new Error(message) };
     }
     const group = findRenderedWorktreeForSettlement(host, path);
     if (isDashboardWorktreeCreateSettled(group)) {
-      return { ok: true };
+      return { status: "settled" };
     }
     if (isDashboardLifecycleCurrent(host, renderLifecycle)) {
-      showOptimisticDashboardWorktreeCreate(host, name);
+      refreshOptimisticDashboardWorktreeCreate(host);
       host.renderDashboard?.();
     }
     await sleep(250);
   }
-  return { ok: false, error: new Error("worktree creating did not settle before timing out") };
+  return { status: "pending" };
 }
 
 async function refreshDashboardWorktreeCreateFailure(
@@ -298,6 +402,89 @@ async function refreshDashboardWorktreeCreateFailure(
     if (findDashboardWorktreeCreateFailure(host, path) || Date.now() >= deadline) return;
     await sleep(100);
   }
+}
+
+async function finishDashboardWorktreeCreateSuccess(
+  host: WorktreeHost,
+  targetPath: string,
+  token: number | undefined,
+  settleLifecycle: DashboardLifecycleToken,
+  uiLifecycle: DashboardLifecycleToken,
+): Promise<void> {
+  if (!clearPendingDashboardWorktreeAction(host, targetPath, token)) return;
+  host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
+  await refreshDashboardModelThroughApi(host, { force: true, lifecycle: settleLifecycle });
+  if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle)) return;
+  host.dashboardState.focusedWorktreePath = targetPath;
+  host.dashboardUiStateStore.markSelectionDirty();
+  host.renderDashboard();
+}
+
+function scheduleDashboardWorktreeCreateReconcile(
+  host: WorktreeHost,
+  opts: {
+    name: string;
+    targetPath: string;
+    token: number | undefined;
+    settleLifecycle: DashboardLifecycleToken;
+    uiLifecycle: DashboardLifecycleToken;
+  },
+): void {
+  const startedAt = Date.now();
+  const maxReconcileMs = host.dashboardWorktreeMutationReconcileMaxMs ?? 60_000;
+  if (isDashboardLifecycleCurrent(host, opts.uiLifecycle)) {
+    host.footerFlash = "worktree creating is still settling";
+    host.footerFlashTicks = 4;
+    host.renderDashboard?.();
+  }
+  void (async () => {
+    while (
+      Date.now() - startedAt < maxReconcileMs &&
+      hasPendingDashboardWorktreeAction(host, opts.targetPath, "creating")
+    ) {
+      await sleep(500);
+      const result = await waitForRenderedDashboardWorktreeCreate(
+        host,
+        opts.name,
+        opts.targetPath,
+        1_000,
+        opts.settleLifecycle,
+        opts.uiLifecycle,
+      );
+      if (result.status === "pending") continue;
+      if (result.status === "failed") {
+        if (!clearPendingDashboardWorktreeAction(host, opts.targetPath, opts.token)) return;
+        await refreshDashboardWorktreeCreateFailure(host, opts.targetPath, opts.settleLifecycle);
+        if (!isDashboardLifecycleCurrent(host, opts.uiLifecycle)) return;
+        showDashboardWorktreeCreateFailure(host, opts.name, opts.targetPath, result.error);
+        return;
+      }
+      debug(`worktree created from UI: ${opts.name}`, "worktree");
+      await finishDashboardWorktreeCreateSuccess(
+        host,
+        opts.targetPath,
+        opts.token,
+        opts.settleLifecycle,
+        opts.uiLifecycle,
+      );
+      return;
+    }
+    if (!hasPendingDashboardWorktreeAction(host, opts.targetPath, "creating")) return;
+    if (!clearPendingDashboardWorktreeAction(host, opts.targetPath, opts.token)) return;
+    await refreshDashboardWorktreeCreateFailure(host, opts.targetPath, opts.settleLifecycle);
+    if (!isDashboardLifecycleCurrent(host, opts.uiLifecycle)) return;
+    showDashboardWorktreeCreateFailure(
+      host,
+      opts.name,
+      opts.targetPath,
+      new Error("worktree creating is still not reflected by the project service after extended reconciliation"),
+    );
+  })().catch(async (error: unknown) => {
+    if (!clearPendingDashboardWorktreeAction(host, opts.targetPath, opts.token)) return;
+    await refreshDashboardWorktreeCreateFailure(host, opts.targetPath, opts.settleLifecycle);
+    if (!isDashboardLifecycleCurrent(host, opts.uiLifecycle)) return;
+    showDashboardWorktreeCreateFailure(host, opts.name, opts.targetPath, error);
+  });
 }
 
 export function showWorktreeCreatePrompt(host: WorktreeHost): void {
@@ -348,7 +535,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           host.showDashboardError("Failed to create worktree", ["Worktree creation requires the project service."]);
           return;
         }
-        const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
+        const { targetPath, token } = showOptimisticDashboardWorktreeCreate(host, name);
         const settleLifecycle = captureDashboardLifecycle(host);
         const uiLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
         host.renderDashboard();
@@ -366,26 +553,25 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
               host,
               name,
               targetPath,
-              180_000,
+              host.dashboardWorktreeInitialSettleMs ?? 10_000,
               settleLifecycle,
               uiLifecycle,
             );
-            if (!result.ok) {
+            if (result.status === "pending") {
+              scheduleDashboardWorktreeCreateReconcile(host, { name, targetPath, token, settleLifecycle, uiLifecycle });
+              return;
+            }
+            if (result.status === "failed") {
               throw result.error;
             }
             debug(`worktree created from UI: ${name}`, "worktree");
-            host.dashboardPendingActions.clearWorktreeAction(targetPath);
-            host.reapplyDashboardPendingActions?.();
-            host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
-            await refreshDashboardModelThroughApi(host, { force: true, lifecycle: settleLifecycle });
-            if (!isDashboardLifecycleCurrent(host, uiLifecycle) || !isDashboardLifecycleCurrent(host, settleLifecycle))
-              return;
-            host.dashboardState.focusedWorktreePath = targetPath;
-            host.dashboardUiStateStore.markSelectionDirty();
-            host.renderDashboard();
+            await finishDashboardWorktreeCreateSuccess(host, targetPath, token, settleLifecycle, uiLifecycle);
           } catch (err) {
-            host.dashboardPendingActions.clearWorktreeAction(targetPath);
-            host.reapplyDashboardPendingActions?.();
+            if (isRecoverableWorktreeRequestError(err)) {
+              scheduleDashboardWorktreeCreateReconcile(host, { name, targetPath, token, settleLifecycle, uiLifecycle });
+              return;
+            }
+            if (!clearPendingDashboardWorktreeAction(host, targetPath, token)) return;
             host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
             await refreshDashboardWorktreeCreateFailure(host, targetPath, settleLifecycle);

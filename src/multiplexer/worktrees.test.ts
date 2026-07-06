@@ -24,17 +24,35 @@ import { beginWorktreeRemoval, handleWorktreeInputKey, handleWorktreeRemoveConfi
 function createPendingActionsStore() {
   const state = new Map<string, string | null>();
   const seeds = new Map<string, any>();
+  const tokens = new Map<string, number>();
+  let nextToken = 0;
   return {
     state,
     setWorktreeAction(path: string | undefined, value: string, opts?: { worktreeSeed?: any }) {
       const key = `worktree:${path ?? "__main__"}`;
+      const token = ++nextToken;
       state.set(key, value);
+      tokens.set(key, token);
       if (opts?.worktreeSeed) seeds.set(key, opts.worktreeSeed);
+      return token;
     },
     clearWorktreeAction(path: string | undefined) {
       const key = `worktree:${path ?? "__main__"}`;
       state.set(key, null);
       seeds.delete(key);
+      tokens.delete(key);
+    },
+    clearWorktreeActionIfToken(path: string | undefined, token: number) {
+      const key = `worktree:${path ?? "__main__"}`;
+      if (tokens.get(key) !== token) return false;
+      state.set(key, null);
+      seeds.delete(key);
+      tokens.delete(key);
+      return true;
+    },
+    getWorktreeAction(path: string | undefined) {
+      const value = state.get(`worktree:${path ?? "__main__"}`);
+      return value || undefined;
     },
     applyToWorktrees(worktrees: any[]) {
       const seen = new Set(worktrees.map((worktree) => `worktree:${worktree.path ?? "__main__"}`));
@@ -678,9 +696,10 @@ describe("worktrees dashboard mutation protocol", () => {
     }
   });
 
-  it("clears project-service worktree create pending when the service snapshot is unreachable", async () => {
+  it("keeps project-service worktree creates pending while snapshots are temporarily unreachable", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();
+    let refreshCount = 0;
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -692,20 +711,89 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
-      dashboardWorktreeSettlementSnapshotUnavailableTimeoutMs: 0,
-      refreshDashboardModelFromService: vi.fn(async () => false),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount < 3) {
+          applyRawWorktrees(host, pending, []);
+          return false;
+        }
+        applyRawWorktrees(host, pending, [
+          {
+            name: "demo",
+            branch: "demo",
+            path: "/repo/.aimux/worktrees/demo",
+            sessions: [],
+            services: [],
+          },
+        ]);
+        return true;
+      }),
       showDashboardError: vi.fn(),
     };
     attachPendingReapply(host, pending);
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
-    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled());
+    await vi.waitFor(() => expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull());
 
-    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
-    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to create "demo"', [
-      "Path: /repo/.aimux/worktrees/demo",
-      "Error: project service snapshot unavailable",
-    ]);
+    expect(refreshCount).toBeGreaterThanOrEqual(3);
+    expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({ name: "demo", branch: "demo" });
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("moves slow worktree creates into background reconciliation instead of failing", async () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    let ready = false;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeMutationReconcileMaxMs: 5_000,
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      refreshDashboardModelFromService: vi.fn(async () => {
+        applyRawWorktrees(
+          host,
+          pending,
+          ready
+            ? [
+                {
+                  name: "demo",
+                  branch: "demo",
+                  path: "/repo/.aimux/worktrees/demo",
+                  sessions: [],
+                  services: [],
+                },
+              ]
+            : [],
+        );
+        return ready;
+      }),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.footerFlash).toBe("worktree creating is still settling"));
+
+    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBe("creating");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+
+    ready = true;
+    await vi.waitFor(() => expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull(), {
+      timeout: 3000,
+    });
+
+    expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({ name: "demo", branch: "demo" });
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("surfaces async project-service worktree create failures instead of dropping the pending row", async () => {

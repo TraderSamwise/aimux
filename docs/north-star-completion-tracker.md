@@ -149,8 +149,9 @@ Remaining:
   refresh failures.
 - [x] Prevent stale TUI agent/service refreshes from clearing pending rows
   before matching settlement.
-- [ ] Extend the same settlement contract to worktree operations and app/mobile
-  lifecycle views.
+- [x] Extend the same settlement contract to TUI worktree create/graveyard
+  operations.
+- [ ] Extend the same settlement contract to app/mobile lifecycle views.
 - [ ] Add fast churn tests for create/start/stop/revive/retry in TUI and app
   stores.
 - [ ] Document which transitions are tmux-substrate actions versus product-state
