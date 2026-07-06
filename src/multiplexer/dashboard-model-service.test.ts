@@ -105,6 +105,28 @@ describe("refreshDashboardModelFromService", () => {
     expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
   });
 
+  it("can refresh service state for background settlement while inactive", async () => {
+    const host = hostDouble();
+    host.mode = "session";
+    host.getFromProjectService.mockResolvedValueOnce(desktopPayload("fresh"));
+
+    await expect(refreshDashboardModelFromService(host, true, { allowInactive: true })).resolves.toBe(true);
+
+    expect(host.getFromProjectService).toHaveBeenCalledWith("/desktop-state?force=1", { timeoutMs: 5000 });
+    expect(host.dashboardSessionsCache.map((session: any) => session.id)).toEqual(["fresh"]);
+    expect(host.dashboardModelServiceRefreshError).toBeUndefined();
+  });
+
+  it("does not run ordinary service refreshes while inactive", async () => {
+    const host = hostDouble();
+    host.mode = "session";
+
+    await expect(refreshDashboardModelFromService(host, true)).resolves.toBe(false);
+
+    expect(host.getFromProjectService).not.toHaveBeenCalled();
+    expect(host.dashboardSessionsCache).toBeUndefined();
+  });
+
   it("probes the runtime guard after a successful refresh only when currently guarded", async () => {
     const host = hostDouble();
     host.runtimeGuardState = { kind: "stale", reason: "service-mismatch" };

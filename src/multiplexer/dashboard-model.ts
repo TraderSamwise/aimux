@@ -37,6 +37,7 @@ import {
 type DashboardModelHost = any;
 export interface DashboardModelRefreshOptions {
   lifecycle?: DashboardLifecycleToken;
+  allowInactive?: boolean;
 }
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
 interface DashboardStateSnapshotOptions {
@@ -1042,7 +1043,7 @@ export async function refreshDashboardModelFromService(
   force = false,
   options: DashboardModelRefreshOptions = {},
 ): Promise<boolean> {
-  if (host.mode !== "dashboard") return false;
+  if (host.mode !== "dashboard" && !options.allowInactive) return false;
   if (!force && host.dashboardModelRefreshedAt > 0 && Date.now() - host.dashboardModelRefreshedAt < 750) {
     return false;
   }

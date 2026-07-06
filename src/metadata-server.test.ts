@@ -266,6 +266,32 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
+  it("returns a terminal worktree create error for synchronous desktop failures", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        failureMessage: "branch already exists",
+        getState: () => ({ sessions: [] }),
+        createWorktree(this: { failureMessage: string }) {
+          throw new Error(this.failureMessage);
+        },
+      } as any,
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}${PROJECT_API_ROUTES.worktreeActions.create}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "demo" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(json).toMatchObject({ ok: false, error: "branch already exists" });
+  });
+
   it("does not record long-lived stream routes as slow requests", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

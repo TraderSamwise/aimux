@@ -101,6 +101,24 @@ describe("dashboard-api-client", () => {
     await expect(refreshDashboardModelThroughApi(host, { force: true })).resolves.toBe(false);
   });
 
+  it("allows model settlement refreshes while inactive even with a stale render lifecycle", async () => {
+    const host: any = {
+      mode: "session",
+      dashboardInputEpoch: 2,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+    };
+
+    await expect(
+      refreshDashboardModelThroughApi(host, {
+        force: true,
+        allowInactive: true,
+        lifecycle: { mode: "dashboard", inputEpoch: 1, requiresInputEpoch: true },
+      }),
+    ).resolves.toBe(true);
+
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, { allowInactive: true });
+  });
+
   it("mutates through the shared TUI API runtime", async () => {
     const host: any = {
       getFromProjectService: vi.fn(),
