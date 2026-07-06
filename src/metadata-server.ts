@@ -4562,8 +4562,8 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree create not supported by this service" });
           return;
         }
-        const createWorktree = this.options.desktop.createWorktree;
-        const resultPromise = Promise.resolve().then(() => createWorktree(body));
+        const desktop = this.options.desktop;
+        const resultPromise = Promise.resolve().then(() => desktop.createWorktree!(body));
         const earlyResult:
           | { kind: "resolved"; result: any }
           | { kind: "rejected"; error: unknown }
