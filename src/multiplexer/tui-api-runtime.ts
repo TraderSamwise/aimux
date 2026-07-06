@@ -8,6 +8,7 @@ export interface TuiApiRequestOptions {
 export interface TuiApiRuntimeOptions {
   request: TuiApiRequestTransport;
   mutate?: TuiApiMutationTransport;
+  criticalResources?: readonly string[];
   onConnectionStateChange?: (state: TuiApiConnectionState) => void;
   onRequestFailure?: (error: unknown) => void;
   shouldRecoverFromError?: (error: unknown) => boolean;
@@ -48,6 +49,10 @@ export interface TuiApiMutationResult<T> {
 }
 
 interface ResourceState<T = unknown> extends TuiApiResourceSnapshot<T> {
+  lastRefresh?: {
+    load: () => Promise<T>;
+    opts: TuiApiRefreshOptions;
+  };
   pendingPromise?: Promise<TuiApiRefreshResult<T>>;
 }
 
@@ -56,12 +61,15 @@ export const TUI_API_RECOVERY_COOLDOWN_MS = 1000;
 
 export class TuiApiRuntime {
   private readonly resources = new Map<string, ResourceState>();
+  private readonly criticalResources: ReadonlySet<string>;
   private state: TuiApiConnectionState = "connected";
   private disposed = false;
   private requestGeneration = 0;
   private lastSuccessfulRequestGeneration = 0;
 
-  constructor(private readonly options: TuiApiRuntimeOptions) {}
+  constructor(private readonly options: TuiApiRuntimeOptions) {
+    this.criticalResources = new Set(options.criticalResources ?? []);
+  }
 
   getConnectionState(): TuiApiConnectionState {
     return this.state;
@@ -107,8 +115,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, generation);
-      this.setConnectionState("connected");
+      this.markRequestSuccess(generation);
       return { ok: true, value };
     } catch (error) {
       if (this.disposed) {
@@ -142,8 +149,7 @@ export class TuiApiRuntime {
       if (this.disposed) {
         return { ok: false, error: new Error("TUI API runtime disposed") };
       }
-      this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, generation);
-      this.setConnectionState("connected");
+      this.markRequestSuccess(generation);
       return { ok: true, value };
     } catch (error) {
       if (this.disposed) {
@@ -169,10 +175,10 @@ export class TuiApiRuntime {
     if (state.pendingPromise && !opts.supersede) return state.pendingPromise;
 
     const generation = state.generation + 1;
+    state.lastRefresh = { load, opts };
     state.generation = generation;
     state.pending = true;
     state.stale = state.value !== undefined;
-    state.error = undefined;
     const requestGeneration = ++this.requestGeneration;
 
     const promise = load()
@@ -186,8 +192,7 @@ export class TuiApiRuntime {
         state.stale = false;
         state.updatedAt = Date.now();
         state.pendingPromise = undefined;
-        this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, requestGeneration);
-        this.setConnectionState("connected");
+        this.markRequestSuccess(requestGeneration);
         return { ok: true, value, stale: false, generation };
       })
       .catch((error: unknown) => {
@@ -199,7 +204,7 @@ export class TuiApiRuntime {
           state.pending = false;
           state.stale = state.value !== undefined;
           state.pendingPromise = undefined;
-          if (this.shouldRecoverFromRequestFailure(error, requestGeneration, opts)) {
+          if (this.shouldRecoverFromResourceFailure(resource, error, requestGeneration, opts)) {
             this.setConnectionState("degraded");
             this.options.onRequestFailure?.(error);
           }
@@ -209,6 +214,17 @@ export class TuiApiRuntime {
 
     state.pendingPromise = promise;
     return promise;
+  }
+
+  async refreshCriticalResources(): Promise<void> {
+    if (this.disposed) return;
+    const refreshes: Promise<TuiApiRefreshResult<unknown>>[] = [];
+    for (const resource of this.criticalResources) {
+      const state = this.resources.get(resource);
+      if (!state?.lastRefresh || state.error === undefined) continue;
+      refreshes.push(this.refresh(resource, state.lastRefresh.load, { ...state.lastRefresh.opts, supersede: true }));
+    }
+    await Promise.allSettled(refreshes);
   }
 
   dispose(): void {
@@ -240,12 +256,36 @@ export class TuiApiRuntime {
     this.options.onConnectionStateChange?.(next);
   }
 
+  private markRequestSuccess(generation: number): void {
+    this.lastSuccessfulRequestGeneration = Math.max(this.lastSuccessfulRequestGeneration, generation);
+    if (!this.hasCriticalResourceFailure()) this.setConnectionState("connected");
+  }
+
+  private hasCriticalResourceFailure(): boolean {
+    for (const resource of this.criticalResources) {
+      const state = this.resources.get(resource);
+      if (state?.error !== undefined) return true;
+    }
+    return false;
+  }
+
   private shouldRecoverFromError(error: unknown): boolean {
     return this.options.shouldRecoverFromError?.(error) ?? isRecoverableTuiApiError(error);
   }
 
   private shouldRecoverFromRequestFailure(error: unknown, generation: number, opts: TuiApiRequestOptions): boolean {
     if (opts.recoverOnFailure === false) return false;
+    return this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error);
+  }
+
+  private shouldRecoverFromResourceFailure(
+    resource: string,
+    error: unknown,
+    generation: number,
+    opts: TuiApiRequestOptions,
+  ): boolean {
+    if (opts.recoverOnFailure === false) return false;
+    if (this.criticalResources.has(resource)) return this.shouldRecoverFromError(error);
     return this.lastSuccessfulRequestGeneration <= generation && this.shouldRecoverFromError(error);
   }
 }
@@ -274,6 +314,7 @@ export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {
       opts === undefined ? host.getFromProjectService(path) : host.getFromProjectService(path, opts),
     mutate: (path, body, opts) =>
       opts === undefined ? host.postToProjectService(path, body) : host.postToProjectService(path, body, opts),
+    criticalResources: ["desktop-state"],
     onConnectionStateChange: (state) => {
       host.tuiApiConnectionState = state;
     },
@@ -312,6 +353,8 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   try {
     const result = host.refreshRuntimeGuard?.();
     if (result && typeof result.then === "function") await result;
+    const refreshResult = host.tuiApiRuntime?.refreshCriticalResources?.();
+    if (refreshResult && typeof refreshResult.then === "function") await refreshResult;
   } catch (error) {
     host.tuiApiRecoveryLastError = error;
     host.tuiApiRecoveryPending = true;
