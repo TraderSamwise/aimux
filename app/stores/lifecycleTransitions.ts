@@ -32,7 +32,7 @@ export interface SettleProjectLifecycleTransitionsInput {
   state: DesktopState;
 }
 
-const ACTIVE_PHASES = new Set(["queued", "started", "settling"]);
+const RECORDABLE_PHASES = new Set(["queued", "started", "settling", "succeeded"]);
 
 export const projectLifecycleTransitionsFamily = atomFamily((_projectPath: string) =>
   atom<AppLifecycleTransitionRecord[]>([]),
@@ -42,7 +42,7 @@ export const recordProjectLifecycleTransitionAtom = atom(
   null,
   (get, set, input: RecordProjectLifecycleTransitionInput) => {
     const transition = input.transition;
-    if (!transition || !ACTIVE_PHASES.has(transition.phase)) return;
+    if (!transition || !RECORDABLE_PHASES.has(transition.phase)) return;
     const current = get(projectLifecycleTransitionsFamily(input.projectPath));
     const record: AppLifecycleTransitionRecord = {
       transition,
@@ -82,7 +82,7 @@ export function applyProjectLifecycleTransitionsToDesktopState(
 
   for (const record of records) {
     const { transition } = record;
-    if (!ACTIVE_PHASES.has(transition.phase)) continue;
+    if (!RECORDABLE_PHASES.has(transition.phase)) continue;
     if (transition.targetKind === "agent") {
       overlayAgentTransition(sessions, record);
     } else if (transition.targetKind === "service") {
@@ -138,7 +138,7 @@ function overlayServiceTransition(
   if (!pendingAction || index < 0) return;
   services[index] = {
     ...services[index],
-    status: "offline",
+    status: servicePendingStatus(record.transition.operation),
     pendingAction,
     optimistic: true,
   };
@@ -277,6 +277,12 @@ function servicePendingAction(operation: ProjectLifecycleTransitionOperation): s
     default:
       return null;
   }
+}
+
+function servicePendingStatus(
+  operation: ProjectLifecycleTransitionOperation,
+): DesktopService["status"] {
+  return operation === "service.remove" ? "offline" : "running";
 }
 
 function agentPendingStatus(): DesktopSession["status"] {

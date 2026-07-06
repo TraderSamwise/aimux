@@ -28,6 +28,7 @@ function transition(
   targetId: string,
   targetKind: ProjectLifecycleTransition["targetKind"] = "agent",
   targetPath?: string,
+  phase: ProjectLifecycleTransition["phase"] = "started",
 ): ProjectLifecycleTransition {
   return {
     operationId: `${operation}:${targetId}`,
@@ -35,7 +36,7 @@ function transition(
     targetKind,
     targetId,
     targetPath,
-    phase: "started",
+    phase,
     startedAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -135,6 +136,30 @@ describe("project lifecycle transition projection", () => {
     expect(store.get(desktopStateFamily(projectPath))?.sessions[0]?.pendingAction).toBeUndefined();
   });
 
+  it("records succeeded transitions until fresh desktop-state proves settlement", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+
+    store.set(applyDesktopStateSuccessAtom, {
+      projectPath,
+      state: desktopState({
+        sessions: [{ id: "agent-1", label: "claude", status: "offline" }],
+      }),
+    });
+    store.set(recordProjectLifecycleTransitionAtom, {
+      projectPath,
+      transition: transition("agent.resume", "agent-1", "agent", undefined, "succeeded"),
+      label: "claude",
+      tool: "claude",
+    });
+
+    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(1);
+    expect(store.get(desktopStateFamily(projectPath))?.sessions[0]).toMatchObject({
+      id: "agent-1",
+      pendingAction: "starting",
+    });
+  });
+
   it("projects worktree create and remove transitions onto worktree state", () => {
     const state = desktopState({
       worktrees: [{ name: "old", path: "/repo/.aimux/worktrees/old", branch: "old" }],
@@ -173,22 +198,39 @@ describe("project lifecycle transition projection", () => {
     ]);
   });
 
-  it("overlays service transitions onto stale desktop-state", () => {
+  it("overlays service transitions without exposing offline actions for active transitions", () => {
     const state = desktopState({
       services: [{ id: "svc-1", label: "server", status: "running" }],
     });
 
-    const projected = applyProjectLifecycleTransitionsToDesktopState(state, [
+    const stopping = applyProjectLifecycleTransitionsToDesktopState(state, [
       {
         transition: transition("service.stop", "svc-1", "service"),
         label: "server",
       },
     ]);
+    const resuming = applyProjectLifecycleTransitionsToDesktopState(
+      desktopState({
+        services: [{ id: "svc-1", label: "server", status: "offline" }],
+      }),
+      [
+        {
+          transition: transition("service.resume", "svc-1", "service"),
+          label: "server",
+        },
+      ],
+    );
 
-    expect(projected?.services[0]).toMatchObject({
+    expect(stopping?.services[0]).toMatchObject({
       id: "svc-1",
-      status: "offline",
+      status: "running",
       pendingAction: "stopping",
+      optimistic: true,
+    });
+    expect(resuming?.services[0]).toMatchObject({
+      id: "svc-1",
+      status: "running",
+      pendingAction: "starting",
       optimistic: true,
     });
     expect(state.services[0]).toEqual({ id: "svc-1", label: "server", status: "running" });

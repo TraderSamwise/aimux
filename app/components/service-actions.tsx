@@ -36,7 +36,8 @@ export function ServiceActions({
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
-  const canAct = !!endpoint && !busy;
+  const hasPendingAction = Boolean(service.pendingAction);
+  const canAct = !!endpoint && !busy && !hasPendingAction;
 
   function runAction(
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
