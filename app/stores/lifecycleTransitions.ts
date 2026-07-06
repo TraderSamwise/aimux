@@ -32,7 +32,7 @@ export interface SettleProjectLifecycleTransitionsInput {
   state: DesktopState;
 }
 
-const RECORDABLE_PHASES = new Set(["queued", "started", "settling", "succeeded"]);
+const PROJECTABLE_PHASES = new Set(["queued", "started", "settling", "succeeded"]);
 
 export const projectLifecycleTransitionsFamily = atomFamily((_projectPath: string) =>
   atom<AppLifecycleTransitionRecord[]>([]),
@@ -42,8 +42,16 @@ export const recordProjectLifecycleTransitionAtom = atom(
   null,
   (get, set, input: RecordProjectLifecycleTransitionInput) => {
     const transition = input.transition;
-    if (!transition || !RECORDABLE_PHASES.has(transition.phase)) return;
     const current = get(projectLifecycleTransitionsFamily(input.projectPath));
+    if (!transition) return;
+    const withoutCurrent = current.filter(
+      (item) => item.transition.operationId !== transition.operationId,
+    );
+    if (transition.phase === "failed") {
+      set(projectLifecycleTransitionsFamily(input.projectPath), withoutCurrent);
+      return;
+    }
+    if (!PROJECTABLE_PHASES.has(transition.phase)) return;
     const record: AppLifecycleTransitionRecord = {
       transition,
       label: input.label,
@@ -51,10 +59,7 @@ export const recordProjectLifecycleTransitionAtom = atom(
       worktreeName: input.worktreeName,
       worktreePath: input.worktreePath ?? transition.targetPath,
     };
-    set(projectLifecycleTransitionsFamily(input.projectPath), [
-      ...current.filter((item) => item.transition.operationId !== transition.operationId),
-      record,
-    ]);
+    set(projectLifecycleTransitionsFamily(input.projectPath), [...withoutCurrent, record]);
   },
 );
 
@@ -82,7 +87,7 @@ export function applyProjectLifecycleTransitionsToDesktopState(
 
   for (const record of records) {
     const { transition } = record;
-    if (!RECORDABLE_PHASES.has(transition.phase)) continue;
+    if (!PROJECTABLE_PHASES.has(transition.phase)) continue;
     if (transition.targetKind === "agent") {
       overlayAgentTransition(sessions, record);
     } else if (transition.targetKind === "service") {
@@ -108,6 +113,10 @@ function overlayAgentTransition(
   if (index >= 0) {
     sessions[index] = {
       ...sessions[index],
+      label:
+        record.transition.operation === "agent.rename" && record.label
+          ? record.label
+          : sessions[index].label,
       status,
       pendingAction,
       optimistic: true,
@@ -135,13 +144,26 @@ function overlayServiceTransition(
   if (!serviceId) return;
   const index = services.findIndex((service) => service.id === serviceId);
   const pendingAction = servicePendingAction(record.transition.operation);
-  if (!pendingAction || index < 0) return;
-  services[index] = {
-    ...services[index],
-    status: servicePendingStatus(record.transition.operation),
+  const status = servicePendingStatus(record.transition.operation);
+  if (!pendingAction) return;
+  if (index >= 0) {
+    services[index] = {
+      ...services[index],
+      status,
+      pendingAction,
+      optimistic: true,
+    };
+    return;
+  }
+  if (record.transition.operation !== "service.create") return;
+  services.push({
+    id: serviceId,
+    label: record.label ?? serviceId,
+    worktreePath: record.worktreePath,
+    status,
     pendingAction,
     optimistic: true,
-  };
+  });
 }
 
 function overlayWorktreeTransition(
@@ -151,7 +173,7 @@ function overlayWorktreeTransition(
   const path = record.worktreePath ?? record.transition.targetPath;
   if (!path) return;
   const index = worktrees.findIndex((worktree) => worktree.path === path);
-  if (record.transition.operation === "worktree.create") {
+  if (shouldCreateOptimisticWorktree(record.transition.operation)) {
     if (index >= 0) {
       worktrees[index] = { ...worktrees[index], pending: true };
       return;
@@ -296,4 +318,8 @@ function shouldCreateOptimisticAgent(operation: ProjectLifecycleTransitionOperat
     operation === "agent.resume" ||
     operation === "graveyard.agent.resurrect"
   );
+}
+
+function shouldCreateOptimisticWorktree(operation: ProjectLifecycleTransitionOperation): boolean {
+  return operation === "worktree.create" || operation === "graveyard.worktree.resurrect";
 }

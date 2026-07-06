@@ -376,6 +376,8 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   if (waiting > 0) chips.push({ label: `${waiting} waiting`, active: true });
   if (idle > 0) chips.push({ label: `${idle} idle`, active: false });
   if (offline > 0) chips.push({ label: `${offline} offline`, active: false });
+  if (bucket.pending) chips.push({ label: "pending", active: true });
+  if (bucket.removing) chips.push({ label: "removing", active: true });
   return chips;
 }
 
@@ -401,8 +403,15 @@ function WorktreeCard({
   onKillSession: (sessionId: string) => void;
 }) {
   const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
+  const isSettling = Boolean(bucket.pending || bucket.removing);
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
-  const barColor = containsSelected ? "#e0b341" : anyRunning ? "#3f9c6d" : "#26272d";
+  const barColor = containsSelected
+    ? "#e0b341"
+    : anyRunning
+      ? "#3f9c6d"
+      : isSettling
+        ? "#d4a62a"
+        : "#26272d";
   const chips = worktreeCountChips(bucket);
 
   return (
@@ -423,8 +432,8 @@ function WorktreeCard({
         className={cn("flex-row items-center gap-2.5", compact ? "px-3 py-2" : "px-3.5 py-2.5")}
       >
         <StatusDotMini
-          status={anyRunning ? "running" : undefined}
-          hollow={!anyRunning}
+          status={anyRunning || isSettling ? "running" : undefined}
+          hollow={!anyRunning && !isSettling}
           shape="square"
           outline
         />

@@ -42,6 +42,8 @@ export function WorktreeManagementPanel({
           (group) =>
             !group.isMainCheckout &&
             group.path &&
+            !group.pending &&
+            !group.removing &&
             group.sessions.length === 0 &&
             group.services.length === 0,
         )

@@ -2,6 +2,7 @@ import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 
 import type { DesktopState } from "@/lib/desktop-state";
+import { groupByWorktree } from "@/lib/desktop-state";
 import {
   applyDesktopStateFailureAtom,
   applyDesktopStateSuccessAtom,
@@ -23,6 +24,30 @@ function desktopState(overrides: Partial<DesktopState> = {}): DesktopState {
 }
 
 describe("desktop state resource lifecycle", () => {
+  it("preserves pending worktree flags through worktree grouping", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        worktrees: [
+          {
+            name: "feature",
+            path: "/repo/.aimux/worktrees/feature",
+            branch: "feature",
+            pending: true,
+          },
+          {
+            name: "remove-me",
+            path: "/repo/.aimux/worktrees/remove-me",
+            branch: "remove-me",
+            removing: true,
+          },
+        ],
+      }),
+    );
+
+    expect(groups[1]).toMatchObject({ name: "feature", pending: true });
+    expect(groups[2]).toMatchObject({ name: "remove-me", removing: true });
+  });
+
   it("marks an in-flight refresh stale when a previous desktop-state exists", () => {
     const store = createStore();
     const projectPath = "/repo";
