@@ -48,6 +48,9 @@ interface DashboardWorktreeMutationOptions {
   settle: (modelLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
+  onStaleProgress?: () => void;
+  onStaleSuccess?: () => void;
+  onStaleError?: (error: unknown) => void;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -208,7 +211,7 @@ function scheduleDashboardWorktreeMutationReconcile(
   opts: DashboardWorktreeMutationOptions & {
     modelLifecycle: DashboardLifecycleToken;
     renderLifecycle: DashboardLifecycleToken;
-    clearPending: () => void;
+    clearPending: () => boolean;
   },
 ): void {
   const startedAt = Date.now();
@@ -224,23 +227,36 @@ function scheduleDashboardWorktreeMutationReconcile(
       hasPendingDashboardWorktreeAction(host, opts.pendingPath, opts.pendingAction)
     ) {
       await sleep(500);
+      if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+        if (!opts.clearPending()) return;
+        opts.onStaleProgress?.();
+        return;
+      }
       if (!(await opts.settle(opts.modelLifecycle))) continue;
-      opts.clearPending();
-      if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+      if (!opts.clearPending()) return;
+      if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+        opts.onStaleSuccess?.();
+        return;
+      }
       opts.onSuccess?.();
       return;
     }
     if (!hasPendingDashboardWorktreeAction(host, opts.pendingPath, opts.pendingAction)) return;
-    opts.clearPending();
-    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
-    opts.onError?.(
-      new Error(
-        `worktree ${opts.pendingAction} is still not reflected by the project service after extended reconciliation`,
-      ),
+    const error = new Error(
+      `worktree ${opts.pendingAction} is still not reflected by the project service after extended reconciliation`,
     );
+    if (!opts.clearPending()) return;
+    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+      opts.onStaleError?.(error);
+      return;
+    }
+    opts.onError?.(error);
   })().catch((error: unknown) => {
-    opts.clearPending();
-    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+    if (!opts.clearPending()) return;
+    if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
+      opts.onStaleError?.(error);
+      return;
+    }
     opts.onError?.(error);
   });
 }
@@ -305,7 +321,6 @@ function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): vo
 
 function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, path: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  host.dashboardPendingActions.clearWorktreeAction(path);
   host.dashboardOptimisticWorktreeCreatedAt?.delete?.(path);
   const failure = findDashboardWorktreeCreateFailure(host, path);
   if (!failure) {
@@ -658,7 +673,14 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     request: async () => {
       await postWorktreeMutation(host, PROJECT_API_ROUTES.worktreeActions.graveyard, { path }, { timeoutMs: 180_000 });
     },
-    settle: (lifecycle) => waitForStableDashboardWorktreeAbsence(host, path, 10_000, 350, lifecycle),
+    settle: (lifecycle) =>
+      waitForStableDashboardWorktreeAbsence(
+        host,
+        path,
+        host.dashboardWorktreeInitialSettleMs ?? 10_000,
+        350,
+        lifecycle,
+      ),
     onSuccess: () => {
       debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
       finishWorktreeRemoval(host, 0);
@@ -672,6 +694,21 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
         "worktree",
       );
       finishWorktreeRemoval(host, 1);
+    },
+    onStaleProgress: () => {
+      if (host.worktreeRemovalJob?.path === path) {
+        host.worktreeRemovalJob = null;
+      }
+    },
+    onStaleSuccess: () => {
+      if (host.worktreeRemovalJob?.path === path) {
+        host.worktreeRemovalJob = null;
+      }
+    },
+    onStaleError: () => {
+      if (host.worktreeRemovalJob?.path === path) {
+        host.worktreeRemovalJob = null;
+      }
     },
   }).finally(() => {
     if (!isDashboardLifecycleCurrent(host, uiLifecycle) && host.worktreeRemovalJob?.path === path) {

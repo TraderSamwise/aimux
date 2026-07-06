@@ -408,6 +408,44 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
+  it("does not let stale worktree create failures clear a newer same-path pending action", async () => {
+    postToProjectService.mockClear();
+    let rejectCreate!: (reason?: unknown) => void;
+    postToProjectService.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCreate = reject;
+        }),
+    );
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(postToProjectService).toHaveBeenCalledOnce());
+    pending.setWorktreeAction("/repo/.aimux/worktrees/demo", "creating");
+    rejectCreate(new Error("branch already exists"));
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBe("creating");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("waits for service-projected create failures after overlapping refreshes", async () => {
     postToProjectService.mockResolvedValueOnce(undefined);
     const pending = createPendingActionsStore();
@@ -1019,6 +1057,92 @@ describe("worktrees dashboard mutation protocol", () => {
     await vi.waitFor(() => expect(pending.state.get(`worktree:${path}`)).toBeNull());
     expect(host.refreshDashboardModelFromService).toHaveBeenCalled();
     expect(host.footerFlash).toBe("Graveyarded: demo");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale background worktree removal settlement after a newer same-path pending action", async () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    const path = "/repo/.aimux/worktrees/demo";
+    const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
+    let refreshCount = 0;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeMutationReconcileMaxMs: 5_000,
+      worktreeRemovalJob: null,
+      dashboardPendingActions: pending,
+      dashboardRawWorktreeGroupsCache: [worktree],
+      dashboardWorktreeGroupsCache: [worktree],
+      dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount < 3) {
+          applyRawWorktrees(host, pending, [worktree]);
+          return true;
+        }
+        applyRawWorktrees(host, pending, []);
+        return true;
+      }),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    beginWorktreeRemoval(host, path, "demo", 0);
+    await vi.waitFor(() => expect(host.footerFlash).toBe("worktree graveyarding is still settling"));
+    pending.setWorktreeAction(path, "graveyarding");
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect(pending.state.get(`worktree:${path}`)).toBe("graveyarding");
+    expect(host.footerFlash).toBe("worktree graveyarding is still settling");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("clears stale background worktree removal jobs without rendering stale success", async () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    const path = "/repo/.aimux/worktrees/demo";
+    const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
+    let refreshCount = 0;
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeInitialSettleMs: 5,
+      dashboardWorktreeMutationReconcileMaxMs: 5_000,
+      worktreeRemovalJob: null,
+      dashboardPendingActions: pending,
+      dashboardRawWorktreeGroupsCache: [worktree],
+      dashboardWorktreeGroupsCache: [worktree],
+      dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        if (refreshCount < 3) {
+          applyRawWorktrees(host, pending, [worktree]);
+          return true;
+        }
+        applyRawWorktrees(host, pending, []);
+        return true;
+      }),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+    attachPendingReapply(host, pending);
+
+    beginWorktreeRemoval(host, path, "demo", 0);
+    await vi.waitFor(() => expect(host.footerFlash).toBe("worktree graveyarding is still settling"));
+    host.mode = "session";
+
+    await vi.waitFor(() => expect(host.worktreeRemovalJob).toBeNull(), { timeout: 3000 });
+
+    expect(pending.state.get(`worktree:${path}`)).toBeNull();
+    expect(host.footerFlash).toBe("worktree graveyarding is still settling");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
