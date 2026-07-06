@@ -487,13 +487,11 @@ function runtimeGuardRepairRetryReady(host: DashboardControlHost, repairKey: str
   return true;
 }
 
-function runtimeGuardRepairBlockedNoticeReady(host: DashboardControlHost, repairKey: string): boolean {
-  const lastKey = host.runtimeGuardRepairBlockedNoticeKey;
+function runtimeGuardRepairBlockedNoticeReady(host: DashboardControlHost): boolean {
   const lastAt = host.runtimeGuardRepairBlockedNoticeAt;
-  if (lastKey === repairKey && typeof lastAt === "number" && Date.now() - lastAt < RUNTIME_GUARD_REPAIR_RETRY_MS) {
+  if (typeof lastAt === "number" && Date.now() - lastAt < RUNTIME_GUARD_REPAIR_RETRY_MS) {
     return false;
   }
-  host.runtimeGuardRepairBlockedNoticeKey = repairKey;
   host.runtimeGuardRepairBlockedNoticeAt = Date.now();
   return true;
 }
@@ -525,7 +523,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
-    if (runtimeGuardRepairBlockedNoticeReady(host, repairKey)) {
+    if (runtimeGuardRepairBlockedNoticeReady(host)) {
       recordDashboardRepairNotice(
         host,
         {
@@ -540,7 +538,6 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     }
     return;
   }
-  host.runtimeGuardRepairBlockedNoticeKey = undefined;
   host.runtimeGuardRepairBlockedNoticeAt = undefined;
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
@@ -702,7 +699,6 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       if (next.state.kind === "ok") {
         host.runtimeGuardRepairFailedKey = undefined;
         host.runtimeGuardRepairRetryAt = undefined;
-        host.runtimeGuardRepairBlockedNoticeKey = undefined;
         host.runtimeGuardRepairBlockedNoticeAt = undefined;
         clearRuntimeGuardRepairError(host);
         if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {

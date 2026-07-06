@@ -638,6 +638,47 @@ describe("TuiApiRuntime", () => {
     }
   });
 
+  it("does not report recovery success when critical resources were never verified", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        runtimeGuardState: { kind: "ok" },
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+        getFromProjectService: vi.fn().mockRejectedValueOnce(new Error("notification endpoint offline")),
+      };
+      const runtime = new TuiApiRuntime({
+        request: (path, opts) => host.getFromProjectService(path, opts),
+        criticalResources: ["desktop-state"],
+        onRequestFailure: () => scheduleTuiApiRecovery(host),
+      });
+      host.tuiApiRuntime = runtime;
+
+      await expect(runtime.requestJson("/notifications", (value) => value)).resolves.toMatchObject({
+        ok: false,
+      });
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
+
+      expect(host.tuiApiRecoveryPending).toBe(true);
+      expect(host.dashboardRepairNotices).toMatchObject([
+        {
+          kind: "tui-api-recovery",
+          phase: "started",
+          message: "Aimux API recovery started",
+        },
+        {
+          kind: "tui-api-recovery",
+          phase: "waiting",
+          message: "Aimux API recovery still reconnecting",
+          error: "critical resources not verified",
+        },
+      ]);
+      expect(host.footerFlash).toBe("Aimux API recovery still reconnecting");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("cooldowns repeated runtime guard recovery probes", async () => {
     vi.useFakeTimers();
     try {
