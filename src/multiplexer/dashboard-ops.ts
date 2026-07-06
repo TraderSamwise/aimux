@@ -318,6 +318,17 @@ function getRawDashboardServiceEntry(host: DashboardOpsHost, serviceId: string):
   return services?.find((entry: any) => entry.id === serviceId);
 }
 
+function getDashboardServiceSettlementEntry(
+  host: DashboardOpsHost,
+  serviceId: string,
+): { known: boolean; service?: any } {
+  const services = Array.isArray(host.dashboardRawServicesCache) ? host.dashboardRawServicesCache : undefined;
+  if (services) return { known: true, service: services.find((entry: any) => entry.id === serviceId) };
+  const service = getDashboardServiceEntry(host, serviceId);
+  if (service?.optimistic || service?.pendingAction) return { known: false };
+  return { known: true, service };
+}
+
 async function waitForRenderedDashboardServiceState(
   host: DashboardOpsHost,
   serviceId: string,
@@ -330,11 +341,12 @@ async function waitForRenderedDashboardServiceState(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await refreshDashboardModelForSettlement(host, modelLifecycle);
-    const service = getDashboardServiceEntry(host, serviceId);
-    if (predicate(service)) {
+    const renderedService = getDashboardServiceEntry(host, serviceId);
+    const settlement = getDashboardServiceSettlementEntry(host, serviceId);
+    if (settlement.known && predicate(settlement.service)) {
       if (
-        isLiveDashboardServiceEntry(service) &&
-        (service?.status !== "running" || service?.pendingAction === "starting")
+        isLiveDashboardServiceEntry(settlement.service) &&
+        (renderedService?.status !== "running" || renderedService?.pendingAction === "starting")
       ) {
         renderDashboardDuringSettlement(host, renderLifecycle);
       }
@@ -348,7 +360,8 @@ async function waitForRenderedDashboardServiceState(
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return predicate(getDashboardServiceEntry(host, serviceId));
+  const settlement = getDashboardServiceSettlementEntry(host, serviceId);
+  return settlement.known && predicate(settlement.service);
 }
 
 async function waitForDashboardServiceStopSettle(

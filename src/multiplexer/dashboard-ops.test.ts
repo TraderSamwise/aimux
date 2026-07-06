@@ -100,6 +100,52 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("does not settle service create from the optimistic pending row", async () => {
+    vi.useFakeTimers();
+    let createdServiceId = "";
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [] as any[],
+      dashboardModelServiceRefreshError: new Error("temporary reconnect"),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+        this.serviceSeed = opts?.serviceSeed;
+      },
+      serviceSeed: undefined as any,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        createdServiceId = body.serviceId;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => false),
+      getDashboardServices: vi.fn(() =>
+        createdServiceId && host.dashboardPendingActions.getServiceAction(createdServiceId) === "creating"
+          ? [{ id: createdServiceId, status: "running", pendingAction: "creating", optimistic: true }]
+          : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = createDashboardServiceWithFeedback(host, "", "/repo");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(11_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull();
+    expect(host.footerFlash).not.toBe("◆ Created service shell");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Failed to create service", [
+      "creating did not settle before timing out",
+    ]);
+  });
+
   it("shows optimistic starting state and clears it on successful service resume", async () => {
     const services = [[], [{ id: "svc-1", status: "running" }]];
     let serviceIndex = 0;
