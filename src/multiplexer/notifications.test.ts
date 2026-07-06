@@ -71,7 +71,7 @@ describe("notification target open", () => {
       notificationTargetState: vi.fn(() => "offline"),
       postToProjectService: notificationServiceDouble(),
       activateDashboardService: vi.fn(async () => undefined),
-      resumeOfflineServiceWithFeedback: vi.fn(async () => undefined),
+      resumeOfflineServiceWithFeedback: vi.fn(async () => "settled"),
       resumeOfflineServiceById: vi.fn(),
       waitAndOpenLiveTmuxWindowForService: vi.fn(),
       showDashboardError: vi.fn(),

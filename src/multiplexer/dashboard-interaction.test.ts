@@ -675,7 +675,7 @@ describe("dashboardInteractionMethods", () => {
       dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "missing"),
       offlineSessions: [offline],
-      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => "settled"),
       sessions: [],
       noteLastUsedItem: vi.fn(),
       focusSession: vi.fn(),
@@ -729,7 +729,7 @@ describe("dashboardInteractionMethods", () => {
       dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
       refreshDashboardModelFromService: vi.fn(async () => true),
-      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => "settled"),
       getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),
       offlineSessions: [{ ...entry }],
       renderDashboard: vi.fn(),
@@ -795,6 +795,7 @@ describe("dashboardInteractionMethods", () => {
       resumeOfflineSessionWithFeedback: vi.fn(async () => {
         host.mode = "session";
         host.dashboardInputEpoch = 1;
+        return "settled";
       }),
       getDashboardSessions: vi.fn(() => [{ ...entry, status: "running", tmuxWindowId: "@agent" }]),
       offlineSessions: [{ ...entry }],
@@ -822,7 +823,7 @@ describe("dashboardInteractionMethods", () => {
       dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "error"),
       refreshDashboardModelFromService: vi.fn(async () => true),
-      resumeOfflineSessionWithFeedback: vi.fn(async () => undefined),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => "settled"),
       getDashboardSessions: vi.fn(() => [entry]),
       offlineSessions: [{ ...entry }],
       renderDashboard: vi.fn(),
@@ -837,7 +838,34 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
-  it("keeps offline service resume pending until the rendered row is live", async () => {
+  it("returns pending for an offline dashboard agent that is still reconciling", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => "pending"),
+      getDashboardSessions: vi.fn(() => [entry]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("pending");
+
+    expect(host.resumeOfflineSessionWithFeedback).toHaveBeenCalledWith(entry);
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("opens an offline service after the shared resume path settles", async () => {
     const service = {
       id: "service-1",
       status: "offline",
@@ -853,21 +881,14 @@ describe("dashboardInteractionMethods", () => {
     const host: any = {
       mode: "dashboard",
       dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
-      dashboardPendingActions: {
-        clearServiceActionIfToken: vi.fn(() => true),
-      },
-      setPendingDashboardServiceAction: vi.fn(() => 1),
       getDashboardServices: vi.fn(() => services[Math.min(serviceIndex, services.length - 1)]),
       openLiveTmuxWindowForService: vi.fn(),
       waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
-      refreshDashboardModelFromService: vi.fn(async () => {
-        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
-        if (serviceIndex === 1) {
-          expect(host.dashboardPendingActions.clearServiceActionIfToken).not.toHaveBeenCalled();
-        }
-        return true;
+      resumeOfflineServiceWithFeedback: vi.fn(async () => {
+        serviceIndex = services.length - 1;
+        return "settled";
       }),
-      postToProjectService: vi.fn(async () => ({ ok: true })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
       reapplyDashboardPendingActions: vi.fn(),
       renderDashboard: vi.fn(),
       showDashboardError: vi.fn(),
@@ -877,19 +898,42 @@ describe("dashboardInteractionMethods", () => {
 
     await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("opened");
 
-    expect(host.postToProjectService).toHaveBeenCalledWith(
-      "/services/resume",
-      { serviceId: "service-1" },
-      { timeoutMs: 10_000 },
-    );
+    expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith(service);
     expect(host.openLiveTmuxWindowForService).not.toHaveBeenCalled();
     expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith(
       expect.objectContaining({ id: "service-1", tmuxWindowId: "@service" }),
       60_000,
     );
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, undefined);
-    expect(host.refreshDashboardModelFromService.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(host.dashboardPendingActions.clearServiceActionIfToken).toHaveBeenCalledWith("service-1", 1);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("returns pending for an offline service that is still reconciling", async () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      getDashboardServices: vi.fn(() => [service]),
+      openLiveTmuxWindowForService: vi.fn(),
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      resumeOfflineServiceWithFeedback: vi.fn(async () => "pending"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("pending");
+
+    expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
