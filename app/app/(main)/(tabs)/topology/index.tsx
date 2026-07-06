@@ -339,6 +339,17 @@ export default function TopologyScreen() {
         <>
           <PageHeader eyebrow="Topology" title={project.name} subtitle={project.path} />
 
+          {resource.stale && visibleError ? (
+            <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10 p-3">
+              <Text className="text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+                Topology refresh failed
+              </Text>
+              <Text className="mt-1 text-[12px] text-muted-foreground">
+                Showing the last successful topology snapshot. {visibleError}
+              </Text>
+            </Card>
+          ) : null}
+
           <View className="mb-5 flex-row flex-wrap">
             <SummaryTile label="Worktrees" value={visibleTopology.counts.worktrees} />
             <SummaryTile label="Agents" value={visibleTopology.counts.agents} />
