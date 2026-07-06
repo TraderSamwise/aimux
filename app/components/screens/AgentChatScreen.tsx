@@ -504,6 +504,7 @@ export default function ChatScreen() {
                 <View className="mr-2">
                   <AgentActions
                     session={session}
+                    projectPath={stateProjectPath}
                     endpoint={serviceEndpoint}
                     token={token}
                     compact
@@ -557,6 +558,7 @@ export default function ChatScreen() {
                 session={session}
                 endpoint={serviceEndpoint}
                 token={token}
+                projectPath={stateProjectPath}
                 groups={worktreeGroups}
               />
               {canManageTeammates ? (
@@ -565,6 +567,7 @@ export default function ChatScreen() {
                   session={session}
                   endpoint={serviceEndpoint}
                   token={token}
+                  projectPath={stateProjectPath}
                 />
               ) : null}
             </>

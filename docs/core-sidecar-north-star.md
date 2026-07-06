@@ -173,7 +173,10 @@ The TUI dashboard now routes shared lifecycle mutations through the project API
 and keeps API refresh glitches from clearing in-flight start/stop/create/remove
 state while the matching pending action still owns the transition. Service
 transition settlement requires fresh API-backed state; optimistic/pending rows
-may stabilize rendering, but they cannot prove mutation success.
+may stabilize rendering, but they cannot prove mutation success. The app uses
+the same transition-envelope model for dashboard, sidebar, agent chat, service
+detail, worktree, graveyard, and teammate lifecycle controls; stale snapshots
+are overlaid only until fresh API-backed state reaches the expected target.
 
 The app now has resource lifecycle stores for critical selected-project state:
 `desktop-state`, the durable notification feed, Coordination, Library, Topology,

@@ -5,12 +5,14 @@ import { GitFork, Play, Square, Trash2 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { forkAgent, killAgent, resumeAgent, stopAgent } from "@/lib/api";
+import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import { canResumeSession } from "@/lib/agent-lifecycle";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type LucideIcon = typeof Square;
@@ -28,6 +30,7 @@ export function AgentActions({
   session,
   endpoint,
   token,
+  projectPath,
   compact = false,
   mainCheckoutPath,
   onKilled,
@@ -35,6 +38,7 @@ export function AgentActions({
   session: DesktopSession;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  projectPath: string;
   compact?: boolean;
   mainCheckoutPath?: string | null;
   onKilled?: () => void;
@@ -43,6 +47,7 @@ export function AgentActions({
   const [error, setError] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
   const canAct = !!endpoint && !busy;
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
@@ -57,13 +62,23 @@ export function AgentActions({
       ? session.worktreePath
       : undefined;
 
-  function runAction(fn: () => Promise<unknown>, opts?: { isKill?: boolean }) {
+  function runAction(
+    fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
+    opts?: { isKill?: boolean },
+  ) {
     return async () => {
       if (!endpoint) return;
       setBusy(true);
       setError(null);
       try {
-        await fn();
+        const response = await fn();
+        recordTransition({
+          projectPath,
+          transition: response.transition,
+          label: session.label || session.id,
+          tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
+          worktreePath: session.worktreePath,
+        });
         kickDesktopRefresh();
         kickProjectViewRefresh(
           opts?.isKill ? [...AGENT_ACTION_REFRESH_VIEWS, "graveyard"] : AGENT_ACTION_REFRESH_VIEWS,

@@ -163,6 +163,7 @@ function AgentRow({
   digit,
   selected,
   compact,
+  projectPath,
   endpoint,
   token,
   mainCheckoutPath,
@@ -173,6 +174,7 @@ function AgentRow({
   digit: number;
   selected: boolean;
   compact?: boolean;
+  projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   mainCheckoutPath?: string | null;
@@ -249,6 +251,7 @@ function AgentRow({
         <StatusCell state={state} />
         <AgentActions
           session={session}
+          projectPath={projectPath}
           endpoint={endpoint}
           token={token}
           compact
@@ -264,6 +267,7 @@ function ServiceRow({
   service,
   digit,
   compact,
+  projectPath,
   endpoint,
   token,
   onPress,
@@ -271,6 +275,7 @@ function ServiceRow({
   service: DesktopService;
   digit: number;
   compact?: boolean;
+  projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onPress: () => void;
@@ -334,7 +339,13 @@ function ServiceRow({
         <Text className={cn("font-mono text-[12px]", word)} numberOfLines={1}>
           {service.pendingAction ?? service.status}
         </Text>
-        <ServiceActions service={service} endpoint={endpoint} token={token} compact />
+        <ServiceActions
+          service={service}
+          projectPath={projectPath}
+          endpoint={endpoint}
+          token={token}
+          compact
+        />
       </View>
     </View>
   );
@@ -370,6 +381,7 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
 
 function WorktreeCard({
   bucket,
+  projectPath,
   endpoint,
   token,
   selectedSessionId,
@@ -379,6 +391,7 @@ function WorktreeCard({
   onKillSession,
 }: {
   bucket: WorktreeBucket;
+  projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   selectedSessionId: string | null;
@@ -464,6 +477,7 @@ function WorktreeCard({
               digit={i + 1}
               selected={session.id === selectedSessionId}
               compact={compact}
+              projectPath={projectPath}
               endpoint={endpoint}
               token={token}
               mainCheckoutPath={bucket.isMainCheckout ? session.worktreePath : undefined}
@@ -477,6 +491,7 @@ function WorktreeCard({
               service={service}
               digit={bucket.sessions.length + i + 1}
               compact={compact}
+              projectPath={projectPath}
               endpoint={endpoint}
               token={token}
               onPress={() => onPickService(service.id)}
@@ -490,6 +505,7 @@ function WorktreeCard({
 
 export function WorktreeList({
   groups,
+  projectPath,
   endpoint,
   token,
   padded,
@@ -501,6 +517,7 @@ export function WorktreeList({
   onKillSession,
 }: {
   groups: WorktreeBucket[];
+  projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   padded: boolean;
@@ -528,6 +545,7 @@ export function WorktreeList({
   }
 
   const cardProps = {
+    projectPath,
     endpoint,
     token,
     selectedSessionId,
@@ -659,10 +677,21 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
 
   return (
     <View className={cn(padded && "px-4")}>
-      <WorktreeManagementPanel endpoint={endpoint} token={token} groups={groups} />
-      <AgentCreatePanel endpoint={endpoint} token={token} groups={groups} />
+      <WorktreeManagementPanel
+        projectPath={stateProjectPath}
+        endpoint={endpoint}
+        token={token}
+        groups={groups}
+      />
+      <AgentCreatePanel
+        projectPath={stateProjectPath}
+        endpoint={endpoint}
+        token={token}
+        groups={groups}
+      />
       <WorktreeList
         groups={groups}
+        projectPath={stateProjectPath}
         endpoint={endpoint}
         token={token}
         padded={false}

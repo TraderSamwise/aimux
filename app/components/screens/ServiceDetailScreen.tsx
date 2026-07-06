@@ -117,6 +117,7 @@ export default function ServiceDetailScreen() {
           <ServiceDetailBody
             service={found.service}
             bucket={found.bucket}
+            projectPath={stateProjectPath}
             endpoint={endpoint}
             token={token}
             onRemoved={goBack}
@@ -130,12 +131,14 @@ export default function ServiceDetailScreen() {
 function ServiceDetailBody({
   service,
   bucket,
+  projectPath,
   endpoint,
   token,
   onRemoved,
 }: {
   service: DesktopService;
   bucket: WorktreeBucket;
+  projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
   onRemoved: () => void;
@@ -168,6 +171,7 @@ function ServiceDetailBody({
         <View className="ml-3 mt-7">
           <ServiceActions
             service={service}
+            projectPath={projectPath}
             endpoint={endpoint}
             token={token}
             onRemoved={onRemoved}

@@ -1,6 +1,12 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai/utils";
 import { groupByWorktree, type DesktopState, type WorktreeBucket } from "@/lib/desktop-state";
+import {
+  applyProjectLifecycleTransitionsToDesktopState,
+  clearProjectLifecycleTransitionsAtom,
+  projectLifecycleTransitionsFamily,
+  settleProjectLifecycleTransitionsAtom,
+} from "@/stores/lifecycleTransitions";
 
 export interface DesktopStateResource {
   value: DesktopState | null;
@@ -36,7 +42,11 @@ export const desktopStateResourceFamily = atomFamily((_projectPath: string) =>
 
 export const desktopStateFamily = atomFamily((projectPath: string) =>
   atom(
-    (get) => get(desktopStateResourceFamily(projectPath)).value,
+    (get) =>
+      applyProjectLifecycleTransitionsToDesktopState(
+        get(desktopStateResourceFamily(projectPath)).value,
+        get(projectLifecycleTransitionsFamily(projectPath)),
+      ),
     (get, set, value: DesktopState | null) => {
       const current = get(desktopStateResourceFamily(projectPath));
       set(desktopStateResourceFamily(projectPath), {
@@ -89,6 +99,7 @@ export const applyDesktopStateSuccessAtom = atom(
       stale: false,
       updatedAt: updatedAt ?? Date.now(),
     });
+    set(settleProjectLifecycleTransitionsAtom, { projectPath, state });
   },
 );
 
@@ -107,6 +118,7 @@ export const applyDesktopStateFailureAtom = atom(
 
 export const clearDesktopStateResourceAtom = atom(null, (_get, set, projectPath: string) => {
   set(desktopStateResourceFamily(projectPath), emptyDesktopStateResource());
+  set(clearProjectLifecycleTransitionsAtom, projectPath);
 });
 
 // Derived: the worktree-grouped hierarchy for a project.

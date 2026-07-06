@@ -10,6 +10,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 const TOOL_CHOICES = ["claude", "codex", "aider"] as const;
@@ -18,10 +19,12 @@ type ToolChoice = (typeof TOOL_CHOICES)[number];
 export function AgentCreatePanel({
   endpoint,
   token,
+  projectPath,
   groups,
 }: {
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  projectPath: string;
   groups: WorktreeBucket[];
 }) {
   const [tool, setTool] = useState<ToolChoice>("claude");
@@ -30,6 +33,7 @@ export function AgentCreatePanel({
   const [error, setError] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
 
   const worktreeChoices = useMemo(
     () =>
@@ -44,7 +48,7 @@ export function AgentCreatePanel({
     setBusy(true);
     setError(null);
     try {
-      await spawnAgent(
+      const response = await spawnAgent(
         endpoint,
         {
           tool,
@@ -53,6 +57,13 @@ export function AgentCreatePanel({
         },
         { token },
       );
+      recordTransition({
+        projectPath,
+        transition: response.transition,
+        label: response.sessionId,
+        tool,
+        worktreePath: worktreePath ?? undefined,
+      });
       kickDesktopRefresh();
       kickProjectViewRefresh([
         "agents",

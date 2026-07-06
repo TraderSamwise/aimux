@@ -19,6 +19,7 @@ import {
   type WorktreeGraveyardEntryResponse,
 } from "@/lib/api";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
+import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import {
   applyProjectGraveyardActionFailureAtom,
   applyProjectGraveyardFailureAtom,
@@ -47,6 +48,7 @@ export default function GraveyardScreen() {
   const settleGraveyardRefresh = useSetAtom(settleProjectGraveyardRefreshAtom);
   const removeGraveyardAgent = useSetAtom(removeProjectGraveyardAgentAtom);
   const removeGraveyardWorktree = useSetAtom(removeProjectGraveyardWorktreeAtom);
+  const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
   const graveyardRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("graveyard"));
 
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
@@ -141,7 +143,13 @@ export default function GraveyardScreen() {
     setBusyMarker(marker);
     try {
       const token = await getToken();
-      await resurrectGraveyardAgent(endpoint, entry.id, { token });
+      const response = await resurrectGraveyardAgent(endpoint, entry.id, { token });
+      recordTransition({
+        projectPath: projectPathKey,
+        transition: response.transition,
+        label: entry.label ?? entry.id,
+        tool: entry.tool,
+      });
       requestTrackerRef.current.invalidate();
       removeGraveyardAgent({ projectPath: projectPathKey, id: entry.id });
       kickRefresh();
@@ -162,7 +170,13 @@ export default function GraveyardScreen() {
     setBusyMarker(marker);
     try {
       const token = await getToken();
-      await resurrectGraveyardWorktree(endpoint, entry.path, { token });
+      const response = await resurrectGraveyardWorktree(endpoint, entry.path, { token });
+      recordTransition({
+        projectPath: projectPathKey,
+        transition: response.transition,
+        worktreeName: entry.name,
+        worktreePath: entry.path,
+      });
       requestTrackerRef.current.invalidate();
       removeGraveyardWorktree({ projectPath: projectPathKey, path: entry.path });
       kickRefresh();
@@ -183,7 +197,13 @@ export default function GraveyardScreen() {
     setBusyMarker(marker);
     try {
       const token = await getToken();
-      await deleteGraveyardWorktree(endpoint, entry.path, { token });
+      const response = await deleteGraveyardWorktree(endpoint, entry.path, { token });
+      recordTransition({
+        projectPath: projectPathKey,
+        transition: response.transition,
+        worktreeName: entry.name,
+        worktreePath: entry.path,
+      });
       requestTrackerRef.current.invalidate();
       removeGraveyardWorktree({ projectPath: projectPathKey, path: entry.path });
       kickRefresh();
