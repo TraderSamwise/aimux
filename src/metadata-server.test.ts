@@ -270,11 +270,12 @@ describe("MetadataServer threads API", () => {
     server?.stop();
     server = new MetadataServer({
       desktop: {
+        failureMessage: "branch already exists",
         getState: () => ({ sessions: [] }),
-        createWorktree: () => {
-          throw new Error("branch already exists");
+        createWorktree(this: { failureMessage: string }) {
+          throw new Error(this.failureMessage);
         },
-      },
+      } as any,
     });
     await server.start();
     const endpoint = server.getAddress();
