@@ -7,16 +7,17 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
-import { getDesktopState } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { env } from "@/lib/env";
 import { singleRouteParam } from "@/lib/route-params";
 import { useRouteProject } from "@/lib/use-route-project";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
-import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
-import { relayStatusAtom } from "@/stores/relay";
+import {
+  desktopStateResourceFamily,
+  kickDesktopStateRefreshAtom,
+  worktreeGroupsFamily,
+} from "@/stores/desktopState";
 
 function findService(
   groups: WorktreeBucket[],
@@ -49,17 +50,14 @@ export default function ServiceDetailScreen() {
   const { projectPath, endpoint } = useRouteProject();
   const stateProjectPath = projectPath ?? "";
   const groups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
-  const setDesktopState = useSetAtom(desktopStateFamily(stateProjectPath));
-  const relayStatus = useAtomValue(relayStatusAtom);
+  const desktopStateResource = useAtomValue(desktopStateResourceFamily(stateProjectPath));
+  const kickDesktopStateRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const router = useRouter();
   const pathname = usePathname();
 
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | null>(null);
-  const [loadingMissingService, setLoadingMissingService] = useState(false);
-  const missingServiceFetchKeyRef = useRef<string | null>(null);
-  const missingServiceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [missingServiceRetryNonce, setMissingServiceRetryNonce] = useState(0);
+  const missingServiceRefreshKeyRef = useRef<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -79,65 +77,22 @@ export default function ServiceDetailScreen() {
   const endpointHost = endpoint?.host ?? null;
   const endpointPort = endpoint?.port ?? null;
   const endpointKey = endpointHost && endpointPort ? `${endpointHost}:${endpointPort}` : null;
-  const relayReadyForRequests = !env.AIMUX_RELAY_URL || relayStatus === "connected";
 
   useEffect(() => {
-    if (found || !endpointHost || !endpointPort || !endpointKey || !projectPath || !serviceId) {
+    if (found || !endpointKey || !projectPath || !serviceId) {
+      if (found) missingServiceRefreshKeyRef.current = null;
       return;
     }
-    if (!relayReadyForRequests) return;
-    const fetchKey = `${projectPath}|${endpointKey}|${serviceId}`;
-    if (missingServiceFetchKeyRef.current === fetchKey) return;
-    let cancelled = false;
-    const endpointForRequest = { host: endpointHost, port: endpointPort };
-    (async () => {
-      missingServiceFetchKeyRef.current = fetchKey;
-      setLoadingMissingService(true);
-      try {
-        const currentToken = await getToken();
-        const state = await getDesktopState(endpointForRequest, { token: currentToken });
-        if (!cancelled) setDesktopState(state);
-      } catch (err) {
-        console.warn("service detail desktop-state refresh failed:", err);
-        if (!cancelled) {
-          if (missingServiceRetryTimerRef.current) {
-            clearTimeout(missingServiceRetryTimerRef.current);
-          }
-          missingServiceRetryTimerRef.current = setTimeout(() => {
-            missingServiceRetryTimerRef.current = null;
-            if (missingServiceFetchKeyRef.current === fetchKey) {
-              missingServiceFetchKeyRef.current = null;
-              setMissingServiceRetryNonce((current) => current + 1);
-            }
-          }, 2000);
-        }
-      } finally {
-        if (!cancelled) setLoadingMissingService(false);
-      }
-    })();
+    const refreshKey = `${projectPath}|${endpointKey}|${serviceId}`;
+    if (missingServiceRefreshKeyRef.current === refreshKey) return;
+    missingServiceRefreshKeyRef.current = refreshKey;
+    kickDesktopStateRefresh();
     return () => {
-      cancelled = true;
-      if (missingServiceRetryTimerRef.current) {
-        clearTimeout(missingServiceRetryTimerRef.current);
-        missingServiceRetryTimerRef.current = null;
-      }
-      if (missingServiceFetchKeyRef.current === fetchKey) {
-        missingServiceFetchKeyRef.current = null;
-        setLoadingMissingService(false);
+      if (missingServiceRefreshKeyRef.current === refreshKey) {
+        missingServiceRefreshKeyRef.current = null;
       }
     };
-  }, [
-    endpointHost,
-    endpointKey,
-    endpointPort,
-    found,
-    getToken,
-    missingServiceRetryNonce,
-    projectPath,
-    relayReadyForRequests,
-    serviceId,
-    setDesktopState,
-  ]);
+  }, [endpointKey, found, kickDesktopStateRefresh, projectPath, serviceId]);
 
   function goBack() {
     if (router.canGoBack()) router.back();
@@ -152,7 +107,7 @@ export default function ServiceDetailScreen() {
           <Text className="text-sm text-muted-foreground">Back</Text>
         </Pressable>
 
-        {!found && loadingMissingService ? (
+        {!found && desktopStateResource.pending && !desktopStateResource.value ? (
           <Text className="text-sm text-muted-foreground">Loading service...</Text>
         ) : !found ? (
           <Text className="text-sm text-muted-foreground">
