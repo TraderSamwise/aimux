@@ -1,3 +1,5 @@
+import { recordDashboardRepairNotice } from "./repair-notices.js";
+
 export type TuiApiConnectionState =
   | "ready"
   | "refreshing"
@@ -89,6 +91,12 @@ export interface TuiApiMutationResult<T> {
   ok: boolean;
   value?: T;
   error?: unknown;
+}
+
+export interface TuiApiCriticalResourceRefreshResult {
+  attemptedResources: string[];
+  missingResources: string[];
+  failedResources: string[];
 }
 
 interface ResourceState<T = unknown> extends TuiApiResourceSnapshot<T> {
@@ -290,15 +298,31 @@ export class TuiApiRuntime {
     return promise;
   }
 
-  async refreshCriticalResources(): Promise<void> {
-    if (this.disposed) return;
+  async refreshCriticalResources(): Promise<TuiApiCriticalResourceRefreshResult> {
+    const result: TuiApiCriticalResourceRefreshResult = {
+      attemptedResources: [],
+      missingResources: [],
+      failedResources: [],
+    };
+    if (this.disposed) return result;
     const refreshes: Promise<TuiApiRefreshResult<unknown>>[] = [];
     for (const resource of this.criticalResources) {
       const state = this.resources.get(resource);
-      if (!state?.lastRefresh || state.error === undefined) continue;
+      if (!state?.lastRefresh) {
+        result.missingResources.push(resource);
+        continue;
+      }
+      result.attemptedResources.push(resource);
       refreshes.push(this.refresh(resource, state.lastRefresh.load, { ...state.lastRefresh.opts, supersede: true }));
     }
-    await Promise.allSettled(refreshes);
+    const settled = await Promise.allSettled(refreshes);
+    for (let index = 0; index < settled.length; index++) {
+      const entry = settled[index];
+      if (entry.status === "rejected" || entry.value.ok === false) {
+        result.failedResources.push(result.attemptedResources[index] ?? "unknown");
+      }
+    }
+    return result;
   }
 
   beginRecovery(): void {
@@ -469,16 +493,54 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
   host.tuiApiRecoveryPending = false;
   host.tuiApiRecoveryInFlight = true;
   host.tuiApiRuntime?.beginRecovery?.();
+  recordDashboardRepairNotice(host, {
+    kind: "tui-api-recovery",
+    phase: "started",
+    message: "Aimux API recovery started",
+  });
   try {
     const result = host.refreshRuntimeGuard?.();
     if (result && typeof result.then === "function") await result;
-    const refreshResult = host.tuiApiRuntime?.refreshCriticalResources?.();
-    if (refreshResult && typeof refreshResult.then === "function") await refreshResult;
+    const refreshResult = await host.tuiApiRuntime?.refreshCriticalResources?.();
     host.tuiApiRuntime?.finishRecovery?.();
+    const snapshot = host.tuiApiRuntime?.getConnectionSnapshot?.();
+    const runtimeGuardOk = !host.runtimeGuardState || host.runtimeGuardState.kind === "ok";
+    const criticalResourcesVerified =
+      refreshResult !== undefined &&
+      refreshResult.missingResources.length === 0 &&
+      refreshResult.failedResources.length === 0 &&
+      refreshResult.attemptedResources.length > 0;
+    if (
+      runtimeGuardOk &&
+      criticalResourcesVerified &&
+      snapshot?.state === "ready" &&
+      snapshot.failedCriticalResources.length === 0
+    ) {
+      recordDashboardRepairNotice(host, {
+        kind: "tui-api-recovery",
+        phase: "succeeded",
+        message: "Aimux API recovery complete",
+      });
+    } else {
+      host.tuiApiRecoveryPending = true;
+      recordDashboardRepairNotice(host, {
+        kind: "tui-api-recovery",
+        phase: "waiting",
+        message: "Aimux API recovery still reconnecting",
+        error:
+          snapshot?.lastError ?? (runtimeGuardOk ? "critical resources not verified" : "runtime guard is not healthy"),
+      });
+    }
   } catch (error) {
     host.tuiApiRecoveryLastError = error;
     host.tuiApiRecoveryPending = true;
     host.tuiApiRuntime?.markRecoveryFailed?.(error);
+    recordDashboardRepairNotice(host, {
+      kind: "tui-api-recovery",
+      phase: "failed",
+      message: "Aimux API recovery failed",
+      error,
+    });
   } finally {
     host.tuiApiRecoveryInFlight = false;
     host.tuiApiLastRecoveryAt = Date.now();

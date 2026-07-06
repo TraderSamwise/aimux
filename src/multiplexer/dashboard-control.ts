@@ -59,6 +59,7 @@ import {
   type RuntimeGuardState,
 } from "./runtime-guard.js";
 import { getJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
+import { recordDashboardRepairNotice } from "./repair-notices.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = OrchestrationRouteOption;
@@ -486,6 +487,15 @@ function runtimeGuardRepairRetryReady(host: DashboardControlHost, repairKey: str
   return true;
 }
 
+function runtimeGuardRepairBlockedNoticeReady(host: DashboardControlHost): boolean {
+  const lastAt = host.runtimeGuardRepairBlockedNoticeAt;
+  if (typeof lastAt === "number" && Date.now() - lastAt < RUNTIME_GUARD_REPAIR_RETRY_MS) {
+    return false;
+  }
+  host.runtimeGuardRepairBlockedNoticeAt = Date.now();
+  return true;
+}
+
 function stabilizeRepairRuntimeGuardProbe(
   host: DashboardControlHost,
   current: RuntimeGuardState,
@@ -513,10 +523,22 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
-    showDashboardFooterFlash(host, "Aimux repair already running", 3);
-    renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+    if (runtimeGuardRepairBlockedNoticeReady(host)) {
+      recordDashboardRepairNotice(
+        host,
+        {
+          kind: "runtime-guard-repair",
+          phase: "blocked",
+          message: "Aimux repair already running",
+        },
+        { flash: false },
+      );
+      showDashboardFooterFlash(host, "Aimux repair already running", 3);
+      renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+    }
     return;
   }
+  host.runtimeGuardRepairBlockedNoticeAt = undefined;
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
   host.runtimeGuardRepairBusy = true;
@@ -527,6 +549,15 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     spinnerFrame: 0,
     startedAt: Date.now(),
   };
+  recordDashboardRepairNotice(
+    host,
+    {
+      kind: "runtime-guard-repair",
+      phase: "started",
+      message: "Aimux repair started",
+    },
+    { flash: false },
+  );
   renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
 
   let settled = false;
@@ -554,6 +585,16 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.dashboardBusyState = null;
       host.runtimeGuardRepairBusy = false;
     }
+    recordDashboardRepairNotice(
+      host,
+      {
+        kind: "runtime-guard-repair",
+        phase: "failed",
+        message: options.title ?? "Aimux repair failed",
+        error: message,
+      },
+      { flash: false },
+    );
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     showRuntimeGuardRepairFailure(host, options.title ?? "Aimux repair failed", message);
   };
@@ -594,6 +635,17 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.runtimeGuardRepairBusy = false;
     }
     host.runtimeGuardState = { kind: "ok" };
+    const shouldFlashSuccess = isDashboardLifecycleCurrent(host, lifecycle) && !shouldReloadDashboard;
+    recordDashboardRepairNotice(
+      host,
+      {
+        kind: "runtime-guard-repair",
+        phase: "succeeded",
+        message: "Aimux repair complete",
+      },
+      { flash: false },
+    );
+    if (shouldFlashSuccess) showDashboardFooterFlash(host, "Aimux repair complete", 4);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     if (shouldReloadDashboard) {
       scheduleDashboardReloadAfterRuntimeGuardRepair(host, projectRoot);
@@ -647,6 +699,7 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       if (next.state.kind === "ok") {
         host.runtimeGuardRepairFailedKey = undefined;
         host.runtimeGuardRepairRetryAt = undefined;
+        host.runtimeGuardRepairBlockedNoticeAt = undefined;
         clearRuntimeGuardRepairError(host);
         if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
           host.dashboardBusyState = null;
