@@ -46,7 +46,7 @@ jobs:
 
       - run: yarn --cwd app install --frozen-lockfile
 
-      - run: yarn verify
+      - run: yarn release:readiness
 
       - name: Build release asset
         run: yarn release:asset

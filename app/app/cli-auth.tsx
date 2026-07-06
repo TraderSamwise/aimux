@@ -47,6 +47,26 @@ export default function CliAuthScreen() {
   const [phase, setPhase] = useState<Phase>("checking");
   const [error, setError] = useState<string>("");
 
+  let blockingPhase: Phase | null = null;
+  let blockingError = "";
+  let shouldRedirectBlockingError = false;
+  if (!callback) {
+    blockingPhase = "error";
+    blockingError = "Missing callback parameter";
+  } else if (!isAllowedCallback(callback)) {
+    blockingPhase = "invalid-callback";
+    blockingError = "Refusing to authorize: callback is not a localhost loopback URL.";
+  } else if (LOCAL_MODE) {
+    blockingPhase = "error";
+    blockingError = "This deployment runs in local mode — no remote login needed.";
+    shouldRedirectBlockingError = true;
+  }
+
+  const effectivePhase = !isLoaded
+    ? phase
+    : (blockingPhase ?? (!isSignedIn ? "need-signin" : phase));
+  const effectiveError = blockingError || error;
+
   function redirectToCallback(qs: string) {
     if (!callback) return;
     const sep = callback.includes("?") ? "&" : "?";
@@ -57,29 +77,14 @@ export default function CliAuthScreen() {
 
   useEffect(() => {
     if (!isLoaded) return;
-    if (!callback) {
-      setError("Missing callback parameter");
-      setPhase("error");
-      return;
-    }
-    if (!isAllowedCallback(callback)) {
-      // Refuse outright — never even attempt to mint a token for an unsafe
-      // callback target, and never redirect anywhere we might leak it.
-      setError("Refusing to authorize: callback is not a localhost loopback URL.");
-      setPhase("invalid-callback");
-      return;
-    }
-    if (LOCAL_MODE) {
-      const msg = "This deployment runs in local mode — no remote login needed.";
-      setError(msg);
-      setPhase("error");
+    if (blockingPhase) {
+      if (!shouldRedirectBlockingError) return;
       redirectToCallback(
-        `error=${encodeURIComponent(msg)}&state=${encodeURIComponent(loginState ?? "")}`,
+        `error=${encodeURIComponent(blockingError)}&state=${encodeURIComponent(loginState ?? "")}`,
       );
       return;
     }
     if (!isSignedIn) {
-      setPhase("need-signin");
       return;
     }
 
@@ -130,23 +135,23 @@ export default function CliAuthScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded, isSignedIn, callback]);
+  }, [isLoaded, isSignedIn, callback, blockingPhase, blockingError, shouldRedirectBlockingError]);
 
   return (
     <View className="flex-1 bg-background items-center justify-center px-8">
       <View className="max-w-[420px] w-full items-center">
         <Text className="font-mono text-[28px] font-bold text-foreground mb-6">aimux</Text>
 
-        {phase === "checking" || phase === "issuing" ? (
+        {effectivePhase === "checking" || effectivePhase === "issuing" ? (
           <>
             <ActivityIndicator />
             <Text className="text-[14px] text-muted-foreground mt-4">
-              {phase === "issuing" ? "Authorizing CLI..." : "Checking session..."}
+              {effectivePhase === "issuing" ? "Authorizing CLI..." : "Checking session..."}
             </Text>
           </>
         ) : null}
 
-        {phase === "need-signin" ? (
+        {effectivePhase === "need-signin" ? (
           <>
             <Text className="text-[15px] text-foreground text-center mb-2">
               Sign in to authorize the CLI
@@ -168,14 +173,14 @@ export default function CliAuthScreen() {
           </>
         ) : null}
 
-        {phase === "done" ? (
+        {effectivePhase === "done" ? (
           <Text className="text-[15px] text-foreground text-center">
             ✓ CLI authorized. Return to your terminal.
           </Text>
         ) : null}
 
-        {phase === "error" || phase === "invalid-callback" ? (
-          <Text className="text-[14px] text-destructive text-center">{error}</Text>
+        {effectivePhase === "error" || effectivePhase === "invalid-callback" ? (
+          <Text className="text-[14px] text-destructive text-center">{effectiveError}</Text>
         ) : null}
       </View>
     </View>
