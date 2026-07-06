@@ -27,7 +27,7 @@ import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-
 import { assertSessionRestorable } from "../session-restorability.js";
 import { log } from "../debug.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
-import { getOrCreateTuiApiRuntime, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
+import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
 import {
   captureDashboardLifecycle,
   type DashboardLifecycleToken,
@@ -1048,7 +1048,7 @@ export async function refreshDashboardModelFromService(
     return false;
   }
   try {
-    if (typeof host.getFromProjectService !== "function") {
+    if (!hasTuiApiRuntimeReadTransport(host)) {
       if (!isDashboardModelRefreshLifecycleCurrent(host, options)) return false;
       return failDashboardServiceRefresh(host, force);
     }

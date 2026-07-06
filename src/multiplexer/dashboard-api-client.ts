@@ -1,6 +1,8 @@
 import { isDashboardLifecycleCurrent, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
+import { postToProjectService as postToProjectServiceTransport } from "./dashboard-control.js";
 import {
   getOrCreateTuiApiRuntime,
+  hasTuiApiRuntimeReadTransport,
   isTuiApiConnectionMutationBlocked,
   type TuiApiConnectionSnapshot,
   type TuiApiRequestOptions,
@@ -79,7 +81,7 @@ export async function refreshDashboardApiResource<T>(
   options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
   if (!isDashboardApiLifecycleCurrent(host, options)) return false;
-  if (typeof host.getFromProjectService !== "function") {
+  if (!hasTuiApiRuntimeReadTransport(host)) {
     config.ensure();
     return false;
   }
@@ -142,7 +144,17 @@ export async function mutateDashboardApi<T = any>(
   opts: TuiApiRequestOptions | undefined = undefined,
   validate: (value: unknown) => T = (value) => value as T,
 ): Promise<T> {
-  const result = await getOrCreateTuiApiRuntime(host).mutateJson(path, body, validate, opts);
+  const mutate =
+    typeof host.postToProjectService === "function"
+      ? (requestPath: string, requestBody: unknown, requestOpts?: TuiApiRequestOptions) =>
+          requestOpts === undefined
+            ? host.postToProjectService(requestPath, requestBody)
+            : host.postToProjectService(requestPath, requestBody, requestOpts)
+      : (requestPath: string, requestBody: unknown, requestOpts?: TuiApiRequestOptions) =>
+          requestOpts === undefined
+            ? postToProjectServiceTransport(host, requestPath, requestBody)
+            : postToProjectServiceTransport(host, requestPath, requestBody, requestOpts);
+  const result = await getOrCreateTuiApiRuntime(host).mutateJson(path, body, validate, opts, mutate);
   if (!result.ok) throw result.error instanceof Error ? result.error : new Error(String(result.error));
   return result.value as T;
 }

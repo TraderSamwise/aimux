@@ -467,6 +467,10 @@ export function getOrCreateTuiApiRuntime(host: any): TuiApiRuntime {
   return host.tuiApiRuntime;
 }
 
+export function hasTuiApiRuntimeReadTransport(host: any): boolean {
+  return typeof host.getFromProjectService === "function";
+}
+
 function tuiApiRecoveryDelay(host: any, immediate: boolean): number {
   if (typeof host.tuiApiLastRecoveryAt !== "number") {
     return immediate ? 0 : TUI_API_RECOVERY_DEBOUNCE_MS;
