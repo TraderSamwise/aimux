@@ -63,14 +63,7 @@ const APP_PROJECT_API_VIEW_DEPENDENCIES = {
   tasks: ["coordination-worklist", "project-observability", "tasks", "threads"],
   threads: ["coordination-worklist", "project-observability", "threads"],
   topology: ["project-observability", "topology"],
-  worktrees: [
-    "agents",
-    "graveyard",
-    "library",
-    "project-observability",
-    "topology",
-    "worktrees",
-  ],
+  worktrees: ["agents", "graveyard", "library", "project-observability", "topology", "worktrees"],
 } satisfies Record<ProjectApiView, readonly ProjectApiView[]>;
 
 export function projectApiViewsForRefresh(views?: readonly string[]): ProjectApiView[] {
