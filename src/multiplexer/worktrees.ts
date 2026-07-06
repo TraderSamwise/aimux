@@ -45,7 +45,7 @@ interface DashboardWorktreeMutationOptions {
   worktreeSeed?: WorktreeGroup;
   lifecycle?: DashboardLifecycleToken;
   request: () => Promise<void>;
-  settle: (modelLifecycle: DashboardLifecycleToken) => Promise<boolean>;
+  settle: (modelLifecycle?: DashboardLifecycleToken) => Promise<boolean>;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
   onStaleProgress?: () => void;
@@ -175,7 +175,13 @@ async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardW
   try {
     await opts.request();
     if (!isDashboardLifecycleCurrent(host, lifecycle)) {
-      clearPending();
+      opts.onStaleProgress?.();
+      scheduleDashboardWorktreeMutationReconcile(host, {
+        ...opts,
+        modelLifecycle: undefined,
+        renderLifecycle: lifecycle,
+        clearPending,
+      });
       return;
     }
     if (!(await opts.settle(modelLifecycle))) {
@@ -209,7 +215,7 @@ async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardW
 function scheduleDashboardWorktreeMutationReconcile(
   host: WorktreeHost,
   opts: DashboardWorktreeMutationOptions & {
-    modelLifecycle: DashboardLifecycleToken;
+    modelLifecycle?: DashboardLifecycleToken;
     renderLifecycle: DashboardLifecycleToken;
     clearPending: () => boolean;
   },
@@ -227,12 +233,11 @@ function scheduleDashboardWorktreeMutationReconcile(
       hasPendingDashboardWorktreeAction(host, opts.pendingPath, opts.pendingAction)
     ) {
       await sleep(500);
-      if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
-        if (!opts.clearPending()) return;
+      const renderCurrent = isDashboardLifecycleCurrent(host, opts.renderLifecycle);
+      if (!renderCurrent) {
         opts.onStaleProgress?.();
-        return;
       }
-      if (!(await opts.settle(opts.modelLifecycle))) continue;
+      if (!(await opts.settle(renderCurrent ? opts.modelLifecycle : undefined))) continue;
       if (!opts.clearPending()) return;
       if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
         opts.onStaleSuccess?.();
@@ -678,7 +683,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
         host,
         path,
         host.dashboardWorktreeInitialSettleMs ?? 10_000,
-        350,
+        host.dashboardWorktreeStableSettleMs ?? 350,
         lifecycle,
       ),
     onSuccess: () => {
