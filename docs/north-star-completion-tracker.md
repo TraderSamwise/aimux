@@ -65,7 +65,7 @@ Remaining:
   stale-build decision dialogs.
 - [ ] Verify agent tmux windows survive restart unless a deliberate runtime
   rebuild path is required.
-- [ ] Document exactly where repair notices are recorded for debugging.
+- [x] Document exactly where repair notices are recorded for debugging.
 
 Done when:
 
@@ -119,7 +119,7 @@ Remaining:
   resource is known invalid.
 - [x] Block only unsafe mutating actions while disconnected; keep local
   navigation instant.
-- [ ] Emit user-visible repair notices whenever automatic repair happens.
+- [x] Emit user-visible repair notices whenever automatic repair happens.
 - [x] Add regression tests for route/service drift, service restart, slow API,
   stale snapshot preservation, and failed repair.
 
@@ -129,6 +129,14 @@ Done when:
 - Reconnect/repair behavior is consistent across Dashboard, Coordination,
   Project, Library, Topology, Graveyard, and Expose/meta surfaces.
 - Fast local navigation does not wait on API calls.
+
+Repair notices:
+
+- Automatic TUI API recovery and runtime-guard repair append bounded entries to
+  the dashboard host's in-memory `dashboardRepairNotices` ring.
+- The same events are written to the Aimux debug log through the `runtime`
+  channel, and dashboard-visible recovery paths flash the footer or show the
+  existing busy/error overlay.
 
 ### Epic D: Lifecycle Transition Contract
 
@@ -349,6 +357,7 @@ Update this table after each epic PR.
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-06 | #339 | App resource lifecycle | Partial | Mostly done | Project tab observability/tasks moved to resource actions; route/endpoint stale response race fixed; app focused tests and PR checks passed. |
 | 2026-07-06 | #344 | TUI connection contract | Partial | Partial | Dashboard model refresh now returns `applied/stale/skipped/failed` outcomes; `TuiApiRuntime` blocks mutation wrappers while the critical `desktop-state` resource is reconnecting; focused TUI API tests and typecheck passed. |
+| 2026-07-06 | #345 | TUI repair observability | Partial | Partial | API recovery and runtime-guard repair now record bounded `dashboardRepairNotices`, flash visible recovery notices, and keep focused regression coverage for repair start/success/failure. |
 
 ## How To Measure Progress
 
