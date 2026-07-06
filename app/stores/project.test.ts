@@ -14,6 +14,7 @@ import {
   applyProjectObservabilityFailureAtom,
   applyProjectObservabilitySuccessAtom,
   applyProjectPlanActionFailureAtom,
+  applyProjectPlanEndpointUnavailableAtom,
   applyProjectPlanFailureAtom,
   applyProjectPlanSaveSuccessAtom,
   applyProjectPlanSuccessAtom,
@@ -811,6 +812,66 @@ describe("project resource lifecycle", () => {
       error: null,
       stale: false,
       updatedAt: 30,
+    });
+  });
+
+  it("preserves newer project plan edits when an older save succeeds", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+
+    putPlan(store, planKey, plan());
+    store.set(editProjectPlanDraftAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Submitted draft",
+    });
+    store.set(editProjectPlanDraftAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Newer draft",
+    });
+    store.set(applyProjectPlanSaveSuccessAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Submitted draft",
+      updatedAt: 30,
+    });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: {
+        content: "# Newer draft",
+        savedContent: "# Submitted draft",
+      },
+      error: null,
+      stale: false,
+      updatedAt: 30,
+    });
+  });
+
+  it("keeps project plan drafts when the service endpoint disappears", () => {
+    const store = createStore();
+    const planKey = projectPlanResourceKey("/repo", "session-1");
+
+    putPlan(store, planKey, plan());
+    store.set(editProjectPlanDraftAtom, {
+      planKey,
+      sessionId: "session-1",
+      content: "# Unsaved draft",
+    });
+    store.set(applyProjectPlanEndpointUnavailableAtom, {
+      planKey,
+      error: "service unavailable",
+    });
+
+    expect(store.get(projectPlanResourceFamily(planKey))).toMatchObject({
+      value: {
+        content: "# Unsaved draft",
+        savedContent: "# Plan",
+      },
+      error: "service unavailable",
+      pending: false,
+      pendingRequestKey: null,
+      stale: true,
     });
   });
 

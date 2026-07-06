@@ -124,6 +124,11 @@ export interface ApplyProjectPlanActionFailureInput {
   error: string;
 }
 
+export interface ApplyProjectPlanEndpointUnavailableInput {
+  planKey: string;
+  error: string;
+}
+
 export interface BeginProjectPlanRefreshInput {
   planKey: string;
   requestKey: string;
@@ -478,6 +483,20 @@ export const applyProjectPlanActionFailureAtom = atom(
   },
 );
 
+export const applyProjectPlanEndpointUnavailableAtom = atom(
+  null,
+  (get, set, { planKey, error }: ApplyProjectPlanEndpointUnavailableInput) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    set(projectPlanResourceFamily(planKey), {
+      ...current,
+      error,
+      pending: false,
+      pendingRequestKey: null,
+      stale: current.value !== null,
+    });
+  },
+);
+
 export const editProjectPlanDraftAtom = atom(
   null,
   (
@@ -515,11 +534,14 @@ export const applyProjectPlanSaveSuccessAtom = atom(
     }: { planKey: string; sessionId: string; content: string; updatedAt?: number },
   ) => {
     const current = get(projectPlanResourceFamily(planKey));
+    const currentValue = current.value;
+    const nextContent =
+      currentValue && currentValue.content !== content ? currentValue.content : content;
     set(projectPlanResourceFamily(planKey), {
       ...current,
       value: {
         sessionId,
-        content,
+        content: nextContent,
         savedContent: content,
         fetchedAt: new Date(updatedAt ?? Date.now()).toISOString(),
       },
