@@ -1,5 +1,6 @@
 import { atom } from "jotai";
-import type { ProjectApiView } from "../../src/project-api-contract";
+import { atomFamily } from "jotai/utils";
+import { PROJECT_API_VIEWS, type ProjectApiView } from "../../src/project-api-contract";
 
 type AppProjectApiViewRefresh = {
   projectApiViews: boolean;
@@ -23,11 +24,31 @@ export const APP_PROJECT_API_VIEW_REGISTRY = {
   worktrees: { projectApiViews: true, desktopState: true, notificationFeed: false },
 } satisfies Record<ProjectApiView, AppProjectApiViewRefresh>;
 
-export const projectApiViewRefreshNonceAtom = atom(0);
+export const projectApiViewRefreshNonceFamily = atomFamily((_view: ProjectApiView) => atom(0));
 
-export const kickProjectApiViewRefreshAtom = atom(null, (get, set) => {
-  set(projectApiViewRefreshNonceAtom, get(projectApiViewRefreshNonceAtom) + 1);
+export const kickProjectApiViewRefreshAtom = atom(null, (get, set, views?: readonly string[]) => {
+  for (const view of projectApiViewsForRefresh(views)) {
+    const nonceAtom = projectApiViewRefreshNonceFamily(view);
+    set(nonceAtom, get(nonceAtom) + 1);
+  }
 });
+
+export function projectApiViewsForRefresh(views?: readonly string[]): ProjectApiView[] {
+  if (!views) return [...PROJECT_API_VIEWS];
+  const result = new Set<ProjectApiView>();
+  for (const view of views) {
+    if (isProjectApiView(view)) {
+      result.add(view);
+    } else {
+      return [...PROJECT_API_VIEWS];
+    }
+  }
+  return [...result];
+}
+
+function isProjectApiView(view: string): view is ProjectApiView {
+  return (PROJECT_API_VIEWS as readonly string[]).includes(view);
+}
 
 function projectUpdateTouches(
   views: readonly string[],

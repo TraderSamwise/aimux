@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
-import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
 import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
 
@@ -197,7 +197,7 @@ function RowsList({
 
 export default function TopologyScreen() {
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
+  const topologyRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("topology"));
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
     project?: string | string[];
@@ -261,7 +261,7 @@ export default function TopologyScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, serializedRefresh]);
+  }, [endpointKey, serializedRefresh, topologyRefreshNonce]);
 
   const visibleTopology = topologyKey === viewKey ? topology : null;
   const visibleError = errorKey === viewKey ? error : null;

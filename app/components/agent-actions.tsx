@@ -56,7 +56,15 @@ export function AgentActions({
       try {
         await fn();
         kickDesktopRefresh();
-        kickProjectViewRefresh();
+        kickProjectViewRefresh([
+          "agents",
+          "project-observability",
+          "topology",
+          "coordination-worklist",
+          "graveyard",
+          "team",
+          "worktrees",
+        ]);
         if (opts?.isKill) onKilled?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

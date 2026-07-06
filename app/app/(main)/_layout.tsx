@@ -369,7 +369,7 @@ export default function MainLayout() {
             }
             if (event.type === PROJECT_API_EVENT_NAMES.projectUpdate) {
               if (projectUpdateTouchesProjectApiView(event.views)) {
-                kickProjectApiViewRefresh();
+                kickProjectApiViewRefresh(event.views);
               }
               if (projectUpdateTouchesDesktopState(event.views)) {
                 kickDesktopStateRefresh();

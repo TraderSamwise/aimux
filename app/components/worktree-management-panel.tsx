@@ -52,7 +52,13 @@ export function WorktreeManagementPanel({
     try {
       await fn();
       kickDesktopRefresh();
-      kickProjectViewRefresh();
+      kickProjectViewRefresh([
+        "worktrees",
+        "project-observability",
+        "topology",
+        "library",
+        "graveyard",
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

@@ -54,7 +54,14 @@ export function AgentCreatePanel({
         { token },
       );
       kickDesktopRefresh();
-      kickProjectViewRefresh();
+      kickProjectViewRefresh([
+        "agents",
+        "project-observability",
+        "topology",
+        "coordination-worklist",
+        "team",
+        "worktrees",
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
