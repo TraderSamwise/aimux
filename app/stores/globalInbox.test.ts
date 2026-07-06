@@ -75,6 +75,15 @@ function threadValue(
 }
 
 describe("global inbox resources", () => {
+  it("creates unique request keys across component remounts", () => {
+    expect(globalInboxRequestKey("notifications", "projects-a")).not.toBe(
+      globalInboxRequestKey("notifications", "projects-a"),
+    );
+    expect(globalInboxRequestKey("threads", "projects-a")).not.toBe(
+      globalInboxRequestKey("threads", "projects-a"),
+    );
+  });
+
   it("keeps stale global notifications while a refresh is in flight", () => {
     const store = createStore();
     const current = notificationValue();
