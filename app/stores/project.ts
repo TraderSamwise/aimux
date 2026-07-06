@@ -31,6 +31,13 @@ export interface ProjectGraveyardValue {
   fetchedAt: string;
 }
 
+export interface ProjectPlanValue {
+  sessionId: string;
+  content: string;
+  savedContent: string;
+  fetchedAt: string;
+}
+
 export interface ProjectResource<T> {
   value: T | null;
   error: string | null;
@@ -95,6 +102,38 @@ export interface ApplyProjectGraveyardSuccessInput {
   updatedAt?: number;
 }
 
+export interface ApplyProjectPlanSuccessInput {
+  planKey: string;
+  requestKey: string;
+  plan: {
+    sessionId: string;
+    content: string;
+    fetchedAt: string;
+  };
+  updatedAt?: number;
+}
+
+export interface ApplyProjectPlanFailureInput {
+  planKey: string;
+  requestKey: string;
+  error: string;
+}
+
+export interface ApplyProjectPlanActionFailureInput {
+  planKey: string;
+  error: string;
+}
+
+export interface BeginProjectPlanRefreshInput {
+  planKey: string;
+  requestKey: string;
+}
+
+export interface SettleProjectPlanRefreshInput {
+  planKey: string;
+  requestKey: string;
+}
+
 const projectResourceRequestScope = `${Date.now().toString(36)}-${Math.random()
   .toString(36)
   .slice(2)}`;
@@ -150,6 +189,10 @@ export const projectGraveyardResourceFamily = atomFamily((_projectPath: string) 
   atom<ProjectResource<ProjectGraveyardValue>>(emptyResource<ProjectGraveyardValue>()),
 );
 
+export const projectPlanResourceFamily = atomFamily((_planKey: string) =>
+  atom<ProjectResource<ProjectPlanValue>>(emptyResource<ProjectPlanValue>()),
+);
+
 export const projectObservabilityFamily = atomFamily((projectPath: string) =>
   atom((get) => get(projectObservabilityResourceFamily(projectPath)).value),
 );
@@ -165,6 +208,14 @@ export const projectThreadsFamily = atomFamily((projectPath: string) =>
 export const projectGraveyardFamily = atomFamily((projectPath: string) =>
   atom((get) => get(projectGraveyardResourceFamily(projectPath)).value),
 );
+
+export const projectPlanFamily = atomFamily((planKey: string) =>
+  atom((get) => get(projectPlanResourceFamily(planKey)).value),
+);
+
+export function projectPlanResourceKey(projectPath: string, sessionId: string): string {
+  return `${projectPath}\u0000${sessionId}`;
+}
 
 export const beginProjectObservabilityRefreshAtom = atom(
   null,
@@ -210,6 +261,19 @@ export const beginProjectGraveyardRefreshAtom = atom(
   (get, set, { projectPath, requestKey }: BeginProjectResourceRefreshInput) => {
     const current = get(projectGraveyardResourceFamily(projectPath));
     set(projectGraveyardResourceFamily(projectPath), {
+      ...current,
+      pending: true,
+      pendingRequestKey: requestKey,
+      stale: current.value !== null,
+    });
+  },
+);
+
+export const beginProjectPlanRefreshAtom = atom(
+  null,
+  (get, set, { planKey, requestKey }: BeginProjectPlanRefreshInput) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    set(projectPlanResourceFamily(planKey), {
       ...current,
       pending: true,
       pendingRequestKey: requestKey,
@@ -290,6 +354,31 @@ export const applyProjectGraveyardSuccessAtom = atom(
   },
 );
 
+export const applyProjectPlanSuccessAtom = atom(
+  null,
+  (get, set, { planKey, requestKey, plan, updatedAt }: ApplyProjectPlanSuccessInput) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    if (current.pendingRequestKey !== requestKey) return;
+    const currentDraft = current.value;
+    const hasUnsavedDraft =
+      currentDraft !== null && currentDraft.content !== currentDraft.savedContent;
+    const nextContent = hasUnsavedDraft ? currentDraft.content : plan.content;
+    set(projectPlanResourceFamily(planKey), {
+      value: {
+        sessionId: plan.sessionId,
+        content: nextContent,
+        savedContent: plan.content,
+        fetchedAt: plan.fetchedAt,
+      },
+      error: null,
+      pending: false,
+      pendingRequestKey: null,
+      stale: false,
+      updatedAt: updatedAt ?? Date.now(),
+    });
+  },
+);
+
 export const applyProjectObservabilityFailureAtom = atom(
   null,
   (get, set, { projectPath, requestKey, error }: ApplyProjectResourceFailureInput) => {
@@ -350,6 +439,21 @@ export const applyProjectGraveyardFailureAtom = atom(
   },
 );
 
+export const applyProjectPlanFailureAtom = atom(
+  null,
+  (get, set, { planKey, requestKey, error }: ApplyProjectPlanFailureInput) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    if (current.pendingRequestKey !== requestKey) return;
+    set(projectPlanResourceFamily(planKey), {
+      ...current,
+      error,
+      pending: false,
+      pendingRequestKey: null,
+      stale: current.value !== null,
+    });
+  },
+);
+
 export const applyProjectGraveyardActionFailureAtom = atom(
   null,
   (get, set, { projectPath, error }: ApplyProjectResourceActionFailureInput) => {
@@ -358,6 +462,70 @@ export const applyProjectGraveyardActionFailureAtom = atom(
       ...current,
       error,
       stale: current.value !== null,
+    });
+  },
+);
+
+export const applyProjectPlanActionFailureAtom = atom(
+  null,
+  (get, set, { planKey, error }: ApplyProjectPlanActionFailureInput) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    set(projectPlanResourceFamily(planKey), {
+      ...current,
+      error,
+      stale: current.value !== null,
+    });
+  },
+);
+
+export const editProjectPlanDraftAtom = atom(
+  null,
+  (
+    get,
+    set,
+    { planKey, sessionId, content }: { planKey: string; sessionId: string; content: string },
+  ) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    const currentValue = current.value;
+    set(projectPlanResourceFamily(planKey), {
+      ...current,
+      value: {
+        sessionId,
+        content,
+        savedContent: currentValue?.savedContent ?? "",
+        fetchedAt: currentValue?.fetchedAt ?? new Date(0).toISOString(),
+      },
+      error: null,
+      stale: current.value !== null ? current.stale : false,
+      updatedAt: current.updatedAt ?? Date.now(),
+    });
+  },
+);
+
+export const applyProjectPlanSaveSuccessAtom = atom(
+  null,
+  (
+    get,
+    set,
+    {
+      planKey,
+      sessionId,
+      content,
+      updatedAt,
+    }: { planKey: string; sessionId: string; content: string; updatedAt?: number },
+  ) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    set(projectPlanResourceFamily(planKey), {
+      ...current,
+      value: {
+        sessionId,
+        content,
+        savedContent: content,
+        fetchedAt: new Date(updatedAt ?? Date.now()).toISOString(),
+      },
+      error: null,
+      stale: false,
+      updatedAt: updatedAt ?? Date.now(),
     });
   },
 );
@@ -379,6 +547,10 @@ export const clearProjectThreadsResourceAtom = atom(null, (_get, set, projectPat
 
 export const clearProjectGraveyardResourceAtom = atom(null, (_get, set, projectPath: string) => {
   set(projectGraveyardResourceFamily(projectPath), emptyResource());
+});
+
+export const clearProjectPlanResourceAtom = atom(null, (_get, set, planKey: string) => {
+  set(projectPlanResourceFamily(planKey), emptyResource());
 });
 
 export const removeProjectGraveyardAgentAtom = atom(
@@ -465,6 +637,20 @@ export const settleProjectGraveyardRefreshAtom = atom(
     const current = get(projectGraveyardResourceFamily(projectPath));
     if (current.pendingRequestKey !== requestKey) return;
     set(projectGraveyardResourceFamily(projectPath), {
+      ...current,
+      pending: false,
+      pendingRequestKey: null,
+      stale: current.value !== null,
+    });
+  },
+);
+
+export const settleProjectPlanRefreshAtom = atom(
+  null,
+  (get, set, { planKey, requestKey }: SettleProjectPlanRefreshInput) => {
+    const current = get(projectPlanResourceFamily(planKey));
+    if (current.pendingRequestKey !== requestKey) return;
+    set(projectPlanResourceFamily(planKey), {
       ...current,
       pending: false,
       pendingRequestKey: null,
