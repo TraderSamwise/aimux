@@ -27,8 +27,11 @@ import {
   clearProjectTasksResourceAtom,
   emptyProjectObservability,
   isCurrentProjectResourceRequest,
+  projectResourceRequestKey,
   projectObservabilityResourceFamily,
   projectTasksResourceFamily,
+  settleProjectObservabilityRefreshAtom,
+  settleProjectTasksRefreshAtom,
   type ProjectObservabilityModel,
   type ProjectResourceRequestScope,
 } from "@/stores/project";
@@ -202,6 +205,8 @@ export default function ProjectScreen() {
   const applyProjectTasksFailure = useSetAtom(applyProjectTasksFailureAtom);
   const clearProjectObservabilityResource = useSetAtom(clearProjectObservabilityResourceAtom);
   const clearProjectTasksResource = useSetAtom(clearProjectTasksResourceAtom);
+  const settleProjectObservabilityRefresh = useSetAtom(settleProjectObservabilityRefreshAtom);
+  const settleProjectTasksRefresh = useSetAtom(settleProjectTasksRefreshAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
@@ -248,16 +253,22 @@ export default function ProjectScreen() {
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
+    const requestKey = projectResourceRequestKey(requestScope, seq);
     if (!currentEndpoint) {
       clearProjectObservabilityResource(currentProjectPath);
       return;
     }
-    beginProjectObservabilityRefresh(currentProjectPath);
+    beginProjectObservabilityRefresh({ projectPath: currentProjectPath, requestKey });
     try {
       const token = await getTokenRef.current();
       const response = await getProjectObservability(currentEndpoint, { token });
-      if (seq !== projectRefreshSeqRef.current) return;
-      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      if (
+        seq !== projectRefreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleProjectObservabilityRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
       applyProjectObservabilitySuccess({
         projectPath: currentProjectPath,
         observability: {
@@ -266,8 +277,13 @@ export default function ProjectScreen() {
         },
       });
     } catch (err) {
-      if (seq !== projectRefreshSeqRef.current) return;
-      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      if (
+        seq !== projectRefreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleProjectObservabilityRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
       applyProjectObservabilityFailure({
         projectPath: currentProjectPath,
         error: err instanceof Error ? err.message : String(err),
@@ -278,6 +294,7 @@ export default function ProjectScreen() {
     applyProjectObservabilitySuccess,
     beginProjectObservabilityRefresh,
     clearProjectObservabilityResource,
+    settleProjectObservabilityRefresh,
   ]);
 
   const refreshTasks = useCallback(async () => {
@@ -289,16 +306,22 @@ export default function ProjectScreen() {
       endpointKey: endpointKeyRef.current,
       generation: refreshGenerationRef.current,
     };
+    const requestKey = projectResourceRequestKey(requestScope, seq);
     if (!currentEndpoint) {
       clearProjectTasksResource(currentProjectPath);
       return;
     }
-    beginProjectTasksRefresh(currentProjectPath);
+    beginProjectTasksRefresh({ projectPath: currentProjectPath, requestKey });
     try {
       const token = await getTokenRef.current();
       const response = await listTasks(currentEndpoint, undefined, { token });
-      if (seq !== tasksRefreshSeqRef.current) return;
-      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      if (
+        seq !== tasksRefreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleProjectTasksRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
       applyProjectTasksSuccess({
         projectPath: currentProjectPath,
         tasks: {
@@ -307,8 +330,13 @@ export default function ProjectScreen() {
         },
       });
     } catch (err) {
-      if (seq !== tasksRefreshSeqRef.current) return;
-      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      if (
+        seq !== tasksRefreshSeqRef.current ||
+        !isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)
+      ) {
+        settleProjectTasksRefresh({ projectPath: currentProjectPath, requestKey });
+        return;
+      }
       applyProjectTasksFailure({
         projectPath: currentProjectPath,
         error: err instanceof Error ? err.message : String(err),
@@ -319,6 +347,7 @@ export default function ProjectScreen() {
     applyProjectTasksSuccess,
     beginProjectTasksRefresh,
     clearProjectTasksResource,
+    settleProjectTasksRefresh,
   ]);
 
   const refreshProjectView = useCallback(async () => {
