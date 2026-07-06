@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -18,6 +18,13 @@ import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
 import { buildViewHref, detailHrefForPath } from "@/lib/view-location";
+import {
+  applyCoordinationWorklistFailureAtom,
+  applyCoordinationWorklistSuccessAtom,
+  beginCoordinationWorklistRefreshAtom,
+  clearCoordinationWorklistResourceAtom,
+  coordinationWorklistResourceFamily,
+} from "@/stores/coordination";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { selectedSessionIdAtom } from "@/stores/projects";
 
@@ -114,58 +121,62 @@ export default function CoordinationScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const refreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("coordination-worklist"));
+  const resource = useAtomValue(coordinationWorklistResourceFamily(projectPathKey));
+  const beginCoordinationWorklistRefresh = useSetAtom(beginCoordinationWorklistRefreshAtom);
+  const applyCoordinationWorklistSuccess = useSetAtom(applyCoordinationWorklistSuccessAtom);
+  const applyCoordinationWorklistFailure = useSetAtom(applyCoordinationWorklistFailureAtom);
+  const clearCoordinationWorklistResource = useSetAtom(clearCoordinationWorklistResourceAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
-  const [items, setItems] = useState<CoordinationWorklistItem[]>([]);
-  const [itemsKey, setItemsKey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [errorKey, setErrorKey] = useState<string | null>(null);
   const endpointRef = useRef(endpoint);
-  const viewKeyRef = useRef(viewKey);
+  const projectPathRef = useRef(projectPathKey);
   const getTokenRef = useRef(getToken);
   const refreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
-    viewKeyRef.current = viewKey;
+    projectPathRef.current = projectPathKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken, viewKey]);
+  }, [endpoint, getToken, projectPathKey]);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentViewKey = viewKeyRef.current;
+    const currentProjectPath = projectPathRef.current;
     if (!currentEndpoint) {
-      setItems([]);
-      setItemsKey(null);
-      setError(null);
-      setErrorKey(null);
-      setLoading(false);
+      clearCoordinationWorklistResource(currentProjectPath);
       return;
     }
-    setLoading(true);
+    beginCoordinationWorklistRefresh(currentProjectPath);
     try {
       const token = await getTokenRef.current();
       const response = await getCoordinationWorklist(currentEndpoint, "user", { token });
       if (seq !== refreshSeqRef.current) return;
-      setItems(response.worklist.items);
-      setItemsKey(currentViewKey);
-      setError(null);
-      setErrorKey(null);
+      applyCoordinationWorklistSuccess({
+        projectPath: currentProjectPath,
+        worklist: {
+          items: response.worklist.items,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
-      setError(err instanceof Error ? err.message : String(err));
-      setErrorKey(currentViewKey);
-    } finally {
-      if (seq === refreshSeqRef.current) setLoading(false);
+      applyCoordinationWorklistFailure({
+        projectPath: currentProjectPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, []);
+  }, [
+    applyCoordinationWorklistFailure,
+    applyCoordinationWorklistSuccess,
+    beginCoordinationWorklistRefresh,
+    clearCoordinationWorklistResource,
+  ]);
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {
@@ -173,13 +184,10 @@ export default function CoordinationScreen() {
       void serializedRefresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, refreshNonce, serializedRefresh]);
+  }, [endpointKey, projectPathKey, refreshNonce, serializedRefresh]);
 
-  const visibleItems = useMemo(
-    () => (itemsKey === viewKey ? items : []),
-    [items, itemsKey, viewKey],
-  );
-  const visibleError = errorKey === viewKey ? error : null;
+  const visibleItems = useMemo(() => resource.value?.items ?? [], [resource.value?.items]);
+  const visibleError = resource.error;
   const needsYou = useMemo(() => visibleItems.filter((item) => item.actionable), [visibleItems]);
   const tail = useMemo(() => visibleItems.filter((item) => !item.actionable), [visibleItems]);
 
@@ -213,7 +221,7 @@ export default function CoordinationScreen() {
           <Button
             variant="outline"
             size="icon"
-            disabled={!endpoint || loading}
+            disabled={!endpoint || resource.pending}
             onPress={() => void serializedRefresh()}
             accessibilityLabel="Refresh coordination"
           >
@@ -231,11 +239,11 @@ export default function CoordinationScreen() {
           title="Project host offline"
           body="Start the project host to load coordination."
         />
-      ) : visibleError ? (
+      ) : visibleError && !resource.value ? (
         <PageStateCard title="Coordination failed" body={visibleError} tone="danger" />
       ) : visibleItems.length === 0 ? (
         <PageStateCard
-          title={loading ? "Loading coordination..." : "Nothing needs you"}
+          title={resource.pending ? "Loading coordination..." : "Nothing needs you"}
           body="Agent asks, handoffs, reviews, and waiting threads will appear here."
         />
       ) : (
