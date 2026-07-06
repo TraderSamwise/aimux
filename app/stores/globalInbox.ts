@@ -34,11 +34,13 @@ export interface BeginGlobalInboxRefreshInput {
 }
 
 export interface ApplyGlobalInboxSuccessInput<T> {
+  requestKey: string;
   value: GlobalInboxValue<T>;
   updatedAt?: number;
 }
 
 export interface ApplyGlobalInboxFailureInput {
+  requestKey: string;
   error: string;
 }
 
@@ -76,9 +78,12 @@ function beginGlobalInboxRefresh<T>(
 }
 
 function applyGlobalInboxSuccess<T>(
+  current: GlobalInboxResource<T>,
+  requestKey: string,
   value: GlobalInboxValue<T>,
   updatedAt?: number,
 ): GlobalInboxResource<T> {
+  if (current.pendingRequestKey !== requestKey) return current;
   return {
     value,
     error: null,
@@ -91,8 +96,10 @@ function applyGlobalInboxSuccess<T>(
 
 function applyGlobalInboxFailure<T>(
   current: GlobalInboxResource<T>,
+  requestKey: string,
   error: string,
 ): GlobalInboxResource<T> {
+  if (current.pendingRequestKey !== requestKey) return current;
   return {
     ...current,
     error,
@@ -127,17 +134,24 @@ export const beginGlobalNotificationRefreshAtom = atom(
 
 export const applyGlobalNotificationSuccessAtom = atom(
   null,
-  (_get, set, { value, updatedAt }: ApplyGlobalInboxSuccessInput<GlobalNotificationRow>) => {
-    set(globalNotificationResourceAtom, applyGlobalInboxSuccess(value, updatedAt));
+  (
+    get,
+    set,
+    { requestKey, value, updatedAt }: ApplyGlobalInboxSuccessInput<GlobalNotificationRow>,
+  ) => {
+    set(
+      globalNotificationResourceAtom,
+      applyGlobalInboxSuccess(get(globalNotificationResourceAtom), requestKey, value, updatedAt),
+    );
   },
 );
 
 export const applyGlobalNotificationFailureAtom = atom(
   null,
-  (get, set, { error }: ApplyGlobalInboxFailureInput) => {
+  (get, set, { requestKey, error }: ApplyGlobalInboxFailureInput) => {
     set(
       globalNotificationResourceAtom,
-      applyGlobalInboxFailure(get(globalNotificationResourceAtom), error),
+      applyGlobalInboxFailure(get(globalNotificationResourceAtom), requestKey, error),
     );
   },
 );
@@ -164,15 +178,21 @@ export const beginGlobalThreadRefreshAtom = atom(
 
 export const applyGlobalThreadSuccessAtom = atom(
   null,
-  (_get, set, { value, updatedAt }: ApplyGlobalInboxSuccessInput<GlobalThreadRow>) => {
-    set(globalThreadResourceAtom, applyGlobalInboxSuccess(value, updatedAt));
+  (get, set, { requestKey, value, updatedAt }: ApplyGlobalInboxSuccessInput<GlobalThreadRow>) => {
+    set(
+      globalThreadResourceAtom,
+      applyGlobalInboxSuccess(get(globalThreadResourceAtom), requestKey, value, updatedAt),
+    );
   },
 );
 
 export const applyGlobalThreadFailureAtom = atom(
   null,
-  (get, set, { error }: ApplyGlobalInboxFailureInput) => {
-    set(globalThreadResourceAtom, applyGlobalInboxFailure(get(globalThreadResourceAtom), error));
+  (get, set, { requestKey, error }: ApplyGlobalInboxFailureInput) => {
+    set(
+      globalThreadResourceAtom,
+      applyGlobalInboxFailure(get(globalThreadResourceAtom), requestKey, error),
+    );
   },
 );
 
@@ -192,4 +212,14 @@ export function globalInboxRequestKey(
   sequence: number,
 ): string {
   return `${kind}\u0000${sourceKey}\u0000${sequence}`;
+}
+
+export function mergeGlobalRowsWithPrevious<T extends { projectPath: string }>(
+  previousRows: readonly T[],
+  nextRows: readonly T[],
+  failedProjectPaths: ReadonlySet<string>,
+): T[] {
+  if (failedProjectPaths.size === 0) return [...nextRows];
+  const retainedRows = previousRows.filter((row) => failedProjectPaths.has(row.projectPath));
+  return [...nextRows, ...retainedRows];
 }

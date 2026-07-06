@@ -12,6 +12,7 @@ import {
   globalInboxRequestKey,
   globalNotificationResourceAtom,
   globalThreadResourceAtom,
+  mergeGlobalRowsWithPrevious,
   settleGlobalNotificationRefreshAtom,
   settleGlobalThreadRefreshAtom,
   type GlobalInboxValue,
@@ -79,7 +80,13 @@ describe("global inbox resources", () => {
     const current = notificationValue();
     const requestKey = globalInboxRequestKey("notifications", "projects-a", 1);
 
-    store.set(applyGlobalNotificationSuccessAtom, { value: current, updatedAt: 10 });
+    const initialKey = globalInboxRequestKey("notifications", "initial", 0);
+    store.set(beginGlobalNotificationRefreshAtom, { requestKey: initialKey });
+    store.set(applyGlobalNotificationSuccessAtom, {
+      requestKey: initialKey,
+      value: current,
+      updatedAt: 10,
+    });
     store.set(beginGlobalNotificationRefreshAtom, { requestKey });
 
     expect(store.get(globalNotificationResourceAtom)).toEqual({
@@ -97,7 +104,13 @@ describe("global inbox resources", () => {
     const current = threadValue();
     const requestKey = globalInboxRequestKey("threads", "projects-a", 1);
 
-    store.set(applyGlobalThreadSuccessAtom, { value: current, updatedAt: 10 });
+    const initialKey = globalInboxRequestKey("threads", "initial", 0);
+    store.set(beginGlobalThreadRefreshAtom, { requestKey: initialKey });
+    store.set(applyGlobalThreadSuccessAtom, {
+      requestKey: initialKey,
+      value: current,
+      updatedAt: 10,
+    });
     store.set(beginGlobalThreadRefreshAtom, { requestKey });
 
     expect(store.get(globalThreadResourceAtom)).toEqual({
@@ -116,7 +129,13 @@ describe("global inbox resources", () => {
     const staleRequest = globalInboxRequestKey("notifications", "projects-a", 1);
     const currentRequest = globalInboxRequestKey("notifications", "projects-b", 2);
 
-    store.set(applyGlobalNotificationSuccessAtom, { value: current, updatedAt: 10 });
+    const initialKey = globalInboxRequestKey("notifications", "initial", 0);
+    store.set(beginGlobalNotificationRefreshAtom, { requestKey: initialKey });
+    store.set(applyGlobalNotificationSuccessAtom, {
+      requestKey: initialKey,
+      value: current,
+      updatedAt: 10,
+    });
     store.set(beginGlobalNotificationRefreshAtom, { requestKey: staleRequest });
     store.set(beginGlobalNotificationRefreshAtom, { requestKey: currentRequest });
     store.set(settleGlobalNotificationRefreshAtom, { requestKey: staleRequest });
@@ -144,7 +163,13 @@ describe("global inbox resources", () => {
     const staleRequest = globalInboxRequestKey("threads", "projects-a", 1);
     const currentRequest = globalInboxRequestKey("threads", "projects-b", 2);
 
-    store.set(applyGlobalThreadSuccessAtom, { value: current, updatedAt: 10 });
+    const initialKey = globalInboxRequestKey("threads", "initial", 0);
+    store.set(beginGlobalThreadRefreshAtom, { requestKey: initialKey });
+    store.set(applyGlobalThreadSuccessAtom, {
+      requestKey: initialKey,
+      value: current,
+      updatedAt: 10,
+    });
     store.set(beginGlobalThreadRefreshAtom, { requestKey: staleRequest });
     store.set(beginGlobalThreadRefreshAtom, { requestKey: currentRequest });
     store.set(settleGlobalThreadRefreshAtom, { requestKey: staleRequest });
@@ -173,19 +198,39 @@ describe("global inbox resources", () => {
     const recoveredNotifications = notificationValue({ rows: [] });
     const recoveredThreads = threadValue({ rows: [] });
 
-    store.set(applyGlobalNotificationSuccessAtom, { value: currentNotifications, updatedAt: 10 });
+    const initialNotificationKey = globalInboxRequestKey("notifications", "initial", 0);
+    const currentNotificationKey = globalInboxRequestKey("notifications", "projects-a", 1);
+    const initialThreadKey = globalInboxRequestKey("threads", "initial", 0);
+    const currentThreadKey = globalInboxRequestKey("threads", "projects-a", 1);
+
+    store.set(beginGlobalNotificationRefreshAtom, { requestKey: initialNotificationKey });
+    store.set(applyGlobalNotificationSuccessAtom, {
+      requestKey: initialNotificationKey,
+      value: currentNotifications,
+      updatedAt: 10,
+    });
     store.set(beginGlobalNotificationRefreshAtom, {
-      requestKey: globalInboxRequestKey("notifications", "projects-a", 1),
+      requestKey: currentNotificationKey,
     });
     store.set(applyGlobalNotificationSuccessAtom, {
+      requestKey: currentNotificationKey,
       value: recoveredNotifications,
       updatedAt: 20,
     });
-    store.set(applyGlobalThreadSuccessAtom, { value: currentThreads, updatedAt: 10 });
-    store.set(beginGlobalThreadRefreshAtom, {
-      requestKey: globalInboxRequestKey("threads", "projects-a", 1),
+    store.set(beginGlobalThreadRefreshAtom, { requestKey: initialThreadKey });
+    store.set(applyGlobalThreadSuccessAtom, {
+      requestKey: initialThreadKey,
+      value: currentThreads,
+      updatedAt: 10,
     });
-    store.set(applyGlobalThreadSuccessAtom, { value: recoveredThreads, updatedAt: 20 });
+    store.set(beginGlobalThreadRefreshAtom, {
+      requestKey: currentThreadKey,
+    });
+    store.set(applyGlobalThreadSuccessAtom, {
+      requestKey: currentThreadKey,
+      value: recoveredThreads,
+      updatedAt: 20,
+    });
 
     expect(store.get(globalNotificationResourceAtom)).toEqual({
       value: recoveredNotifications,
@@ -210,16 +255,37 @@ describe("global inbox resources", () => {
     const currentNotifications = notificationValue();
     const currentThreads = threadValue();
 
-    store.set(applyGlobalNotificationSuccessAtom, { value: currentNotifications, updatedAt: 10 });
+    const initialNotificationKey = globalInboxRequestKey("notifications", "initial", 0);
+    const failingNotificationKey = globalInboxRequestKey("notifications", "projects-a", 1);
+    const initialThreadKey = globalInboxRequestKey("threads", "initial", 0);
+    const failingThreadKey = globalInboxRequestKey("threads", "projects-a", 1);
+
+    store.set(beginGlobalNotificationRefreshAtom, { requestKey: initialNotificationKey });
+    store.set(applyGlobalNotificationSuccessAtom, {
+      requestKey: initialNotificationKey,
+      value: currentNotifications,
+      updatedAt: 10,
+    });
     store.set(beginGlobalNotificationRefreshAtom, {
-      requestKey: globalInboxRequestKey("notifications", "projects-a", 1),
+      requestKey: failingNotificationKey,
     });
-    store.set(applyGlobalNotificationFailureAtom, { error: "token failed" });
-    store.set(applyGlobalThreadSuccessAtom, { value: currentThreads, updatedAt: 10 });
+    store.set(applyGlobalNotificationFailureAtom, {
+      requestKey: failingNotificationKey,
+      error: "token failed",
+    });
+    store.set(beginGlobalThreadRefreshAtom, { requestKey: initialThreadKey });
+    store.set(applyGlobalThreadSuccessAtom, {
+      requestKey: initialThreadKey,
+      value: currentThreads,
+      updatedAt: 10,
+    });
     store.set(beginGlobalThreadRefreshAtom, {
-      requestKey: globalInboxRequestKey("threads", "projects-a", 1),
+      requestKey: failingThreadKey,
     });
-    store.set(applyGlobalThreadFailureAtom, { error: "token failed" });
+    store.set(applyGlobalThreadFailureAtom, {
+      requestKey: failingThreadKey,
+      error: "token failed",
+    });
 
     expect(store.get(globalNotificationResourceAtom)).toMatchObject({
       value: currentNotifications,
@@ -235,5 +301,53 @@ describe("global inbox resources", () => {
       pendingRequestKey: null,
       stale: true,
     });
+  });
+
+  it("ignores stale global inbox success and failure requests", () => {
+    const store = createStore();
+    const currentNotifications = notificationValue();
+    const currentNotificationKey = globalInboxRequestKey("notifications", "projects-a", 2);
+    const staleNotificationKey = globalInboxRequestKey("notifications", "projects-a", 1);
+    const currentThreadKey = globalInboxRequestKey("threads", "projects-a", 2);
+    const staleThreadKey = globalInboxRequestKey("threads", "projects-a", 1);
+
+    store.set(beginGlobalNotificationRefreshAtom, { requestKey: currentNotificationKey });
+    store.set(applyGlobalNotificationSuccessAtom, {
+      requestKey: staleNotificationKey,
+      value: currentNotifications,
+      updatedAt: 10,
+    });
+    store.set(beginGlobalThreadRefreshAtom, { requestKey: currentThreadKey });
+    store.set(applyGlobalThreadFailureAtom, {
+      requestKey: staleThreadKey,
+      error: "stale failed",
+    });
+
+    expect(store.get(globalNotificationResourceAtom)).toMatchObject({
+      value: null,
+      pending: true,
+      pendingRequestKey: currentNotificationKey,
+    });
+    expect(store.get(globalThreadResourceAtom)).toMatchObject({
+      value: null,
+      error: null,
+      pending: true,
+      pendingRequestKey: currentThreadKey,
+    });
+  });
+
+  it("retains previous failed-project rows during partial refresh failures", () => {
+    const previousRows = [
+      { projectPath: "/repo-a", projectName: "A", notification: notification("old-a") },
+      { projectPath: "/repo-b", projectName: "B", notification: notification("old-b") },
+    ];
+    const nextRows = [
+      { projectPath: "/repo-a", projectName: "A", notification: notification("new-a") },
+    ];
+
+    expect(mergeGlobalRowsWithPrevious(previousRows, nextRows, new Set(["/repo-b"]))).toEqual([
+      nextRows[0],
+      previousRows[1],
+    ]);
   });
 });

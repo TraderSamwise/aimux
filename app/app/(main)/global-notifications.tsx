@@ -22,6 +22,7 @@ import {
   beginGlobalNotificationRefreshAtom,
   globalInboxRequestKey,
   globalNotificationResourceAtom,
+  mergeGlobalRowsWithPrevious,
   settleGlobalNotificationRefreshAtom,
   type GlobalNotificationRow,
 } from "@/stores/globalInbox";
@@ -77,6 +78,7 @@ export default function GlobalNotificationsScreen() {
   );
   const onlineProjectsRef = useRef(onlineProjects);
   const onlineProjectKeyRef = useRef(onlineProjectKey);
+  const resourceRef = useRef(resource);
   const refreshSeqRef = useRef(0);
   const rows = resource.value?.rows ?? [];
   const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
@@ -87,7 +89,8 @@ export default function GlobalNotificationsScreen() {
     onlineProjectsRef.current = onlineProjects;
     onlineProjectKeyRef.current = onlineProjectKey;
     getTokenRef.current = getToken;
-  }, [getToken, onlineProjectKey, onlineProjects]);
+    resourceRef.current = resource;
+  }, [getToken, onlineProjectKey, onlineProjects, resource]);
 
   const hasFetchError = errors.length > 0;
 
@@ -115,21 +118,29 @@ export default function GlobalNotificationsScreen() {
       );
       const nextRows: GlobalNotificationRow[] = [];
       const nextErrors: string[] = [];
+      const failedProjectPaths = new Set<string>();
       results.forEach((result, index) => {
         if (result.status === "fulfilled") {
           nextRows.push(...result.value);
         } else {
-          nextErrors.push(`${projectSnapshot[index]?.name ?? "Project"}: ${String(result.reason)}`);
+          const project = projectSnapshot[index];
+          if (project) failedProjectPaths.add(project.path);
+          nextErrors.push(`${project?.name ?? "Project"}: ${String(result.reason)}`);
         }
       });
       if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
         settleRefresh({ requestKey });
         return;
       }
-      nextRows.sort(sortNotificationRows);
+      const mergedRows = mergeGlobalRowsWithPrevious(
+        resourceRef.current.value?.rows ?? [],
+        nextRows,
+        failedProjectPaths,
+      ).sort(sortNotificationRows);
       applySuccess({
+        requestKey,
         value: {
-          rows: nextRows,
+          rows: mergedRows,
           errors: nextErrors,
           projectCount: projectSnapshot.length,
           fetchedAt: new Date().toISOString(),
@@ -141,6 +152,7 @@ export default function GlobalNotificationsScreen() {
         return;
       }
       applyFailure({
+        requestKey,
         error: `Unable to refresh inbox: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
