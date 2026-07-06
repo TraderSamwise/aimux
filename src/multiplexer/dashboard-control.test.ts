@@ -1413,12 +1413,14 @@ describe("startRuntimeGuardRepair", () => {
 
     startRuntimeGuardRepair(firstHost as never, { kind: "stale", reason: "service-mismatch" });
     startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
+    startRuntimeGuardRepair(secondHost as never, { kind: "stale", reason: "service-mismatch" });
 
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
     expect(secondHost.dashboardBusyState).toBeNull();
     expect(secondHost.footerFlash).toBe("Aimux repair already running");
     expect(secondHost.footerFlashTicks).toBe(3);
     expect(secondHost.runtimeGuardRepairBusy).toBe(true);
+    expect(secondHost.renderCurrentDashboardView).toHaveBeenCalledTimes(1);
     expect(secondHost.dashboardRepairNotices).toMatchObject([
       {
         kind: "runtime-guard-repair",
@@ -1426,6 +1428,7 @@ describe("startRuntimeGuardRepair", () => {
         message: "Aimux repair already running",
       },
     ]);
+    expect(secondHost.dashboardRepairNotices).toHaveLength(1);
   });
 
   it("reclaims a repair lock owned by an exited repair process", async () => {

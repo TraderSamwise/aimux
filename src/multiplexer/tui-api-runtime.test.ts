@@ -593,6 +593,51 @@ describe("TuiApiRuntime", () => {
     }
   });
 
+  it("keeps recovery pending instead of reporting success while critical resources still fail", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+        getFromProjectService: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("desktop-state offline"))
+          .mockRejectedValueOnce(new Error("desktop-state still offline"))
+          .mockResolvedValueOnce({ ok: true, recovered: true }),
+      };
+      const runtime = new TuiApiRuntime({
+        request: (path, opts) => host.getFromProjectService(path, opts),
+        criticalResources: ["desktop-state"],
+        onRequestFailure: () => scheduleTuiApiRecovery(host),
+      });
+      host.tuiApiRuntime = runtime;
+
+      await expect(runtime.refreshJson("desktop-state", "/desktop-state", (value) => value)).resolves.toMatchObject({
+        ok: false,
+      });
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
+
+      expect(runtime.getConnectionState()).toBe("reconnecting");
+      expect(host.tuiApiRecoveryPending).toBe(true);
+      expect(host.dashboardRepairNotices).toMatchObject([
+        {
+          kind: "tui-api-recovery",
+          phase: "started",
+          message: "Aimux API recovery started",
+        },
+        {
+          kind: "tui-api-recovery",
+          phase: "waiting",
+          message: "Aimux API recovery still reconnecting",
+          error: "desktop-state still offline",
+        },
+      ]);
+      expect(host.footerFlash).toBe("Aimux API recovery still reconnecting");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("cooldowns repeated runtime guard recovery probes", async () => {
     vi.useFakeTimers();
     try {
