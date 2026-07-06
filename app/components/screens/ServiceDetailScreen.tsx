@@ -107,7 +107,7 @@ export default function ServiceDetailScreen() {
           <Text className="text-sm text-muted-foreground">Back</Text>
         </Pressable>
 
-        {!found && desktopStateResource.pending ? (
+        {!found && desktopStateResource.pending && !desktopStateResource.value ? (
           <Text className="text-sm text-muted-foreground">Loading service...</Text>
         ) : !found ? (
           <Text className="text-sm text-muted-foreground">
