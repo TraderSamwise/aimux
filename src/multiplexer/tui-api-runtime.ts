@@ -482,11 +482,22 @@ async function runScheduledTuiApiRecovery(host: any): Promise<void> {
     const refreshResult = host.tuiApiRuntime?.refreshCriticalResources?.();
     if (refreshResult && typeof refreshResult.then === "function") await refreshResult;
     host.tuiApiRuntime?.finishRecovery?.();
-    recordDashboardRepairNotice(host, {
-      kind: "tui-api-recovery",
-      phase: "succeeded",
-      message: "Aimux API recovery complete",
-    });
+    const snapshot = host.tuiApiRuntime?.getConnectionSnapshot?.();
+    if (snapshot?.state === "ready" && snapshot.failedCriticalResources.length === 0) {
+      recordDashboardRepairNotice(host, {
+        kind: "tui-api-recovery",
+        phase: "succeeded",
+        message: "Aimux API recovery complete",
+      });
+    } else {
+      host.tuiApiRecoveryPending = true;
+      recordDashboardRepairNotice(host, {
+        kind: "tui-api-recovery",
+        phase: "waiting",
+        message: "Aimux API recovery still reconnecting",
+        error: snapshot?.lastError,
+      });
+    }
   } catch (error) {
     host.tuiApiRecoveryLastError = error;
     host.tuiApiRecoveryPending = true;

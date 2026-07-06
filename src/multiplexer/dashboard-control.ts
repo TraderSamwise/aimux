@@ -487,6 +487,17 @@ function runtimeGuardRepairRetryReady(host: DashboardControlHost, repairKey: str
   return true;
 }
 
+function runtimeGuardRepairBlockedNoticeReady(host: DashboardControlHost, repairKey: string): boolean {
+  const lastKey = host.runtimeGuardRepairBlockedNoticeKey;
+  const lastAt = host.runtimeGuardRepairBlockedNoticeAt;
+  if (lastKey === repairKey && typeof lastAt === "number" && Date.now() - lastAt < RUNTIME_GUARD_REPAIR_RETRY_MS) {
+    return false;
+  }
+  host.runtimeGuardRepairBlockedNoticeKey = repairKey;
+  host.runtimeGuardRepairBlockedNoticeAt = Date.now();
+  return true;
+}
+
 function stabilizeRepairRuntimeGuardProbe(
   host: DashboardControlHost,
   current: RuntimeGuardState,
@@ -514,18 +525,23 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
     host.runtimeGuardRepairBusy = true;
-    recordDashboardRepairNotice(
-      host,
-      {
-        kind: "runtime-guard-repair",
-        phase: "blocked",
-        message: "Aimux repair already running",
-      },
-      { ticks: 3 },
-    );
-    renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+    if (runtimeGuardRepairBlockedNoticeReady(host, repairKey)) {
+      recordDashboardRepairNotice(
+        host,
+        {
+          kind: "runtime-guard-repair",
+          phase: "blocked",
+          message: "Aimux repair already running",
+        },
+        { flash: false },
+      );
+      showDashboardFooterFlash(host, "Aimux repair already running", 3);
+      renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+    }
     return;
   }
+  host.runtimeGuardRepairBlockedNoticeKey = undefined;
+  host.runtimeGuardRepairBlockedNoticeAt = undefined;
   host.runtimeGuardRepairing = true;
   host.runtimeGuardRepairStateKey = repairKey;
   host.runtimeGuardRepairBusy = true;
@@ -622,6 +638,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
       host.runtimeGuardRepairBusy = false;
     }
     host.runtimeGuardState = { kind: "ok" };
+    const shouldFlashSuccess = isDashboardLifecycleCurrent(host, lifecycle) && !shouldReloadDashboard;
     recordDashboardRepairNotice(
       host,
       {
@@ -629,8 +646,9 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
         phase: "succeeded",
         message: "Aimux repair complete",
       },
-      { flash: isDashboardLifecycleCurrent(host, lifecycle) && !shouldReloadDashboard },
+      { flash: false },
     );
+    if (shouldFlashSuccess) showDashboardFooterFlash(host, "Aimux repair complete", 4);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
     if (shouldReloadDashboard) {
       scheduleDashboardReloadAfterRuntimeGuardRepair(host, projectRoot);
@@ -684,6 +702,8 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       if (next.state.kind === "ok") {
         host.runtimeGuardRepairFailedKey = undefined;
         host.runtimeGuardRepairRetryAt = undefined;
+        host.runtimeGuardRepairBlockedNoticeKey = undefined;
+        host.runtimeGuardRepairBlockedNoticeAt = undefined;
         clearRuntimeGuardRepairError(host);
         if (host.runtimeGuardRepairBusy && !host.runtimeGuardRepairing) {
           host.dashboardBusyState = null;

@@ -1,7 +1,7 @@
 import { debug } from "../debug.js";
 
 export type DashboardRepairNoticeKind = "tui-api-recovery" | "runtime-guard-repair";
-export type DashboardRepairNoticePhase = "started" | "succeeded" | "failed" | "blocked";
+export type DashboardRepairNoticePhase = "started" | "succeeded" | "failed" | "blocked" | "waiting";
 
 export interface DashboardRepairNotice {
   kind: DashboardRepairNoticeKind;
@@ -36,7 +36,7 @@ export function recordDashboardRepairNotice(
   const previous = Array.isArray(host.dashboardRepairNotices) ? host.dashboardRepairNotices : [];
   host.dashboardRepairNotices = [...previous, entry].slice(-20);
   debug(`${entry.kind} ${entry.phase}: ${entry.message}${entry.error ? ` (${entry.error})` : ""}`, "runtime");
-  if (opts.flash !== false) {
+  if (opts.flash !== false && (!host.mode || host.mode === "dashboard")) {
     host.footerFlash = entry.message;
     host.footerFlashTicks = opts.ticks ?? 4;
     host.renderCurrentDashboardView?.();
