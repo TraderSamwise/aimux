@@ -9,6 +9,7 @@ import type {
   WorktreeGraveyardEntryResponse,
 } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+import type { ProjectResourceRequestMarker } from "@/lib/project-resource-request-tracker";
 import {
   applyProjectGraveyardActionFailureAtom,
   applyProjectGraveyardFailureAtom,
@@ -171,6 +172,7 @@ function plan(overrides: Partial<ProjectPlanValue> = {}): ProjectPlanValue {
 type TestStore = ReturnType<typeof createStore>;
 const endpoint: ServiceEndpoint = { host: "127.0.0.1", port: 43191 };
 const getToken = async () => "token";
+const endpointKey = `${endpoint.host}:${endpoint.port}`;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -180,6 +182,23 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function requestMarker(projectPath: string, sequence = 1): ProjectResourceRequestMarker {
+  const scope = { projectPath, endpointKey, generation: 0 };
+  return {
+    seq: sequence,
+    requestKey: projectResourceRequestKey(scope, sequence),
+    scope,
+  };
+}
+
+function refreshInput(
+  projectPath: string,
+  request = requestMarker(projectPath),
+  isCurrentRequest: (marker: ProjectResourceRequestMarker) => boolean = () => true,
+) {
+  return { endpoint, getToken, request, isCurrentRequest };
 }
 
 function putObservability(
@@ -1035,7 +1054,7 @@ describe("project resource lifecycle", () => {
       project: observability().project,
     });
 
-    await store.set(refreshProjectObservabilityResourceAtom, { projectPath, endpoint, getToken });
+    await store.set(refreshProjectObservabilityResourceAtom, refreshInput(projectPath));
 
     expect(getProjectObservability).toHaveBeenCalledWith(endpoint, { token: "token" });
     expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
@@ -1054,7 +1073,7 @@ describe("project resource lifecycle", () => {
     const projectPath = "/repo";
     vi.mocked(listTasks).mockResolvedValueOnce({ ok: true, tasks: tasks().tasks });
 
-    await store.set(refreshProjectTasksResourceAtom, { projectPath, endpoint, getToken });
+    await store.set(refreshProjectTasksResourceAtom, refreshInput(projectPath));
 
     expect(listTasks).toHaveBeenCalledWith(endpoint, undefined, { token: "token" });
     expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
@@ -1075,7 +1094,7 @@ describe("project resource lifecycle", () => {
     putObservability(store, projectPath, existing);
     vi.mocked(getProjectObservability).mockRejectedValueOnce(new Error("service unavailable"));
 
-    await store.set(refreshProjectObservabilityResourceAtom, { projectPath, endpoint, getToken });
+    await store.set(refreshProjectObservabilityResourceAtom, refreshInput(projectPath));
 
     expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
       value: existing,
@@ -1103,19 +1122,24 @@ describe("project resource lifecycle", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
 
-    const firstRefresh = store.set(refreshProjectObservabilityResourceAtom, {
-      projectPath,
-      endpoint,
-      getToken,
-    });
+    const firstRequest = requestMarker(projectPath, 1);
+    const secondRequest = requestMarker(projectPath, 2);
+    let currentRequestKey = firstRequest.requestKey;
+    const isCurrentRequest = (marker: ProjectResourceRequestMarker) =>
+      marker.requestKey === currentRequestKey;
+
+    const firstRefresh = store.set(
+      refreshProjectObservabilityResourceAtom,
+      refreshInput(projectPath, firstRequest, isCurrentRequest),
+    );
     const firstPendingKey = store.get(
       projectObservabilityResourceFamily(projectPath),
     ).pendingRequestKey;
-    const secondRefresh = store.set(refreshProjectObservabilityResourceAtom, {
-      projectPath,
-      endpoint,
-      getToken,
-    });
+    currentRequestKey = secondRequest.requestKey;
+    const secondRefresh = store.set(
+      refreshProjectObservabilityResourceAtom,
+      refreshInput(projectPath, secondRequest, isCurrentRequest),
+    );
     const secondPendingKey = store.get(
       projectObservabilityResourceFamily(projectPath),
     ).pendingRequestKey;
