@@ -1,19 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { ClipboardList, FileText, Network, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
-import {
-  getProjectObservability,
-  listTasks,
-  type ProjectObservabilityResponse,
-  type TaskSummaryResponse,
-} from "@/lib/api";
+import { getProjectObservability, listTasks, type TaskSummaryResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { cn } from "@/lib/utils";
@@ -21,6 +16,22 @@ import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
+import {
+  applyProjectObservabilityFailureAtom,
+  applyProjectObservabilitySuccessAtom,
+  applyProjectTasksFailureAtom,
+  applyProjectTasksSuccessAtom,
+  beginProjectObservabilityRefreshAtom,
+  beginProjectTasksRefreshAtom,
+  clearProjectObservabilityResourceAtom,
+  clearProjectTasksResourceAtom,
+  emptyProjectObservability,
+  isCurrentProjectResourceRequest,
+  projectObservabilityResourceFamily,
+  projectTasksResourceFamily,
+  type ProjectObservabilityModel,
+  type ProjectResourceRequestScope,
+} from "@/stores/project";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
 
@@ -43,33 +54,7 @@ const SECTIONS: Array<{ id: ProjectSection; label: string }> = [
   { id: "topology", label: "Topology" },
 ];
 
-type ProjectObservabilityModel = ProjectObservabilityResponse["project"];
 type ProjectStoryItem = ProjectObservabilityModel["story"][number];
-
-function emptyProjectObservability(): ProjectObservabilityModel {
-  return {
-    summary: {
-      agentsRunning: 0,
-      agentsWaiting: 0,
-      agentsOffline: 0,
-      services: 0,
-      worktrees: 0,
-      openTasks: 0,
-      doneTasks: 0,
-      unreadNotifications: 0,
-    },
-    progress: {
-      pending: 0,
-      assigned: 0,
-      in_progress: 0,
-      blocked: 0,
-      done: 0,
-      failed: 0,
-      total: 0,
-    },
-    story: [],
-  };
-}
 
 function matchesStoryTerms(item: ProjectStoryItem, terms: RegExp): boolean {
   return terms.test([item.title, item.meta, item.body].filter(Boolean).join(" "));
@@ -201,104 +186,140 @@ function ProgressSection({ model }: { model: ProjectObservabilityModel }) {
 export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const [tasks, setTasks] = useState<TaskSummaryResponse[]>([]);
-  const [tasksKey, setTasksKey] = useState<string | null>(null);
-  const [taskError, setTaskError] = useState<string | null>(null);
-  const [taskErrorKey, setTaskErrorKey] = useState<string | null>(null);
-  const [loadingTasks, setLoadingTasks] = useState(false);
-  const [model, setModel] = useState<ProjectObservabilityModel>(() => emptyProjectObservability());
-  const [modelKey, setModelKey] = useState<string | null>(null);
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
-  const [loadingProject, setLoadingProject] = useState(false);
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
+  const projectPathKey = projectPath ?? "__aimux_no_selected_project__";
   const projectObservabilityRefreshNonce = useAtomValue(
     projectApiViewRefreshNonceFamily("project-observability"),
   );
   const tasksRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("tasks"));
+  const projectResource = useAtomValue(projectObservabilityResourceFamily(projectPathKey));
+  const tasksResource = useAtomValue(projectTasksResourceFamily(projectPathKey));
+  const beginProjectObservabilityRefresh = useSetAtom(beginProjectObservabilityRefreshAtom);
+  const beginProjectTasksRefresh = useSetAtom(beginProjectTasksRefreshAtom);
+  const applyProjectObservabilitySuccess = useSetAtom(applyProjectObservabilitySuccessAtom);
+  const applyProjectObservabilityFailure = useSetAtom(applyProjectObservabilityFailureAtom);
+  const applyProjectTasksSuccess = useSetAtom(applyProjectTasksSuccessAtom);
+  const applyProjectTasksFailure = useSetAtom(applyProjectTasksFailureAtom);
+  const clearProjectObservabilityResource = useSetAtom(clearProjectObservabilityResourceAtom);
+  const clearProjectTasksResource = useSetAtom(clearProjectTasksResourceAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
-  const viewKey = endpointKey ? `${projectPath ?? ""}|${endpointKey}` : null;
   const endpointRef = useRef(endpoint);
-  const viewKeyRef = useRef(viewKey);
+  const endpointKeyRef = useRef(endpointKey);
+  const projectPathRef = useRef(projectPathKey);
   const getTokenRef = useRef(getToken);
-  const refreshSeqRef = useRef(0);
+  const tasksRefreshSeqRef = useRef(0);
   const projectRefreshSeqRef = useRef(0);
+  const refreshGenerationRef = useRef(0);
+  const requestScopeRef = useRef<ProjectResourceRequestScope>({
+    projectPath: projectPathKey,
+    endpointKey,
+    generation: 0,
+  });
 
   useEffect(() => {
     endpointRef.current = endpoint;
-    viewKeyRef.current = viewKey;
     getTokenRef.current = getToken;
-  }, [endpoint, getToken, viewKey]);
+  }, [endpoint, getToken]);
 
-  const visibleModel = modelKey === viewKey ? model : emptyProjectObservability();
-  const visibleTasks = useMemo(
-    () => (tasksKey === viewKey ? tasks : []),
-    [tasks, tasksKey, viewKey],
-  );
+  useEffect(() => {
+    refreshGenerationRef.current += 1;
+    endpointKeyRef.current = endpointKey;
+    projectPathRef.current = projectPathKey;
+    requestScopeRef.current = {
+      projectPath: projectPathKey,
+      endpointKey,
+      generation: refreshGenerationRef.current,
+    };
+  }, [endpointKey, projectPathKey]);
+
+  const visibleModel = projectResource.value?.project ?? emptyProjectObservability();
+  const visibleTasks = useMemo(() => tasksResource.value?.tasks ?? [], [tasksResource.value]);
 
   const refreshProject = useCallback(async () => {
     const seq = ++projectRefreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentViewKey = viewKeyRef.current;
+    const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
     if (!currentEndpoint) {
-      setModel(emptyProjectObservability());
-      setModelKey(null);
-      setProjectError(null);
-      setProjectErrorKey(null);
-      setLoadingProject(false);
+      clearProjectObservabilityResource(currentProjectPath);
       return;
     }
-    setLoadingProject(true);
+    beginProjectObservabilityRefresh(currentProjectPath);
     try {
       const token = await getTokenRef.current();
       const response = await getProjectObservability(currentEndpoint, { token });
       if (seq !== projectRefreshSeqRef.current) return;
-      setModel(response.project);
-      setModelKey(currentViewKey);
-      setProjectError(null);
-      setProjectErrorKey(null);
+      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      applyProjectObservabilitySuccess({
+        projectPath: currentProjectPath,
+        observability: {
+          project: response.project,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (err) {
       if (seq !== projectRefreshSeqRef.current) return;
-      setProjectError(err instanceof Error ? err.message : String(err));
-      setProjectErrorKey(currentViewKey);
-    } finally {
-      if (seq === projectRefreshSeqRef.current) setLoadingProject(false);
+      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      applyProjectObservabilityFailure({
+        projectPath: currentProjectPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, []);
+  }, [
+    applyProjectObservabilityFailure,
+    applyProjectObservabilitySuccess,
+    beginProjectObservabilityRefresh,
+    clearProjectObservabilityResource,
+  ]);
 
   const refreshTasks = useCallback(async () => {
-    const seq = ++refreshSeqRef.current;
+    const seq = ++tasksRefreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
-    const currentViewKey = viewKeyRef.current;
+    const currentProjectPath = projectPathRef.current;
+    const requestScope = {
+      projectPath: currentProjectPath,
+      endpointKey: endpointKeyRef.current,
+      generation: refreshGenerationRef.current,
+    };
     if (!currentEndpoint) {
-      setTasks([]);
-      setTasksKey(null);
-      setTaskError(null);
-      setTaskErrorKey(null);
-      setLoadingTasks(false);
+      clearProjectTasksResource(currentProjectPath);
       return;
     }
-    setLoadingTasks(true);
+    beginProjectTasksRefresh(currentProjectPath);
     try {
       const token = await getTokenRef.current();
       const response = await listTasks(currentEndpoint, undefined, { token });
-      if (seq !== refreshSeqRef.current) return;
-      setTasks(response.tasks);
-      setTasksKey(currentViewKey);
-      setTaskError(null);
-      setTaskErrorKey(null);
+      if (seq !== tasksRefreshSeqRef.current) return;
+      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      applyProjectTasksSuccess({
+        projectPath: currentProjectPath,
+        tasks: {
+          tasks: response.tasks,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (err) {
-      if (seq !== refreshSeqRef.current) return;
-      setTaskError(err instanceof Error ? err.message : String(err));
-      setTaskErrorKey(currentViewKey);
-    } finally {
-      if (seq === refreshSeqRef.current) setLoadingTasks(false);
+      if (seq !== tasksRefreshSeqRef.current) return;
+      if (!isCurrentProjectResourceRequest(requestScope, requestScopeRef.current)) return;
+      applyProjectTasksFailure({
+        projectPath: currentProjectPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, []);
+  }, [
+    applyProjectTasksFailure,
+    applyProjectTasksSuccess,
+    beginProjectTasksRefresh,
+    clearProjectTasksResource,
+  ]);
 
   const refreshProjectView = useCallback(async () => {
     await Promise.all([refreshProject(), refreshTasks()]);
@@ -313,6 +334,7 @@ export default function ProjectScreen() {
   }, [
     endpointKey,
     projectObservabilityRefreshNonce,
+    projectPathKey,
     serializedRefreshProjectView,
     tasksRefreshNonce,
   ]);
@@ -344,8 +366,8 @@ export default function ProjectScreen() {
     visibleModel.summary.agentsWaiting +
     visibleModel.summary.agentsOffline;
   const taskCount = visibleModel.summary.openTasks + visibleModel.summary.doneTasks;
-  const visibleProjectError = projectErrorKey === viewKey ? projectError : null;
-  const visibleTaskError = taskErrorKey === viewKey ? taskError : null;
+  const visibleProjectError = projectResource.error;
+  const visibleTaskError = tasksResource.error;
 
   return (
     <Page>
@@ -357,7 +379,7 @@ export default function ProjectScreen() {
           <Button
             variant="outline"
             size="icon"
-            disabled={!endpoint || loadingTasks || loadingProject}
+            disabled={!endpoint || tasksResource.pending || projectResource.pending}
             onPress={() => {
               void serializedRefreshProjectView();
             }}
