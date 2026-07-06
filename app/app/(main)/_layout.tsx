@@ -27,8 +27,10 @@ import {
   desktopStateRefreshNonceAtom,
 } from "@/stores/desktopState";
 import {
-  notificationFeedErrorFamily,
-  notificationFeedFamily,
+  applyNotificationFeedFailureAtom,
+  applyNotificationFeedSuccessAtom,
+  beginNotificationFeedRefreshAtom,
+  clearNotificationFeedResourceAtom,
   kickNotificationFeedRefreshAtom,
   markNotificationRecordsObservedAtom,
   notificationFeedRefreshNonceAtom,
@@ -87,6 +89,10 @@ export default function MainLayout() {
   const kickDesktopStateRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectApiViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const kickNotificationFeedRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
+  const beginNotificationFeedRefresh = useSetAtom(beginNotificationFeedRefreshAtom);
+  const applyNotificationFeedSuccess = useSetAtom(applyNotificationFeedSuccessAtom);
+  const applyNotificationFeedFailure = useSetAtom(applyNotificationFeedFailureAtom);
+  const clearNotificationFeedResource = useSetAtom(clearNotificationFeedResourceAtom);
   const markNotificationRecordsObserved = useSetAtom(markNotificationRecordsObservedAtom);
   const store = useStore();
   const { getToken } = useAuth();
@@ -283,8 +289,7 @@ export default function MainLayout() {
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) {
-      store.set(notificationFeedFamily(effectiveProjectPath), null);
-      store.set(notificationFeedErrorFamily(effectiveProjectPath), null);
+      clearNotificationFeedResource(effectiveProjectPath);
       return;
     }
     let cancelled = false;
@@ -292,20 +297,23 @@ export default function MainLayout() {
 
     async function poll() {
       if (cancelled) return;
+      beginNotificationFeedRefresh(effectiveProjectPath!);
       try {
         const token = await getTokenRef.current();
         const feed = await listNotifications(endpoint!, { token });
         if (cancelled) return;
-        store.set(notificationFeedFamily(effectiveProjectPath!), {
-          notifications: feed.notifications,
-          unreadCount: feed.unreadCount,
-          fetchedAt: new Date().toISOString(),
+        applyNotificationFeedSuccess({
+          projectPath: effectiveProjectPath!,
+          feed: {
+            notifications: feed.notifications,
+            unreadCount: feed.unreadCount,
+            fetchedAt: new Date().toISOString(),
+          },
         });
-        store.set(notificationFeedErrorFamily(effectiveProjectPath!), null);
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
-          store.set(notificationFeedErrorFamily(effectiveProjectPath!), msg);
+          applyNotificationFeedFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("notification fetch failed:", err);
           }
@@ -324,11 +332,14 @@ export default function MainLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeShare,
+    applyNotificationFeedFailure,
+    applyNotificationFeedSuccess,
+    beginNotificationFeedRefresh,
+    clearNotificationFeedResource,
     effectiveProjectPath,
     endpointKey,
     notificationRefreshNonce,
     relayReadyForRequests,
-    store,
   ]);
 
   // Realtime project updates and alerts. In local mode this opens EventSource
