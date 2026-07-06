@@ -1106,6 +1106,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const path = "/repo/.aimux/worktrees/demo";
     const worktree = { name: "demo", branch: "demo", path, sessions: [], services: [] };
     let refreshCount = 0;
+    const refreshOptsSeen: any[] = [];
     const host: any = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -1118,7 +1119,7 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardWorktreeGroupsCache: [worktree],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
       refreshDashboardModelFromService: vi.fn(async (_force: boolean, opts?: any) => {
-        expect(opts?.allowInactive).toBe(true);
+        refreshOptsSeen.push(opts);
         refreshCount += 1;
         if (refreshCount < 3) {
           applyRawWorktrees(host, pending, [worktree]);
@@ -1143,6 +1144,8 @@ describe("worktrees dashboard mutation protocol", () => {
     expect(pending.state.get(`worktree:${path}`)).toBe("graveyarding");
     expect(host.footerFlash).toBe("worktree graveyarding is still settling");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(refreshOptsSeen.length).toBeGreaterThan(0);
+    expect(refreshOptsSeen.every((opts) => opts?.allowInactive === true)).toBe(true);
   });
 
   it("clears stale background worktree removal jobs without rendering stale success", async () => {
