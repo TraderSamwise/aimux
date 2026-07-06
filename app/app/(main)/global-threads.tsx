@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -7,17 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
-import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
+import { listThreads } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { buildViewHref, buildViewPath } from "@/lib/view-location";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import {
+  applyGlobalThreadFailureAtom,
+  applyGlobalThreadSuccessAtom,
+  beginGlobalThreadRefreshAtom,
+  globalInboxRequestKey,
+  globalThreadResourceAtom,
+  settleGlobalThreadRefreshAtom,
+  type GlobalThreadRow,
+} from "@/stores/globalInbox";
 import { projectsAtom, selectProjectAtom } from "@/stores/projects";
-
-interface GlobalThreadRow {
-  projectName: string;
-  projectPath: string;
-  thread: ThreadSummaryResponse;
-}
 
 function sortThreadRows(a: GlobalThreadRow, b: GlobalThreadRow): number {
   const aTime = Date.parse(a.thread.latestMessage?.ts ?? "");
@@ -33,9 +36,11 @@ export default function GlobalThreadsScreen() {
   const selectProject = useSetAtom(selectProjectAtom);
   const projects = useAtomValue(projectsAtom);
   const { getToken } = useAuth();
-  const [rows, setRows] = useState<GlobalThreadRow[]>([]);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  const resource = useAtomValue(globalThreadResourceAtom);
+  const beginRefresh = useSetAtom(beginGlobalThreadRefreshAtom);
+  const applySuccess = useSetAtom(applyGlobalThreadSuccessAtom);
+  const applyFailure = useSetAtom(applyGlobalThreadFailureAtom);
+  const settleRefresh = useSetAtom(settleGlobalThreadRefreshAtom);
   const getTokenRef = useRef(getToken);
 
   const onlineProjects = useMemo(
@@ -53,24 +58,26 @@ export default function GlobalThreadsScreen() {
     [onlineProjects],
   );
   const onlineProjectsRef = useRef(onlineProjects);
+  const onlineProjectKeyRef = useRef(onlineProjectKey);
   const refreshSeqRef = useRef(0);
+  const rows = resource.value?.rows ?? [];
+  const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
+  const loading = resource.pending;
 
   useEffect(() => {
     onlineProjectsRef.current = onlineProjects;
+    onlineProjectKeyRef.current = onlineProjectKey;
     getTokenRef.current = getToken;
-  }, [getToken, onlineProjects]);
-
-  useEffect(() => {
-    getTokenRef.current = getToken;
-  }, [getToken]);
+  }, [getToken, onlineProjectKey, onlineProjects]);
 
   const hasFetchError = errors.length > 0;
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshSeqRef.current;
     const projectSnapshot = onlineProjectsRef.current;
-    setLoading(true);
-    setErrors([]);
+    const requestSourceKey = onlineProjectKeyRef.current;
+    const requestKey = globalInboxRequestKey("threads", requestSourceKey, requestId);
+    beginRefresh({ requestKey });
     try {
       const token = await getTokenRef.current();
       const results = await Promise.allSettled(
@@ -94,19 +101,29 @@ export default function GlobalThreadsScreen() {
           nextErrors.push(`${projectSnapshot[index]?.name ?? "Project"}: ${String(result.reason)}`);
         }
       });
-      if (refreshSeqRef.current !== requestId) return;
+      if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
+        settleRefresh({ requestKey });
+        return;
+      }
       nextRows.sort(sortThreadRows);
-      setRows(nextRows);
-      setErrors(nextErrors);
+      applySuccess({
+        value: {
+          rows: nextRows,
+          errors: nextErrors,
+          projectCount: projectSnapshot.length,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (error) {
-      if (refreshSeqRef.current !== requestId) return;
-      setErrors([
-        `Unable to refresh threads: ${error instanceof Error ? error.message : String(error)}`,
-      ]);
-    } finally {
-      if (refreshSeqRef.current === requestId) setLoading(false);
+      if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
+        settleRefresh({ requestKey });
+        return;
+      }
+      applyFailure({
+        error: `Unable to refresh threads: ${error instanceof Error ? error.message : String(error)}`,
+      });
     }
-  }, []);
+  }, [applyFailure, applySuccess, beginRefresh, settleRefresh]);
 
   useEffect(() => {
     void refresh();
