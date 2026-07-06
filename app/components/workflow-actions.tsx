@@ -56,7 +56,7 @@ export function TaskWorkflowActions({
     try {
       const token = await getToken();
       await fn(token);
-      kickProjectRefresh();
+      kickProjectRefresh(["tasks", "threads", "project-observability", "coordination-worklist"]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -195,7 +195,7 @@ export function ThreadWorkflowActions({
       const token = await getToken();
       await fn(token);
       if (action === "reply") setDraft("");
-      kickProjectRefresh();
+      kickProjectRefresh(["threads", "coordination-worklist"]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

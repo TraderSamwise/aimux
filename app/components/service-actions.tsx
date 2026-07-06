@@ -41,7 +41,7 @@ export function ServiceActions({
       try {
         await fn();
         kickRefresh();
-        kickProjectViewRefresh();
+        kickProjectViewRefresh(["services", "project-observability", "topology"]);
         if (opts?.isRemove) onRemoved?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

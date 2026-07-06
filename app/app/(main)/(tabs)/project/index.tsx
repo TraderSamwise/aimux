@@ -21,7 +21,7 @@ import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
 import { useRouteProject } from "@/lib/use-route-project";
-import { projectApiViewRefreshNonceAtom } from "@/stores/projectViews";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import { TaskWorkflowActions } from "@/components/workflow-actions";
 
 type ProjectSection =
@@ -212,7 +212,10 @@ export default function ProjectScreen() {
   const [projectErrorKey, setProjectErrorKey] = useState<string | null>(null);
   const [loadingProject, setLoadingProject] = useState(false);
   const { project, projectPath, endpoint, projectLoading } = useRouteProject();
-  const projectViewRefreshNonce = useAtomValue(projectApiViewRefreshNonceAtom);
+  const projectObservabilityRefreshNonce = useAtomValue(
+    projectApiViewRefreshNonceFamily("project-observability"),
+  );
+  const tasksRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("tasks"));
   const { getToken } = useAuth();
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
@@ -307,7 +310,12 @@ export default function ProjectScreen() {
       void serializedRefreshProjectView();
     }, 0);
     return () => clearTimeout(timer);
-  }, [endpointKey, projectViewRefreshNonce, serializedRefreshProjectView]);
+  }, [
+    endpointKey,
+    projectObservabilityRefreshNonce,
+    serializedRefreshProjectView,
+    tasksRefreshNonce,
+  ]);
 
   const artifactHints = useMemo(
     () =>
