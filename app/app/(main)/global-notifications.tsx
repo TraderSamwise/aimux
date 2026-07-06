@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
-import { listNotifications, type NotificationRecord } from "@/lib/api";
+import { listNotifications } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   buildViewHref,
@@ -16,13 +16,16 @@ import {
   detailViewPathForPath,
 } from "@/lib/view-location";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
+import {
+  applyGlobalNotificationFailureAtom,
+  applyGlobalNotificationSuccessAtom,
+  beginGlobalNotificationRefreshAtom,
+  globalInboxRequestKey,
+  globalNotificationResourceAtom,
+  settleGlobalNotificationRefreshAtom,
+  type GlobalNotificationRow,
+} from "@/stores/globalInbox";
 import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
-
-interface GlobalNotificationRow {
-  projectName: string;
-  projectPath: string;
-  notification: NotificationRecord;
-}
 
 function relativeTime(value: string): string {
   const then = Date.parse(value);
@@ -51,9 +54,11 @@ export default function GlobalNotificationsScreen() {
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const projects = useAtomValue(projectsAtom);
   const { getToken } = useAuth();
-  const [rows, setRows] = useState<GlobalNotificationRow[]>([]);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  const resource = useAtomValue(globalNotificationResourceAtom);
+  const beginRefresh = useSetAtom(beginGlobalNotificationRefreshAtom);
+  const applySuccess = useSetAtom(applyGlobalNotificationSuccessAtom);
+  const applyFailure = useSetAtom(applyGlobalNotificationFailureAtom);
+  const settleRefresh = useSetAtom(settleGlobalNotificationRefreshAtom);
   const getTokenRef = useRef(getToken);
 
   const onlineProjects = useMemo(
@@ -71,21 +76,27 @@ export default function GlobalNotificationsScreen() {
     [onlineProjects],
   );
   const onlineProjectsRef = useRef(onlineProjects);
+  const onlineProjectKeyRef = useRef(onlineProjectKey);
   const refreshSeqRef = useRef(0);
+  const rows = resource.value?.rows ?? [];
+  const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
+  const loading = resource.pending;
   const unreadCount = rows.filter((row) => row.notification.unread).length;
 
   useEffect(() => {
     onlineProjectsRef.current = onlineProjects;
+    onlineProjectKeyRef.current = onlineProjectKey;
     getTokenRef.current = getToken;
-  }, [getToken, onlineProjects]);
+  }, [getToken, onlineProjectKey, onlineProjects]);
 
   const hasFetchError = errors.length > 0;
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshSeqRef.current;
     const projectSnapshot = onlineProjectsRef.current;
-    setLoading(true);
-    setErrors([]);
+    const requestSourceKey = onlineProjectKeyRef.current;
+    const requestKey = globalInboxRequestKey("notifications", requestSourceKey, requestId);
+    beginRefresh({ requestKey });
     try {
       const token = await getTokenRef.current();
       const results = await Promise.allSettled(
@@ -111,19 +122,29 @@ export default function GlobalNotificationsScreen() {
           nextErrors.push(`${projectSnapshot[index]?.name ?? "Project"}: ${String(result.reason)}`);
         }
       });
-      if (refreshSeqRef.current !== requestId) return;
+      if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
+        settleRefresh({ requestKey });
+        return;
+      }
       nextRows.sort(sortNotificationRows);
-      setRows(nextRows);
-      setErrors(nextErrors);
+      applySuccess({
+        value: {
+          rows: nextRows,
+          errors: nextErrors,
+          projectCount: projectSnapshot.length,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
     } catch (error) {
-      if (refreshSeqRef.current !== requestId) return;
-      setErrors([
-        `Unable to refresh inbox: ${error instanceof Error ? error.message : String(error)}`,
-      ]);
-    } finally {
-      if (refreshSeqRef.current === requestId) setLoading(false);
+      if (refreshSeqRef.current !== requestId || onlineProjectKeyRef.current !== requestSourceKey) {
+        settleRefresh({ requestKey });
+        return;
+      }
+      applyFailure({
+        error: `Unable to refresh inbox: ${error instanceof Error ? error.message : String(error)}`,
+      });
     }
-  }, []);
+  }, [applyFailure, applySuccess, beginRefresh, settleRefresh]);
 
   useEffect(() => {
     void refresh();
