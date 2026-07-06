@@ -1,6 +1,7 @@
 import { isDashboardLifecycleCurrent, type DashboardApiViewRefreshOptions } from "./dashboard-lifecycle.js";
 import {
   getOrCreateTuiApiRuntime,
+  hasTuiApiRuntimeReadTransport,
   isTuiApiConnectionMutationBlocked,
   type TuiApiConnectionSnapshot,
   type TuiApiRequestOptions,
@@ -79,7 +80,7 @@ export async function refreshDashboardApiResource<T>(
   options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
   if (!isDashboardApiLifecycleCurrent(host, options)) return false;
-  if (typeof host.getFromProjectService !== "function") {
+  if (!hasTuiApiRuntimeReadTransport(host)) {
     config.ensure();
     return false;
   }

@@ -13,7 +13,7 @@ import {
   startDashboardLifecycleTask,
 } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi } from "./dashboard-api-client.js";
-import { getOrCreateTuiApiRuntime } from "./tui-api-runtime.js";
+import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport } from "./tui-api-runtime.js";
 
 type NotificationHost = any;
 const COORDINATION_WORKLIST_RESOURCE = "coordination-worklist";
@@ -87,7 +87,7 @@ export async function refreshCoordinationFromService(
   host: NotificationHost,
   options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
-  if (typeof host.getFromProjectService !== "function") return false;
+  if (!hasTuiApiRuntimeReadTransport(host)) return false;
   try {
     const result = await getOrCreateTuiApiRuntime(host).refreshJson(
       COORDINATION_WORKLIST_RESOURCE,

@@ -10,7 +10,11 @@ import {
   isDashboardLifecycleCurrent,
 } from "./dashboard-lifecycle.js";
 import { type GraveyardSelectableRow, type GraveyardViewModel } from "./graveyard-view-model.js";
-import { getOrCreateTuiApiRuntime, postJsonWithTuiApiRuntime } from "./tui-api-runtime.js";
+import {
+  getOrCreateTuiApiRuntime,
+  hasTuiApiRuntimeReadTransport,
+  postJsonWithTuiApiRuntime,
+} from "./tui-api-runtime.js";
 import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type ArchivesHost = any;
@@ -292,7 +296,7 @@ export async function refreshGraveyardEntriesFromService(
   host: ArchivesHost,
   options: DashboardApiViewRefreshOptions = {},
 ): Promise<boolean> {
-  if (typeof host.getFromProjectService !== "function") {
+  if (!hasTuiApiRuntimeReadTransport(host)) {
     if (isRefreshLifecycleCurrent(host, options) && !isGraveyardViewModel(host.graveyardViewModel)) {
       applyGraveyardPayload(host, emptyGraveyardPayload());
     }
