@@ -160,6 +160,47 @@ describe("project lifecycle transition projection", () => {
     });
   });
 
+  it("clears an existing transition when the operation fails", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+
+    store.set(recordProjectLifecycleTransitionAtom, {
+      projectPath,
+      transition: transition("agent.resume", "agent-1"),
+      label: "claude",
+      tool: "claude",
+    });
+    store.set(recordProjectLifecycleTransitionAtom, {
+      projectPath,
+      transition: transition("agent.resume", "agent-1", "agent", undefined, "failed"),
+      label: "claude",
+      tool: "claude",
+    });
+
+    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(0);
+  });
+
+  it("updates agent rename labels optimistically", () => {
+    const projected = applyProjectLifecycleTransitionsToDesktopState(
+      desktopState({
+        sessions: [{ id: "agent-1", label: "old", status: "running" }],
+      }),
+      [
+        {
+          transition: transition("agent.rename", "agent-1"),
+          label: "new",
+        },
+      ],
+    );
+
+    expect(projected?.sessions[0]).toMatchObject({
+      id: "agent-1",
+      label: "new",
+      pendingAction: "renaming",
+      optimistic: true,
+    });
+  });
+
   it("projects worktree create and remove transitions onto worktree state", () => {
     const state = desktopState({
       worktrees: [{ name: "old", path: "/repo/.aimux/worktrees/old", branch: "old" }],
@@ -193,6 +234,26 @@ describe("project lifecycle transition projection", () => {
         name: "feature",
         path: "/repo/.aimux/worktrees/feature",
         branch: "feature",
+        pending: true,
+      },
+    ]);
+  });
+
+  it("projects worktree resurrect transitions like worktree creation", () => {
+    const path = "/repo/.aimux/worktrees/restored";
+    const projected = applyProjectLifecycleTransitionsToDesktopState(desktopState(), [
+      {
+        transition: transition("graveyard.worktree.resurrect", "restored", "worktree", path),
+        worktreeName: "restored",
+        worktreePath: path,
+      },
+    ]);
+
+    expect(projected?.worktrees).toEqual([
+      {
+        name: "restored",
+        path,
+        branch: "restored",
         pending: true,
       },
     ]);
@@ -234,5 +295,26 @@ describe("project lifecycle transition projection", () => {
       optimistic: true,
     });
     expect(state.services[0]).toEqual({ id: "svc-1", label: "server", status: "running" });
+  });
+
+  it("adds optimistic service rows before the next desktop-state includes them", () => {
+    const projected = applyProjectLifecycleTransitionsToDesktopState(desktopState(), [
+      {
+        transition: transition("service.create", "svc-2", "service", "/repo/worktree"),
+        label: "server",
+        worktreePath: "/repo/worktree",
+      },
+    ]);
+
+    expect(projected?.services).toEqual([
+      {
+        id: "svc-2",
+        label: "server",
+        worktreePath: "/repo/worktree",
+        status: "running",
+        pendingAction: "starting",
+        optimistic: true,
+      },
+    ]);
   });
 });

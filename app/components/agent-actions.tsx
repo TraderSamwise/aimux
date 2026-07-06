@@ -48,7 +48,8 @@ export function AgentActions({
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
-  const canAct = !!endpoint && !busy;
+  const hasPendingAction = Boolean(session.pendingAction);
+  const canAct = !!endpoint && !busy && !hasPendingAction;
   const isRunning =
     session.status === "running" || session.status === "waiting" || session.status === "idle";
   const canResume = canResumeSession(session);
