@@ -265,7 +265,7 @@ export default function CoordinationScreen() {
           title="Project host offline"
           body="Start the project host to load coordination."
         />
-      ) : visibleError && !resource.value ? (
+      ) : visibleError && !resource.value && !resource.pending ? (
         <PageStateCard title="Coordination failed" body={visibleError} tone="danger" />
       ) : visibleItems.length === 0 ? (
         <PageStateCard
