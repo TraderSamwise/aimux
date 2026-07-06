@@ -11,6 +11,7 @@ import { singleRouteParam } from "@/lib/route-params";
 import { useRouteProject } from "@/lib/use-route-project";
 import {
   applyProjectPlanActionFailureAtom,
+  applyProjectPlanEndpointUnavailableAtom,
   applyProjectPlanFailureAtom,
   applyProjectPlanSaveSuccessAtom,
   applyProjectPlanSuccessAtom,
@@ -49,6 +50,7 @@ export default function PlanEditorScreen() {
   const applyPlanSuccess = useSetAtom(applyProjectPlanSuccessAtom);
   const applyPlanFailure = useSetAtom(applyProjectPlanFailureAtom);
   const applyPlanActionFailure = useSetAtom(applyProjectPlanActionFailureAtom);
+  const applyPlanEndpointUnavailable = useSetAtom(applyProjectPlanEndpointUnavailableAtom);
   const applyPlanSaveSuccess = useSetAtom(applyProjectPlanSaveSuccessAtom);
   const settlePlanRefresh = useSetAtom(settleProjectPlanRefreshAtom);
   const clearPlanResource = useSetAtom(clearProjectPlanResourceAtom);
@@ -70,8 +72,15 @@ export default function PlanEditorScreen() {
   }, [endpointKey, planKey]);
 
   const refreshPlan = useCallback(async () => {
-    if (!serviceEndpoint || !sessionId || planKey === NO_PROJECT_PLAN_KEY) {
+    if (!sessionId || planKey === NO_PROJECT_PLAN_KEY) {
       clearPlanResource(planKey);
+      return;
+    }
+    if (!serviceEndpoint) {
+      applyPlanEndpointUnavailable({
+        planKey,
+        error: "Project service not running. Start the project host to edit plans.",
+      });
       return;
     }
 
@@ -119,6 +128,7 @@ export default function PlanEditorScreen() {
   }, [
     applyPlanFailure,
     applyPlanSuccess,
+    applyPlanEndpointUnavailable,
     beginPlanRefresh,
     clearPlanResource,
     getToken,
