@@ -71,17 +71,43 @@ describe("project API view refresh registry", () => {
   });
 
   it("maps project update views to view-scoped refreshes", () => {
-    expect(projectApiViewsForRefresh(["threads", "tasks"])).toEqual(["threads", "tasks"]);
-    expect(projectApiViewsForRefresh(["threads", "threads"])).toEqual(["threads"]);
+    expect(projectApiViewsForRefresh(["threads", "tasks"])).toEqual([
+      "coordination-worklist",
+      "project-observability",
+      "threads",
+      "tasks",
+    ]);
+    expect(projectApiViewsForRefresh(["threads", "threads"])).toEqual([
+      "coordination-worklist",
+      "project-observability",
+      "threads",
+    ]);
+    expect(projectApiViewsForRefresh(["notifications"])).toEqual([
+      "coordination-worklist",
+      "notifications",
+      "project-observability",
+    ]);
+    expect(projectApiViewsForRefresh(["desktop-state"])).toEqual([
+      "agents",
+      "desktop-state",
+      "graveyard",
+      "project-observability",
+      "services",
+      "team",
+      "topology",
+      "worktrees",
+    ]);
     expect(projectApiViewsForRefresh()).toEqual([...PROJECT_API_VIEWS]);
     expect(projectApiViewsForRefresh(["future-view"])).toEqual([...PROJECT_API_VIEWS]);
   });
 
-  it("bumps only requested project API view refresh nonces", () => {
+  it("bumps requested project API views and their app dependencies", () => {
     const store = createStore();
 
     store.set(kickProjectApiViewRefreshAtom, ["threads", "tasks"]);
 
+    expect(store.get(projectApiViewRefreshNonceFamily("coordination-worklist"))).toBe(1);
+    expect(store.get(projectApiViewRefreshNonceFamily("project-observability"))).toBe(1);
     expect(store.get(projectApiViewRefreshNonceFamily("threads"))).toBe(1);
     expect(store.get(projectApiViewRefreshNonceFamily("tasks"))).toBe(1);
     expect(store.get(projectApiViewRefreshNonceFamily("library"))).toBe(0);
