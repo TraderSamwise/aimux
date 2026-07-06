@@ -19,7 +19,7 @@ import {
   isDashboardLifecycleCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { refreshDashboardModelThroughApi, type DashboardModelRefreshOutcome } from "./dashboard-api-client.js";
 import { refreshLibrary } from "./library.js";
 import { refreshProjectObservability } from "./project.js";
 import { refreshTopology } from "./topology.js";
@@ -280,7 +280,9 @@ class DashboardProjectEventAdapter {
         );
       }
     }
-    const appliedRefresh = results.some((result) => result.status === "fulfilled" && result.value !== false);
+    const appliedRefresh = results.some(
+      (result) => result.status === "fulfilled" && didProjectEventRefreshApply(result.value),
+    );
     if (tasks.length > 0 && !appliedRefresh) return;
     if (generation !== this.generation) return;
     if (!renderLifecycles.some((token) => isDashboardLifecycleCurrent(this.host, token))) return;
@@ -406,6 +408,15 @@ function screenLifecycle(screen: string): DashboardLifecycleToken {
 
 function touches(views: Set<ProjectApiView>, candidates: ProjectApiView[]): boolean {
   return candidates.some((view) => views.has(view));
+}
+
+function isDashboardModelRefreshOutcome(value: unknown): value is DashboardModelRefreshOutcome {
+  return value !== null && typeof value === "object" && "status" in value && "ok" in value;
+}
+
+function didProjectEventRefreshApply(value: unknown): boolean {
+  if (isDashboardModelRefreshOutcome(value)) return value.ok;
+  return value !== false;
 }
 
 function projectEventStreamRetryMs(attempt: number): number {

@@ -117,7 +117,7 @@ Remaining:
   retry/overlay logic.
 - [x] Keep last coherent snapshot visible while reconnecting unless the specific
   resource is known invalid.
-- [ ] Block only unsafe mutating actions while disconnected; keep local
+- [x] Block only unsafe mutating actions while disconnected; keep local
   navigation instant.
 - [ ] Emit user-visible repair notices whenever automatic repair happens.
 - [x] Add regression tests for route/service drift, service restart, slow API,
@@ -348,6 +348,7 @@ Update this table after each epic PR.
 | Date | PR | Area | Before | After | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-06 | #339 | App resource lifecycle | Partial | Mostly done | Project tab observability/tasks moved to resource actions; route/endpoint stale response race fixed; app focused tests and PR checks passed. |
+| 2026-07-06 | TBD | TUI connection contract | Partial | Partial | Dashboard model refresh now returns `applied/stale/skipped/failed` outcomes; `TuiApiRuntime` blocks mutation wrappers while the critical `desktop-state` resource is reconnecting; focused TUI API tests and typecheck passed. |
 
 ## How To Measure Progress
 

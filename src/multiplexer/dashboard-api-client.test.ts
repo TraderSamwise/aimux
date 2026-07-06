@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  isDashboardApiMutationBlocked,
   mutateDashboardApi,
   refreshDashboardApiResource,
   refreshDashboardModelThroughApi,
 } from "./dashboard-api-client.js";
+import { getOrCreateTuiApiRuntime, TuiApiMutationBlockedError } from "./tui-api-runtime.js";
 
 describe("dashboard-api-client", () => {
   it("applies resource snapshots through the TUI API runtime", async () => {
@@ -91,14 +93,38 @@ describe("dashboard-api-client", () => {
     expect(ensure).not.toHaveBeenCalled();
   });
 
-  it("wraps dashboard model refresh failures as false", async () => {
+  it("returns a failed dashboard model refresh outcome when no snapshot is usable", async () => {
     const host: any = {
       refreshDashboardModelFromService: vi.fn(async () => {
         throw new Error("offline");
       }),
     };
 
-    await expect(refreshDashboardModelThroughApi(host, { force: true })).resolves.toBe(false);
+    await expect(refreshDashboardModelThroughApi(host, { force: true })).resolves.toMatchObject({
+      ok: false,
+      status: "failed",
+      stale: false,
+    });
+  });
+
+  it("returns a stale dashboard model refresh outcome when a prior desktop snapshot is usable", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(async () => ({ ok: true, sessions: [] })),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshError = new Error("offline");
+        return false;
+      }),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    host.getFromProjectService.mockRejectedValue(new Error("offline"));
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value, { supersede: true });
+
+    await expect(refreshDashboardModelThroughApi(host, { force: true })).resolves.toMatchObject({
+      ok: false,
+      status: "stale",
+      stale: true,
+    });
   });
 
   it("allows model settlement refreshes while inactive even with a stale render lifecycle", async () => {
@@ -114,7 +140,7 @@ describe("dashboard-api-client", () => {
         allowInactive: true,
         lifecycle: { mode: "dashboard", inputEpoch: 1, requiresInputEpoch: true },
       }),
-    ).resolves.toBe(true);
+    ).resolves.toMatchObject({ ok: true, status: "applied" });
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true, { allowInactive: true });
   });
@@ -131,5 +157,22 @@ describe("dashboard-api-client", () => {
     });
 
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "a" });
+  });
+
+  it("blocks mutations while the critical desktop-state resource is reconnecting", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(async () => ({ ok: true, sessions: [] })),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    host.getFromProjectService.mockRejectedValue(Object.assign(new Error("offline"), { code: "ECONNREFUSED" }));
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value, { supersede: true });
+
+    expect(isDashboardApiMutationBlocked(host)).toBe(true);
+    await expect(mutateDashboardApi(host, "/agents/stop", { sessionId: "a" })).rejects.toBeInstanceOf(
+      TuiApiMutationBlockedError,
+    );
+    expect(host.postToProjectService).not.toHaveBeenCalled();
   });
 });

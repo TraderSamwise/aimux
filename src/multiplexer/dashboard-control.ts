@@ -45,7 +45,11 @@ import {
   renderDashboardIfCurrent,
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
-import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import {
+  isDashboardModelRefreshUsable,
+  mutateDashboardApi,
+  refreshDashboardModelThroughApi,
+} from "./dashboard-api-client.js";
 import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
 import {
   probeRuntimeGuard,
@@ -572,7 +576,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     if (!shouldReloadDashboard && isDashboardLifecycleCurrent(host, lifecycle)) {
       const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle });
       if (settled) return;
-      if (!refreshed) {
+      if (!isDashboardModelRefreshUsable(refreshed)) {
         fail("aimux repair completed but dashboard data is still unavailable");
         return;
       }
