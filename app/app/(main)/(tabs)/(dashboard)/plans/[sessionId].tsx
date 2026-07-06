@@ -25,6 +25,16 @@ import {
 
 const NO_PROJECT_PLAN_KEY = "__aimux_no_project__";
 
+interface PlanRouteScope {
+  endpointKey: string | null;
+  planKey: string;
+  sessionId: string | null;
+}
+
+function samePlanRouteScope(a: PlanRouteScope, b: PlanRouteScope): boolean {
+  return a.endpointKey === b.endpointKey && a.planKey === b.planKey && a.sessionId === b.sessionId;
+}
+
 export default function PlanEditorScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
@@ -61,15 +71,21 @@ export default function PlanEditorScreen() {
       endpointKey,
     }),
   );
+  const routeScopeRef = useRef<PlanRouteScope>({
+    endpointKey,
+    planKey,
+    sessionId: sessionId ?? null,
+  });
   const [savingPlanKey, setSavingPlanKey] = useState<string | null>(null);
 
   useEffect(() => {
     const tracker = trackerRef.current;
+    routeScopeRef.current = { endpointKey, planKey, sessionId: sessionId ?? null };
     tracker.update({ projectPath: planKey, endpointKey });
     return () => {
       tracker.invalidateGeneration();
     };
-  }, [endpointKey, planKey]);
+  }, [endpointKey, planKey, sessionId]);
 
   const refreshPlan = useCallback(async () => {
     if (!sessionId || planKey === NO_PROJECT_PLAN_KEY) {
@@ -152,11 +168,13 @@ export default function PlanEditorScreen() {
       return;
     }
 
+    const saveScope = { endpointKey, planKey, sessionId: sessionId ?? null };
     trackerRef.current.invalidate();
     setSavingPlanKey(planKey);
     try {
       const token = await getToken();
       await putPlan(serviceEndpoint, sessionId, currentPlan.content, { token });
+      if (!samePlanRouteScope(saveScope, routeScopeRef.current)) return;
       applyPlanSaveSuccess({
         planKey,
         sessionId,
@@ -164,6 +182,7 @@ export default function PlanEditorScreen() {
       });
       void refreshPlan();
     } catch (err) {
+      if (!samePlanRouteScope(saveScope, routeScopeRef.current)) return;
       applyPlanActionFailure({
         planKey,
         error: err instanceof Error ? err.message : String(err),
@@ -174,6 +193,7 @@ export default function PlanEditorScreen() {
   }, [
     applyPlanActionFailure,
     applyPlanSaveSuccess,
+    endpointKey,
     getToken,
     planKey,
     planResource.value,
