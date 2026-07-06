@@ -1,12 +1,14 @@
 import { createStore } from "jotai";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { getProjectObservability, listTasks } from "@/lib/api";
 import type {
   GraveyardEntryResponse,
   TaskSummaryResponse,
   ThreadSummaryResponse,
   WorktreeGraveyardEntryResponse,
 } from "@/lib/api";
+import type { ServiceEndpoint } from "@/lib/daemon-url";
 import {
   applyProjectGraveyardActionFailureAtom,
   applyProjectGraveyardFailureAtom,
@@ -60,6 +62,15 @@ import {
   type ProjectTasksValue,
   type ProjectThreadsValue,
 } from "./project";
+import {
+  refreshProjectObservabilityResourceAtom,
+  refreshProjectTasksResourceAtom,
+} from "./projectRefresh";
+
+vi.mock("@/lib/api", () => ({
+  getProjectObservability: vi.fn(),
+  listTasks: vi.fn(),
+}));
 
 function observability(
   overrides: Partial<ProjectObservabilityValue> = {},
@@ -158,6 +169,18 @@ function plan(overrides: Partial<ProjectPlanValue> = {}): ProjectPlanValue {
 }
 
 type TestStore = ReturnType<typeof createStore>;
+const endpoint: ServiceEndpoint = { host: "127.0.0.1", port: 43191 };
+const getToken = async () => "token";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function putObservability(
   store: TestStore,
@@ -244,6 +267,10 @@ function putPlan(
 }
 
 describe("project resource lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("keeps stale project observability after a refresh failure", () => {
     const store = createStore();
     const projectPath = "/repo";
@@ -998,5 +1025,110 @@ describe("project resource lifecycle", () => {
       pending: true,
       pendingRequestKey: currentPlanRequest,
     });
+  });
+
+  it("refreshes project observability through the resource atom", async () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    vi.mocked(getProjectObservability).mockResolvedValueOnce({
+      ok: true,
+      project: observability().project,
+    });
+
+    await store.set(refreshProjectObservabilityResourceAtom, { projectPath, endpoint, getToken });
+
+    expect(getProjectObservability).toHaveBeenCalledWith(endpoint, { token: "token" });
+    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+      value: {
+        project: observability().project,
+      },
+      error: null,
+      pending: false,
+      pendingRequestKey: null,
+      stale: false,
+    });
+  });
+
+  it("refreshes project tasks through the resource atom", async () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    vi.mocked(listTasks).mockResolvedValueOnce({ ok: true, tasks: tasks().tasks });
+
+    await store.set(refreshProjectTasksResourceAtom, { projectPath, endpoint, getToken });
+
+    expect(listTasks).toHaveBeenCalledWith(endpoint, undefined, { token: "token" });
+    expect(store.get(projectTasksResourceFamily(projectPath))).toMatchObject({
+      value: {
+        tasks: tasks().tasks,
+      },
+      error: null,
+      pending: false,
+      pendingRequestKey: null,
+      stale: false,
+    });
+  });
+
+  it("preserves stale project data when a resource refresh fails", async () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const existing = observability();
+    putObservability(store, projectPath, existing);
+    vi.mocked(getProjectObservability).mockRejectedValueOnce(new Error("service unavailable"));
+
+    await store.set(refreshProjectObservabilityResourceAtom, { projectPath, endpoint, getToken });
+
+    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+      value: existing,
+      error: "service unavailable",
+      pending: false,
+      pendingRequestKey: null,
+      stale: true,
+    });
+  });
+
+  it("lets the latest project resource refresh win", async () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const first = deferred<{ ok: true; project: ReturnType<typeof observability>["project"] }>();
+    const second = deferred<{ ok: true; project: ReturnType<typeof observability>["project"] }>();
+    const firstProject = {
+      ...emptyProjectObservability(),
+      summary: { ...emptyProjectObservability().summary, agentsRunning: 1 },
+    };
+    const secondProject = {
+      ...emptyProjectObservability(),
+      summary: { ...emptyProjectObservability().summary, agentsRunning: 2 },
+    };
+    vi.mocked(getProjectObservability)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const firstRefresh = store.set(refreshProjectObservabilityResourceAtom, {
+      projectPath,
+      endpoint,
+      getToken,
+    });
+    const firstPendingKey = store.get(
+      projectObservabilityResourceFamily(projectPath),
+    ).pendingRequestKey;
+    const secondRefresh = store.set(refreshProjectObservabilityResourceAtom, {
+      projectPath,
+      endpoint,
+      getToken,
+    });
+    const secondPendingKey = store.get(
+      projectObservabilityResourceFamily(projectPath),
+    ).pendingRequestKey;
+
+    expect(firstPendingKey).not.toEqual(secondPendingKey);
+
+    second.resolve({ ok: true, project: secondProject });
+    await secondRefresh;
+    first.resolve({ ok: true, project: firstProject });
+    await firstRefresh;
+
+    expect(store.get(projectObservabilityFamily(projectPath))?.project.summary.agentsRunning).toBe(
+      2,
+    );
   });
 });
