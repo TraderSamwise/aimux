@@ -52,6 +52,21 @@ export interface TuiApiConnectionSnapshot {
   lastError?: unknown;
 }
 
+export class TuiApiMutationBlockedError extends Error {
+  readonly connection: TuiApiConnectionSnapshot;
+
+  constructor(connection: TuiApiConnectionSnapshot) {
+    super("Aimux is reconnecting the project service");
+    this.name = "TuiApiMutationBlockedError";
+    this.connection = connection;
+  }
+}
+
+export function isTuiApiConnectionMutationBlocked(snapshot: TuiApiConnectionSnapshot): boolean {
+  if (snapshot.failedCriticalResources.length > 0) return true;
+  return snapshot.state === "failed";
+}
+
 export interface TuiApiRefreshResult<T> {
   ok: boolean;
   value?: T;
@@ -185,6 +200,10 @@ export class TuiApiRuntime {
     }
     if (!mutate) {
       return { ok: false, error: new Error("TUI API mutation transport unavailable") };
+    }
+    const connection = this.getConnectionSnapshot();
+    if (isTuiApiConnectionMutationBlocked(connection)) {
+      return { ok: false, error: new TuiApiMutationBlockedError(connection) };
     }
     const requestOpts = opts.timeoutMs === undefined ? undefined : { timeoutMs: opts.timeoutMs };
     const generation = ++this.requestGeneration;

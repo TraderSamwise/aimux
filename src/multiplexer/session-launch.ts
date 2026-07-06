@@ -23,7 +23,7 @@ import { startDashboardProjectEventStream } from "./project-event-stream.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
-import { refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { isDashboardModelRefreshUsable, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
 import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
@@ -284,7 +284,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     projectEventStreamStarted = true;
     startDashboardProjectEventStream(host);
   };
-  if (!primed) {
+  if (!isDashboardModelRefreshUsable(primed)) {
     const startupBusyState = {
       title: "Connecting Aimux",
       lines: ["Loading project state from the local service."],
@@ -307,7 +307,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
         const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: repairModelLifecycle });
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
         if (!isRepairLifecycleCurrent()) return;
-        if (refreshed || !host.dashboardModelServiceRefreshError) {
+        if (isDashboardModelRefreshUsable(refreshed) || !host.dashboardModelServiceRefreshError) {
           startProjectEventStreamOnce();
           host.renderCurrentDashboardView();
           return;

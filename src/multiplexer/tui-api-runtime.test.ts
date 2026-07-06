@@ -5,6 +5,7 @@ import {
   getOrCreateTuiApiRuntime,
   postJsonWithTuiApiRuntime,
   scheduleTuiApiRecovery,
+  TuiApiMutationBlockedError,
   TuiApiRuntime,
   TUI_API_RECOVERY_COOLDOWN_MS,
   TUI_API_RECOVERY_DEBOUNCE_MS,
@@ -410,7 +411,7 @@ describe("TuiApiRuntime", () => {
         postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "claude-1" }, undefined, async () => {
           throw new Error("still offline");
         }),
-      ).rejects.toThrow("still offline");
+      ).rejects.toBeInstanceOf(TuiApiMutationBlockedError);
 
       expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_DEBOUNCE_MS);
@@ -705,6 +706,24 @@ describe("TuiApiRuntime", () => {
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "b" });
     expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "c" }, opts);
+  });
+
+  it("blocks wrapper mutations while a critical resource is reconnecting", async () => {
+    const host: any = {
+      getFromProjectService: vi.fn(async () => ({ ok: true, sessions: [] })),
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+    };
+    const runtime = getOrCreateTuiApiRuntime(host);
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value);
+    host.getFromProjectService.mockRejectedValue(Object.assign(new Error("offline"), { code: "ECONNREFUSED" }));
+    await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value, { supersede: true });
+    const mutate = vi.fn(async () => ({ ok: true }));
+
+    await expect(
+      postJsonWithTuiApiRuntime(host, "/agents/stop", { sessionId: "a" }, undefined, mutate),
+    ).rejects.toBeInstanceOf(TuiApiMutationBlockedError);
+    expect(mutate).not.toHaveBeenCalled();
+    expect(host.postToProjectService).not.toHaveBeenCalled();
   });
 
   it("bootstraps direct resource refreshes through the dashboard GET wrapper", async () => {

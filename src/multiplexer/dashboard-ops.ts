@@ -160,7 +160,7 @@ async function refreshDashboardModelForSettlement(
   host: DashboardOpsHost,
   lifecycle?: DashboardLifecycleToken,
 ): Promise<boolean> {
-  return refreshDashboardModelThroughApi(host, { force: true, lifecycle });
+  return (await refreshDashboardModelThroughApi(host, { force: true, lifecycle })).ok;
 }
 
 function hasDashboardModelServiceRefreshError(host: DashboardOpsHost): boolean {
