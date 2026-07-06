@@ -774,9 +774,9 @@ export const dashboardInteractionMethods = {
     this.persistDashboardUiState();
     if (service.status !== "running") {
       const resumeResult = await this.resumeOfflineServiceWithFeedback(service);
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       if (resumeResult === "pending") return "pending";
       if (resumeResult === "failed") return "error";
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       const serviceForOpen =
         this.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? service;
       const result = await this.waitAndOpenLiveTmuxWindowForService(serviceForOpen, 60_000);
@@ -836,9 +836,9 @@ export const dashboardInteractionMethods = {
       const resumeResult = await this.resumeOfflineSessionWithFeedback(
         this.offlineSessions?.find((session: any) => session.id === entry.id) ?? entry,
       );
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       if (resumeResult === "pending") return "pending";
       if (resumeResult === "failed") return "error";
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       await refreshDashboardModelThroughApi(this, { force: true });
       if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       this.renderDashboard();
@@ -872,6 +872,7 @@ export const dashboardInteractionMethods = {
         return "blocked";
       }
       const resumeResult = await this.resumeOfflineSessionWithFeedback(offline ?? entry);
+      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
       if (resumeResult === "pending") return "pending";
       if (resumeResult === "failed") return "error";
       return "opened";

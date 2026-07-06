@@ -865,6 +865,36 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
+  it("does not return pending for an offline dashboard agent after newer input invalidates activation", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      resumeOfflineSessionWithFeedback: vi.fn(async () => {
+        host.dashboardInputEpoch = 1;
+        return "pending";
+      }),
+      getDashboardSessions: vi.fn(() => [entry]),
+      offlineSessions: [{ ...entry }],
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardEntry.call(host, entry)).resolves.toBe("missing");
+
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
+  });
+
   it("opens an offline service after the shared resume path settles", async () => {
     const service = {
       id: "service-1",
@@ -932,6 +962,37 @@ describe("dashboardInteractionMethods", () => {
     await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("pending");
 
     expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not return pending for an offline service after newer input invalidates activation", async () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      getDashboardServices: vi.fn(() => [service]),
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      resumeOfflineServiceWithFeedback: vi.fn(async () => {
+        host.dashboardInputEpoch = 1;
+        return "pending";
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await expect(dashboardInteractionMethods.activateDashboardService.call(host, service)).resolves.toBe("missing");
+
     expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
