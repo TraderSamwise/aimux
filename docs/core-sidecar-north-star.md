@@ -176,11 +176,11 @@ transition settlement requires fresh API-backed state; optimistic/pending rows
 may stabilize rendering, but they cannot prove mutation success.
 
 The app now has resource lifecycle stores for critical selected-project state:
-`desktop-state`, the durable notification feed, Coordination, Library, and Topology all
-preserve the last good snapshot across transient refresh failures and expose
-pending/stale/error metadata. App screens that still keep ad hoc fetch state
-should move to the same resource contract instead of clearing useful data
-during service churn.
+`desktop-state`, the durable notification feed, Coordination, Library, Topology,
+and Project all preserve the last good snapshot across transient refresh
+failures and expose pending/stale/error metadata. App screens that still keep
+ad hoc fetch state should move to the same resource contract instead of
+clearing useful data during service churn.
 
 The remaining work is not "make more fallback paths." The remaining work is to
 shrink the exceptional surface and centralize the client connection contract:
@@ -193,8 +193,8 @@ shrink the exceptional surface and centralize the client connection contract:
   product state locally
 - move client state transitions into one API-backed lifecycle contract so TUI,
   web, and mobile see the same state machine
-- migrate remaining app project views, starting with Project and global inbox
-  surfaces, off screen-local fetch state
+- migrate remaining app project views, starting with global inbox surfaces, off
+  screen-local fetch state
 - make `/events` carry enough change signals for remote clients to avoid polling
   or stale UI
 - remove dead direct-writer and direct-computation paths as each owner cut lands
