@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { getProjectObservability, listTasks } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+import type { ProjectResourceRequestMarker } from "@/lib/project-resource-request-tracker";
 import {
   applyProjectObservabilityFailureAtom,
   applyProjectObservabilitySuccessAtom,
@@ -10,17 +11,15 @@ import {
   beginProjectTasksRefreshAtom,
   clearProjectObservabilityResourceAtom,
   clearProjectTasksResourceAtom,
-  projectResourceRequestKey,
+  settleProjectObservabilityRefreshAtom,
+  settleProjectTasksRefreshAtom,
 } from "@/stores/project";
 
 export interface RefreshProjectApiResourceInput {
-  projectPath: string;
   endpoint: ServiceEndpoint | null;
   getToken: () => Promise<string | null>;
-}
-
-function endpointKey(endpoint: ServiceEndpoint | null): string | null {
-  return endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  isCurrentRequest: (marker: ProjectResourceRequestMarker) => boolean;
+  request: ProjectResourceRequestMarker;
 }
 
 function errorMessage(error: unknown): string {
@@ -29,20 +28,25 @@ function errorMessage(error: unknown): string {
 
 export const refreshProjectObservabilityResourceAtom = atom(
   null,
-  async (_get, set, { projectPath, endpoint, getToken }: RefreshProjectApiResourceInput) => {
+  async (
+    _get,
+    set,
+    { endpoint, getToken, isCurrentRequest, request }: RefreshProjectApiResourceInput,
+  ) => {
+    const projectPath = request.scope.projectPath;
+    const requestKey = request.requestKey;
     if (!endpoint) {
       set(clearProjectObservabilityResourceAtom, projectPath);
       return;
     }
-    const requestKey = projectResourceRequestKey({
-      projectPath,
-      endpointKey: endpointKey(endpoint),
-      generation: 0,
-    });
     set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey });
     try {
       const token = await getToken();
       const response = await getProjectObservability(endpoint, { token });
+      if (!isCurrentRequest(request)) {
+        set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
+        return;
+      }
       set(applyProjectObservabilitySuccessAtom, {
         projectPath,
         requestKey,
@@ -52,6 +56,10 @@ export const refreshProjectObservabilityResourceAtom = atom(
         },
       });
     } catch (err) {
+      if (!isCurrentRequest(request)) {
+        set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
+        return;
+      }
       set(applyProjectObservabilityFailureAtom, {
         projectPath,
         requestKey,
@@ -63,20 +71,25 @@ export const refreshProjectObservabilityResourceAtom = atom(
 
 export const refreshProjectTasksResourceAtom = atom(
   null,
-  async (_get, set, { projectPath, endpoint, getToken }: RefreshProjectApiResourceInput) => {
+  async (
+    _get,
+    set,
+    { endpoint, getToken, isCurrentRequest, request }: RefreshProjectApiResourceInput,
+  ) => {
+    const projectPath = request.scope.projectPath;
+    const requestKey = request.requestKey;
     if (!endpoint) {
       set(clearProjectTasksResourceAtom, projectPath);
       return;
     }
-    const requestKey = projectResourceRequestKey({
-      projectPath,
-      endpointKey: endpointKey(endpoint),
-      generation: 0,
-    });
     set(beginProjectTasksRefreshAtom, { projectPath, requestKey });
     try {
       const token = await getToken();
       const response = await listTasks(endpoint, undefined, { token });
+      if (!isCurrentRequest(request)) {
+        set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
+        return;
+      }
       set(applyProjectTasksSuccessAtom, {
         projectPath,
         requestKey,
@@ -86,6 +99,10 @@ export const refreshProjectTasksResourceAtom = atom(
         },
       });
     } catch (err) {
+      if (!isCurrentRequest(request)) {
+        set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
+        return;
+      }
       set(applyProjectTasksFailureAtom, {
         projectPath,
         requestKey,

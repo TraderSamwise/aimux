@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { createProjectResourceRequestTracker } from "@/lib/project-resource-request-tracker";
 import { useRouteProject } from "@/lib/use-route-project";
 import {
   emptyProjectObservability,
@@ -195,23 +196,40 @@ export default function ProjectScreen() {
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const requestTrackerRef = useRef(
+    createProjectResourceRequestTracker({
+      projectPath: projectPathKey,
+      endpointKey,
+    }),
+  );
+
+  useEffect(() => {
+    const requestTracker = requestTrackerRef.current;
+    requestTracker.update({
+      projectPath: projectPathKey,
+      endpointKey,
+    });
+    return () => {
+      requestTracker.invalidateGeneration();
+    };
+  }, [endpointKey, projectPathKey]);
 
   const visibleModel = projectResource.value?.project ?? emptyProjectObservability();
   const visibleTasks = useMemo(() => tasksResource.value?.tasks ?? [], [tasksResource.value]);
 
   const refreshProjectView = useCallback(async () => {
-    const input = { projectPath: projectPathKey, endpoint, getToken };
+    const request = requestTrackerRef.current.begin();
+    const input = {
+      endpoint,
+      getToken,
+      request,
+      isCurrentRequest: (marker: typeof request) => requestTrackerRef.current.isCurrent(marker),
+    };
     await Promise.all([
       refreshProjectObservabilityResource(input),
       refreshProjectTasksResource(input),
     ]);
-  }, [
-    endpoint,
-    getToken,
-    projectPathKey,
-    refreshProjectObservabilityResource,
-    refreshProjectTasksResource,
-  ]);
+  }, [endpoint, getToken, refreshProjectObservabilityResource, refreshProjectTasksResource]);
   const serializedRefreshProjectView = useSerializedProjectApiRefresh(refreshProjectView);
 
   useEffect(() => {
