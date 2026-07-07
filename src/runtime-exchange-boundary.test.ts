@@ -59,4 +59,11 @@ describe("runtime exchange boundary", () => {
     expect(pathsSource).not.toContain("function getThreadsDir");
     expect(pathsSource).not.toContain("function getTasksDir");
   });
+
+  it("keeps exchange alert recipient routing out of the metadata server", () => {
+    const metadataServerSource = readFileSync(join(process.cwd(), "src", "metadata-server.ts"), "utf8");
+
+    expect(metadataServerSource).not.toContain("resolveAlertRecipients");
+    expect(metadataServerSource).not.toContain("payload?.deliveredTo");
+  });
 });

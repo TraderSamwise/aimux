@@ -138,6 +138,12 @@ import { resolveDashboardTarget } from "./dashboard/targets.js";
 import { isUsableDashboardTarget } from "./dashboard/targets.js";
 import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
+import {
+  resolveExchangeMessageAlertRecipients,
+  resolveExchangeReviewOutcomeRecipient,
+  resolveExchangeTaskAssignmentRecipient,
+  resolveExchangeTaskOutcomeRecipient,
+} from "./runtime-core/exchange-alert-routing.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
@@ -1934,7 +1940,7 @@ export class MetadataServer {
       worktreePath?: string;
     };
   }): void {
-    const recipient = input.task.assignedTo?.trim();
+    const recipient = resolveExchangeTaskAssignmentRecipient(input.task);
     if (!recipient) return;
     const kind = input.task.type === "review" ? "review_waiting" : "task_assigned";
     const noun = input.task.type === "review" ? "Review" : "Task";
@@ -1968,7 +1974,7 @@ export class MetadataServer {
     kind: Extract<AlertKind, "task_done" | "blocked">;
     fallbackMessage: string;
   }): void {
-    const recipient = input.task.assignedBy?.trim();
+    const recipient = resolveExchangeReviewOutcomeRecipient(input.task);
     if (!recipient) return;
     const isBlocked = input.kind === "blocked";
     this.emitAlert({
@@ -1982,20 +1988,6 @@ export class MetadataServer {
       dedupeKey: `${isBlocked ? "review-blocked" : "review-approved"}:${input.task.id}:${recipient}`,
       cooldownMs: 15_000,
     });
-  }
-
-  private resolveAlertRecipients(
-    explicit: string[] | undefined,
-    message: unknown,
-    fallback: string[] | undefined,
-  ): string[] {
-    const fromExplicit = explicit?.map((value) => value?.trim()).filter(Boolean);
-    if (fromExplicit && fromExplicit.length > 0) return [...new Set(fromExplicit)];
-    const payload = message as { deliveredTo?: string[]; to?: string[] } | undefined;
-    const fromMessage = payload?.deliveredTo?.map((value) => value?.trim()).filter(Boolean);
-    if (fromMessage && fromMessage.length > 0) return [...new Set(fromMessage)];
-    const fallbackRecipients = payload?.to ?? fallback ?? [];
-    return [...new Set(fallbackRecipients.map((value) => value?.trim()).filter(Boolean))];
   }
 
   private recordSlowRequest(entry: ProjectServiceSlowRequest): void {
@@ -3753,11 +3745,13 @@ export class MetadataServer {
               });
         const messageKind = body.kind ?? "request";
         if (messageKind === "handoff") {
-          const alertRecipients = this.resolveAlertRecipients(
-            explicitRecipients.length > 0 ? explicitRecipients : undefined,
-            result.message,
-            recipients,
-          );
+          const alertRecipients = resolveExchangeMessageAlertRecipients({
+            explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            message: result.message,
+            thread: result.thread,
+            fallbackRecipients: recipients,
+            from: body.from ?? "user",
+          });
           this.emitThreadWaitingAlert({
             kind: "handoff_waiting",
             threadId: (result.thread as { id: string }).id,
@@ -3768,11 +3762,13 @@ export class MetadataServer {
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         } else if (messageKind === "request" || messageKind === "reply" || messageKind === "note") {
-          const alertRecipients = this.resolveAlertRecipients(
-            explicitRecipients.length > 0 ? explicitRecipients : undefined,
-            result.message,
-            recipients,
-          );
+          const alertRecipients = resolveExchangeMessageAlertRecipients({
+            explicitRecipients: explicitRecipients.length > 0 ? explicitRecipients : undefined,
+            message: result.message,
+            thread: result.thread,
+            fallbackRecipients: recipients,
+            from: body.from ?? "user",
+          });
           this.emitThreadWaitingAlert({
             kind: "message_waiting",
             threadId: (result.thread as { id: string }).id,
@@ -3846,7 +3842,14 @@ export class MetadataServer {
               title: body.title,
               worktreePath: body.worktreePath,
             });
-        const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+        const explicitRecipients = optionalStringArray(body.to);
+        const recipients = resolveExchangeMessageAlertRecipients({
+          explicitRecipients,
+          message: result.message,
+          thread: result.thread,
+          fallbackRecipients: explicitRecipients,
+          from: body.from?.trim() || "user",
+        });
         this.emitThreadWaitingAlert({
           kind: "handoff_waiting",
           threadId: (result.thread as { id: string }).id,
@@ -3947,17 +3950,24 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.emitAlert({
-          kind: "blocked",
-          sessionId: result.task.assignedTo,
-          taskId: result.task.id,
-          threadId: result.thread?.id,
-          worktreePath: result.thread?.worktreePath,
-          title: `Task blocked: ${result.task.description}`,
-          message: result.task.error || body.body || "Task is blocked.",
-          dedupeKey: `task-blocked:${result.task.id}`,
-          cooldownMs: 15_000,
+        const recipient = resolveExchangeTaskOutcomeRecipient({
+          task: result.task,
+          thread: result.thread,
+          from: body.from?.trim() || "user",
         });
+        if (recipient) {
+          this.emitAlert({
+            kind: "blocked",
+            sessionId: recipient,
+            taskId: result.task.id,
+            threadId: result.thread?.id,
+            worktreePath: result.thread?.worktreePath,
+            title: `Task blocked: ${result.task.description}`,
+            message: result.task.error || body.body || "Task is blocked.",
+            dedupeKey: `task-blocked:${result.task.id}:${recipient}`,
+            cooldownMs: 15_000,
+          });
+        }
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
@@ -3972,17 +3982,24 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.emitAlert({
-          kind: "task_done",
-          sessionId: result.task.assignedTo,
-          taskId: result.task.id,
-          threadId: result.thread?.id,
-          worktreePath: result.thread?.worktreePath,
-          title: `Task done: ${result.task.description}`,
-          message: body.body?.trim() || result.message?.body || "Task completed.",
-          dedupeKey: `task-done:${result.task.id}`,
-          cooldownMs: 15_000,
+        const recipient = resolveExchangeTaskOutcomeRecipient({
+          task: result.task,
+          thread: result.thread,
+          from: body.from?.trim() || "user",
         });
+        if (recipient) {
+          this.emitAlert({
+            kind: "task_done",
+            sessionId: recipient,
+            taskId: result.task.id,
+            threadId: result.thread?.id,
+            worktreePath: result.thread?.worktreePath,
+            title: `Task done: ${result.task.description}`,
+            message: body.body?.trim() || result.message?.body || "Task completed.",
+            dedupeKey: `task-done:${result.task.id}:${recipient}`,
+            cooldownMs: 15_000,
+          });
+        }
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
