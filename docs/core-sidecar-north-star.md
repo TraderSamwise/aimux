@@ -108,28 +108,31 @@ The TUI should not have separate bespoke reconnection logic per screen. It needs
 one adapter that owns request lifecycle, reconnect, repair, stale snapshots, and
 transition reconciliation.
 
-## Current Focus
+## Completion State
 
-The broad command migration is no longer the main risk. Most normal installed
-command families now route through daemon/project-service core routes in the
-healthy path. The remaining risk is client reliability under churn.
+As of 2026-07-07, the core-sidecar north star is the expected architecture, not
+a migration aspiration. The completion tracker is the measuring document:
+[north-star-completion-tracker.md](north-star-completion-tracker.md).
 
-Work should focus on making the client/API/tmux boundary boring:
+The architecture is complete when code keeps these boundaries true:
 
-- one TUI connection adapter owns refresh, reconnect, stale snapshots, repair
-  notices, and lifecycle transition settlement
-- critical view resources such as `desktop-state` stay `stale`/`reconnecting`
-  until that resource recovers, even when unrelated API calls succeed
-- optimistic state is presentation-only and never proves that a mutation settled
-- daemon/project-service APIs expose enough transition state for TUI, web, and
-  mobile to render the same lifecycle without flicker
-- project-service `/events` provides push parity for remote clients
-- tmux remains execution/focus/pane transport, not product-state authority
-- diagnostics and smoke tests target fast repeated lifecycle transitions
+- normal installed commands route through the daemon or project service when a
+  matching daemon is healthy
+- bootstrap, stale-daemon recovery, and explicit debug plumbing are the only
+  allowed short-lived Node paths
+- the TUI uses one shared API runtime for project-service connectivity,
+  reconnect, repair notices, stale snapshots, and lifecycle settlement
+- web/mobile selected-project resources use the same API contracts and
+  stale-response rules as the TUI
+- project-service `/events` exposes semantic invalidation for all API-backed
+  views
+- tmux owns local terminal mechanics only, while daemon/project-service APIs own
+  product state
+- diagnostics classify sources as authority, projection/cache, substrate, or
+  legacy compatibility instead of recomputing alternate truth
 
-Do not spend the next epics chasing isolated dashboard symptoms unless they
-feed back into that central contract. A bug fix should either harden the shared
-adapter, improve the API contract, or delete an old bypass.
+Release candidates still need live smoke evidence, but that is an operational
+gate, not unfinished north-star architecture.
 
 ## Done Means
 
@@ -146,10 +149,10 @@ This migration is done when:
 - dead direct-writer and direct-computation paths are removed
 - docs and tests make regressions hard to reintroduce
 
-## Current Progress
+## Completed Architecture
 
-As of 2026-07-06, the normal installed CLI path has been cut over for the core
-user command families that should be sidecar-backed:
+As of 2026-07-07, the normal installed CLI path has been cut over for the core
+user command families that are sidecar-backed:
 
 - daemon restart/status/project ensure
 - host status
@@ -178,7 +181,7 @@ the same transition-envelope model for dashboard, sidebar, agent chat, service
 detail, worktree, graveyard, and teammate lifecycle controls; stale snapshots
 are overlaid only until fresh API-backed state reaches the expected target.
 
-The app now has resource lifecycle stores for critical selected-project state:
+The app has resource lifecycle stores for critical selected-project state:
 `desktop-state`, the durable notification feed, Coordination, Library, Topology,
 Project, project Threads, Graveyard, Plan Editor, and the global inbox surfaces
 all preserve the last good snapshot across transient refresh failures and expose
@@ -188,29 +191,11 @@ Service detail also uses the shared `desktop-state` resource instead of owning
 its own desktop-state fetch/retry loop.
 The Project tab's observability/tasks refreshes now run through project-store
 resource actions instead of screen-owned request bookkeeping.
-App screens that still keep ad hoc fetch state should move to the same resource
-contract instead of clearing useful data during service churn.
 
-The remaining work is not "make more fallback paths." The remaining work is to
-shrink the exceptional surface and centralize the client connection contract:
+## Maintenance Path
 
-- keep bootstrap/repair/dashboard entry as the only normal paths allowed to
-  start Node
-- classify or remove legacy/internal command families that still bypass the
-  daemon-owned model
-- make diagnostics read daemon/project-service truth instead of recomputing
-  product state locally
-- move client state transitions into one API-backed lifecycle contract so TUI,
-  web, and mobile see the same state machine
-- migrate remaining app project views off screen-local fetch state
-- make `/events` carry enough change signals for remote clients to avoid polling
-  or stale UI
-- remove dead direct-writer and direct-computation paths as each owner cut lands
-
-## Path Forward
-
-Work should proceed by connection-contract and client-surface families, not
-random one-off patches:
+Future work should preserve the completed architecture instead of reopening
+parallel paths:
 
 1. Maintain the command ownership inventory.
 2. Maintain a client connection-state inventory for TUI, web, and mobile.
