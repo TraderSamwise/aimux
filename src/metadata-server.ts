@@ -141,8 +141,8 @@ import { listTopologySessionStates, type RuntimeTopologySessionState } from "./r
 import {
   resolveExchangeMessageAlertRecipients,
   resolveExchangeReviewOutcomeRecipient,
-  resolveExchangeTaskActorRecipient,
   resolveExchangeTaskAssignmentRecipient,
+  resolveExchangeTaskOutcomeRecipient,
 } from "./runtime-core/exchange-alert-routing.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
@@ -3949,7 +3949,11 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        const recipient = resolveExchangeTaskActorRecipient(result.task);
+        const recipient = resolveExchangeTaskOutcomeRecipient({
+          task: result.task,
+          thread: result.thread,
+          from: body.from?.trim() || "user",
+        });
         this.emitAlert({
           kind: "blocked",
           sessionId: recipient,
@@ -3975,7 +3979,11 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        const recipient = resolveExchangeTaskActorRecipient(result.task);
+        const recipient = resolveExchangeTaskOutcomeRecipient({
+          task: result.task,
+          thread: result.thread,
+          from: body.from?.trim() || "user",
+        });
         this.emitAlert({
           kind: "task_done",
           sessionId: recipient,
