@@ -1025,17 +1025,7 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: pending,
     };
 
-    const changed = loadOfflineServices(host, {
-      sessions: [],
-      services: [
-        {
-          id: "service-1",
-          label: "shell",
-          worktreePath: repoRoot,
-        },
-      ],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(false);
     expect(host.offlineServices).toEqual([]);
@@ -1052,23 +1042,17 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: pending,
     };
 
-    const changed = loadOfflineServices(host, {
-      sessions: [],
-      services: [
-        {
-          id: "service-1",
-          label: "shell",
-          worktreePath: repoRoot,
-        },
-      ],
-      updatedAt: new Date().toISOString(),
+    upsertTopologyService({ id: "service-1", label: "shell", worktreePath: repoRoot }, "stopped", {
+      projectRoot: repoRoot,
     });
+
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-1" }]);
   });
 
-  it("loads stopped services from topology before legacy saved state", () => {
+  it("loads stopped services from topology", () => {
     upsertTopologyService(
       {
         id: "service-topology",
@@ -1087,11 +1071,7 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: new DashboardPendingActions(() => {}),
     };
 
-    const changed = loadOfflineServices(host, {
-      sessions: [],
-      services: [{ id: "service-legacy", label: "legacy" }],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-topology", launchCommandLine: "yarn web" }]);
@@ -1124,7 +1104,7 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: new DashboardPendingActions(() => {}),
     };
 
-    const changed = loadOfflineServices(host, { sessions: [], services: [] });
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-retained", retained: true }]);
@@ -1630,10 +1610,12 @@ describe("resumeOfflineSession", () => {
       },
     };
 
-    const changed = loadOfflineServices(host, { sessions: [], services: [saved] });
+    upsertTopologyService(saved, "stopped", { projectRoot: repoRoot });
+
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
-    expect(host.offlineServices).toEqual([saved]);
+    expect(host.offlineServices).toMatchObject([saved]);
     expect(buildLiveServiceStates(host)).toEqual([]);
   });
 });

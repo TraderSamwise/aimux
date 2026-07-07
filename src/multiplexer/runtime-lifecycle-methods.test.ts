@@ -449,7 +449,7 @@ describe("runtime lifecycle state persistence", () => {
     ]);
   });
 
-  it("persists an empty session list after the last local agent row is removed", () => {
+  it("persists no stale compatibility rows after the last local agent row is removed", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -468,10 +468,10 @@ describe("runtime lifecycle state persistence", () => {
 
     const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: unknown[] };
     expect(saved).not.toHaveProperty("sessions");
-    expect(saved.services).toEqual([{ id: "stale-service", command: "shell", args: [] }]);
+    expect(saved.services).toEqual([]);
   });
 
-  it("preserves service rows that were not loaded into the current process yet", () => {
+  it("does not preserve service rows that were not loaded into the current process yet", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -491,10 +491,10 @@ describe("runtime lifecycle state persistence", () => {
     const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
       services: Array<{ id: string }>;
     };
-    expect(saved.services.map((service) => service.id)).toEqual(["existing-service"]);
+    expect(saved.services).toEqual([]);
   });
 
-  it("drops explicitly removed service rows when merging state", () => {
+  it("drops explicitly removed service rows while rebuilding the compatibility snapshot", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -521,7 +521,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(saved.services).toEqual([]);
   });
 
-  it("preserves existing topology sessions when this instance has no local rows", () => {
+  it("preserves existing topology sessions without stale compatibility services", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -543,7 +543,32 @@ describe("runtime lifecycle state persistence", () => {
 
     const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: Array<{ id: string }> };
     expect(topologySessions().map((session) => session.id)).toEqual(["remote-agent"]);
-    expect(saved.services.map((service) => service.id)).toEqual(["stale-service"]);
+    expect(saved.services).toEqual([]);
+  });
+
+  it("rebuilds compatibility services from the current runtime state", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [],
+          services: [{ id: "stale-service", command: "shell", args: [] }],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        offlineServices: [{ id: "current-service", command: "shell", args: [], worktreePath: repoRoot }],
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: Array<{ id: string }> };
+    expect(saved.services.map((service) => service.id)).toEqual(["current-service"]);
   });
 
   it("preserves recoverable existing live sessions when saving partial state", () => {

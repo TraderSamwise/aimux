@@ -211,11 +211,10 @@ export function stopStatusRefresh(host: RuntimeStateHost): void {
 }
 
 export function syncSessionsFromTopology(host: RuntimeStateHost): void {
-  const state = host.constructor.loadState();
   const liveAgentWindows = restoreTmuxSessionsFromTopology(host);
   reconcileOrphanedTopologySessions(host, liveAgentWindows);
   loadOfflineTopologySessions(host, liveAgentWindows);
-  loadOfflineServices(host, state);
+  loadOfflineServices(host);
   host.invalidateDesktopStateSnapshot();
 }
 
@@ -323,9 +322,8 @@ function offlineSessionChangeKey(session: any): string {
   ].join(":");
 }
 
-export function loadOfflineServices(host: RuntimeStateHost, state = host.constructor.loadState()): boolean {
-  const topologyServices = listTopologyServiceStates({ statuses: ["stopped", "offline"] });
-  const savedServices = topologyServices.length > 0 ? topologyServices : (state?.services ?? []);
+export function loadOfflineServices(host: RuntimeStateHost): boolean {
+  const savedServices = listTopologyServiceStates({ statuses: ["stopped", "offline"] });
   if (savedServices.length === 0) {
     const changed = host.offlineServices.length > 0;
     host.offlineServices = [];

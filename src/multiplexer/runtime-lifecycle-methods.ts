@@ -130,7 +130,7 @@ export type RuntimeLifecycleMethods = {
   stopStatusRefresh(this: Multiplexer): void;
   syncSessionsFromTopology(this: Multiplexer): void;
   loadOfflineTopologySessions(this: Multiplexer): boolean;
-  loadOfflineServices(this: Multiplexer, state?: SavedState | null): boolean;
+  loadOfflineServices(this: Multiplexer): boolean;
   buildLiveServiceStates(this: Multiplexer): ServiceState[];
   restoreTmuxSessionsFromTopology(this: Multiplexer): void;
   stopSessionToOffline(this: Multiplexer, session: SessionRuntime): void;
@@ -167,7 +167,6 @@ export function loadStateStatic(): SavedState | null {
     return {
       savedAt: typeof state.savedAt === "string" ? state.savedAt : new Date().toISOString(),
       cwd: typeof state.cwd === "string" ? state.cwd : getRepoRoot(),
-      services: Array.isArray(state.services) ? (state.services as ServiceState[]) : undefined,
     };
   } catch {
     quarantineCorruptFile(statePath);
@@ -216,8 +215,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   loadOfflineTopologySessions(this: Multiplexer) {
     return loadOfflineTopologySessionsImpl(this);
   },
-  loadOfflineServices(this: Multiplexer, state = loadStateStatic()) {
-    return loadOfflineServicesImpl(this, state);
+  loadOfflineServices(this: Multiplexer) {
+    return loadOfflineServicesImpl(this);
   },
   buildLiveServiceStates(this: Multiplexer) {
     return buildLiveServiceStatesImpl(this);
@@ -318,30 +317,24 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       return [s];
     });
     const mergedSessions: SessionState[] = dedupeSessionStates([...otherSessions, ...mySessions]);
-    let mergedServices: ServiceState[] = myServices;
-
+    let existingState: Record<string, unknown> = {};
     if (existsSync(statePath)) {
       try {
-        const existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-        const myServiceIds = new Set(myServices.map((service) => service.id));
-        const otherServices = (existing.services ?? []).filter((service) => {
-          if (removedServiceIds.has(service.id)) return false;
-          if (myServiceIds.has(service.id)) return false;
-          return true;
-        });
-        mergedServices = [...otherServices, ...myServices];
+        existingState = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
       } catch {
         quarantineCorruptFile(statePath);
       }
     }
+    const { sessions: _legacySessions, services: _legacyServices, ...stateMetadata } = existingState;
 
     saveRuntimeTopologySessions({ sessions: mergedSessions });
     unpreservedExitedIds.clear();
 
     const state: SavedState = {
+      ...stateMetadata,
       savedAt: new Date().toISOString(),
       cwd: projectRoot,
-      services: mergedServices,
+      services: myServices,
     };
 
     writeJsonAtomic(statePath, state);
