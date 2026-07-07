@@ -283,6 +283,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.recordBackendSession:
     case PROJECT_API_ROUTES.agents.loop:
     case PROJECT_API_ROUTES.agents.overseer:
+    case PROJECT_API_ROUTES.livePane.interrupt:
     case PROJECT_API_ROUTES.agents.createTeammate:
     case PROJECT_API_ROUTES.agents.stopTeammate:
     case PROJECT_API_ROUTES.agents.resumeTeammate:
