@@ -2,12 +2,18 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { type ToolConfig } from "./config.js";
-import { getContextDir, getHistoryDir, getPlansDir, getStatusDir } from "./paths.js";
+import { getContextDir, getHistoryDir, getStatusDir } from "./paths.js";
 import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { type SessionTeamMetadata, buildOverseerPreamble } from "./team.js";
+import {
+  ensureDefaultPlan,
+  getPlanAuthorityPath,
+  readNonStubPlanBody,
+  writePlanContent,
+} from "./runtime-core/plan-authority.js";
 
 export interface ForkSourceSnapshot {
   historyText?: string;
@@ -137,28 +143,7 @@ export class SessionBootstrapService {
 
   ensurePlanFile(sessionId: string, command: string, worktreePath?: string): void {
     try {
-      const plansDir = getPlansDir();
-      mkdirSync(plansDir, { recursive: true });
-      const planPath = join(plansDir, `${sessionId}.md`);
-      if (existsSync(planPath)) return;
-
-      const worktreeLabel = worktreePath ? worktreePath : "main";
-      const content =
-        `---\n` +
-        `sessionId: ${sessionId}\n` +
-        `tool: ${command}\n` +
-        `worktree: ${worktreeLabel}\n` +
-        `updatedAt: ${new Date().toISOString()}\n` +
-        `---\n\n` +
-        `# Goal\n\n` +
-        `TBD\n\n` +
-        `# Current Status\n\n` +
-        `TBD\n\n` +
-        `# Steps\n\n` +
-        `- [ ] TBD\n\n` +
-        `# Notes\n\n` +
-        `- None yet.\n`;
-      writeFileSync(planPath, content);
+      ensureDefaultPlan({ sessionId, tool: command, worktreePath });
     } catch {
       // Keep session creation resilient even if plan file creation fails.
     }
@@ -223,17 +208,9 @@ export class SessionBootstrapService {
       }
     }
 
-    const sourcePlanPath = join(getPlansDir(), `${sourceSessionId}.md`);
     let planText = "";
     try {
-      if (existsSync(sourcePlanPath)) {
-        const raw = readFileSync(sourcePlanPath, "utf-8")
-          .replace(/^---\n[\s\S]*?\n---\n?/, "")
-          .trim();
-        if (raw && !this.isDefaultPlanContent(raw)) {
-          planText = raw;
-        }
-      }
+      planText = readNonStubPlanBody(sourceSessionId) ?? "";
     } catch {
       // Ignore unreadable plan files.
     }
@@ -322,7 +299,7 @@ export class SessionBootstrapService {
     const activitySummary = this.summarizeForkSourceActivity(snapshot);
     const summaryPath = join(getContextDir(), targetSessionId, "summary.md");
     const livePath = join(getContextDir(), targetSessionId, "live.md");
-    const planPath = join(getPlansDir(), `${targetSessionId}.md`);
+    const planPath = getPlanAuthorityPath(targetSessionId);
     return [
       `This session is a fork of ${sourceSessionId}.`,
       `Read ${summaryPath}, ${livePath}, and ${planPath} first.`,
@@ -346,7 +323,7 @@ export class SessionBootstrapService {
     const activitySummary = this.summarizeForkSourceActivity(snapshot);
     const summaryPath = join(getContextDir(), sessionId, "summary.md");
     const livePath = join(getContextDir(), sessionId, "live.md");
-    const planPath = join(getPlansDir(), `${sessionId}.md`);
+    const planPath = getPlanAuthorityPath(sessionId);
     return [
       `This session was migrated from ${sourceWorktreePath} to ${targetWorktreePath}.`,
       `Read ${summaryPath}, ${livePath}, and ${planPath} first.`,
@@ -382,7 +359,6 @@ export class SessionBootstrapService {
       writeFileSync(targetStatusPath, snapshot.statusText + "\n");
     }
 
-    const targetPlanPath = join(getPlansDir(), `${targetSessionId}.md`);
     const targetWorktree = this.deps.getSessionWorktreePath(sourceSessionId) ?? "main";
     const handoffPlan =
       `---\n` +
@@ -402,7 +378,7 @@ export class SessionBootstrapService {
       `- Forked from ${sourceSessionId}\n` +
       (activitySummary ? `- Recent carried-over activity: ${activitySummary}\n` : "") +
       (snapshot.planText ? `- Source plan carried below\n\n## Source Plan\n\n${snapshot.planText}\n` : "");
-    writeFileSync(targetPlanPath, handoffPlan);
+    writePlanContent(targetSessionId, handoffPlan);
 
     const targetLivePath = join(targetContextDir, "live.md");
     if (snapshot.liveText) {
@@ -434,15 +410,6 @@ export class SessionBootstrapService {
 
   finalizePreamble(command: string, preamble: string): void {
     debugPreamble(command, Buffer.byteLength(preamble));
-  }
-
-  private isDefaultPlanContent(content: string): boolean {
-    const normalized = content.replace(/\r/g, "").trim();
-    return (
-      normalized.includes("# Goal\n\nTBD") &&
-      normalized.includes("# Current Status\n\nTBD") &&
-      normalized.includes("# Steps\n\n- [ ] TBD")
-    );
   }
 }
 
