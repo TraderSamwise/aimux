@@ -44,6 +44,32 @@ type SaveRuntimeTopologySessionsInput = {
   store?: RuntimeTopologyStore;
 };
 
+type ReconcileRuntimeTopologySessionsInput = SaveRuntimeTopologySessionsInput & {
+  removedSessionIds?: Iterable<string>;
+};
+
+function sessionStateKey(session: RuntimeTopologySessionState): string {
+  return session.backendSessionId ? `backend:${session.backendSessionId}` : `id:${session.id}`;
+}
+
+function isRecoverableExistingSession(session: RuntimeTopologySessionState): boolean {
+  if (!session.id || !(session.command || session.tool || session.toolConfigKey)) return false;
+  if (session.lifecycle === "offline") return true;
+  if (session.lifecycle === "live") return true;
+  if (session.status === "offline" || session.status === "running" || session.status === "idle") return true;
+  return false;
+}
+
+function dedupeSessionStates(sessions: RuntimeTopologySessionState[]): RuntimeTopologySessionState[] {
+  const byKey = new Map<string, RuntimeTopologySessionState>();
+  for (const session of sessions) {
+    const key = sessionStateKey(session);
+    byKey.delete(key);
+    byKey.set(key, session);
+  }
+  return [...byKey.values()];
+}
+
 function nodeIdForSession(sessionId: string): string {
   return `agent:${sessionId}`;
 }
@@ -210,45 +236,96 @@ export function saveRuntimeTopologySessions(input: SaveRuntimeTopologySessionsIn
   const projectRoot = input.projectRoot ?? getRepoRoot();
   return store.update((current) => {
     const topology = current.version ? current : emptyRuntimeTopology(now);
-    topology.generatedAt = now;
-    const rigId = ensureRig(topology, projectRoot, now);
-    const nextSessionIds = new Set(input.sessions.map((session) => session.id));
-    const preservedGraveyard = topology.sessions.filter(
-      (session) => session.status === "graveyard" && !nextSessionIds.has(session.id),
-    );
-    const nextNodes: RuntimeTopologyNode[] = [];
-    const nextBindings: RuntimeTopologyBinding[] = [];
-    const nextSessions: RuntimeTopologySession[] = [];
-    for (const session of input.sessions) {
-      const node = upsertNode(topology, session, rigId, now);
-      nextNodes.push(node);
-      const binding = sessionToBinding(session, node.id, now);
-      if (binding) nextBindings.push(binding);
-      nextSessions.push(sessionToTopologySession(session, node.id, now));
-    }
-    const activeNodeIds = new Set(nextNodes.map((node) => node.id));
-    const preservedServiceNodeIds = new Set(topology.services.map((service) => service.nodeId).filter(Boolean));
-    const preservedNodes = topology.nodes.filter(
-      (node) =>
-        preservedServiceNodeIds.has(node.id) || preservedGraveyard.some((session) => session.nodeId === node.id),
-    );
-    topology.nodes = [...preservedNodes.filter((node) => !activeNodeIds.has(node.id)), ...nextNodes];
-    topology.bindings = [
-      ...topology.bindings.filter((binding) => preservedServiceNodeIds.has(binding.nodeId)),
-      ...nextBindings,
-    ];
-    topology.sessions = [...preservedGraveyard, ...nextSessions];
-    const retainedNodeIds = new Set(topology.nodes.map((node) => node.id));
-    topology.edges = topology.edges.filter(
-      (edge) => retainedNodeIds.has(edge.sourceNodeId) && retainedNodeIds.has(edge.targetNodeId),
-    );
-    const retainedSessionIds = new Set(topology.sessions.map((session) => session.id));
-    topology.exchangeRefs = topology.exchangeRefs.filter(
-      (ref) =>
-        (!ref.sessionId || retainedSessionIds.has(ref.sessionId)) && (!ref.nodeId || retainedNodeIds.has(ref.nodeId)),
-    );
-    return topology;
+    return replaceRuntimeTopologySessions(topology, input.sessions, projectRoot, now);
   });
+}
+
+export function reconcileRuntimeTopologySessions(input: ReconcileRuntimeTopologySessionsInput): RuntimeTopology {
+  const store = input.store ?? createRuntimeTopologyStore();
+  const now = input.now ?? new Date().toISOString();
+  const projectRoot = input.projectRoot ?? getRepoRoot();
+  return store.update((current) => {
+    const topology = current.version ? current : emptyRuntimeTopology(now);
+    const removedSessionIds = new Set(input.removedSessionIds ?? []);
+    const topologySessions = topology.sessions
+      .filter((session) => session.status === "running" || session.status === "idle" || session.status === "offline")
+      .map((session) => topologySessionToSessionState(session, topology));
+    const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
+    const topologyById = new Map(topologySessions.map((session) => [session.id, session]));
+    const incomingSessions = dedupeSessionStates(
+      input.sessions.map((session) => {
+        if (session.lifecycle !== "offline") return session;
+        const existing =
+          topologyByKey.get(sessionStateKey(session)) ??
+          (!session.backendSessionId ? topologyById.get(session.id) : undefined);
+        if (!existing) return session;
+        return {
+          ...session,
+          backendSessionId: session.backendSessionId ?? existing.backendSessionId,
+          restoreBlockedReason: session.restoreBlockedReason ?? existing.restoreBlockedReason,
+        };
+      }),
+    );
+    const incomingBackendIds = new Set(incomingSessions.map((session) => session.backendSessionId).filter(Boolean));
+    const incomingIds = new Set(incomingSessions.map((session) => session.id));
+    const preservedSessions = topologySessions.filter((session) => {
+      if (removedSessionIds.has(session.id)) return false;
+      if (session.backendSessionId && incomingBackendIds.has(session.backendSessionId)) return false;
+      if (incomingIds.has(session.id)) return false;
+      return isRecoverableExistingSession(session);
+    });
+    return replaceRuntimeTopologySessions(
+      topology,
+      dedupeSessionStates([...preservedSessions, ...incomingSessions]),
+      projectRoot,
+      now,
+    );
+  });
+}
+
+function replaceRuntimeTopologySessions(
+  topology: RuntimeTopology,
+  sessions: RuntimeTopologySessionState[],
+  projectRoot: string,
+  now: string,
+): RuntimeTopology {
+  topology.generatedAt = now;
+  const rigId = ensureRig(topology, projectRoot, now);
+  const nextSessionIds = new Set(sessions.map((session) => session.id));
+  const preservedGraveyard = topology.sessions.filter(
+    (session) => session.status === "graveyard" && !nextSessionIds.has(session.id),
+  );
+  const nextNodes: RuntimeTopologyNode[] = [];
+  const nextBindings: RuntimeTopologyBinding[] = [];
+  const nextSessions: RuntimeTopologySession[] = [];
+  for (const session of sessions) {
+    const node = upsertNode(topology, session, rigId, now);
+    nextNodes.push(node);
+    const binding = sessionToBinding(session, node.id, now);
+    if (binding) nextBindings.push(binding);
+    nextSessions.push(sessionToTopologySession(session, node.id, now));
+  }
+  const activeNodeIds = new Set(nextNodes.map((node) => node.id));
+  const preservedServiceNodeIds = new Set(topology.services.map((service) => service.nodeId).filter(Boolean));
+  const preservedNodes = topology.nodes.filter(
+    (node) => preservedServiceNodeIds.has(node.id) || preservedGraveyard.some((session) => session.nodeId === node.id),
+  );
+  topology.nodes = [...preservedNodes.filter((node) => !activeNodeIds.has(node.id)), ...nextNodes];
+  topology.bindings = [
+    ...topology.bindings.filter((binding) => preservedServiceNodeIds.has(binding.nodeId)),
+    ...nextBindings,
+  ];
+  topology.sessions = [...preservedGraveyard, ...nextSessions];
+  const retainedNodeIds = new Set(topology.nodes.map((node) => node.id));
+  topology.edges = topology.edges.filter(
+    (edge) => retainedNodeIds.has(edge.sourceNodeId) && retainedNodeIds.has(edge.targetNodeId),
+  );
+  const retainedSessionIds = new Set(topology.sessions.map((session) => session.id));
+  topology.exchangeRefs = topology.exchangeRefs.filter(
+    (ref) =>
+      (!ref.sessionId || retainedSessionIds.has(ref.sessionId)) && (!ref.nodeId || retainedNodeIds.has(ref.nodeId)),
+  );
+  return topology;
 }
 
 export function upsertTopologySession(
