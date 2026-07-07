@@ -528,15 +528,9 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     headline: host.deriveHeadline(session.id),
   };
 
-  const existingIndex = host.offlineSessions.findIndex((entry: any) => entry.id === session.id);
-  if (existingIndex >= 0) {
-    host.offlineSessions[existingIndex] = { ...host.offlineSessions[existingIndex], ...offlineEntry };
-  } else {
-    host.offlineSessions.push(offlineEntry);
-  }
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
-  upsertTopologySession(offlineEntry, "offline");
+  upsertTopologySession(offlineEntry, "offline", { projectRoot: projectRootFor(host) });
   host.saveState();
   session.kill();
   host.debug?.(`stopped session ${session.id} → offline`, "session");
@@ -658,8 +652,10 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     if (discovered) {
       backendSessionId = discovered;
       session.backendSessionId = discovered;
-      const offline = host.offlineSessions.find((entry: any) => entry.id === session.id);
-      if (offline) offline.backendSessionId = discovered;
+      upsertTopologySession({ ...session, backendSessionId: discovered }, "offline", {
+        projectRoot: projectRootFor(host),
+      });
+      loadOfflineTopologySessions(host);
       host.debug?.(`reconciled backend session id for ${session.id} from disk: ${discovered}`, "session");
     }
   }

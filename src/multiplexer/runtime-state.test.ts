@@ -244,7 +244,10 @@ describe("resumeOfflineSession", () => {
     stopSessionToOffline(host, session);
 
     expect(host.noteLastUsedItem).toHaveBeenCalledWith("codex-1");
-    expect(host.offlineSessions).toMatchObject([{ id: "codex-1", lifecycle: "offline" }]);
+    expect(host.offlineSessions).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["offline"] })).toMatchObject([
+      { id: "codex-1", lifecycle: "offline" },
+    ]);
     expect(session.kill).toHaveBeenCalledOnce();
   });
 

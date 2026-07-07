@@ -1291,7 +1291,8 @@ describe("persistenceMethods", () => {
         status: "offline",
       });
 
-      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-parent"]);
+      expect(host.offlineSessions).toEqual([]);
+      expect(host.loadOfflineTopologySessions).toHaveBeenCalledOnce();
       expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
         "codex-reviewer",
         "claude-nested",
@@ -1335,7 +1336,8 @@ describe("persistenceMethods", () => {
         status: "offline",
       });
 
-      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["codex-reviewer"]);
+      expect(host.offlineSessions).toEqual([]);
+      expect(host.loadOfflineTopologySessions).toHaveBeenCalledOnce();
       expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
         "claude-parent",
       ]);
