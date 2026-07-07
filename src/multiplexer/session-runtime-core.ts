@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { loadConfig } from "../config.js";
 import { readHistory } from "../context/history.js";
-import { getAimuxDirFor, getProjectStateDir, getStatusDir } from "../paths.js";
+import { getAimuxDirFor, getProjectStateDir, getRepoRoot, getStatusDir } from "../paths.js";
 import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -17,11 +17,17 @@ import { parseAgentOutput } from "../agent-output-parser.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
+import { upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionRuntimeHost = any;
+
+function projectRootFor(host: SessionRuntimeHost): string {
+  const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  return projectRoot || getRepoRoot();
+}
 
 export function getSessionLabel(host: SessionRuntimeHost, sessionId: string): string | undefined {
   return (
@@ -386,26 +392,30 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   const backendSessionId = runtime.backendSessionId;
   const quickUnexpectedExit = !explicitStop && !graveyardAfterStop && uptime < 10_000;
   const shouldPreserveOffline = !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000);
-  if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
-    host.offlineSessions.push({
-      id: runtime.id,
-      tool: runtime.command,
-      toolConfigKey: host.sessionToolKeys.get(runtime.id) ?? runtime.command,
-      command: runtime.command,
-      args: host.sessionOriginalArgs.get(runtime.id) ?? [],
-      lifecycle: "offline",
-      createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
-      backendSessionId,
-      team: runtime.team,
-      worktreePath: host.sessionWorktreePaths.get(runtime.id),
-      label: host.getSessionLabel(runtime.id),
-      headline: host.deriveHeadline(runtime.id),
-      restoreBlockedReason: quickUnexpectedExit
-        ? errorHint
-          ? `agent exited during startup${errorHint}`
-          : "agent exited during startup"
-        : undefined,
-    });
+  if (shouldPreserveOffline) {
+    upsertTopologySession(
+      {
+        id: runtime.id,
+        tool: runtime.command,
+        toolConfigKey: host.sessionToolKeys.get(runtime.id) ?? runtime.command,
+        command: runtime.command,
+        args: host.sessionOriginalArgs.get(runtime.id) ?? [],
+        lifecycle: "offline",
+        createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
+        backendSessionId,
+        team: runtime.team,
+        worktreePath: host.sessionWorktreePaths.get(runtime.id),
+        label: host.getSessionLabel(runtime.id),
+        headline: host.deriveHeadline(runtime.id),
+        restoreBlockedReason: quickUnexpectedExit
+          ? errorHint
+            ? `agent exited during startup${errorHint}`
+            : "agent exited during startup"
+          : undefined,
+      },
+      "offline",
+      { projectRoot: projectRootFor(host) },
+    );
   } else if (!shouldPreserveOffline) {
     host.unpreservedExitedSessionIds ??= new Set<string>();
     host.unpreservedExitedSessionIds.add(runtime.id);
@@ -414,7 +424,9 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   host.sessions.splice(idx, 1);
   host.stoppingSessionIds.delete(runtime.id);
   host.graveyardAfterStopSessionIds?.delete?.(runtime.id);
-  if (graveyardAfterStop) {
+  if (shouldPreserveOffline) {
+    host.loadOfflineTopologySessions?.();
+  } else {
     host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== runtime.id);
   }
   host.updateContextWatcherSessions();
