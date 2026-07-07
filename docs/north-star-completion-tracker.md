@@ -36,7 +36,7 @@ Use these labels consistently:
 | TUI transition stability | Mostly done | Medium | Medium | Lifecycle mutation responses include canonical transition records; TUI and app core lifecycle controls now reconcile against API-backed state. Churn smoke remains. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Mostly done | Medium | Medium | Shared invalidation groups cover every API-backed view; HTTP mutations publish view-scoped `project_update` events and app/TUI clients consume the same semantic event. |
-| Runtime topology authority | Partial | Medium | High | Services/worktrees are topology-owned; agent lifecycle, graveyard, bindings, and team ownership still have old caches or fail-closed paths. |
+| Runtime topology authority | Mostly done | Medium | Medium | Services/worktrees are topology-owned; agent resume/graveyard/exit paths are topology-gated; `offlineSessions` is being reduced to a projection cache. Binding and team-role authority remain. |
 | Runtime exchange authority | Partial | Low for next build | High | Notifications are exchange-backed; threads/tasks/handoffs/reviews/waits still have legacy-file authority. |
 | tmux boundary | Mostly done | Medium | Medium | tmux is treated as substrate for local navigation/focus, but binding recovery and remote equivalents need finalization. |
 | Upgrade/restart coherence | Mostly done | High | Medium | `aimux restart` and install repair are strong; release rehearsal must prove multi-project coherence from old builds. |
@@ -258,14 +258,14 @@ Done when:
 Goal: topology is the authority for agents, services, worktrees, lifecycle,
 graveyard, bindings, and topology-backed operation state.
 
-Status: `Partial`
+Status: `Mostly done`
 
 Remaining:
 
-- [ ] Finish cutting agent lifecycle resume/revive paths to topology-owned
+- [x] Finish cutting agent lifecycle resume/revive paths to topology-owned
   semantics.
-- [ ] Remove or demote `offlineSessions` as lifecycle authority.
-- [ ] Remove or demote `graveyardEntries` as agent graveyard authority.
+- [x] Remove or demote `offlineSessions` as lifecycle authority.
+- [x] Remove or demote `graveyardEntries` as agent graveyard authority.
 - [x] Finish service lifecycle authority over topology service records and demote
   `.aimux/state.json` service rows to compatibility/debug snapshots.
 - [ ] Finalize durable tmux binding records and use tmux metadata only as live
@@ -293,6 +293,17 @@ Service authority notes:
 - `.aimux/state.json` service rows are rewritten only from current runtime state
   or observed tmux service windows for compatibility/debug output; stale service
   rows are dropped instead of merged forward.
+
+Agent authority notes:
+
+- Agent resume and graveyard operations require matching topology rows; stale
+  `offlineSessions` or `graveyardEntries` projections cannot revive or remove an
+  agent by themselves.
+- Runtime exits, explicit stops, backend-id recovery, and graveyard resurrection
+  mutate topology first, then rebuild offline/graveyard projections from topology.
+- `offlineSessions` and `graveyardEntries` remain UI/runtime projection caches
+  while dashboard rendering and selection code are being simplified around the
+  topology-backed API model.
 
 ### Epic H: Runtime Exchange Authority
 
@@ -399,6 +410,9 @@ Update this table after each epic PR.
 | 2026-07-06 | #344 | TUI connection contract | Partial | Partial | Dashboard model refresh now returns `applied/stale/skipped/failed` outcomes; `TuiApiRuntime` blocks mutation wrappers while the critical `desktop-state` resource is reconnecting; focused TUI API tests and typecheck passed. |
 | 2026-07-06 | #345 | TUI repair observability | Partial | Partial | API recovery and runtime-guard repair now record bounded `dashboardRepairNotices`, flash visible recovery notices, and keep focused regression coverage for repair start/success/failure. |
 | 2026-07-06 | #346 | TUI API boundary enforcement | Partial | Done | Raw project-service transport checks moved into `tui-api-runtime`; production TUI source scan now fails if screens bypass the shared API runtime. |
+| 2026-07-07 | #351 | Runtime topology authority | Partial | Partial | Agent resume/graveyard paths now require topology rows and prune stale offline projections; focused lifecycle tests and full gate passed. |
+| 2026-07-07 | #352 | Runtime topology authority | Partial | Partial | Runtime topology reconciliation moved into `runtime-core`, preserving recoverable topology rows while dropping explicit removals; focused and full gates passed. |
+| 2026-07-07 | #353 | Runtime topology authority | Partial | Mostly done | Stop/runtime-exit/backend recovery/graveyard resurrection write topology first and reload projections; stale offline projection can no longer suppress current topology writes; focused and full gates passed. |
 
 ## How To Measure Progress
 
