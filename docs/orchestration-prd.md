@@ -6,11 +6,11 @@ Mostly implemented.
 
 Implemented so far:
 
-- durable thread/message storage under `.aimux/threads/`
+- durable thread/message/task/review/handoff storage in `runtime-exchange.yaml`
 - thread inbox/dashboard screen
 - direct messaging, handoff, and task-assignment CLI verbs
 - project-service API endpoints for threads, handoffs, task assignment, and workflow actions
-- durable thread state for messages and workflow actions
+- exchange-backed thread state for messages and workflow actions
 - dashboard-native orchestration actions and quick reply/jump flows
 - routing by explicit session, role, tool, and worktree
 - fan-out routing to all matching recipients
@@ -53,7 +53,7 @@ This PRD defined that orchestration layer. Most of the original Phase 1 and Phas
 Current coordination is split across several mechanisms:
 
 - `.aimux/plans/<session-id>.md` for durable intent
-- `.aimux/tasks/*.json` for executable delegation
+- `runtime-exchange.yaml` task records for executable delegation
 - `history/*.jsonl` and `context/<session-id>/live.md` for continuity
 - metadata/events for derived activity and attention
 
@@ -299,7 +299,7 @@ Aimux already has these layers:
 
 ### 2. Tasks
 
-- path: `.aimux/tasks/*.json`
+- authority: `runtime-exchange.yaml` task records
 - implementation:
   - [`src/tasks.ts`](../src/tasks.ts)
   - [`src/orchestration-actions.ts`](../src/orchestration-actions.ts)
@@ -451,9 +451,9 @@ Example:
 
 ### Thread
 
-Proposed file path:
+Authority:
 
-- `.aimux/threads/<thread-id>.json`
+- `runtime-exchange.yaml` thread records
 
 Shape:
 
@@ -480,9 +480,9 @@ interface OrchestrationThread {
 
 ### Message
 
-Proposed file path:
+Authority:
 
-- `.aimux/threads/<thread-id>.jsonl`
+- `runtime-exchange.yaml` message records
 
 Shape:
 
@@ -513,15 +513,16 @@ interface Task {
 
 ## Storage Model
 
-Recommended split:
+Current split:
 
-- repo-local `.aimux/threads/` for durable orchestration artifacts
-- global project metadata store for derived/UI state only
+- `runtime-exchange.yaml` owns orchestration records.
+- legacy `.aimux/threads/` and `.aimux/tasks/` files are explicit import-only inputs.
+- global project metadata and GUI stores remain derived/UI projections.
 
 Why:
 
-- threads/tasks/plans should travel with the repo/worktree world
-- UI-derived state should stay ephemeral/project-local
+- threads/tasks/reviews/handoffs need one authority shared by TUI, web, mobile, CLI, and agents.
+- UI-derived state should stay ephemeral/project-local.
 
 ## API / CLI
 
@@ -715,7 +716,7 @@ We can say this is successful when:
 ## Open Questions
 
 1. Should thread storage be repo-local or global-project-local?
-   - recommendation: repo-local `.aimux/threads/`
+   - resolved: `runtime-exchange.yaml` in project state is authoritative; legacy repo-local thread files are import-only.
 
 2. Should every task auto-create a thread?
    - recommendation: yes
