@@ -368,7 +368,7 @@ export function initProject(): void {
   // In-repo directory (agent-facing shared contract + config/team)
   const localDir = getLocalAimuxDir();
   mkdirSync(localDir, { recursive: true });
-  for (const subdir of ["plans", "context", "history", "tasks", "status", "threads"]) {
+  for (const subdir of ["plans", "context", "history", "status"]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }
 

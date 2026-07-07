@@ -7,10 +7,20 @@ const skippedFiles = [/\.d\.ts$/];
 
 const allowedLegacyExchangeFiles = new Set([
   "src/paths.ts",
+  "src/runtime-migration.ts",
+  "src/runtime-migration.test.ts",
   "src/runtime-core/exchange-import.ts",
   "src/runtime-core/exchange-import.test.ts",
   "src/runtime-exchange-boundary.test.ts",
+  "src/tasks.test.ts",
 ]);
+
+const legacyExchangePathPatterns = [
+  /\bgetLegacy(?:Threads|Tasks)Dir\b/,
+  /join\([^)]*(?:getLocalAimuxDir\(\)|localAimuxDir|repoRoot)[^)]*,\s*["'](?:threads|tasks)["']/,
+  /join\([^)]*["']\.aimux["'][^)]*,\s*["'](?:threads|tasks)["']/,
+  /\.aimux\/(?:threads|tasks)\b/,
+];
 
 function listSourceFiles(root: string): string[] {
   const absoluteRoot = join(process.cwd(), root);
@@ -36,7 +46,7 @@ describe("runtime exchange boundary", () => {
     const violations: string[] = [];
     for (const file of ["src", "app"].flatMap((root) => listSourceFiles(root))) {
       const text = readFileSync(join(process.cwd(), file), "utf8");
-      if (!/\bgetLegacy(?:Threads|Tasks)Dir\b/.test(text)) continue;
+      if (!legacyExchangePathPatterns.some((pattern) => pattern.test(text))) continue;
       if (!allowedLegacyExchangeFiles.has(file)) violations.push(file);
     }
 
