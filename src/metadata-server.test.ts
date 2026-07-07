@@ -3961,6 +3961,89 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("streams view-scoped invalidations after plan mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+    const putRes = await fetch(`${base}/plans/codex-1`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "# Plan\n" }),
+    });
+    expect(putRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: project_update");
+    expect(text).toContain('"plans"');
+    expect(text).not.toContain('"notifications"');
+    expect(text).not.toContain('"agents"');
+  });
+
+  it("streams workflow invalidations after thread mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+    const threadRes = await fetch(`${base}/threads/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Coordinate",
+        from: "codex-1",
+        participants: ["claude-1"],
+      }),
+    });
+    expect(threadRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: project_update");
+    expect(text).toContain('"coordination-worklist"');
+    expect(text).toContain('"project-observability"');
+    expect(text).toContain('"tasks"');
+    expect(text).toContain('"threads"');
+    expect(text).not.toContain('"notifications"');
+  });
+
+  it("streams runtime invalidations after runtime mutations", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: project_update"));
+    const statusRes = await fetch(`${base}/set-status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: "codex-1", text: "Busy" }),
+    });
+    expect(statusRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: project_update");
+    expect(text).toContain('"agents"');
+    expect(text).toContain('"coordination-worklist"');
+    expect(text).toContain('"desktop-state"');
+    expect(text).toContain('"project-observability"');
+    expect(text).toContain('"topology"');
+    expect(text).toContain('"worktrees"');
+    expect(text).not.toContain('"notifications"');
+    expect(text).not.toContain('"plans"');
+  });
+
   it("updates shell service state over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

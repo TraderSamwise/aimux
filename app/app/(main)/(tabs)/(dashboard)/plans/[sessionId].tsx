@@ -9,6 +9,7 @@ import { ApiError, getPlan, putPlan } from "@/lib/api";
 import { createProjectResourceRequestTracker } from "@/lib/project-resource-request-tracker";
 import { singleRouteParam } from "@/lib/route-params";
 import { useRouteProject } from "@/lib/use-route-project";
+import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
 import {
   applyProjectPlanActionFailureAtom,
   applyProjectPlanEndpointUnavailableAtom,
@@ -56,6 +57,7 @@ export default function PlanEditorScreen() {
     [projectPath, sessionId],
   );
   const planResource = useAtomValue(projectPlanResourceFamily(planKey));
+  const plansRefreshNonce = useAtomValue(projectApiViewRefreshNonceFamily("plans"));
   const beginPlanRefresh = useSetAtom(beginProjectPlanRefreshAtom);
   const applyPlanSuccess = useSetAtom(applyProjectPlanSuccessAtom);
   const applyPlanFailure = useSetAtom(applyProjectPlanFailureAtom);
@@ -160,7 +162,7 @@ export default function PlanEditorScreen() {
     return () => {
       tracker.invalidate();
     };
-  }, [endpointKey, planKey, refreshPlan]);
+  }, [endpointKey, planKey, plansRefreshNonce, refreshPlan]);
 
   const handleSave = useCallback(async () => {
     const currentPlan = planResource.value;

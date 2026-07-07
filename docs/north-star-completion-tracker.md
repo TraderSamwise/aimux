@@ -35,7 +35,7 @@ Use these labels consistently:
 | TUI shared state API boundary | Done | Medium | Low | Production TUI API request sites are guarded by `tui-api-boundary.test.ts`; reconnect, stale snapshot, mutation blocking, and repair notice behavior route through the shared TUI API runtime. |
 | TUI transition stability | Mostly done | Medium | Medium | Lifecycle mutation responses include canonical transition records; TUI and app core lifecycle controls now reconcile against API-backed state. Churn smoke remains. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
-| Project-service events parity | Partial | Medium | High | Some push exists; remote clients still need complete change events for all API-backed views. |
+| Project-service events parity | Mostly done | Medium | Medium | Shared invalidation groups cover every API-backed view; HTTP mutations publish view-scoped `project_update` events and app/TUI clients consume the same semantic event. |
 | Runtime topology authority | Partial | Medium | High | Agents/services/worktrees are partly topology-owned; old caches and fail-closed lifecycle paths remain. |
 | Runtime exchange authority | Partial | Low for next build | High | Notifications are exchange-backed; threads/tasks/handoffs/reviews/waits still have legacy-file authority. |
 | tmux boundary | Mostly done | Medium | Medium | tmux is treated as substrate for local navigation/focus, but binding recovery and remote equivalents need finalization. |
@@ -219,19 +219,33 @@ Done when:
 Goal: remote clients can stay current from project-service `/events` without
 polling every important view.
 
-Status: `Partial`
+Status: `Mostly done`
 
 Remaining:
 
-- [ ] Inventory all API-backed views and the events that should invalidate them.
-- [ ] Emit change events for lifecycle, services, worktrees, graveyard,
+- [x] Inventory all API-backed views and the events that should invalidate them.
+- [x] Emit change events for lifecycle, services, worktrees, graveyard,
   notifications, Coordination, threads, tasks, handoffs, reviews, Library,
   Topology, Project observability, plans, and repair/coherence changes.
-- [ ] Make app event handling invalidate or refresh the right resource stores.
-- [ ] Keep TUI push behavior aligned with the same semantic event names, even if
+- [x] Make app event handling invalidate or refresh the right resource stores.
+- [x] Keep TUI push behavior aligned with the same semantic event names, even if
   it receives them through an in-process bus.
-- [ ] Add tests for event emission on each mutation family.
-- [ ] Document event payload compatibility rules.
+- [x] Add tests for event emission on representative mutation families and
+  route-level invalidation contracts for the rest.
+- [x] Document event payload compatibility rules.
+- [ ] Run release-gate web/mobile/TUI churn with a real `/events` stream open
+  across lifecycle, workflow, plan, notification, and repair mutations.
+
+Event compatibility rules:
+
+- `ready` means clients must refresh every project API view.
+- `project_update.views` is additive and semantic. Known values are the
+  `PROJECT_API_VIEWS` contract; unknown values mean "service is newer", so
+  clients must refresh all project API views instead of dropping the event.
+- Mutation producers should use `PROJECT_API_VIEW_INVALIDATIONS` or
+  `projectApiViewsForMutationRoute()` rather than hand-written view arrays.
+- `alert` remains a notification delivery event and is paired with
+  `project_update` for notification/Coordination refresh.
 
 Done when:
 
