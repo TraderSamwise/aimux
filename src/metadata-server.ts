@@ -83,12 +83,15 @@ import {
   type DashboardControlScreen,
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
+  PROJECT_API_VIEW_INVALIDATIONS,
   type OrchestrationRouteOption,
   type ProjectLifecycleTransition,
   type ProjectLifecycleTransitionOperation,
   type ProjectLifecycleTransitionPhase,
   type ProjectLifecycleTransitionTargetKind,
   type ProjectApiView,
+  projectApiMutationReasonForRoute,
+  projectApiViewsForMutationRoute,
 } from "./project-api-contract.js";
 import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { log } from "./debug.js";
@@ -1317,7 +1320,10 @@ export class MetadataServer {
     if (input.canEdit === true || (input.canEdit === undefined && existing?.canEdit)) nextRole.canEdit = true;
     config.roles[role] = nextRole;
     saveTeamConfig(config);
-    this.notifyProjectChanged({ views: ["team"], reason: "team-role-add" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.team],
+      reason: "team-role-add",
+    });
     return { ok: true, config, role };
   }
 
@@ -1340,7 +1346,10 @@ export class MetadataServer {
       config.defaultRole = nextDefault;
     }
     saveTeamConfig(config);
-    this.notifyProjectChanged({ views: ["team"], reason: "team-role-remove" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.team],
+      reason: "team-role-remove",
+    });
     return { ok: true, config, role };
   }
 
@@ -1357,14 +1366,20 @@ export class MetadataServer {
     }
     config.defaultRole = role;
     saveTeamConfig(config);
-    this.notifyProjectChanged({ views: ["team"], reason: "team-default-role" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.team],
+      reason: "team-default-role",
+    });
     return { ok: true, config, role };
   }
 
   private initTeamConfig(): { ok: true; config: ReturnType<typeof getDefaultTeamConfig> } {
     const config = getDefaultTeamConfig();
     saveTeamConfig(config);
-    this.notifyProjectChanged({ views: ["team"], reason: "team-init" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.team],
+      reason: "team-init",
+    });
     return { ok: true, config };
   }
 
@@ -1448,7 +1463,11 @@ export class MetadataServer {
           tracker: this.tracker,
           emitAlert: (input) => this.emitAlert(input),
         });
-        this.notifyProjectChanged({ reason: "shell-state", sessionId: result.sessionId });
+        this.notifyProjectChanged({
+          views: [...PROJECT_API_VIEW_INVALIDATIONS.runtime],
+          reason: "shell-state",
+          sessionId: result.sessionId,
+        });
       } catch (error) {
         log.warn("shell-state update failed", "api", {
           error: error instanceof Error ? error.message : String(error),
@@ -1476,18 +1495,29 @@ export class MetadataServer {
   // correction, so it must not bump unseen counts or fire a completion alert.
   reconcileSettleActivity(sessionId: string): void {
     this.tracker.setActivity(sessionId, "idle");
-    this.notifyProjectChanged({ sessionId, reason: "reconcile-settle-activity" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.runtime],
+      sessionId,
+      reason: "reconcile-settle-activity",
+    });
   }
 
   // Clear a needs_response attention stranded by a lost in-memory interaction
   // registry (e.g. after a daemon restart) once no live interaction remains.
   reconcileClearResponse(sessionId: string): void {
     this.tracker.setAttention(sessionId, "normal");
-    this.notifyProjectChanged({ sessionId, reason: "reconcile-clear-response" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.runtime],
+      sessionId,
+      reason: "reconcile-clear-response",
+    });
   }
 
   notifyChange(): void {
-    this.notifyProjectChanged({ reason: "notify-change" });
+    this.notifyProjectChanged({
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.runtime],
+      reason: "notify-change",
+    });
   }
 
   private resolveDirectTeammates(parentSessionId: string):
@@ -2009,6 +2039,16 @@ export class MetadataServer {
     }
 
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const notifyCurrentRouteChange = (input: { reason?: string; sessionId?: string; worktreePath?: string } = {}) => {
+      this.notifyProjectChanged({
+        views: projectApiViewsForMutationRoute(req.method ?? "", url.pathname) ?? [
+          ...PROJECT_API_VIEW_INVALIDATIONS.all,
+        ],
+        reason: input.reason ?? projectApiMutationReasonForRoute(req.method ?? "", url.pathname),
+        sessionId: input.sessionId,
+        worktreePath: input.worktreePath,
+      });
+    };
 
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.events) {
       const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
@@ -2260,6 +2300,7 @@ export class MetadataServer {
         sessionId: body.sessionId?.trim() || undefined,
         force: body.force === true,
       });
+      notifyCurrentRouteChange({ sessionId: body.sessionId?.trim() || undefined });
       send(res, 200, { ok: true });
       return;
     }
@@ -2352,7 +2393,7 @@ export class MetadataServer {
         itemId,
         lastUsedAt: state.items[itemId]?.lastUsedAt ?? null,
       });
-      this.notifyChange();
+      notifyCurrentRouteChange();
       return;
     }
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.controls.switchableAgents) {
@@ -2573,6 +2614,7 @@ export class MetadataServer {
           send(res, 500, { ok: false, error: "Failed to write plan" });
           return;
         }
+        notifyCurrentRouteChange({ sessionId });
         send(res, 200, { ok: true, sessionId });
         return;
       }
@@ -2583,7 +2625,7 @@ export class MetadataServer {
           ...current,
           status: { text: body.text, tone: body.tone },
         }));
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -2730,7 +2772,7 @@ export class MetadataServer {
           }
           if (focus) {
             markTargetUsed(tmux, this.currentProjectRoot(), match.target, focusClientSession, itemId);
-            this.notifyChange();
+            notifyCurrentRouteChange();
           }
           sendControlAction(res, "open-notification-target", match.target, focusResult, itemId);
         };
@@ -2800,7 +2842,7 @@ export class MetadataServer {
         }
         if (focus) {
           markTargetUsed(tmux, this.currentProjectRoot(), match.target, focusClientSession, itemId);
-          this.notifyChange();
+          notifyCurrentRouteChange();
         }
         sendControlAction(res, "focus-window", match.target, focusResult, itemId);
         return;
@@ -2866,7 +2908,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, action: "active-window", focused: false });
         return;
       }
@@ -2923,7 +2965,7 @@ export class MetadataServer {
         if (focus) {
           markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, this.currentProjectRoot(), item.target, currentClientSession, item.metadata.sessionId);
-          this.notifyChange();
+          notifyCurrentRouteChange();
         }
         sendControlAction(res, "switch-next", item.target, focusResult, item.metadata.sessionId);
         return;
@@ -2981,7 +3023,7 @@ export class MetadataServer {
         if (focus) {
           markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, this.currentProjectRoot(), item.target, currentClientSession, item.metadata.sessionId);
-          this.notifyChange();
+          notifyCurrentRouteChange();
         }
         sendControlAction(res, "switch-prev", item.target, focusResult, item.metadata.sessionId);
         return;
@@ -3042,7 +3084,7 @@ export class MetadataServer {
         if (focus) {
           markSessionViewed(item.metadata.sessionId, metadataProjectRoot());
           markTargetUsed(tmux, this.currentProjectRoot(), item.target, currentClientSession, item.metadata.sessionId);
-          this.notifyChange();
+          notifyCurrentRouteChange();
         }
         sendControlAction(res, "switch-attention", item.target, focusResult, item.metadata.sessionId);
         return;
@@ -3059,7 +3101,7 @@ export class MetadataServer {
           ...current,
           progress: { current: body.current, total: body.total, label: body.label },
         }));
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3086,7 +3128,7 @@ export class MetadataServer {
             },
           };
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3103,7 +3145,7 @@ export class MetadataServer {
             services: body.services,
           },
         }));
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3160,7 +3202,7 @@ export class MetadataServer {
           ...current,
           logs: [...(current.logs ?? []).slice(-19), entry],
         }));
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3205,7 +3247,7 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3213,7 +3255,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.markSeen) {
         const body = (await readJson(req)) as { session: string };
         markSessionViewed(body.session, metadataProjectRoot());
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3221,7 +3263,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.setActivity) {
         const body = (await readJson(req)) as { session: string; activity: AgentActivityState };
         this.tracker.setActivity(body.session, body.activity);
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3257,7 +3299,7 @@ export class MetadataServer {
             cooldownMs: 15_000,
           });
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3330,7 +3372,7 @@ export class MetadataServer {
           }),
           cooldownMs: 60_000,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, telemetry: true });
         return;
       }
@@ -3378,7 +3420,7 @@ export class MetadataServer {
         const settled = await this.interactions.wait(request.id, { timeoutMs, signal: controller.signal });
         if (settled.status !== "resolved" && this.interactions.listPending(sessionId).length === 0) {
           this.tracker.setAttention(sessionId, "normal");
-          this.notifyChange();
+          notifyCurrentRouteChange();
         }
         if (closed) return;
         send(res, 200, { ok: true, request: settled });
@@ -3429,7 +3471,7 @@ export class MetadataServer {
         if (request.sessionId && this.interactions.listPending(request.sessionId).length === 0) {
           this.tracker.setAttention(request.sessionId, "normal");
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, request });
         return;
       }
@@ -3485,7 +3527,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.runtime.clearLog) {
         const body = (await readJson(req)) as { session: string };
         clearSessionLogs(body.session);
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true });
         return;
       }
@@ -3582,7 +3624,7 @@ export class MetadataServer {
           projectRoot: metadataProjectRoot(),
         });
         this.notifyProjectChanged({
-          views: ["coordination-worklist", "notifications"],
+          views: [...PROJECT_API_VIEW_INVALIDATIONS.notifications],
           reason: "notifications-read",
           sessionId,
         });
@@ -3601,7 +3643,7 @@ export class MetadataServer {
           projectRoot: metadataProjectRoot(),
         });
         this.notifyProjectChanged({
-          views: ["coordination-worklist", "notifications"],
+          views: [...PROJECT_API_VIEW_INVALIDATIONS.notifications],
           reason: "notifications-clear",
           sessionId,
         });
@@ -3622,7 +3664,7 @@ export class MetadataServer {
           targetId: body.targetId?.trim() || undefined,
           worktreePath: body.worktreePath?.trim() || undefined,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, cleared });
         return;
       }
@@ -3672,7 +3714,7 @@ export class MetadataServer {
           kind: (body.kind as ThreadKind) ?? "conversation",
           worktreePath: body.worktreePath,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, thread });
         return;
       }
@@ -3741,7 +3783,7 @@ export class MetadataServer {
             worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
           });
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3758,7 +3800,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, thread });
         return;
       }
@@ -3778,7 +3820,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, thread });
         return;
       }
@@ -3814,7 +3856,7 @@ export class MetadataServer {
           message: body.body.trim() || "A handoff is waiting for you.",
           worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3828,7 +3870,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3842,7 +3884,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3877,7 +3919,7 @@ export class MetadataServer {
           iteration: body.iteration,
         });
         this.emitAssignedTaskAlert(result);
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3891,7 +3933,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3916,7 +3958,7 @@ export class MetadataServer {
           dedupeKey: `task-blocked:${result.task.id}`,
           cooldownMs: 15_000,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3941,7 +3983,7 @@ export class MetadataServer {
           dedupeKey: `task-done:${result.task.id}`,
           cooldownMs: 15_000,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -3963,7 +4005,7 @@ export class MetadataServer {
           { operation: "agent.spawn", targetKind: "agent", targetId: body.sessionId },
           () => this.options.lifecycle!.spawnAgent!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4082,7 +4124,7 @@ export class MetadataServer {
         if (taskResult) {
           this.emitAssignedTaskAlert(taskResult);
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4143,7 +4185,7 @@ export class MetadataServer {
             optionalString(resolved.parent.worktreePath),
         });
         this.emitAssignedTaskAlert(result);
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, parentSessionId: resolved.parent.id, teammateSessionId: teammate.id, ...result });
         return;
       }
@@ -4174,7 +4216,7 @@ export class MetadataServer {
           { operation: "agent.stop", targetKind: "agent", targetId: resolved.teammate.id },
           () => this.options.lifecycle!.stopAgent!({ sessionId: resolved.teammate.id }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4208,7 +4250,7 @@ export class MetadataServer {
               session: resolved.teammate,
             }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4241,7 +4283,7 @@ export class MetadataServer {
               sessionId: resolved.teammate.id,
             }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4271,7 +4313,7 @@ export class MetadataServer {
           { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: resolved.teammate.id },
           () => this.options.desktop!.resurrectGraveyard!({ sessionId: resolved.teammate.id }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4301,7 +4343,7 @@ export class MetadataServer {
           { operation: "agent.fork", targetKind: "agent", targetId: body.targetSessionId },
           () => this.options.lifecycle!.forkAgent!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4324,7 +4366,7 @@ export class MetadataServer {
           { operation: "agent.stop", targetKind: "agent", targetId: body.sessionId },
           () => this.options.lifecycle!.stopAgent!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4347,7 +4389,7 @@ export class MetadataServer {
           { operation: "agent.resume", targetKind: "agent", targetId: body.sessionId },
           () => this.options.desktop!.resumeAgent!({ sessionId: body.sessionId }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4367,7 +4409,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.recordBackendSessionId(body);
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -4390,7 +4432,7 @@ export class MetadataServer {
           { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId },
           () => this.options.lifecycle!.interruptAgent!({ sessionId }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, lifecycleOk(result, { operation: "agent.interrupt", targetKind: "agent", targetId: sessionId }));
         return;
       }
@@ -4435,7 +4477,7 @@ export class MetadataServer {
           { operation: "agent.rename", targetKind: "agent", targetId: body.sessionId },
           () => this.options.lifecycle!.renameAgent!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4458,7 +4500,7 @@ export class MetadataServer {
           { operation: "agent.migrate", targetKind: "agent", targetId: body.sessionId, targetPath: body.worktreePath },
           () => this.options.lifecycle!.migrateAgent!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4482,7 +4524,7 @@ export class MetadataServer {
           { operation: "agent.kill", targetKind: "agent", targetId: body.sessionId },
           () => this.options.lifecycle!.killAgent!({ sessionId: body.sessionId }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4538,7 +4580,7 @@ export class MetadataServer {
           text: formattedText,
           waitForSubmit: false,
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -4558,11 +4600,11 @@ export class MetadataServer {
           const goal = typeof body.goal === "string" ? body.goal.trim() : "";
           const loop = { active: true, goal: goal || undefined, since: new Date().toISOString() };
           setSessionLoop(sessionId, loop);
-          this.notifyChange();
+          notifyCurrentRouteChange();
           send(res, 200, { ok: true, sessionId, loop });
         } else {
           clearSessionLoop(sessionId);
-          this.notifyChange();
+          notifyCurrentRouteChange();
           send(res, 200, { ok: true, sessionId, loop: null });
         }
         return;
@@ -4576,7 +4618,7 @@ export class MetadataServer {
           return;
         }
         setSessionOverseer(sessionId, Boolean(body.active));
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, sessionId, overseer: Boolean(body.active) });
         return;
       }
@@ -4744,7 +4786,7 @@ export class MetadataServer {
         if (earlyResult.kind === "resolved") {
           const status = typeof earlyResult.result.status === "string" ? earlyResult.result.status : undefined;
           const phase = status === "creating" ? "settling" : "succeeded";
-          this.notifyChange();
+          notifyCurrentRouteChange();
           send(
             res,
             phase === "settling" ? 202 : 200,
@@ -4773,10 +4815,10 @@ export class MetadataServer {
           });
           return;
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         void resultPromise.then(
-          () => this.notifyChange(),
-          () => this.notifyChange(),
+          () => notifyCurrentRouteChange(),
+          () => notifyCurrentRouteChange(),
         );
         const targetPath = getWorktreeCreatePath(body.name, this.projectRoot);
         send(
@@ -4817,7 +4859,7 @@ export class MetadataServer {
           }),
         ]);
         if (earlyResult.kind === "resolved") {
-          this.notifyChange();
+          notifyCurrentRouteChange();
           send(
             res,
             200,
@@ -4844,10 +4886,10 @@ export class MetadataServer {
           });
           return;
         }
-        this.notifyChange();
+        notifyCurrentRouteChange();
         void resultPromise.then(
-          () => this.notifyChange(),
-          () => this.notifyChange(),
+          () => notifyCurrentRouteChange(),
+          () => notifyCurrentRouteChange(),
         );
         send(
           res,
@@ -4870,7 +4912,7 @@ export class MetadataServer {
           { operation: "worktree.graveyard", targetKind: "worktree", targetPath: body.path },
           () => this.options.desktop!.graveyardWorktree!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4893,7 +4935,7 @@ export class MetadataServer {
           { operation: "service.create", targetKind: "service", targetId: body.serviceId },
           () => this.options.desktop!.createService!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4916,7 +4958,7 @@ export class MetadataServer {
           { operation: "service.stop", targetKind: "service", targetId: body.serviceId },
           () => this.options.desktop!.stopService!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4939,7 +4981,7 @@ export class MetadataServer {
           { operation: "service.resume", targetKind: "service", targetId: body.serviceId },
           () => this.options.desktop!.resumeService!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4962,7 +5004,7 @@ export class MetadataServer {
           { operation: "service.remove", targetKind: "service", targetId: body.serviceId },
           () => this.options.desktop!.removeService!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -4990,7 +5032,7 @@ export class MetadataServer {
           { operation: "graveyard.agent.resurrect", targetKind: "agent", targetId: sessionId },
           () => this.options.desktop!.resurrectGraveyard!({ sessionId }),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -5013,7 +5055,7 @@ export class MetadataServer {
           { operation: "graveyard.worktree.resurrect", targetKind: "worktree", targetPath: body.path },
           () => this.options.desktop!.resurrectGraveyardWorktree!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -5036,7 +5078,7 @@ export class MetadataServer {
           { operation: "graveyard.worktree.delete", targetKind: "worktree", targetPath: body.path },
           () => this.options.desktop!.deleteGraveyardWorktree!(body),
         );
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(
           res,
           200,
@@ -5056,7 +5098,7 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.cleanupGraveyard({ dryRun: body.dryRun === true });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...(typeof result === "object" && result ? result : { result }) });
         return;
       }
@@ -5076,7 +5118,7 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Review approved.",
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -5096,7 +5138,7 @@ export class MetadataServer {
           thread: result.thread,
           fallbackMessage: body.body?.trim() || result.message?.body || "Changes requested.",
         });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }
@@ -5110,7 +5152,7 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
-        this.notifyChange();
+        notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
       }

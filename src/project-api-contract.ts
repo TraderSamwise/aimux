@@ -159,6 +159,7 @@ export const PROJECT_API_VIEWS = [
   "graveyard",
   "library",
   "notifications",
+  "plans",
   "project-observability",
   "services",
   "team",
@@ -170,6 +171,171 @@ export const PROJECT_API_VIEWS = [
 
 export type ProjectApiEventName = (typeof PROJECT_API_EVENT_NAMES)[keyof typeof PROJECT_API_EVENT_NAMES];
 export type ProjectApiView = (typeof PROJECT_API_VIEWS)[number];
+
+function projectViews(...views: ProjectApiView[]): readonly ProjectApiView[] {
+  return views;
+}
+
+export const PROJECT_API_VIEW_INVALIDATIONS = {
+  all: PROJECT_API_VIEWS,
+  agentLifecycle: projectViews(
+    "agents",
+    "coordination-worklist",
+    "desktop-state",
+    "graveyard",
+    "project-observability",
+    "team",
+    "topology",
+    "worktrees",
+  ),
+  serviceLifecycle: projectViews("desktop-state", "project-observability", "services", "topology", "worktrees"),
+  worktreeLifecycle: projectViews(
+    "agents",
+    "desktop-state",
+    "graveyard",
+    "library",
+    "project-observability",
+    "topology",
+    "worktrees",
+  ),
+  workflow: projectViews("coordination-worklist", "project-observability", "tasks", "threads"),
+  notifications: projectViews("coordination-worklist", "notifications", "project-observability"),
+  team: projectViews("coordination-worklist", "project-observability", "tasks", "team", "threads"),
+  library: projectViews("library"),
+  plans: projectViews("plans"),
+  runtime: projectViews(
+    "agents",
+    "coordination-worklist",
+    "desktop-state",
+    "project-observability",
+    "topology",
+    "worktrees",
+  ),
+  operationFailures: projectViews("desktop-state", "project-observability"),
+  repair: PROJECT_API_VIEWS,
+} as const satisfies Record<string, readonly ProjectApiView[]>;
+
+export type ProjectApiInvalidationGroup = keyof typeof PROJECT_API_VIEW_INVALIDATIONS;
+
+export function projectApiMutationReasonForRoute(method: string, pathname: string): string {
+  return `${method.toUpperCase() || "REQUEST"} ${pathname || "/"}`;
+}
+
+export function projectApiViewsForMutationRoute(method: string, pathname: string): ProjectApiView[] | null {
+  const normalizedMethod = method.toUpperCase();
+  if (
+    normalizedMethod === "GET" &&
+    (
+      [
+        PROJECT_API_ROUTES.controls.openNotificationTarget,
+        PROJECT_API_ROUTES.controls.focusWindow,
+        PROJECT_API_ROUTES.controls.activeWindow,
+        PROJECT_API_ROUTES.controls.switchNext,
+        PROJECT_API_ROUTES.controls.switchPrev,
+        PROJECT_API_ROUTES.controls.switchAttention,
+      ] as readonly string[]
+    ).includes(pathname)
+  ) {
+    return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
+  }
+  if (normalizedMethod !== "POST" && normalizedMethod !== "PUT") return null;
+  if (normalizedMethod === "PUT" && pathname.startsWith(`${PROJECT_API_ROUTES.plans}/`)) {
+    return [...PROJECT_API_VIEW_INVALIDATIONS.plans];
+  }
+
+  switch (pathname) {
+    case PROJECT_API_ROUTES.notifications.read:
+    case PROJECT_API_ROUTES.notifications.clear:
+    case PROJECT_API_ROUTES.runtime.notify:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.notifications];
+
+    case PROJECT_API_ROUTES.team.init:
+    case PROJECT_API_ROUTES.team.addRole:
+    case PROJECT_API_ROUTES.team.removeRole:
+    case PROJECT_API_ROUTES.team.defaultRole:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.team];
+
+    case PROJECT_API_ROUTES.threads.open:
+    case PROJECT_API_ROUTES.threads.send:
+    case PROJECT_API_ROUTES.threads.markSeen:
+    case PROJECT_API_ROUTES.threads.status:
+    case PROJECT_API_ROUTES.handoff.send:
+    case PROJECT_API_ROUTES.handoff.accept:
+    case PROJECT_API_ROUTES.handoff.complete:
+    case PROJECT_API_ROUTES.tasks.assign:
+    case PROJECT_API_ROUTES.tasks.accept:
+    case PROJECT_API_ROUTES.tasks.block:
+    case PROJECT_API_ROUTES.tasks.complete:
+    case PROJECT_API_ROUTES.tasks.reopen:
+    case PROJECT_API_ROUTES.reviews.approve:
+    case PROJECT_API_ROUTES.reviews.requestChanges:
+    case PROJECT_API_ROUTES.agents.createTeammateTask:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.workflow];
+
+    case PROJECT_API_ROUTES.agents.spawn:
+    case PROJECT_API_ROUTES.agents.fork:
+    case PROJECT_API_ROUTES.agents.stop:
+    case PROJECT_API_ROUTES.agents.resume:
+    case PROJECT_API_ROUTES.agents.kill:
+    case PROJECT_API_ROUTES.agents.interrupt:
+    case PROJECT_API_ROUTES.agents.rename:
+    case PROJECT_API_ROUTES.agents.migrate:
+    case PROJECT_API_ROUTES.agents.recordBackendSession:
+    case PROJECT_API_ROUTES.agents.loop:
+    case PROJECT_API_ROUTES.agents.overseer:
+    case PROJECT_API_ROUTES.livePane.interrupt:
+    case PROJECT_API_ROUTES.agents.createTeammate:
+    case PROJECT_API_ROUTES.agents.stopTeammate:
+    case PROJECT_API_ROUTES.agents.resumeTeammate:
+    case PROJECT_API_ROUTES.agents.killTeammate:
+    case PROJECT_API_ROUTES.agents.resurrectTeammate:
+    case PROJECT_API_ROUTES.graveyardActions.resurrectAgent:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.agentLifecycle];
+
+    case PROJECT_API_ROUTES.services.create:
+    case PROJECT_API_ROUTES.services.stop:
+    case PROJECT_API_ROUTES.services.resume:
+    case PROJECT_API_ROUTES.services.remove:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.serviceLifecycle];
+
+    case PROJECT_API_ROUTES.worktreeActions.create:
+    case PROJECT_API_ROUTES.worktreeActions.remove:
+    case PROJECT_API_ROUTES.worktreeActions.graveyard:
+    case PROJECT_API_ROUTES.graveyardActions.resurrectWorktree:
+    case PROJECT_API_ROUTES.graveyardActions.deleteWorktree:
+    case PROJECT_API_ROUTES.graveyardActions.cleanup:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.worktreeLifecycle];
+
+    case PROJECT_API_ROUTES.runtime.usageMark:
+    case PROJECT_API_ROUTES.runtime.setStatus:
+    case PROJECT_API_ROUTES.runtime.setProgress:
+    case PROJECT_API_ROUTES.runtime.setContext:
+    case PROJECT_API_ROUTES.runtime.setServices:
+    case PROJECT_API_ROUTES.runtime.log:
+    case PROJECT_API_ROUTES.runtime.event:
+    case PROJECT_API_ROUTES.runtime.markSeen:
+    case PROJECT_API_ROUTES.runtime.setActivity:
+    case PROJECT_API_ROUTES.runtime.setAttention:
+    case PROJECT_API_ROUTES.runtime.clearLog:
+    case PROJECT_API_ROUTES.runtime.shellState:
+    case PROJECT_API_ROUTES.agents.interactionRegister:
+    case PROJECT_API_ROUTES.agents.interactionNotify:
+    case PROJECT_API_ROUTES.agents.interactionRequest:
+    case PROJECT_API_ROUTES.agents.interactionRespond:
+    case PROJECT_API_ROUTES.agents.input:
+    case PROJECT_API_ROUTES.livePane.input:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
+
+    case PROJECT_API_ROUTES.statuslineRefresh:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
+
+    case PROJECT_API_ROUTES.operationFailuresClear:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.operationFailures];
+
+    default:
+      return [...PROJECT_API_VIEW_INVALIDATIONS.all];
+  }
+}
 
 export interface ProjectUpdateEvent {
   type: typeof PROJECT_API_EVENT_NAMES.projectUpdate;
