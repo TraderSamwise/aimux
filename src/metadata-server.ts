@@ -3842,11 +3842,12 @@ export class MetadataServer {
               title: body.title,
               worktreePath: body.worktreePath,
             });
+        const explicitRecipients = optionalStringArray(body.to);
         const recipients = resolveExchangeMessageAlertRecipients({
-          explicitRecipients: body.to,
+          explicitRecipients,
           message: result.message,
           thread: result.thread,
-          fallbackRecipients: body.to,
+          fallbackRecipients: explicitRecipients,
           from: body.from?.trim() || "user",
         });
         this.emitThreadWaitingAlert({
