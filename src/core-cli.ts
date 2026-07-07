@@ -29,6 +29,7 @@ import {
   coreWhoamiJson,
   type CoreDaemonStatusTextPayload,
 } from "./core-text.js";
+import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { requestCoreCommand } from "./core-command-client.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadDaemonInfo, loadDaemonState } from "./daemon-state.js";
@@ -170,7 +171,7 @@ async function runRestart(args: string[], io: Required<CoreCliIo>): Promise<numb
   }
   const restartArgs = args[0] === "daemon" ? null : parseCoreRestartArgs(args);
   const projectRoot = restartArgs?.project ? resolveProjectRoot(pathResolve(restartArgs.project)) : undefined;
-  const { result } = await requestCoreCommand(CORE_COMMAND_NAMES.restart, projectRoot ? { projectRoot } : undefined);
+  const result = await restartControlPlaneFromCli(projectRoot);
   if (parsedArgs.json) {
     io.stdout(JSON.stringify(result.restart, null, 2));
   } else {

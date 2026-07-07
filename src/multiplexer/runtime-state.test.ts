@@ -732,6 +732,42 @@ describe("resumeOfflineSession", () => {
     expect(restoredSession.supersededBackendSessionId).toBe("backend-old");
   });
 
+  it("fresh relaunches backend-less sessions with no user history", () => {
+    const createSession = vi.fn(() => ({}));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-empty" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => false) },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+    seedOfflineSession({
+      id: "codex-empty",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      freshRelaunchAllowed: true,
+      worktreePath: repoRoot,
+    });
+
+    resumeOfflineSession(host, {
+      id: "codex-empty",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      freshRelaunchAllowed: true,
+      worktreePath: repoRoot,
+    });
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0][7]).toBeUndefined();
+    expect(createSession.mock.calls[0][10]).toBe(false);
+  });
+
   it("records backend session ids on live and offline sessions", () => {
     seedTopologySessions([
       {

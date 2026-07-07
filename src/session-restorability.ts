@@ -14,6 +14,7 @@ export interface RestorableSessionLike {
   toolConfigKey?: string;
   status?: string;
   backendSessionId?: string;
+  freshRelaunchAllowed?: boolean;
   restoreState?: SessionRestoreState;
   restoreBlockedReason?: string;
 }
@@ -59,7 +60,7 @@ export function describeSessionRestorability(
       restoreBlockedReason: `agent tool "${toolKey}" does not support exact backend resume`,
     };
   }
-  if (!session.backendSessionId) {
+  if (!session.backendSessionId && !session.freshRelaunchAllowed) {
     return {
       restoreState: "blocked",
       restoreBlockedReason: "missing exact resumable backend session id",

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   readLastLogLines: vi.fn(),
   selectedLogPath: vi.fn(),
   requestCoreCommand: vi.fn(),
+  restartControlPlaneFromCli: vi.fn(),
   tmuxIsInsideTmux: vi.fn(),
   tmuxOpenTarget: vi.fn(),
   setRemoteEnabled: vi.fn(),
@@ -35,6 +36,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./core-command-client.js", () => ({
   requestCoreCommand: mocks.requestCoreCommand,
+}));
+
+vi.mock("./control-plane-restart-client.js", () => ({
+  restartControlPlaneFromCli: mocks.restartControlPlaneFromCli,
 }));
 
 vi.mock("./credentials.js", () => ({
@@ -225,6 +230,12 @@ describe("runCoreCli", () => {
       if (command === CORE_COMMAND_NAMES.relayDisable) return commandOk(command, { relay: { status: "off" } });
       throw new Error(`unexpected command ${command}`);
     });
+    mocks.restartControlPlaneFromCli.mockReset();
+    mocks.restartControlPlaneFromCli.mockResolvedValue({
+      restart: runtimeRestartResult(),
+      text: "Aimux Restart\nfailures: 0",
+      source: "daemon",
+    });
     mocks.setRemoteEnabled.mockReset();
     mocks.clearCredentials.mockReset();
     mocks.clearCredentials.mockReturnValue("cleared");
@@ -362,7 +373,7 @@ describe("runCoreCli", () => {
     );
   });
 
-  it("runs global and daemon restart through the sidecar command transport", async () => {
+  it("runs global and daemon restart through the repair-aware restart client", async () => {
     await expect(run(["restart", "--project", "/repo", "--json"])).resolves.toMatchObject({
       code: 0,
     });
@@ -374,17 +385,16 @@ describe("runCoreCli", () => {
       stdout: ["Aimux Restart\nfailures: 0"],
     });
 
-    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.restart, { projectRoot: "/repo" });
-    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.restart, undefined);
+    expect(mocks.restartControlPlaneFromCli).toHaveBeenCalledWith("/repo");
+    expect(mocks.restartControlPlaneFromCli).toHaveBeenCalledWith(undefined);
   });
 
   it("returns restart failures as a non-zero core CLI exit", async () => {
-    mocks.requestCoreCommand.mockImplementationOnce(async (command: CoreCommandName) =>
-      commandOk(command, {
-        restart: runtimeRestartResult(1),
-        text: "Aimux Restart\nfailures: 1",
-      }),
-    );
+    mocks.restartControlPlaneFromCli.mockResolvedValueOnce({
+      restart: runtimeRestartResult(1),
+      text: "Aimux Restart\nfailures: 1",
+      source: "daemon",
+    });
 
     const result = await run(["restart"]);
 

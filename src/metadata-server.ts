@@ -151,6 +151,7 @@ import {
 } from "./runtime-core/exchange-alert-routing.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
+import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
   permissionRequestHookOutput,
@@ -1132,7 +1133,12 @@ function topologyDesktopSessionList(
   return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => {
     const status = session.status ?? "offline";
     const restorability =
-      status === "offline" ? describeSessionRestorability({ ...session, status }, tools) : undefined;
+      status === "offline"
+        ? describeSessionRestorability(
+            { ...session, status, freshRelaunchAllowed: shouldRelaunchFreshSession(session, getRepoRoot()) },
+            tools,
+          )
+        : undefined;
     return {
       ...session,
       status,

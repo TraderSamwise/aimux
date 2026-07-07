@@ -28,8 +28,12 @@ import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-
 import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
+import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
 
 type SessionLaunchHost = any;
+
+const CODEX_BACKEND_CAPTURE_ATTEMPTS = 20;
+const CODEX_BACKEND_CAPTURE_INTERVAL_MS = 250;
 
 function projectRootFor(host: SessionLaunchHost): string {
   return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot.trim() : process.cwd();
@@ -138,6 +142,42 @@ export function injectCodexDeveloperInstructions(args: string[], key: string, in
   if (!key.trim() || !instructions.trim()) return [...args];
   const insertionIndex = firstCodexPositionalArgIndex(args);
   return [...args.slice(0, insertionIndex), "-c", codexConfigArg(key, instructions), ...args.slice(insertionIndex)];
+}
+
+function scheduleCodexBackendSessionIdCapture(
+  host: SessionLaunchHost,
+  sessionId: string,
+  cwd: string,
+  launchStartedAtMs: number,
+): void {
+  if (typeof host.recordSessionBackendSessionId !== "function") return;
+  let attempts = 0;
+  const capture = () => {
+    const runtime = host.sessions?.find?.((session: any) => session.id === sessionId);
+    if (!runtime || runtime.backendSessionId) return;
+    attempts += 1;
+    try {
+      const backendSessionId = discoverCodexBackendSessionId(cwd, undefined, {
+        sinceMs: Math.max(0, launchStartedAtMs - 1000),
+      });
+      if (backendSessionId) {
+        host.recordSessionBackendSessionId(sessionId, backendSessionId);
+        debug(`captured codex backend session id for ${sessionId}: ${backendSessionId}`, "session");
+        return;
+      }
+    } catch (error) {
+      debug(
+        `codex backend session id capture failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+      return;
+    }
+    if (attempts >= CODEX_BACKEND_CAPTURE_ATTEMPTS) return;
+    const timer = setTimeout(capture, CODEX_BACKEND_CAPTURE_INTERVAL_MS);
+    timer.unref?.();
+  };
+  const timer = setTimeout(capture, CODEX_BACKEND_CAPTURE_INTERVAL_MS);
+  timer.unref?.();
 }
 
 export async function run(host: SessionLaunchHost, opts: { command: string; args: string[] }): Promise<number> {
@@ -675,6 +715,9 @@ export function createSession(
   session.backendSessionId = backendSessionId;
   if (session instanceof TmuxSessionTransport) {
     host.syncTmuxWindowMetadata(sessionId);
+  }
+  if (isConfiguredCodexCommand && !backendSessionId) {
+    scheduleCodexBackendSessionIdCapture(host, sessionId, launchCwd, sessionStartTime);
   }
 
   host.activeIndex = host.sessions.length - 1;
