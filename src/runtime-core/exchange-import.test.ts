@@ -9,8 +9,8 @@ import {
   getPlansDir,
   getRecordingsDir,
   getStatusDir,
-  getTasksDir,
-  getThreadsDir,
+  getLegacyTasksDir,
+  getLegacyThreadsDir,
   initPaths,
 } from "../paths.js";
 import type { Task } from "../tasks.js";
@@ -111,8 +111,8 @@ describe("runtime exchange legacy import helpers", () => {
   });
 
   it("imports legacy files without creating missing legacy directories", () => {
-    mkdirSync(getThreadsDir(), { recursive: true });
-    mkdirSync(getTasksDir(), { recursive: true });
+    mkdirSync(getLegacyThreadsDir(), { recursive: true });
+    mkdirSync(getLegacyTasksDir(), { recursive: true });
     mkdirSync(getPlansDir(), { recursive: true });
     mkdirSync(getHistoryDir(), { recursive: true });
     mkdirSync(join(getContextDir(), "codex-1"), { recursive: true });
@@ -121,7 +121,7 @@ describe("runtime exchange legacy import helpers", () => {
     mkdirSync(getAttachmentsDir(), { recursive: true });
 
     writeFileSync(
-      join(getThreadsDir(), "thread-1.json"),
+      join(getLegacyThreadsDir(), "thread-1.json"),
       JSON.stringify({
         id: "thread-1",
         title: "Task",
@@ -136,7 +136,7 @@ describe("runtime exchange legacy import helpers", () => {
       }) + "\n",
     );
     writeFileSync(
-      join(getThreadsDir(), "thread-1.jsonl"),
+      join(getLegacyThreadsDir(), "thread-1.jsonl"),
       JSON.stringify({
         id: "msg-1",
         threadId: "thread-1",
@@ -147,7 +147,7 @@ describe("runtime exchange legacy import helpers", () => {
       }) + "\n",
     );
     writeFileSync(
-      join(getTasksDir(), "task-1.json"),
+      join(getLegacyTasksDir(), "task-1.json"),
       JSON.stringify({
         id: "task-1",
         status: "pending",
