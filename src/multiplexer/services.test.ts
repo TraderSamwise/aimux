@@ -103,6 +103,44 @@ describe("services", () => {
     expect(state.services).toEqual([]);
   });
 
+  it("does not resurrect stale state.json service rows while committing services", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify({
+        savedAt: "old",
+        cwd: "/old",
+        services: [{ id: "svc-stale", label: "stale", launchCommandLine: "yarn stale" }],
+      }),
+    );
+    const createWindow = vi.fn(() => ({
+      sessionName: "aimux-repo",
+      windowId: "@9",
+      windowIndex: 9,
+      windowName: "dev",
+    }));
+    const host = {
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        createWindow,
+        setWindowMetadata: vi.fn(),
+        applyManagedAgentWindowPolicy: vi.fn(),
+      },
+      startedInDashboard: false,
+      mode: "dashboard",
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      settleDashboardCreatePending: vi.fn(),
+    };
+
+    const result = createService(host, "yarn dev", repoRoot, { serviceId: "svc-live" });
+
+    expect(result).toEqual({ serviceId: "svc-live" });
+    expect(readSavedServices().map((service) => service.id)).toEqual(["svc-live"]);
+  });
+
   it("stops a running service by interrupting and retaining its tmux window", async () => {
     const killWindow = vi.fn();
     const sendKey = vi.fn();

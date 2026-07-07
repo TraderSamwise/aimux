@@ -6,12 +6,13 @@ import { initPaths } from "../paths.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
-import { upsertTopologyService } from "../runtime-core/topology-services.js";
+import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   buildLiveServiceStates,
   graveyardSession,
   loadOfflineServices,
   loadOfflineTopologySessions,
+  reconcileOrphanedTopologyServices,
   recordSessionBackendSessionId,
   reconcileOrphanedTopologySessions,
   restoreTmuxSessionsFromTopology,
@@ -1025,17 +1026,7 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: pending,
     };
 
-    const changed = loadOfflineServices(host, {
-      sessions: [],
-      services: [
-        {
-          id: "service-1",
-          label: "shell",
-          worktreePath: repoRoot,
-        },
-      ],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(false);
     expect(host.offlineServices).toEqual([]);
@@ -1052,23 +1043,17 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: pending,
     };
 
-    const changed = loadOfflineServices(host, {
-      sessions: [],
-      services: [
-        {
-          id: "service-1",
-          label: "shell",
-          worktreePath: repoRoot,
-        },
-      ],
-      updatedAt: new Date().toISOString(),
+    upsertTopologyService({ id: "service-1", label: "shell", worktreePath: repoRoot }, "stopped", {
+      projectRoot: repoRoot,
     });
+
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-1" }]);
   });
 
-  it("loads stopped services from topology before legacy saved state", () => {
+  it("loads stopped services from topology", () => {
     upsertTopologyService(
       {
         id: "service-topology",
@@ -1087,14 +1072,66 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: new DashboardPendingActions(() => {}),
     };
 
-    const changed = loadOfflineServices(host, {
-      sessions: [],
-      services: [{ id: "service-legacy", label: "legacy" }],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-topology", launchCommandLine: "yarn web" }]);
+  });
+
+  it("demotes crash-orphaned running services to stopped before loading offline services", () => {
+    upsertTopologyService(
+      {
+        id: "service-orphan",
+        label: "web",
+        launchCommandLine: "yarn web",
+        worktreePath: repoRoot,
+        tmuxTarget: { sessionName: "aimux-repo", windowId: "@3", windowIndex: 3, windowName: "web" },
+      },
+      "running",
+      { projectRoot: repoRoot },
+    );
+    const host: any = {
+      projectRoot: repoRoot,
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineServices(host);
+
+    expect(changed).toBe(true);
+    expect(listTopologyServiceStates({ statuses: ["running"] })).toEqual([]);
+    expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
+      { id: "service-orphan", launchCommandLine: "yarn web", retained: false },
+    ]);
+    expect(host.offlineServices).toMatchObject([{ id: "service-orphan", launchCommandLine: "yarn web" }]);
+  });
+
+  it("does not demote a service that is mid-launch", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setServiceAction("service-starting", "starting");
+    upsertTopologyService({ id: "service-starting", label: "web", worktreePath: repoRoot }, "starting", {
+      projectRoot: repoRoot,
+    });
+    const host: any = {
+      projectRoot: repoRoot,
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: pending,
+      debug: vi.fn(),
+    };
+
+    const changed = reconcileOrphanedTopologyServices(host);
+
+    expect(changed).toBe(false);
+    expect(listTopologyServiceStates({ statuses: ["starting"] }).map((service) => service.id)).toEqual([
+      "service-starting",
+    ]);
   });
 
   it("keeps retained topology services offline even when their tmux window is alive", () => {
@@ -1124,7 +1161,7 @@ describe("resumeOfflineSession", () => {
       dashboardPendingActions: new DashboardPendingActions(() => {}),
     };
 
-    const changed = loadOfflineServices(host, { sessions: [], services: [] });
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-retained", retained: true }]);
@@ -1630,10 +1667,12 @@ describe("resumeOfflineSession", () => {
       },
     };
 
-    const changed = loadOfflineServices(host, { sessions: [], services: [saved] });
+    upsertTopologyService(saved, "stopped", { projectRoot: repoRoot });
+
+    const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
-    expect(host.offlineServices).toEqual([saved]);
+    expect(host.offlineServices).toMatchObject([saved]);
     expect(buildLiveServiceStates(host)).toEqual([]);
   });
 });

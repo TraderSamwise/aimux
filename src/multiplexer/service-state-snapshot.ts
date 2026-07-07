@@ -6,6 +6,7 @@ import type { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import type { SavedState, ServiceState } from "./index.js";
 import { buildServiceStateFromMetadata } from "./services.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
+import { upsertTopologyServices } from "../runtime-core/topology-services.js";
 
 function isAvailableSnapshotWorktree(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
   if (!worktreePath) return true;
@@ -20,9 +21,6 @@ export function mergeRuntimeSnapshots(
   savedAt = new Date().toISOString(),
 ): SavedState {
   const byId = new Map<string, ServiceState>();
-  for (const service of state?.services ?? []) {
-    byId.set(service.id, service);
-  }
   for (const service of snapshots.services ?? []) {
     byId.set(service.id, {
       ...service,
@@ -59,6 +57,7 @@ export function snapshotProjectServiceWindows(projectRoot: string, tmux: TmuxRun
     snapshots.push(
       buildServiceStateFromMetadata(metadata.sessionId, metadata, {
         cwd: tmux.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
+        tmuxTarget: target,
       }),
     );
   }
@@ -70,7 +69,9 @@ export function persistProjectRuntimeSnapshotsBeforeTmuxStop(
   tmux: TmuxRuntimeManager,
 ): { sessions: []; services: ServiceState[] } {
   const services = snapshotProjectServiceWindows(projectRoot, tmux);
-  if (services.length === 0) return { sessions: [], services };
+  if (services.length > 0) {
+    upsertTopologyServices(services, "stopped", { projectRoot });
+  }
 
   const statePath = getStatePath();
   let existing: SavedState | null = null;
