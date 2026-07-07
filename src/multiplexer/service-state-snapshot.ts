@@ -20,9 +20,6 @@ export function mergeRuntimeSnapshots(
   savedAt = new Date().toISOString(),
 ): SavedState {
   const byId = new Map<string, ServiceState>();
-  for (const service of state?.services ?? []) {
-    byId.set(service.id, service);
-  }
   for (const service of snapshots.services ?? []) {
     byId.set(service.id, {
       ...service,

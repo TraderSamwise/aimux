@@ -62,7 +62,10 @@ rg -n "metadata\\.kind === \"service\"|kind: \"service\"|launchCommandLine" src
 ```
 
 - Replace `.aimux/state.json` service authority with topology service records.
-- Remove direct JSON service edits in `removeOfflineService` and snapshot writers.
+- Direct JSON service edits in `removeOfflineService`, worktree cleanup, and
+  snapshot writers are removed; compatibility snapshots may only preserve
+  unrelated metadata and write services rebuilt from current runtime/topology
+  state or observed tmux service windows.
 - Keep `offlineServices` only as a rebuilt UI cache.
 - Keep tmux service metadata only as live substrate evidence.
 

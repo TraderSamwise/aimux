@@ -19,6 +19,11 @@ describe("service-state-snapshot", () => {
       sessions: [{ id: "agent-1", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] }],
       services: [
         {
+          id: "stale-service",
+          label: "stale",
+          launchCommandLine: "yarn stale",
+        },
+        {
           id: "service-1",
           label: "old",
           launchCommandLine: "yarn dev",
