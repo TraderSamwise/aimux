@@ -2300,6 +2300,7 @@ export class MetadataServer {
         sessionId: body.sessionId?.trim() || undefined,
         force: body.force === true,
       });
+      notifyCurrentRouteChange({ sessionId: body.sessionId?.trim() || undefined });
       send(res, 200, { ok: true });
       return;
     }

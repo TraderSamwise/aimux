@@ -176,10 +176,6 @@ function projectViews(...views: ProjectApiView[]): readonly ProjectApiView[] {
   return views;
 }
 
-function mergeProjectViews(...groups: readonly (readonly ProjectApiView[])[]): ProjectApiView[] {
-  return [...new Set(groups.flat())];
-}
-
 export const PROJECT_API_VIEW_INVALIDATIONS = {
   all: PROJECT_API_VIEWS,
   agentLifecycle: projectViews(
@@ -336,7 +332,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
       return [...PROJECT_API_VIEW_INVALIDATIONS.operationFailures];
 
     default:
-      return mergeProjectViews(PROJECT_API_VIEW_INVALIDATIONS.runtime, PROJECT_API_VIEW_INVALIDATIONS.workflow);
+      return [...PROJECT_API_VIEW_INVALIDATIONS.all];
   }
 }
 
