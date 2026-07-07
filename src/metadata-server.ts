@@ -1,10 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   getDashboardClientUiStatePath,
-  getPlansDir,
   getProjectId,
   getProjectStateDir,
   getRepoRoot,
@@ -111,6 +110,12 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
+import {
+  getPlanAuthorityDir,
+  readPlanContent,
+  validatePlanSessionId,
+  writePlanContent,
+} from "./runtime-core/plan-authority.js";
 import { TMUX_DASHBOARD_READY_OPTION } from "./runtime-owner.js";
 import {
   getDefaultTeamConfig,
@@ -2169,7 +2174,7 @@ export class MetadataServer {
     }
 
     if (req.method === "GET" && url.pathname === PROJECT_API_ROUTES.library) {
-      const plansDir = getPlansDir();
+      const plansDir = getPlanAuthorityDir();
       send(res, 200, {
         ok: true,
         documents: listLibraryDocuments(this.currentProjectRoot()),
@@ -2554,21 +2559,20 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
         }
-        const validation = validateSessionId(raw);
+        const validation = validatePlanSessionId(raw);
         if (!validation.ok) {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
         }
         const sessionId = validation.value;
-        const planPath = join(getPlansDir(), `${sessionId}.md`);
         try {
-          const content = readFileSync(planPath, "utf8");
-          send(res, 200, { ok: true, sessionId, content });
-        } catch (err: any) {
-          if (err?.code === "ENOENT") {
+          const content = readPlanContent(sessionId);
+          if (content === null) {
             send(res, 404, { ok: false, error: "Plan not found" });
             return;
           }
+          send(res, 200, { ok: true, sessionId, content });
+        } catch {
           send(res, 500, { ok: false, error: "Failed to read plan" });
           return;
         }
@@ -2583,7 +2587,7 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
         }
-        const validation = validateSessionId(raw);
+        const validation = validatePlanSessionId(raw);
         if (!validation.ok) {
           send(res, 400, { ok: false, error: "invalid sessionId" });
           return;
@@ -2594,15 +2598,9 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "content must be a string" });
           return;
         }
-        const planPath = join(getPlansDir(), `${sessionId}.md`);
-        const dir = dirname(planPath);
-        const tmpPath = join(dir, `.${sessionId}.${randomUUID()}.tmp`);
         try {
-          mkdirSync(dir, { recursive: true });
-          writeFileSync(tmpPath, body.content, "utf8");
-          renameSync(tmpPath, planPath);
+          writePlanContent(sessionId, body.content);
         } catch {
-          rmSync(tmpPath, { force: true });
           send(res, 500, { ok: false, error: "Failed to write plan" });
           return;
         }
