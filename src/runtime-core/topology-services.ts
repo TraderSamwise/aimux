@@ -175,6 +175,14 @@ export function upsertTopologyService(
   status: RuntimeTopologyServiceStatus,
   input?: { store?: RuntimeTopologyStore; now?: string; projectRoot?: string },
 ): RuntimeTopology {
+  return upsertTopologyServices([service], status, input);
+}
+
+export function upsertTopologyServices(
+  services: RuntimeTopologyServiceState[],
+  status: RuntimeTopologyServiceStatus,
+  input?: { store?: RuntimeTopologyStore; now?: string; projectRoot?: string },
+): RuntimeTopology {
   const store = input?.store ?? createRuntimeTopologyStore();
   const now = input?.now ?? new Date().toISOString();
   const projectRoot = input?.projectRoot ?? getRepoRoot();
@@ -182,13 +190,15 @@ export function upsertTopologyService(
     const topology = current.version ? current : emptyRuntimeTopology(now);
     topology.generatedAt = now;
     const rigId = ensureRig(topology, projectRoot, now);
-    const node = upsertServiceNode(topology, service, rigId, now);
-    const nextService = serviceToTopologyService(service, rigId, node.id, status, now);
-    topology.services = [...topology.services.filter((entry) => entry.id !== service.id), nextService];
-    const binding = serviceToBinding(service, node.id, status, now);
-    topology.bindings = binding
-      ? [...topology.bindings.filter((entry) => entry.id !== binding.id), binding]
-      : topology.bindings.filter((entry) => entry.nodeId !== node.id);
+    for (const service of services) {
+      const node = upsertServiceNode(topology, service, rigId, now);
+      const nextService = serviceToTopologyService(service, rigId, node.id, status, now);
+      topology.services = [...topology.services.filter((entry) => entry.id !== service.id), nextService];
+      const binding = serviceToBinding(service, node.id, status, now);
+      topology.bindings = binding
+        ? [...topology.bindings.filter((entry) => entry.id !== binding.id), binding]
+        : topology.bindings.filter((entry) => entry.nodeId !== node.id);
+    }
     return topology;
   });
 }
