@@ -13,6 +13,7 @@ import {
   moveTopologySessionToGraveyard,
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
+import type { RuntimeTopologySessionStatus } from "../runtime-core/topology-store.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
@@ -73,6 +74,15 @@ function listLiveServiceWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
     windows.push(entry);
   }
   return windows;
+}
+
+function findTopologySession(sessionId: string, statuses?: RuntimeTopologySessionStatus[]) {
+  return listTopologySessionStates(statuses ? { statuses } : undefined).find((session) => session.id === sessionId);
+}
+
+function pruneOfflineSessionCache(host: RuntimeStateHost, sessionId: string): void {
+  if (!Array.isArray(host.offlineSessions)) return;
+  host.offlineSessions = host.offlineSessions.filter((session: any) => session.id !== sessionId);
 }
 
 function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
@@ -549,13 +559,19 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
 }
 
 export function graveyardSession(host: RuntimeStateHost, sessionId: string, _sessionSeed?: any): void {
-  const session =
-    host.offlineSessions.find((s: any) => s.id === sessionId) ??
-    listTopologySessionStates({ statuses: ["running", "idle", "offline"] }).find((s: any) => s.id === sessionId);
-  if (!session) return;
+  const session = findTopologySession(sessionId, ["running", "idle", "offline"]);
+  if (!session) {
+    pruneOfflineSessionCache(host, sessionId);
+    host.invalidateDesktopStateSnapshot?.();
+    host.writeStatuslineFile?.();
+    if (host.mode === "dashboard") {
+      host.renderCurrentDashboardView?.();
+    }
+    return;
+  }
   markLifecycleUsed(host, sessionId);
 
-  host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== sessionId);
+  pruneOfflineSessionCache(host, sessionId);
 
   moveTopologySessionToGraveyard(sessionId);
   host.invalidateDesktopStateSnapshot?.();
@@ -595,16 +611,29 @@ export function evictZombieSession(host: RuntimeStateHost, runtime: any): void {
 }
 
 export function resumeOfflineSession(host: RuntimeStateHost, session: any): void {
-  const existing = host.sessions.find((runtime: any) => runtime.id === session.id);
+  const sessionId = session?.id;
+  if (!sessionId) return;
+
+  const existing = host.sessions.find((runtime: any) => runtime.id === sessionId);
   if (existing) {
     if (isSessionRuntimeLive(host, existing)) {
-      host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== session.id);
+      pruneOfflineSessionCache(host, sessionId);
       host.invalidateDesktopStateSnapshot();
       host.writeStatuslineFile();
       return;
     }
     evictZombieSession(host, existing);
   }
+
+  const topologySession = findTopologySession(sessionId, ["offline"]);
+  if (!topologySession) {
+    pruneOfflineSessionCache(host, sessionId);
+    host.invalidateDesktopStateSnapshot?.();
+    host.writeStatuslineFile?.();
+    host.debug?.(`ignored stale offline resume for ${sessionId}: no offline topology row`, "session");
+    return;
+  }
+  session = { ...topologySession, lifecycle: "offline", status: "offline" };
 
   const config = loadConfig();
   const toolCfg = config.tools[session.toolConfigKey];
