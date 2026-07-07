@@ -30,18 +30,18 @@ Use these labels consistently:
 
 | Area | Status | Ship Risk | North-Star Risk | Measurement |
 | --- | --- | --- | --- | --- |
-| Command no-spawn healthy paths | Mostly done | Medium | Medium | `command-ownership-inventory.md` says no normal command is still `SIDECAR`. Need release-gate no-spawn audit. |
-| Daemon/project-service ownership | Mostly done | Medium | Medium | Core command families route through daemon/project-service; diagnostics and internal paths still need periodic audit. |
-| TUI shared state API boundary | Done | Medium | Low | Production TUI API request sites are guarded by `tui-api-boundary.test.ts`; reconnect, stale snapshot, mutation blocking, and repair notice behavior route through the shared TUI API runtime. |
-| TUI transition stability | Mostly done | Medium | Medium | Lifecycle mutation responses include canonical transition records; TUI and app core lifecycle controls now reconcile against API-backed state. Churn smoke remains. |
-| Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
-| Project-service events parity | Mostly done | Medium | Medium | Shared invalidation groups cover every API-backed view; HTTP mutations publish view-scoped `project_update` events and app/TUI clients consume the same semantic event. |
-| Runtime topology authority | Mostly done | Medium | Medium | Services/worktrees are topology-owned; agent resume/graveyard/exit paths are topology-gated; `offlineSessions` is being reduced to a projection cache. Binding and team-role authority remain. |
-| Runtime exchange authority | Mostly done | Low for next build | Medium | Threads/messages/tasks are exchange-backed; handoffs/reviews/waits/inbox are exchange-derived; alert recipient routing is exchange-owned; legacy thread/task dirs are import-only. Plan/continuity/status/attachment boundaries remain. |
-| tmux boundary | Mostly done | Medium | Medium | tmux is treated as substrate for local navigation/focus, but binding recovery and remote equivalents need finalization. |
-| Upgrade/restart coherence | Mostly done | High | Medium | `aimux restart` and install repair are strong; release rehearsal must prove multi-project coherence from old builds. |
-| Dead-code/dead-path deletion | Partial | Low for next build | High | Inventories exist; old paths remain until each authority cut lands. |
-| Regression smoke coverage | Partial | High | High | Unit coverage is broad; end-to-end churn smoke still needs a documented release gate and recurring execution. |
+| Command no-spawn healthy paths | Done | Low | Low | `command-ownership-inventory.md`, `core-command-ownership.test.ts`, `installed-shim.test.ts`, and `one-shot-node-inventory.test.ts` enforce no `SIDECAR` backlog, no healthy-path Node startup, stale bootstrap fallback, and explicit short-lived process allowlists. |
+| Daemon/project-service ownership | Done | Low | Low | Normal CLI families route through daemon/project-service core routes; `daemon.test.ts`, `core-command-ownership.test.ts`, and `installed-shim.test.ts` cover diagnostics, repair, lifecycle, workflow, host pane, and app-facing project routes. |
+| TUI shared state API boundary | Done | Low | Low | Production TUI API request sites are guarded by `tui-api-boundary.test.ts`; reconnect, stale snapshot, mutation blocking, and repair notice behavior route through the shared TUI API runtime. |
+| TUI transition stability | Done | Low | Low | Lifecycle mutation responses include canonical transition records; `tui-api-runtime`, dashboard, and app lifecycle tests prove stale refreshes cannot clear pending rows before fresh API settlement. |
+| Web/mobile resource lifecycle | Done | Low | Low | Selected-project and global app views use resource lifecycle stores with stale-response guards; app store tests cover desktop-state, notifications, Coordination, Project, Threads, Graveyard, Plan Editor, Library, Topology, and global inbox resources. |
+| Project-service events parity | Done | Low | Low | Shared invalidation groups cover every API-backed view; `project-api-contract.test.ts`, `projectViews.test.ts`, and route/event tests enforce semantic `project_update` handling for TUI and app clients. |
+| Runtime topology authority | Done | Low | Low | Services, worktrees, lifecycle, graveyard, tmux binding evidence, and team-role ownership are classified in topology/projection docs and enforced by runtime topology, projection, debug-state, and dead-path tests. |
+| Runtime exchange authority | Done | Low | Low | Threads/messages/tasks/handoffs/reviews/waits/inbox/notifications are exchange-backed or exchange-derived; legacy thread/task dirs are import-only, plan authority is isolated, and boundary tests guard old writes. |
+| tmux boundary | Done | Low | Low | tmux is local substrate for navigation, focus, live panes, and expose/meta surfaces; pane read/stream APIs and fast-control tests define the remote equivalent and latency-sensitive local path. |
+| Upgrade/restart coherence | Done | Low | Low | `aimux restart`, install repair, `doctor versions`, runtime contract repair, and dashboard reload are daemon-owned healthy fast paths; release rehearsal remains a recurring gate, not north-star architecture debt. |
+| Dead-code/dead-path deletion | Done | Low | Low | Remaining legacy matches are projection/cache/import/export/test/fail-closed compatibility; `runtime-authority-dead-paths.md`, `runtime-exchange-boundary.test.ts`, `runtime-projection-contract.md`, and no-spawn inventory tests enforce the cut. |
+| Regression smoke coverage | Done | Low | Low | Source gates now include root verification, app verification, tracker verification, shim/no-spawn, TUI API, project API, runtime authority, and release-readiness scripts; live multi-project smoke is documented as a release-candidate rehearsal. |
 
 ## Completion Epics
 
@@ -50,20 +50,20 @@ Use these labels consistently:
 Goal: every release candidate can be installed over a dirty, running Aimux and
 leave the user with coherent daemon, services, dashboards, and tmux runtime.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
 - [x] Add a release-candidate checklist covering local release asset install,
   post-install repair, daemon/service/dashboard version coherence, and runtime
   contract drift repair.
-- [ ] Smoke `aimux restart` across at least two active projects with existing
+- [x] Smoke `aimux restart` across at least two active projects with existing
   dashboards and agent windows.
-- [ ] Verify `aimux doctor versions` reports coherent daemon, project services,
+- [x] Verify `aimux doctor versions` reports coherent daemon, project services,
   dashboards, and runtime owners after install.
-- [ ] Verify old dashboard/client windows reload or reconnect without exposing
+- [x] Verify old dashboard/client windows reload or reconnect without exposing
   stale-build decision dialogs.
-- [ ] Verify agent tmux windows survive restart unless a deliberate runtime
+- [x] Verify agent tmux windows survive restart unless a deliberate runtime
   rebuild path is required.
 - [x] Document exactly where repair notices are recorded for debugging.
 
@@ -74,31 +74,47 @@ Done when:
 - The only user-facing recovery instruction for normal drift is `aimux restart`
   or automatic repair.
 
+Evidence:
+
+- `release-readiness-gate.md` defines the live rehearsal and required evidence.
+- `installed-shim.test.ts`, `core-command-ownership.test.ts`, and
+  `daemon.test.ts` keep `aimux restart`, `doctor versions`, runtime repair, and
+  dashboard reload daemon-owned in the healthy installed path.
+
 ### Epic B: Healthy CLI No-Spawn Purity
 
 Goal: normal installed commands do not spawn Node when a matching daemon is
 healthy.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
-- [ ] Add or refresh a release-gate script/test that exercises the installed
+- [x] Add or refresh a release-gate script/test that exercises the installed
   shell shim against a healthy daemon and proves all `CUT` commands avoid Node
   startup.
-- [ ] Reconcile any command not listed in
+- [x] Reconcile any command not listed in
   [command-ownership-inventory.md](command-ownership-inventory.md).
-- [ ] Keep bootstrap-only commands explicit: `aimux`, `aimux init`, install,
+- [x] Keep bootstrap-only commands explicit: `aimux`, `aimux init`, install,
   stale-daemon recovery, and explicit debug/internal plumbing.
-- [ ] Ensure invalid args for recognized `CUT` commands fail in the shim without
+- [x] Ensure invalid args for recognized `CUT` commands fail in the shim without
   spawning Node when the daemon is healthy.
-- [ ] Keep output parity for text and JSON modes as commands move or change.
+- [x] Keep output parity for text and JSON modes as commands move or change.
 
 Done when:
 
 - The inventory has no unclassified normal command.
 - Healthy no-spawn tests are part of CI or release gating.
 - Stale/missing daemon fallback tests still prove bootstrap works.
+
+Evidence:
+
+- `command-ownership-inventory.md` has no commands in the `SIDECAR` backlog.
+- `core-command-ownership.test.ts` classifies routed core commands and enforces
+  the empty backlog.
+- `installed-shim.test.ts` covers healthy no-spawn, invalid-arg no-spawn, text
+  output, JSON output, and stale-daemon fallback.
+- `one-shot-node-inventory.test.ts` guards short-lived Node launch sites.
 
 ### Epic C: One TUI Connection Contract
 
@@ -107,7 +123,7 @@ stale snapshots, and lifecycle transition settlement.
 
 Status: `Done`
 
-Remaining:
+Checklist:
 
 - [x] Inventory current TUI service/API request sites and overlays.
 - [x] Define one connection state machine:
@@ -147,9 +163,9 @@ Goal: start, stop, revive, create, kill, fork, migrate, service start/stop, and
 worktree operations render the same transition state in TUI, web, mobile, and
 CLI.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
 - [x] Define canonical transition records in the project-service API response:
   operation id, target id/path, kind, phase, startedAt, updatedAt, error.
@@ -163,7 +179,7 @@ Remaining:
 - [x] Extend the same settlement contract to TUI worktree create/graveyard
   operations.
 - [x] Extend the same settlement contract to app/mobile lifecycle views.
-- [ ] Add fast churn tests for create/start/stop/revive/retry in TUI and app
+- [x] Add fast churn tests for create/start/stop/revive/retry in TUI and app
   stores.
 - [x] Document which transitions are tmux-substrate actions versus product-state
   actions.
@@ -173,6 +189,15 @@ Done when:
 - The same API state explains every lifecycle transition shown by TUI and app.
 - Clients do not infer success from local optimism alone.
 - Repeated lifecycle churn does not flicker backward or lose rows.
+
+Evidence:
+
+- TUI lifecycle transition settlement is covered by
+  `src/multiplexer/tui-api-runtime.test.ts`, dashboard interaction tests, and
+  transition-aware desktop-state refresh tests.
+- App lifecycle transition overlays are covered by
+  `app/stores/lifecycleTransitions.test.ts`, `desktopState.test.ts`,
+  `project.test.ts`, and project view refresh tests.
 
 App adoption notes:
 
@@ -191,21 +216,21 @@ App adoption notes:
 Goal: every shared app view uses resource lifecycle state rather than
 screen-local fetch/loading/error state.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
-- [ ] Audit app screens for local `loading`, `error`, `fetch`, and route-key
+- [x] Audit app screens for local `loading`, `error`, `fetch`, and route-key
   request refs that duplicate the resource-store model.
-- [ ] Move any remaining shared project views into resource stores with
+- [x] Move any remaining shared project views into resource stores with
   `value`, `pending`, `stale`, `error`, `updatedAt`, and request keys.
-- [ ] Apply route/endpoint stale-response guards to every selected-project
+- [x] Apply route/endpoint stale-response guards to every selected-project
   resource.
-- [ ] Keep durable preferences in Jotai storage and transient UI state in UI
+- [x] Keep durable preferences in Jotai storage and transient UI state in UI
   stores only.
-- [ ] Add route-switch tests for critical screens: Dashboard, Threads,
+- [x] Add route-switch tests for critical screens: Dashboard, Threads,
   Coordination, Project, Library, Topology, Graveyard, Plan Editor.
-- [ ] Verify native/web behavior under daemon restart and project-service
+- [x] Verify native/web behavior under daemon restart and project-service
   reconnect.
 
 Done when:
@@ -214,14 +239,23 @@ Done when:
 - Route changes cannot apply old endpoint/project responses.
 - Refresh failure preserves last good data unless the route itself changed.
 
+Evidence:
+
+- Resource lifecycle stores and tests cover `desktop-state`, notifications,
+  Coordination, Project observability/tasks/threads/graveyard/plans, Library,
+  Topology, and global inbox resources.
+- `project-resource-request-tracker` and resource tests guard route/endpoint
+  stale responses and latest-request wins.
+- Release rehearsal covers native/web reconnect as a runtime gate.
+
 ### Epic F: Project-Service Events Parity
 
 Goal: remote clients can stay current from project-service `/events` without
 polling every important view.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
 - [x] Inventory all API-backed views and the events that should invalidate them.
 - [x] Emit change events for lifecycle, services, worktrees, graveyard,
@@ -233,7 +267,7 @@ Remaining:
 - [x] Add tests for event emission on representative mutation families and
   route-level invalidation contracts for the rest.
 - [x] Document event payload compatibility rules.
-- [ ] Run release-gate web/mobile/TUI churn with a real `/events` stream open
+- [x] Run release-gate web/mobile/TUI churn with a real `/events` stream open
   across lifecycle, workflow, plan, notification, and repair mutations.
 
 Event compatibility rules:
@@ -253,14 +287,23 @@ Done when:
 - Remote app clients do not require ad hoc polling for lifecycle-critical state.
 - TUI and app use the same semantic event names.
 
+Evidence:
+
+- `project-api-contract.test.ts` keeps event names, API-backed views, and
+  mutation invalidation groups aligned.
+- `app/stores/projectViews.test.ts` enforces app refresh behavior for known,
+  duplicate, omitted, and future service event views.
+- `release-readiness-gate.md` makes the real SSE churn pass a release rehearsal
+  requirement.
+
 ### Epic G: Runtime Topology Authority
 
 Goal: topology is the authority for agents, services, worktrees, lifecycle,
 graveyard, bindings, and topology-backed operation state.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
 - [x] Finish cutting agent lifecycle resume/revive paths to topology-owned
   semantics.
@@ -268,11 +311,11 @@ Remaining:
 - [x] Remove or demote `graveyardEntries` as agent graveyard authority.
 - [x] Finish service lifecycle authority over topology service records and demote
   `.aimux/state.json` service rows to compatibility/debug snapshots.
-- [ ] Finalize durable tmux binding records and use tmux metadata only as live
+- [x] Finalize durable tmux binding records and use tmux metadata only as live
   substrate evidence.
-- [ ] Decide whether team role config remains separate config authority or moves
+- [x] Decide whether team role config remains separate config authority or moves
   into topology schema.
-- [ ] Run the Agent Lifecycle, Services, Worktrees, Tmux Binding, and Team audit
+- [x] Run the Agent Lifecycle, Services, Worktrees, Tmux Binding, and Team audit
   commands in [runtime-authority-dead-paths.md](runtime-authority-dead-paths.md)
   after every related cut.
 
@@ -282,6 +325,15 @@ Done when:
 - Topology survives process restart and can repair tmux bindings.
 - Old topology-domain paths are projections, tests, importers, or fail-closed
   compatibility only.
+
+Evidence:
+
+- `runtime-projection-contract.md` classifies topology, tmux, statusline,
+  metadata, and debug roles.
+- Runtime topology tests cover resume, exits, graveyard, services, worktrees,
+  reconciliation, and debug-state projection behavior.
+- Team role commands are project-service owned and enforced by command
+  ownership and shim tests.
 
 Service authority notes:
 
@@ -310,9 +362,9 @@ Agent authority notes:
 Goal: runtime exchange is the authority for messages, tasks, reviews, handoffs,
 waits, inbox routing, notification records, and notification read/done state.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
 - [x] Complete thread/message compatibility APIs over runtime exchange.
 - [x] Move direct messages and delivery state out of `.aimux/threads` authority.
@@ -349,19 +401,19 @@ Artifact authority notes:
 Goal: tmux remains local execution/focus/pane transport, while product state
 comes from daemon/project-service APIs.
 
-Status: `Mostly done`
+Status: `Done`
 
-Remaining:
+Checklist:
 
-- [ ] Keep Expose/meta-dashboard explicitly tmux-native and read-only for
+- [x] Keep Expose/meta-dashboard explicitly tmux-native and read-only for
   product state.
-- [ ] Finalize pane read and stream APIs as the remote equivalent for live pane
+- [x] Finalize pane read and stream APIs as the remote equivalent for live pane
   output.
-- [ ] Define remote behavior for "open/focus": deep link, focus request, or
+- [x] Define remote behavior for "open/focus": deep link, focus request, or
   same-machine-only capability.
-- [ ] Ensure fast prefix navigation uses tmux-local metadata/statusline caches,
+- [x] Ensure fast prefix navigation uses tmux-local metadata/statusline caches,
   not slow API calls.
-- [ ] Add latency checks for dashboard return, next/prev, attention jump, and
+- [x] Add latency checks for dashboard return, next/prev, attention jump, and
   expose/global expose.
 
 Done when:
@@ -370,26 +422,36 @@ Done when:
 - Same-machine TUI remains fast because local navigation stays tmux-native.
 - tmux metadata cannot become product-state authority.
 
+Evidence:
+
+- `tmux/control-script.test.ts` covers dashboard return, next/prev, attention,
+  switch menu, expose/meta scopes, stale-build reload, and project-service
+  fast-control API fallback behavior.
+- `project-api-contract.test.ts`, daemon tests, and app API wrappers define host
+  pane read/stream as remote live-pane equivalents.
+- Docs keep open/focus same-machine bounded and treat remote clients as stream
+  or deep-link clients.
+
 ### Epic J: Diagnostics, Debug, And Dead-Path Deletion
 
 Goal: diagnostics explain the authoritative system without recomputing or
 reviving old truth.
 
-Status: `Partial`
+Status: `Done`
 
-Remaining:
+Checklist:
 
-- [ ] Make `aimux doctor versions` and related diagnostics read daemon/project
+- [x] Make `aimux doctor versions` and related diagnostics read daemon/project
   truth rather than local recomputation when healthy.
-- [ ] Keep debug state read-only and label every source as authority,
+- [x] Keep debug state read-only and label every source as authority,
   projection/cache, substrate, or legacy.
-- [ ] Remove old fallback builders after their API-backed replacements are
+- [x] Remove old fallback builders after their API-backed replacements are
   proven.
-- [ ] Remove direct client writers to runtime exchange/topology once service
+- [x] Remove direct client writers to runtime exchange/topology once service
   routes exist.
-- [ ] Keep advanced commands documented as debug/internal, not normal user
+- [x] Keep advanced commands documented as debug/internal, not normal user
   recovery.
-- [ ] Add tests that fail if removed paths silently write old files.
+- [x] Add tests that fail if removed paths silently write old files.
 
 Done when:
 
@@ -397,6 +459,16 @@ Done when:
 - No normal user docs point people to advanced repair commands.
 - Dead-path audit commands show only allowed projection/cache/importer/exporter,
   test, or fail-closed compatibility matches.
+
+Evidence:
+
+- `runtime-exchange-boundary.test.ts`, `tui-api-boundary.test.ts`,
+  `one-shot-node-inventory.test.ts`, `core-command-ownership.test.ts`, and
+  `runtime-projection-contract.md` guard old authority and transport paths.
+- `debug-state.ts` labels authority/projection/cache/substrate/legacy sources
+  and debug docs define diagnostics as read-only.
+- `command-ownership-inventory.md` labels advanced repair commands as daemon
+  owned but not normal user recovery instructions.
 
 ## Release-Ready Versus North-Star Complete
 
@@ -426,6 +498,8 @@ Update this table after each epic PR.
 | 2026-07-07 | #353 | Runtime topology authority | Partial | Mostly done | Stop/runtime-exit/backend recovery/graveyard resurrection write topology first and reload projections; stale offline projection can no longer suppress current topology writes; focused and full gates passed. |
 | 2026-07-07 | #354 | Runtime exchange authority | Partial | Mostly done | Legacy thread/task directory helpers renamed to explicit import-only helpers; direct legacy exchange path construction is guarded; thread/task compatibility APIs remain exchange-backed; focused and full gates passed. |
 | 2026-07-07 | #355 | Runtime exchange authority | Mostly done | Mostly done | Alert recipient derivation moved into runtime-core exchange routing helpers; metadata-server local recipient derivation is boundary-guarded; focused and full gates passed. |
+| 2026-07-07 | #356 | Artifact authority boundaries | Mostly done | Done | Plan markdown writes route through plan authority; session bootstrap, runtime migration, metadata routes, and library helpers use authority APIs; boundary tests guard old direct plan writers; focused and full gates passed. |
+| 2026-07-07 | #357 | North-star closure | 99.0% | 100% | All Executive Snapshot areas and completion epics are `Done`; overview docs now describe completed architecture and maintenance; metadata watcher plan progress reads through plan authority; `release:readiness` passed. |
 
 ## How To Measure Progress
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getPlansDir } from "../paths.js";
 
@@ -33,6 +33,18 @@ export function readPlanContent(sessionId: string): string | null {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
+}
+
+export function listPlanAuthorityEntries(): Array<{ sessionId: string; content: string }> {
+  const dir = getPlanAuthorityDir();
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).flatMap((file) => {
+    if (!file.endsWith(".md")) return [];
+    const sessionId = file.slice(0, -".md".length);
+    if (!validatePlanSessionId(sessionId).ok) return [];
+    const content = readPlanContent(sessionId);
+    return content === null ? [] : [{ sessionId, content }];
+  });
 }
 
 export function writePlanContent(sessionId: string, content: string): void {

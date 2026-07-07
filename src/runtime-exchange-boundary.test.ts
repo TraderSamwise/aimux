@@ -21,7 +21,6 @@ const allowedPlanAuthorityFiles = new Set([
   "src/runtime-core/exchange-import.ts",
   "src/runtime-core/exchange-import.test.ts",
   "src/runtime-exchange-boundary.test.ts",
-  "src/builtin-metadata-watchers.ts",
   "src/builtin-metadata-watchers.test.ts",
   "src/graveyard-cleanup.ts",
   "src/graveyard-cleanup.test.ts",
