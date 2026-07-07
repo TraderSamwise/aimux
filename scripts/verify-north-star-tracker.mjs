@@ -45,8 +45,20 @@ expectIncludes("docs/command-ownership-inventory.md", "No commands currently liv
 expectIncludes("docs/runtime-authority-dead-paths.md", "## Completion Gate", "runtime authority completion gate");
 expectIncludes(".github/workflows/release.yml", "yarn release:readiness", "release workflow readiness gate");
 
-for (const epic of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]) {
-  expectIncludes(tracker, `### Epic ${epic}:`, `Epic ${epic}`);
+const expectedEpics = [
+  ["A", "Release Coherence Gate"],
+  ["B", "Healthy CLI No-Spawn Purity"],
+  ["C", "One TUI Connection Contract"],
+  ["D", "Lifecycle Transition Contract"],
+  ["E", "App/Web/Mobile Resource Contract"],
+  ["F", "Project-Service Events Parity"],
+  ["G", "Runtime Topology Authority"],
+  ["H", "Runtime Exchange Authority"],
+  ["I", "Tmux Boundary And Remote Equivalents"],
+  ["J", "Diagnostics, Debug, And Dead-Path Deletion"],
+];
+for (const [epic, title] of expectedEpics) {
+  expectIncludes(tracker, `### Epic ${epic}: ${title}`, `Epic ${epic}: ${title}`);
 }
 
 if (trackerText.includes("- [ ]")) {
@@ -59,17 +71,29 @@ for (const stalePhrase of ["## Current Focus", "## Current Progress", "The remai
   }
 }
 
-const epicStatuses = [...trackerText.matchAll(/^Status: `([^`]+)`$/gm)].map((match) => match[1]);
-if (epicStatuses.length !== 10) {
-  fail(`${tracker} should have 10 epic status lines, got ${epicStatuses.length}`);
+const epicHeadings = [...trackerText.matchAll(/^### Epic ([A-J]): (.+)$/gm)].map((match) => ({
+  epic: match[1],
+  title: match[2],
+  offset: match.index ?? 0,
+}));
+if (epicHeadings.length !== expectedEpics.length) {
+  fail(`${tracker} should have ${expectedEpics.length} epic headings, got ${epicHeadings.length}`);
 }
-for (const [index, status] of epicStatuses.entries()) {
+for (const [index, [expectedEpic, expectedTitle]] of expectedEpics.entries()) {
+  const heading = epicHeadings[index];
+  if (!heading || heading.epic !== expectedEpic || heading.title !== expectedTitle) {
+    fail(`${tracker} epic ${index + 1} should be Epic ${expectedEpic}: ${expectedTitle}`);
+    continue;
+  }
+  const nextHeading = epicHeadings[index + 1];
+  const section = trackerText.slice(heading.offset, nextHeading?.offset ?? trackerText.length);
+  const status = section.match(/^Status: `([^`]+)`$/m)?.[1] ?? "";
   if (status !== "Done") {
-    fail(`${tracker} Epic ${String.fromCharCode(65 + index)} should be Done, got ${status}`);
+    fail(`${tracker} Epic ${expectedEpic} should be Done, got ${status || "<missing>"}`);
   }
 }
 
-for (const area of [
+const expectedSnapshotAreas = [
   "Command no-spawn healthy paths",
   "Daemon/project-service ownership",
   "TUI shared state API boundary",
@@ -82,7 +106,8 @@ for (const area of [
   "Upgrade/restart coherence",
   "Dead-code/dead-path deletion",
   "Regression smoke coverage",
-]) {
+];
+for (const area of expectedSnapshotAreas) {
   expectIncludes(tracker, `| ${area} |`, `Executive Snapshot row: ${area}`);
 }
 
@@ -95,11 +120,15 @@ if (snapshotStart === -1 || epicsStart === -1 || epicsStart <= snapshotStart) {
     .slice(snapshotStart, epicsStart)
     .split("\n")
     .filter((line) => line.startsWith("| ") && !line.includes("---") && !line.includes("| Area |"));
-  if (snapshotRows.length !== 12) {
-    fail(`${tracker} should have 12 Executive Snapshot rows, got ${snapshotRows.length}`);
+  if (snapshotRows.length !== expectedSnapshotAreas.length) {
+    fail(`${tracker} should have ${expectedSnapshotAreas.length} Executive Snapshot rows, got ${snapshotRows.length}`);
   }
-  for (const row of snapshotRows) {
+  for (const [index, row] of snapshotRows.entries()) {
     const columns = row.split("|").map((column) => column.trim());
+    const area = columns[1];
+    if (area !== expectedSnapshotAreas[index]) {
+      fail(`${tracker} Executive Snapshot row ${index + 1} should be ${expectedSnapshotAreas[index]}, got ${area}`);
+    }
     if (columns[2] !== "Done") {
       fail(`${tracker} Executive Snapshot row should be Done: ${row}`);
     }
