@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { loadConfig } from "../config.js";
 import { readHistory } from "../context/history.js";
-import { getAimuxDirFor, getProjectStateDir, getStatusDir } from "../paths.js";
+import { getAimuxDirFor, getProjectStateDir, getRepoRoot, getStatusDir } from "../paths.js";
 import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -25,7 +25,8 @@ import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard
 type SessionRuntimeHost = any;
 
 function projectRootFor(host: SessionRuntimeHost): string {
-  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+  const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  return projectRoot || getRepoRoot();
 }
 
 export function getSessionLabel(host: SessionRuntimeHost, sessionId: string): string | undefined {
@@ -423,7 +424,9 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   host.sessions.splice(idx, 1);
   host.stoppingSessionIds.delete(runtime.id);
   host.graveyardAfterStopSessionIds?.delete?.(runtime.id);
-  if (graveyardAfterStop) {
+  if (shouldPreserveOffline) {
+    host.loadOfflineTopologySessions?.();
+  } else {
     host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== runtime.id);
   }
   host.updateContextWatcherSessions();
@@ -433,7 +436,6 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
     host.sessionTmuxTargets.delete(runtime.id);
   }
   host.saveState();
-  host.loadOfflineTopologySessions?.();
 
   if (host.sessions.length === 0) {
     if (host.startedInDashboard) {

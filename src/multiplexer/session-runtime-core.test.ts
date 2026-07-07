@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
+import { loadOfflineTopologySessions } from "./runtime-state.js";
 import {
   buildTmuxWindowMetadata,
   handleSessionRuntimeEvent,
@@ -505,8 +507,10 @@ describe("session runtime prompt submission", () => {
         backendSessionId: "backend-current",
       };
       const host: any = {
+        projectRoot: repoRoot,
         sessions: [runtime],
         offlineSessions: [{ id: "claude-stale-cache", command: "claude", backendSessionId: "backend-stale" }],
+        offlineServices: [],
         stoppingSessionIds: new Set(),
         sessionOriginalArgs: new Map([["claude-stale-cache", []]]),
         sessionToolKeys: new Map([["claude-stale-cache", "claude"]]),
@@ -516,9 +520,12 @@ describe("session runtime prompt submission", () => {
         getSessionLabel: vi.fn(() => undefined),
         deriveHeadline: vi.fn(() => undefined),
         updateContextWatcherSessions: vi.fn(),
+        buildLiveServiceStates: vi.fn(() => []),
+        isSessionRuntimeLive: vi.fn(() => false),
+        invalidateDesktopStateSnapshot: vi.fn(),
         writeStatuslineFile: vi.fn(),
-        saveState: vi.fn(),
-        loadOfflineTopologySessions: vi.fn(),
+        saveState: vi.fn(() => runtimeLifecycleMethods.saveState.call(host as never)),
+        loadOfflineTopologySessions: vi.fn(() => loadOfflineTopologySessions(host)),
         renderDashboard: vi.fn(),
       };
 

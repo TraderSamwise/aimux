@@ -7,6 +7,7 @@ import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
+import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import {
   buildLiveServiceStates,
   graveyardSession,
@@ -225,19 +226,27 @@ describe("resumeOfflineSession", () => {
     const session = {
       id: "codex-1",
       command: "codex",
+      backendSessionId: "backend-current",
       startTime: Date.parse("2026-05-01T00:00:00.000Z"),
       kill: vi.fn(),
     };
     const host: any = {
+      projectRoot: repoRoot,
+      sessions: [session],
       stoppingSessionIds: new Set(),
-      offlineSessions: [],
+      offlineSessions: [{ id: "codex-1", command: "codex", backendSessionId: "backend-stale" }],
+      offlineServices: [],
       sessionToolKeys: new Map([["codex-1", "codex"]]),
       sessionOriginalArgs: new Map([["codex-1", []]]),
       sessionWorktreePaths: new Map([["codex-1", repoRoot]]),
+      sessionTmuxTargets: new Map(),
       getSessionLabel: vi.fn(() => "codex"),
       deriveHeadline: vi.fn(() => "summary"),
       noteLastUsedItem: vi.fn(),
-      saveState: vi.fn(),
+      buildLiveServiceStates: vi.fn(() => []),
+      isSessionRuntimeLive: vi.fn(() => false),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(() => runtimeLifecycleMethods.saveState.call(host as never)),
       debug: vi.fn(),
     };
 
@@ -246,7 +255,7 @@ describe("resumeOfflineSession", () => {
     expect(host.noteLastUsedItem).toHaveBeenCalledWith("codex-1");
     expect(host.offlineSessions).toEqual([]);
     expect(listTopologySessionStates({ statuses: ["offline"] })).toMatchObject([
-      { id: "codex-1", lifecycle: "offline" },
+      { id: "codex-1", lifecycle: "offline", backendSessionId: "backend-current" },
     ]);
     expect(session.kill).toHaveBeenCalledOnce();
   });
