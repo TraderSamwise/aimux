@@ -8,8 +8,8 @@ import {
   getPlansDir,
   getRecordingsDir,
   getStatusDir,
-  getTasksDir,
-  getThreadsDir,
+  getLegacyTasksDir,
+  getLegacyThreadsDir,
 } from "../paths.js";
 import type { Task } from "../tasks.js";
 import type { OrchestrationMessage, OrchestrationThread } from "../threads.js";
@@ -83,14 +83,14 @@ function listNestedFiles(dir: string, predicate: (name: string) => boolean): str
 }
 
 function readLegacyThreads(): OrchestrationThread[] {
-  return listFiles(getThreadsDir(), (name) => name.endsWith(".json"))
+  return listFiles(getLegacyThreadsDir(), (name) => name.endsWith(".json"))
     .map((path) => safeJson<OrchestrationThread>(path))
     .filter((thread): thread is OrchestrationThread => Boolean(thread));
 }
 
 function readLegacyMessages(threadIds: string[]): OrchestrationMessage[] {
   return threadIds.flatMap((threadId) => {
-    const path = join(getThreadsDir(), `${threadId}.jsonl`);
+    const path = join(getLegacyThreadsDir(), `${threadId}.jsonl`);
     if (!existsSync(path)) return [];
     try {
       return readFileSync(path, "utf8")
@@ -112,7 +112,7 @@ function readLegacyMessages(threadIds: string[]): OrchestrationMessage[] {
 }
 
 function readLegacyTasks(): Task[] {
-  return listFiles(getTasksDir(), (name) => name.endsWith(".json"))
+  return listFiles(getLegacyTasksDir(), (name) => name.endsWith(".json"))
     .map((path) => safeJson<Task>(path))
     .filter((task): task is Task => Boolean(task));
 }
