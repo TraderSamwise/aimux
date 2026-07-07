@@ -73,6 +73,16 @@ describe("project api contract", () => {
       "topology",
       "worktrees",
     ]);
+    expect(projectApiViewsForMutationRoute("POST", PROJECT_API_ROUTES.livePane.interrupt)).toEqual([
+      "agents",
+      "coordination-worklist",
+      "desktop-state",
+      "graveyard",
+      "project-observability",
+      "team",
+      "topology",
+      "worktrees",
+    ]);
     expect(projectApiViewsForMutationRoute("POST", PROJECT_API_ROUTES.tasks.assign)).toEqual([
       "coordination-worklist",
       "project-observability",
