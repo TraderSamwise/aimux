@@ -279,7 +279,7 @@ export function getRecordingsDir(): string {
   return join(getProjectStateDir(), "recordings");
 }
 
-export function getTasksDir(): string {
+export function getLegacyTasksDir(): string {
   return join(getLocalAimuxDir(), "tasks");
 }
 
@@ -340,7 +340,7 @@ export function getPlansDir(): string {
   return join(getLocalAimuxDir(), "plans");
 }
 
-export function getThreadsDir(): string {
+export function getLegacyThreadsDir(): string {
   return join(getLocalAimuxDir(), "threads");
 }
 

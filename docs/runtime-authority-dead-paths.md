@@ -89,7 +89,7 @@ rg -n "git worktree|worktree add|worktree remove|worktree repair" src scripts
 Audit commands:
 
 ```bash
-rg -n "getThreadsDir|createThread|readThread|updateThread|listThreads|appendMessage|readMessages|updateMessage|markMessageDelivered|markThreadSeen|setThreadStatus|sendDirectMessage|sendThreadMessage|sendHandoff|acceptHandoff|completeHandoff|resolveOrchestrationRecipients|orchestration-routing|buildWorkflowEntries|filterWorkflowEntries|describeWorkflowNextAction" src app
+rg -n "getThreadsDir|getLegacyThreadsDir|createThread|readThread|updateThread|listThreads|appendMessage|readMessages|updateMessage|markMessageDelivered|markThreadSeen|setThreadStatus|sendDirectMessage|sendThreadMessage|sendHandoff|acceptHandoff|completeHandoff|resolveOrchestrationRecipients|orchestration-routing|buildWorkflowEntries|filterWorkflowEntries|describeWorkflowNextAction" src app
 rg -n "\"/threads|\"/handoff|\"/tasks/handoff|threadId|waitingOn|unreadBy|deliveredTo|deliveredAt|exchangeRefs|runtime-exchange" src app
 ```
 
@@ -132,11 +132,12 @@ rg -n "getHistoryDir|appendTurn|readHistory|readAllHistories|history\\.jsonl|get
 Audit commands:
 
 ```bash
-rg -n "getTasksDir|readTask|readAllTasks|writeTask|hasActiveTask|cleanupTasks|assignTask|acceptTask|blockTask|completeTask|reopenTask|requestReview|approveReview|requestTaskChanges|TaskWorkflow|listPendingReviews|listTasksForRole|buildWorkflowEntries|filterWorkflowEntries|describeWorkflowNextAction" src app
+rg -n "getTasksDir|getLegacyTasksDir|readTask|readAllTasks|writeTask|hasActiveTask|cleanupTasks|assignTask|acceptTask|blockTask|completeTask|reopenTask|requestReview|approveReview|requestTaskChanges|TaskWorkflow|listPendingReviews|listTasksForRole|buildWorkflowEntries|filterWorkflowEntries|describeWorkflowNextAction" src app
 rg -n "\"/tasks|\"/reviews|/agents/teammates/tasks|/agents/teammates/create|initialTask|reviewStatus|reviewFeedback|reviewOf|assignee|assigner|exchangeRefs|runtime-exchange" src app
 ```
 
 - `.aimux/tasks/*.json` is no longer a write authority; task compatibility APIs write runtime exchange records.
+- Generic `getTasksDir`/`getThreadsDir` helpers stay deleted. Legacy directory access must use explicit `getLegacy*Dir` helpers and remain quarantined to import/migration tooling.
 - Keep task/review cards and workflow lists as projections.
 - Remove task side effects from metadata watchers once exchange emits activity directly.
 - Audit `/agents/teammates/tasks` and `/agents/teammates/create` `initialTask` with the task routes; both are public task-authority surfaces over `assignTask`.

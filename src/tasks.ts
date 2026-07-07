@@ -1,6 +1,7 @@
 import { deriveRuntimeExchangeIndexes } from "./runtime-core/exchange-derived.js";
 import { createRuntimeExchangeStore, type RuntimeExchangeTask } from "./runtime-core/exchange-store.js";
 
+// Compatibility API: task callers keep these names, but runtime exchange owns persistence.
 export type TaskStatus = RuntimeExchangeTask["status"];
 export type ReviewStatus = "pending" | "approved" | "changes_requested";
 export type ReviewStatusInput =

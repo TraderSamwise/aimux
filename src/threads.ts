@@ -5,6 +5,7 @@ import {
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
 
+// Compatibility API: thread callers keep these names, but runtime exchange owns persistence.
 export type ThreadKind = RuntimeExchangeThread["kind"];
 export type ThreadStatus = RuntimeExchangeThread["status"];
 export type MessageKind = RuntimeExchangeMessage["kind"];
