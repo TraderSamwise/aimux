@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   PROJECT_API_EVENT_NAMES,
   PROJECT_API_ROUTES,
+  PROJECT_API_VIEW_INVALIDATIONS,
   PROJECT_API_VIEWS,
   type LivePaneAttachRequest,
+  projectApiViewsForMutationRoute,
 } from "./project-api-contract.js";
 
 function collectRoutes(value: unknown): string[] {
@@ -40,8 +42,62 @@ describe("project api contract", () => {
     expect(PROJECT_API_VIEWS).toContain("coordination-worklist");
     expect(PROJECT_API_VIEWS).toContain("desktop-state");
     expect(PROJECT_API_VIEWS).toContain("notifications");
+    expect(PROJECT_API_VIEWS).toContain("plans");
     expect(PROJECT_API_VIEWS).not.toContain("inbox");
-    expect(PROJECT_API_VIEWS).not.toContain("plans");
+  });
+
+  it("keeps invalidation groups within the shared view set", () => {
+    const knownViews = new Set(PROJECT_API_VIEWS);
+    for (const views of Object.values(PROJECT_API_VIEW_INVALIDATIONS)) {
+      expect(views.length).toBeGreaterThan(0);
+      for (const view of views) {
+        expect(knownViews.has(view)).toBe(true);
+      }
+    }
+  });
+
+  it("maps mutation routes to shared client invalidations", () => {
+    expect(projectApiViewsForMutationRoute("PUT", "/plans/codex-1")).toEqual(["plans"]);
+    expect(projectApiViewsForMutationRoute("POST", PROJECT_API_ROUTES.notifications.read)).toEqual([
+      "coordination-worklist",
+      "notifications",
+      "project-observability",
+    ]);
+    expect(projectApiViewsForMutationRoute("POST", PROJECT_API_ROUTES.agents.spawn)).toEqual([
+      "agents",
+      "coordination-worklist",
+      "desktop-state",
+      "graveyard",
+      "project-observability",
+      "team",
+      "topology",
+      "worktrees",
+    ]);
+    expect(projectApiViewsForMutationRoute("POST", PROJECT_API_ROUTES.tasks.assign)).toEqual([
+      "coordination-worklist",
+      "project-observability",
+      "tasks",
+      "threads",
+    ]);
+    expect(projectApiViewsForMutationRoute("GET", PROJECT_API_ROUTES.controls.switchNext)).toEqual([
+      "agents",
+      "coordination-worklist",
+      "desktop-state",
+      "project-observability",
+      "topology",
+      "worktrees",
+    ]);
+    expect(projectApiViewsForMutationRoute("POST", "/future-mutation")).toEqual([
+      "agents",
+      "coordination-worklist",
+      "desktop-state",
+      "project-observability",
+      "topology",
+      "worktrees",
+      "tasks",
+      "threads",
+    ]);
+    expect(projectApiViewsForMutationRoute("GET", PROJECT_API_ROUTES.agents.list)).toBeNull();
   });
 
   it("requires live pane attach dimensions to be both or neither", () => {
