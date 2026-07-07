@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isStubPlan, loadLibraryEntries } from "./library.js";
+import { getPlanAuthorityDirForLocalAimuxDir } from "./runtime-core/plan-authority.js";
 
 const STUB = `---
 sessionId: claude-1
@@ -58,7 +59,7 @@ describe("loadLibraryEntries", () => {
   let plansDir = "";
   beforeEach(() => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-library-"));
-    plansDir = join(repoRoot, ".aimux", "plans");
+    plansDir = getPlanAuthorityDirForLocalAimuxDir(join(repoRoot, ".aimux"));
     mkdirSync(plansDir, { recursive: true });
   });
   afterEach(() => {

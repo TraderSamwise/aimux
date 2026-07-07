@@ -320,12 +320,12 @@ Remaining:
 - [x] Model tasks and reviews as exchange-backed or exchange-derived records.
 - [x] Replace legacy wait/inbox files with exchange-derived wait/inbox state.
 - [x] Move alert recipient derivation into exchange-owned routing semantics.
-- [ ] Decide plan, continuity, status, and attachment authority boundaries.
+- [x] Decide plan, continuity, status, and attachment authority boundaries.
 - [x] Keep old thread/task files as explicit import-only artifacts or fail-closed
   compatibility only.
 - [x] Run the Exchange, Tasks/Reviews, and Waiting/Inbox audit commands in
   [runtime-authority-dead-paths.md](runtime-authority-dead-paths.md).
-- [ ] Run the Plans and Continuity audit commands in
+- [x] Run the Plans and Continuity audit commands in
   [runtime-authority-dead-paths.md](runtime-authority-dead-paths.md).
 
 Done when:
@@ -334,6 +334,15 @@ Done when:
 - Workflow, Coordination, notifications, and inbox surfaces are exchange
   projections.
 - Legacy files are import/export/debug artifacts only.
+
+Artifact authority notes:
+
+- Plans are a separate project-service plan authority through
+  `src/runtime-core/plan-authority.ts`; exchange keeps only refs.
+- Continuity history/context/recordings are a separate continuity authority for
+  carry-over and compaction; status files are projection notes.
+- Attachments are blob authority through `src/attachment-store.ts`; exchange
+  stores refs and clients fetch content through API routes.
 
 ### Epic I: Tmux Boundary And Remote Equivalents
 

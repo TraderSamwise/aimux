@@ -14,6 +14,7 @@ import { basename, dirname, join } from "node:path";
 import { getReadOnlyProjectPathsFor, type ReadOnlyProjectPaths } from "./paths.js";
 import { RuntimeExchangeStore, type RuntimeExchange } from "./runtime-core/exchange-store.js";
 import { importRuntimeExchangeFromLegacyFiles } from "./runtime-core/exchange-import.js";
+import { getPlanAuthorityDirForLocalAimuxDir } from "./runtime-core/plan-authority.js";
 import { RuntimeTopologyStore } from "./runtime-core/topology-store.js";
 
 export type RuntimeMigrationDiagnosticSeverity = "info" | "warning" | "error";
@@ -314,7 +315,7 @@ export function buildRuntimeMigrationReport(input: { cwd?: string; now?: string 
   const diagnostics: RuntimeMigrationDiagnostic[] = [];
   const localThreadsDir = join(paths.localAimuxDir, "threads");
   const localTasksDir = join(paths.localAimuxDir, "tasks");
-  const localPlansDir = join(paths.localAimuxDir, "plans");
+  const localPlansDir = getPlanAuthorityDirForLocalAimuxDir(paths.localAimuxDir);
   const localHistoryDir = join(paths.localAimuxDir, "history");
   const localContextDir = join(paths.localAimuxDir, "context");
   const localStatusDir = join(paths.localAimuxDir, "status");
