@@ -37,7 +37,8 @@ const idleNotificationCandidates = new WeakMap<
 >();
 
 function projectRootFor(host: RuntimeStateHost): string {
-  return typeof host.projectRoot === "string" && host.projectRoot.trim() ? host.projectRoot : process.cwd();
+  const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
+  return projectRoot || getRepoRoot();
 }
 
 function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
@@ -531,6 +532,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
   upsertTopologySession(offlineEntry, "offline", { projectRoot: projectRootFor(host) });
+  pruneOfflineSessionCache(host, session.id);
   host.saveState();
   session.kill();
   host.debug?.(`stopped session ${session.id} → offline`, "session");
