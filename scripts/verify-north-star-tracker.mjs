@@ -29,8 +29,13 @@ function expectPackageScript(name, expected) {
 }
 
 const tracker = "docs/north-star-completion-tracker.md";
+const overview = "docs/core-sidecar-north-star.md";
+const trackerText = readProjectFile(tracker);
+const overviewText = readProjectFile(overview);
 
-expectIncludes("docs/core-sidecar-north-star.md", "[north-star-completion-tracker.md](north-star-completion-tracker.md)", "tracker link");
+expectIncludes(overview, "[north-star-completion-tracker.md](north-star-completion-tracker.md)", "tracker link");
+expectIncludes(overview, "## Completion State", "completion-state section");
+expectIncludes(overview, "## Completed Architecture", "completed architecture section");
 expectIncludes(tracker, "[release-readiness-gate.md](release-readiness-gate.md)", "release readiness gate link");
 expectIncludes("docs/release-readiness-gate.md", "yarn release:readiness", "automated readiness command");
 expectIncludes("docs/release-readiness-gate.md", "app verification", "app verification scope");
@@ -42,6 +47,26 @@ expectIncludes(".github/workflows/release.yml", "yarn release:readiness", "relea
 
 for (const epic of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]) {
   expectIncludes(tracker, `### Epic ${epic}:`, `Epic ${epic}`);
+}
+
+if (trackerText.includes("- [ ]")) {
+  fail(`${tracker} still has unchecked north-star completion items`);
+}
+
+for (const stalePhrase of ["## Current Focus", "## Current Progress", "The remaining work is"]) {
+  if (overviewText.includes(stalePhrase)) {
+    fail(`${overview} still contains stale migration wording: ${stalePhrase}`);
+  }
+}
+
+const epicStatuses = [...trackerText.matchAll(/^Status: `([^`]+)`$/gm)].map((match) => match[1]);
+if (epicStatuses.length !== 10) {
+  fail(`${tracker} should have 10 epic status lines, got ${epicStatuses.length}`);
+}
+for (const [index, status] of epicStatuses.entries()) {
+  if (status !== "Done") {
+    fail(`${tracker} Epic ${String.fromCharCode(65 + index)} should be Done, got ${status}`);
+  }
 }
 
 for (const area of [
@@ -59,6 +84,26 @@ for (const area of [
   "Regression smoke coverage",
 ]) {
   expectIncludes(tracker, `| ${area} |`, `Executive Snapshot row: ${area}`);
+}
+
+const snapshotStart = trackerText.indexOf("## Executive Snapshot");
+const epicsStart = trackerText.indexOf("## Completion Epics");
+if (snapshotStart === -1 || epicsStart === -1 || epicsStart <= snapshotStart) {
+  fail(`${tracker} should contain Executive Snapshot before Completion Epics`);
+} else {
+  const snapshotRows = trackerText
+    .slice(snapshotStart, epicsStart)
+    .split("\n")
+    .filter((line) => line.startsWith("| ") && !line.includes("---") && !line.includes("| Area |"));
+  if (snapshotRows.length !== 12) {
+    fail(`${tracker} should have 12 Executive Snapshot rows, got ${snapshotRows.length}`);
+  }
+  for (const row of snapshotRows) {
+    const columns = row.split("|").map((column) => column.trim());
+    if (columns[2] !== "Done") {
+      fail(`${tracker} Executive Snapshot row should be Done: ${row}`);
+    }
+  }
 }
 
 expectPackageScript("verify:north-star", "./scripts/verify-north-star-tracker.mjs");
