@@ -15,11 +15,32 @@ const allowedLegacyExchangeFiles = new Set([
   "src/tasks.test.ts",
 ]);
 
+const allowedPlanAuthorityFiles = new Set([
+  "src/paths.ts",
+  "src/runtime-core/plan-authority.ts",
+  "src/runtime-core/exchange-import.ts",
+  "src/runtime-core/exchange-import.test.ts",
+  "src/runtime-exchange-boundary.test.ts",
+  "src/builtin-metadata-watchers.ts",
+  "src/builtin-metadata-watchers.test.ts",
+  "src/graveyard-cleanup.ts",
+  "src/graveyard-cleanup.test.ts",
+  "src/metadata-server.test.ts",
+  "src/multiplexer/persistence-methods.test.ts",
+  "src/runtime-core/exchange-store.test.ts",
+]);
+
 const legacyExchangePathPatterns = [
   /\bgetLegacy(?:Threads|Tasks)Dir\b/,
   /join\([^)]*(?:getLocalAimuxDir\(\)|localAimuxDir|repoRoot)[^)]*,\s*["'](?:threads|tasks)["']/,
   /join\([^)]*["']\.aimux["'][^)]*,\s*["'](?:threads|tasks)["']/,
   /\.aimux\/(?:threads|tasks)\b/,
+];
+
+const planAuthorityPathPatterns = [
+  /\bgetPlansDir\b/,
+  /join\([^)]*(?:getLocalAimuxDir\(\)|localAimuxDir|repoRoot)[^)]*,\s*["']plans["']/,
+  /join\([^)]*["']\.aimux["'][^)]*,\s*["']plans["']/,
 ];
 
 function listSourceFiles(root: string): string[] {
@@ -65,5 +86,16 @@ describe("runtime exchange boundary", () => {
 
     expect(metadataServerSource).not.toContain("resolveAlertRecipients");
     expect(metadataServerSource).not.toContain("payload?.deliveredTo");
+  });
+
+  it("keeps plan markdown authority behind explicit plan-authority APIs", () => {
+    const violations: string[] = [];
+    for (const file of ["src", "app"].flatMap((root) => listSourceFiles(root))) {
+      const text = readFileSync(join(process.cwd(), file), "utf8");
+      if (!planAuthorityPathPatterns.some((pattern) => pattern.test(text))) continue;
+      if (!allowedPlanAuthorityFiles.has(file)) violations.push(file);
+    }
+
+    expect(violations).toEqual([]);
   });
 });

@@ -56,6 +56,26 @@ This inventory tracks the concrete authority map per domain. For the durable-wri
 
 ## Audit Columns
 
+## Resolved Artifact Boundaries
+
+- Plans are a separate project-service plan authority, not runtime exchange
+  state. Runtime exchange may reference a plan by id/path, but `/plans/*`,
+  session bootstrap, and fork/migrate flows must use
+  `src/runtime-core/plan-authority.ts` for plan persistence.
+- Continuity history, context, and recordings are a separate continuity
+  authority for transcript carry-over and compaction. Exchange may hold
+  continuity refs created by explicit import, but it does not own raw transcript
+  files.
+- Status files are projection notes. They may seed metadata/status summaries or
+  fork context, but they cannot decide lifecycle, waiting, inbox, or task truth.
+- Attachments are blob authority through `src/attachment-store.ts`. Exchange
+  stores attachment refs only; attachment upload/read routes must not become
+  message or task authority.
+
+Source boundary tests in `src/runtime-exchange-boundary.test.ts` guard the first
+hard cut: direct plan-dir usage is confined to plan authority, import, cleanup,
+metadata projection, and tests.
+
 Each domain row should eventually answer:
 
 - `Current Authority`: the file, in-memory object, tmux metadata, API surface, or external service that currently decides truth.

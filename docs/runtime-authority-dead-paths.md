@@ -109,8 +109,8 @@ Audit commands:
 rg -n "getPlansDir|/plans|readPlan|writePlan|session-bootstrap|initialize.*plan|plan.*progress|plansAtom|savePlan|loadPlan" src app
 ```
 
-- Classify `.aimux/plans/*.md` as runtime exchange state or as an explicitly separate durable plan authority.
-- Route plan creation/save/update through the chosen authority instead of project-service route handlers writing markdown directly.
+- `.aimux/plans/*.md` is explicitly separate durable plan authority, not runtime exchange state.
+- Route plan creation/save/update through `src/runtime-core/plan-authority.ts` instead of project-service route handlers writing markdown directly.
 - Keep metadata progress derived from plans as projection only.
 
 ## Continuity Context, History, Status, Attachments
@@ -121,11 +121,11 @@ Audit commands:
 rg -n "getHistoryDir|appendTurn|readHistory|readAllHistories|history\\.jsonl|getContextDir|getContextPathForDate|context/|summary\\.md|live\\.md|getRecordingsDir|Recorder|recordings/|\\.log|\\.txt|getStatusDir|status\\.md|parseStatusHeadline|attachment-store|getAttachmentsDir|/attachments|AttachmentRecord|contentUrl" src app relay
 ```
 
-- Classify `.aimux/history/*.jsonl`, `.aimux/context/*`, and `.aimux/recordings/*` as exchange-owned continuity state or as an explicitly separate continuity authority.
-- Do not inject history/context into restore, fork, or session bootstrap flows without a single authority boundary.
+- `.aimux/history/*.jsonl`, `.aimux/context/*`, and `.aimux/recordings/*` are explicitly separate continuity authority for transcript carry-over and compaction, not runtime exchange state.
+- Do not inject history/context into restore, fork, or session bootstrap flows outside the continuity boundary.
 - Treat recordings as continuity backfill/projection only unless they become part of the explicit continuity authority.
-- Classify `.aimux/status/*.md` as projection or exchange-owned standing status; do not leave status files as hidden agent coordination state.
-- Classify `.aimux/attachments/*.json` and payload files as exchange payload storage or separate blob authority; relay sharing allowlists must follow that authority.
+- `.aimux/status/*.md` is projection-only status note state; do not leave status files as hidden agent coordination state.
+- `.aimux/attachments/*.json` and payload files are separate blob authority through `src/attachment-store.ts`; relay sharing allowlists must follow that authority.
 
 ## Exchange: Tasks And Reviews
 
