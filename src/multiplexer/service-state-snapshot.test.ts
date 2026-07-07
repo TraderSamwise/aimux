@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
   mergeRuntimeSnapshots,
   mergeServiceSnapshots,
+  persistProjectRuntimeSnapshotsBeforeTmuxStop,
   snapshotProjectServiceWindows,
 } from "./service-state-snapshot.js";
-import { initPaths } from "../paths.js";
+import { getStatePath, initPaths } from "../paths.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 
 describe("service-state-snapshot", () => {
   it("merges runtime-stop service snapshots as offline services without stale tmux retention", () => {
@@ -18,6 +20,11 @@ describe("service-state-snapshot", () => {
       cwd: "/repo",
       sessions: [{ id: "agent-1", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] }],
       services: [
+        {
+          id: "stale-service",
+          label: "stale",
+          launchCommandLine: "yarn stale",
+        },
         {
           id: "service-1",
           label: "old",
@@ -107,6 +114,85 @@ describe("service-state-snapshot", () => {
         services: [],
       });
       expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("demotes observed running services to topology stopped state before tmux stop", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-service-stop-snapshot-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    const target = { sessionName: "aimux-repo", windowId: "@2", windowIndex: 2, windowName: "web" };
+    try {
+      upsertTopologyService(
+        {
+          id: "service-1",
+          label: "web",
+          launchCommandLine: "yarn web",
+          worktreePath: repoRoot,
+          tmuxTarget: target,
+        },
+        "running",
+        { projectRoot: repoRoot },
+      );
+      const tmux: any = {
+        listProjectManagedWindows: () => [
+          {
+            target,
+            metadata: {
+              kind: "service",
+              sessionId: "service-1",
+              label: "web",
+              launchCommandLine: "yarn web",
+              worktreePath: repoRoot,
+              createdAt: "2026-05-01T00:00:00.000Z",
+            },
+          },
+        ],
+        isWindowAlive: () => true,
+        displayMessage: () => repoRoot,
+      };
+
+      persistProjectRuntimeSnapshotsBeforeTmuxStop(repoRoot, tmux);
+
+      expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
+        {
+          id: "service-1",
+          status: "stopped",
+          label: "web",
+          launchCommandLine: "yarn web",
+          worktreePath: repoRoot,
+          retained: true,
+        },
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("clears stale compatibility service snapshots when no service windows are observed", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-empty-service-stop-snapshot-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    try {
+      writeFileSync(
+        getStatePath(),
+        JSON.stringify({
+          savedAt: "2026-05-01T00:00:00.000Z",
+          cwd: repoRoot,
+          services: [{ id: "stale-service", label: "stale", launchCommandLine: "yarn stale" }],
+        }),
+      );
+      const tmux: any = {
+        listProjectManagedWindows: () => [],
+      };
+
+      const result = persistProjectRuntimeSnapshotsBeforeTmuxStop(repoRoot, tmux);
+      const state = JSON.parse(readFileSync(getStatePath(), "utf-8"));
+
+      expect(result.services).toEqual([]);
+      expect(state).toMatchObject({ cwd: repoRoot, services: [] });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

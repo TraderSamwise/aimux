@@ -36,7 +36,7 @@ Use these labels consistently:
 | TUI transition stability | Mostly done | Medium | Medium | Lifecycle mutation responses include canonical transition records; TUI and app core lifecycle controls now reconcile against API-backed state. Churn smoke remains. |
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Mostly done | Medium | Medium | Shared invalidation groups cover every API-backed view; HTTP mutations publish view-scoped `project_update` events and app/TUI clients consume the same semantic event. |
-| Runtime topology authority | Partial | Medium | High | Agents/services/worktrees are partly topology-owned; old caches and fail-closed lifecycle paths remain. |
+| Runtime topology authority | Partial | Medium | High | Services/worktrees are topology-owned; agent lifecycle, graveyard, bindings, and team ownership still have old caches or fail-closed paths. |
 | Runtime exchange authority | Partial | Low for next build | High | Notifications are exchange-backed; threads/tasks/handoffs/reviews/waits still have legacy-file authority. |
 | tmux boundary | Mostly done | Medium | Medium | tmux is treated as substrate for local navigation/focus, but binding recovery and remote equivalents need finalization. |
 | Upgrade/restart coherence | Mostly done | High | Medium | `aimux restart` and install repair are strong; release rehearsal must prove multi-project coherence from old builds. |
@@ -266,7 +266,7 @@ Remaining:
   semantics.
 - [ ] Remove or demote `offlineSessions` as lifecycle authority.
 - [ ] Remove or demote `graveyardEntries` as agent graveyard authority.
-- [ ] Finish service lifecycle authority over topology service records and demote
+- [x] Finish service lifecycle authority over topology service records and demote
   `.aimux/state.json` service rows to compatibility/debug snapshots.
 - [ ] Finalize durable tmux binding records and use tmux metadata only as live
   substrate evidence.
@@ -282,6 +282,17 @@ Done when:
 - Topology survives process restart and can repair tmux bindings.
 - Old topology-domain paths are projections, tests, importers, or fail-closed
   compatibility only.
+
+Service authority notes:
+
+- Service lifecycle creates, stops, resumes, removes, and worktree cleanup paths
+  mutate topology service records instead of editing `.aimux/state.json` as
+  lifecycle truth.
+- `offlineServices` is a rebuilt UI/runtime cache sourced from topology, not a
+  legacy saved-state restore path.
+- `.aimux/state.json` service rows are rewritten only from current runtime state
+  or observed tmux service windows for compatibility/debug output; stale service
+  rows are dropped instead of merged forward.
 
 ### Epic H: Runtime Exchange Authority
 

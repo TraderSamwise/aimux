@@ -90,14 +90,12 @@ function markServiceUsed(host: ServiceHost, serviceId: string): void {
 function commitServiceState(host: ServiceHost, options: { upsert?: ServiceState[]; removeIds?: string[] } = {}) {
   const statePath = getStatePath();
   let state: Record<string, unknown> = {};
-  let services: ServiceState[] = [];
   if (existsSync(statePath)) {
     try {
       state = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
-      services = Array.isArray(state.services) ? (state.services as ServiceState[]) : [];
     } catch {}
   }
-  const byId = new Map(services.map((service) => [service.id, service]));
+  const byId = new Map<string, ServiceState>();
   for (const service of host.offlineServices ?? []) {
     byId.set(service.id, service);
   }

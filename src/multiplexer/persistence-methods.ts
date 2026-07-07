@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { loadConfig } from "../config.js";
@@ -13,8 +13,8 @@ import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon-state.js";
 import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
-import { getProjectStateDir, getStatePath } from "../paths.js";
-import { writeJsonAtomic, writeTextAtomicFast } from "../atomic-write.js";
+import { getProjectStateDir } from "../paths.js";
+import { writeTextAtomicFast } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import {
   buildGraveyardCleanupPlan,
@@ -1294,7 +1294,6 @@ function detachWorktreeServices(host: any, path: string): void {
 
   host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
   removeTopologyServicesForWorktree(path);
-  removePersistedServicesForWorktree(path);
 }
 
 function stopWorktreeServicesForGraveyard(host: any, path: string): void {
@@ -1331,7 +1330,6 @@ function removeWorktreeDependents(host: any, path: string): void {
   host.offlineServices = (host.offlineServices ?? []).filter((service: any) => service.worktreePath !== path);
   removeTopologySessionsForWorktree(path);
   removeTopologyServicesForWorktree(path);
-  removePersistedServicesForWorktree(path);
 }
 
 function cleanupAgentAssetsForWorktree(path: string): void {
@@ -1339,17 +1337,6 @@ function cleanupAgentAssetsForWorktree(path: string): void {
     if (session.worktreePath !== path) continue;
     deleteAgentAssets(session.id);
   }
-}
-
-function removePersistedServicesForWorktree(path: string): void {
-  const statePath = getStatePath();
-  if (!existsSync(statePath)) return;
-  try {
-    const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: Array<{ worktreePath?: string }> };
-    const nextServices = (state.services ?? []).filter((service) => service.worktreePath !== path);
-    if (nextServices.length === (state.services ?? []).length) return;
-    writeJsonAtomic(statePath, { ...state, services: nextServices });
-  } catch {}
 }
 
 function markLifecycleUsed(host: any, itemId: string): void {
