@@ -499,6 +499,7 @@ Update this table after each epic PR.
 | 2026-07-07 | #354 | Runtime exchange authority | Partial | Mostly done | Legacy thread/task directory helpers renamed to explicit import-only helpers; direct legacy exchange path construction is guarded; thread/task compatibility APIs remain exchange-backed; focused and full gates passed. |
 | 2026-07-07 | #355 | Runtime exchange authority | Mostly done | Mostly done | Alert recipient derivation moved into runtime-core exchange routing helpers; metadata-server local recipient derivation is boundary-guarded; focused and full gates passed. |
 | 2026-07-07 | #356 | Artifact authority boundaries | Mostly done | Done | Plan markdown writes route through plan authority; session bootstrap, runtime migration, metadata routes, and library helpers use authority APIs; boundary tests guard old direct plan writers; focused and full gates passed. |
+| 2026-07-07 | #357 | North-star closure | 99.0% | 100% | All Executive Snapshot areas and completion epics are `Done`; overview docs now describe completed architecture and maintenance; metadata watcher plan progress reads through plan authority; `release:readiness` passed. |
 
 ## How To Measure Progress
 
