@@ -9,6 +9,7 @@ import {
   moveTopologySessionToGraveyard,
   removeTopologySession,
   removeTopologySessionsForWorktree,
+  reconcileRuntimeTopologySessions,
   resurrectTopologySession,
   saveRuntimeTopologySessions,
   topologySessionToSessionState,
@@ -368,6 +369,117 @@ describe("topology session lifecycle", () => {
     expect(topology.services.map((service) => service.id)).toEqual(["service-web"]);
     expect(topology.nodes.map((node) => node.id)).toContain("service:service-web");
     expect(topology.bindings).toMatchObject([{ nodeId: "service:service-web", tmuxWindowId: "@2" }]);
+  });
+
+  it("preserves recoverable sessions while reconciling runtime-owned sessions", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const now = "2026-05-25T00:00:00.000Z";
+    upsertTopologySession(
+      {
+        id: "existing-offline",
+        tool: "claude",
+        toolConfigKey: "claude",
+        command: "claude",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "backend-existing",
+        restoreBlockedReason: "manual stop",
+      },
+      "offline",
+      { store, projectRoot: repoRoot, now },
+    );
+
+    const topology = reconcileRuntimeTopologySessions({
+      store,
+      projectRoot: repoRoot,
+      now: "2026-05-25T00:01:00.000Z",
+      sessions: [
+        {
+          id: "incoming-live",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "live",
+        },
+      ],
+    });
+
+    expect(topology.sessions.map((session) => session.id)).toEqual(["existing-offline", "incoming-live"]);
+    const preserved = topologySessionToSessionState(topology.sessions[0]!, topology);
+    expect(preserved).toMatchObject({
+      id: "existing-offline",
+      backendSessionId: "backend-existing",
+      restoreBlockedReason: "manual stop",
+      lifecycle: "offline",
+    });
+  });
+
+  it("drops explicitly removed sessions during runtime topology reconciliation", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "removed-offline",
+        tool: "claude",
+        toolConfigKey: "claude",
+        command: "claude",
+        args: [],
+        lifecycle: "offline",
+      },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+
+    const topology = reconcileRuntimeTopologySessions({
+      store,
+      projectRoot: repoRoot,
+      removedSessionIds: ["removed-offline"],
+      sessions: [],
+    });
+
+    expect(topology.sessions).toEqual([]);
+    expect(topology.nodes).toEqual([]);
+  });
+
+  it("keeps offline restore metadata when runtime reconciliation reports the same session", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "claude-a",
+        tool: "claude",
+        toolConfigKey: "claude",
+        command: "claude",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "backend-a",
+        restoreBlockedReason: "startup failed",
+      },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+
+    const topology = reconcileRuntimeTopologySessions({
+      store,
+      projectRoot: repoRoot,
+      sessions: [
+        {
+          id: "claude-a",
+          tool: "claude",
+          toolConfigKey: "claude",
+          command: "claude",
+          args: [],
+          lifecycle: "offline",
+        },
+      ],
+    });
+
+    expect(topology.sessions).toHaveLength(1);
+    expect(topologySessionToSessionState(topology.sessions[0]!, topology)).toMatchObject({
+      id: "claude-a",
+      backendSessionId: "backend-a",
+      restoreBlockedReason: "startup failed",
+      lifecycle: "offline",
+    });
   });
 
   it("removes sessions for a worktree and keeps unrelated sessions", () => {

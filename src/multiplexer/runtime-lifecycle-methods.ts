@@ -6,7 +6,7 @@ import { getRepoRoot, getStatePath } from "../paths.js";
 import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
-import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { reconcileRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { stopDashboardProjectEventStream } from "./project-event-stream.js";
 import { clearTuiRuntimeMutationQueue } from "./tui-runtime-mutations.js";
 import {
@@ -72,14 +72,6 @@ function sanitizeOfflineSessionState(session: SessionState): SessionState {
 
 function sessionStateKey(session: SessionState): string {
   return session.backendSessionId ? `backend:${session.backendSessionId}` : `id:${session.id}`;
-}
-
-function isRecoverableExistingSession(session: SessionState): boolean {
-  if (!session.id || !(session.command || session.tool || session.toolConfigKey)) return false;
-  if (session.lifecycle === "offline") return true;
-  if (session.lifecycle === "live") return true;
-  if (session.lifecycle) return false;
-  return Boolean(session.backendSessionId);
 }
 
 function dedupeSessionStates(sessions: SessionState[]): SessionState[] {
@@ -279,24 +271,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         tmuxTarget: mux.sessionTmuxTargets.get(s.id) as never,
       }));
     const liveKeys = new Set(liveSessions.map(sessionStateKey));
-    const topologySessions = listTopologySessionStates({
-      statuses: ["running", "idle", "offline"],
-    }) as SessionState[];
-    const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
-    const topologyById = new Map(topologySessions.map((session) => [session.id, session]));
     const offlineSessions = mux.offlineSessions
       .map((session) => sanitizeOfflineSessionState(session))
-      .map((session) => {
-        const existing =
-          topologyByKey.get(sessionStateKey(session)) ??
-          (!session.backendSessionId ? topologyById.get(session.id) : undefined);
-        if (!existing) return session;
-        return {
-          ...session,
-          backendSessionId: session.backendSessionId ?? existing.backendSessionId,
-          restoreBlockedReason: session.restoreBlockedReason ?? existing.restoreBlockedReason,
-        };
-      })
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
     const removedServiceIds = mux.removedServiceIds ?? new Set<string>();
@@ -306,17 +282,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     );
 
     const statePath = getStatePath();
-    const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
-    const myIds = new Set(mySessions.map((s) => s.id));
     const unpreservedExitedIds = mux.unpreservedExitedSessionIds ?? new Set<string>();
-    const otherSessions = topologySessions.flatMap((s) => {
-      if (unpreservedExitedIds.has(s.id)) return [];
-      if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
-      if (myIds.has(s.id)) return [];
-      if (!isRecoverableExistingSession(s)) return [];
-      return [s];
-    });
-    const mergedSessions: SessionState[] = dedupeSessionStates([...otherSessions, ...mySessions]);
     let existingState: Record<string, unknown> = {};
     if (existsSync(statePath)) {
       try {
@@ -327,7 +293,11 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     }
     const { sessions: _legacySessions, services: _legacyServices, ...stateMetadata } = existingState;
 
-    saveRuntimeTopologySessions({ sessions: mergedSessions });
+    reconcileRuntimeTopologySessions({
+      sessions: mySessions,
+      removedSessionIds: unpreservedExitedIds,
+      projectRoot,
+    });
     unpreservedExitedIds.clear();
 
     const state: SavedState = {
