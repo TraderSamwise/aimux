@@ -198,6 +198,19 @@ describe("resumeOfflineSession", () => {
     });
   }
 
+  function seedOfflineSession(session: any): any {
+    const topologySession = {
+      command: session.command,
+      tool: session.tool ?? session.toolConfigKey ?? session.command,
+      toolConfigKey: session.toolConfigKey ?? session.tool ?? session.command,
+      args: session.args ?? [],
+      lifecycle: "offline",
+      ...session,
+    };
+    seedTopologySessions([topologySession]);
+    return topologySession;
+  }
+
   beforeEach(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-runtime-state-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
@@ -256,6 +269,15 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession,
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      team,
+      worktreePath: repoRoot,
+    });
 
     resumeOfflineSession(host, {
       id: "codex-1",
@@ -284,6 +306,32 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
+  it("prunes stale offline cache rows instead of resuming without topology authority", () => {
+    const createSession = vi.fn();
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-stale", command: "codex", toolConfigKey: "codex" }],
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-stale",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(createSession).not.toHaveBeenCalled();
+    expect(host.offlineSessions).toEqual([]);
+    expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
+    expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
+    expect(listTopologySessionStates()).toEqual([]);
+  });
+
   it("settles a stale running activity to idle on backend resume", () => {
     updateSessionMetadata("codex-1", (current) => ({
       ...current,
@@ -301,6 +349,14 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession: vi.fn(),
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      worktreePath: repoRoot,
+    });
 
     resumeOfflineSession(host, {
       id: "codex-1",
@@ -331,6 +387,14 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession: vi.fn(),
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      worktreePath: repoRoot,
+    });
 
     resumeOfflineSession(host, {
       id: "codex-1",
@@ -362,6 +426,13 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession,
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+    });
 
     resumeOfflineSession(host, {
       id: "codex-1",
@@ -429,6 +500,14 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession,
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+      createdAt: new Date().toISOString(),
+    });
 
     expect(() =>
       resumeOfflineSession(host, {
@@ -464,6 +543,14 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession,
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "backend-current",
+      args: [],
+      worktreePath: repoRoot,
+    });
 
     resumeOfflineSession(host, {
       id: "codex-1",
@@ -511,6 +598,13 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession,
     };
+    seedOfflineSession({
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+    });
 
     expect(() =>
       resumeOfflineSession(host, {
@@ -602,6 +696,14 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
       createSession,
     };
+    seedOfflineSession({
+      id: "claude-error",
+      command: "claude",
+      toolConfigKey: "claude",
+      backendSessionId: "backend-old",
+      args: [],
+      worktreePath: repoRoot,
+    });
 
     resumeOfflineSession(host, {
       id: "claude-error",
@@ -1455,6 +1557,27 @@ describe("resumeOfflineSession", () => {
     const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
     expect(listTopologySessionStates({ statuses: ["offline"] }).map((entry) => entry.id)).toEqual([]);
     expect(graveyard.map((entry) => entry.id)).toContain("codex-stale");
+    expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
+    expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
+
+  it("prunes stale offline cache rows instead of graveyarding without topology authority", () => {
+    const host: any = {
+      offlineSessions: [{ id: "codex-stale", command: "codex", toolConfigKey: "codex" }],
+      mode: "dashboard",
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      noteLastUsedItem: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    graveyardSession(host, "codex-stale");
+
+    expect(host.offlineSessions).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] })).toEqual([]);
+    expect(host.noteLastUsedItem).not.toHaveBeenCalled();
     expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
     expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
