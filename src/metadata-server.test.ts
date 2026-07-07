@@ -4379,6 +4379,86 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"codex-1"');
   });
 
+  it("emits task blocked alerts to the original assigner", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const taskRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit the blocked alert branch",
+        type: "task",
+      }),
+    });
+    const assigned = (await taskRes.json()) as { task: { id: string } };
+    expect(taskRes.ok).toBe(true);
+
+    const streamRes = await fetch(`${base}/events?sessionId=claude-lead`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("Task blocked:"));
+
+    const blockRes = await fetch(`${base}/tasks/block`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: assigned.task.id,
+        from: "codex-1",
+        body: "Need a fixture.",
+      }),
+    });
+    expect(blockRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain('"kind":"blocked"');
+    expect(text).toContain('"sessionId":"claude-lead"');
+  });
+
+  it("emits task done alerts to the original assigner", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const taskRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit the done alert branch",
+        type: "task",
+      }),
+    });
+    const assigned = (await taskRes.json()) as { task: { id: string } };
+    expect(taskRes.ok).toBe(true);
+
+    const streamRes = await fetch(`${base}/events?sessionId=claude-lead`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("Task done:"));
+
+    const completeRes = await fetch(`${base}/tasks/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: assigned.task.id,
+        from: "codex-1",
+        body: "Done.",
+      }),
+    });
+    expect(completeRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain('"kind":"task_done"');
+    expect(text).toContain('"sessionId":"claude-lead"');
+  });
+
   it("does not emit generic message alerts for status messages", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

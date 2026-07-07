@@ -34,17 +34,17 @@ export function resolveExchangeMessageAlertRecipients(input: {
   fallbackRecipients?: string[];
   from?: string;
 }): string[] {
-  const explicit = recipientsExcludingSender(input.explicitRecipients ?? [], input.from);
-  if (explicit.length > 0) return explicit;
+  const explicit = uniqueTrimmed(input.explicitRecipients ?? []);
+  if (explicit.length > 0) return recipientsExcludingSender(explicit, input.from);
 
-  const deliveredTo = recipientsExcludingSender(stringArrayField(input.message, "deliveredTo"), input.from);
-  if (deliveredTo.length > 0) return deliveredTo;
+  const deliveredTo = uniqueTrimmed(stringArrayField(input.message, "deliveredTo"));
+  if (deliveredTo.length > 0) return recipientsExcludingSender(deliveredTo, input.from);
 
-  const waitingOn = recipientsExcludingSender(stringArrayField(input.thread, "waitingOn"), input.from);
-  if (waitingOn.length > 0) return waitingOn;
+  const waitingOn = uniqueTrimmed(stringArrayField(input.thread, "waitingOn"));
+  if (waitingOn.length > 0) return recipientsExcludingSender(waitingOn, input.from);
 
-  const messageRecipients = recipientsExcludingSender(stringArrayField(input.message, "to"), input.from);
-  if (messageRecipients.length > 0) return messageRecipients;
+  const messageRecipients = uniqueTrimmed(stringArrayField(input.message, "to"));
+  if (messageRecipients.length > 0) return recipientsExcludingSender(messageRecipients, input.from);
 
   return recipientsExcludingSender(input.fallbackRecipients ?? [], input.from);
 }
@@ -53,8 +53,14 @@ export function resolveExchangeTaskAssignmentRecipient(task: ExchangeAlertTask):
   return uniqueTrimmed([task.assignedTo])[0];
 }
 
-export function resolveExchangeTaskActorRecipient(task: ExchangeAlertTask): string | undefined {
-  return uniqueTrimmed([task.assignedTo])[0];
+export function resolveExchangeTaskOutcomeRecipient(input: {
+  task: ExchangeAlertTask;
+  thread?: unknown;
+  from?: string;
+}): string | undefined {
+  const waitingOn = uniqueTrimmed(stringArrayField(input.thread, "waitingOn"));
+  if (waitingOn.length > 0) return recipientsExcludingSender(waitingOn, input.from)[0];
+  return recipientsExcludingSender([input.task.assignedBy], input.from)[0];
 }
 
 export function resolveExchangeReviewOutcomeRecipient(task: ExchangeAlertTask): string | undefined {
