@@ -3954,17 +3954,19 @@ export class MetadataServer {
           thread: result.thread,
           from: body.from?.trim() || "user",
         });
-        this.emitAlert({
-          kind: "blocked",
-          sessionId: recipient,
-          taskId: result.task.id,
-          threadId: result.thread?.id,
-          worktreePath: result.thread?.worktreePath,
-          title: `Task blocked: ${result.task.description}`,
-          message: result.task.error || body.body || "Task is blocked.",
-          dedupeKey: `task-blocked:${result.task.id}:${recipient ?? "unknown"}`,
-          cooldownMs: 15_000,
-        });
+        if (recipient) {
+          this.emitAlert({
+            kind: "blocked",
+            sessionId: recipient,
+            taskId: result.task.id,
+            threadId: result.thread?.id,
+            worktreePath: result.thread?.worktreePath,
+            title: `Task blocked: ${result.task.description}`,
+            message: result.task.error || body.body || "Task is blocked.",
+            dedupeKey: `task-blocked:${result.task.id}:${recipient}`,
+            cooldownMs: 15_000,
+          });
+        }
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;
@@ -3984,17 +3986,19 @@ export class MetadataServer {
           thread: result.thread,
           from: body.from?.trim() || "user",
         });
-        this.emitAlert({
-          kind: "task_done",
-          sessionId: recipient,
-          taskId: result.task.id,
-          threadId: result.thread?.id,
-          worktreePath: result.thread?.worktreePath,
-          title: `Task done: ${result.task.description}`,
-          message: body.body?.trim() || result.message?.body || "Task completed.",
-          dedupeKey: `task-done:${result.task.id}:${recipient ?? "unknown"}`,
-          cooldownMs: 15_000,
-        });
+        if (recipient) {
+          this.emitAlert({
+            kind: "task_done",
+            sessionId: recipient,
+            taskId: result.task.id,
+            threadId: result.thread?.id,
+            worktreePath: result.thread?.worktreePath,
+            title: `Task done: ${result.task.description}`,
+            message: body.body?.trim() || result.message?.body || "Task completed.",
+            dedupeKey: `task-done:${result.task.id}:${recipient}`,
+            cooldownMs: 15_000,
+          });
+        }
         notifyCurrentRouteChange();
         send(res, 200, { ok: true, ...result });
         return;

@@ -59,6 +59,13 @@ describe("exchange alert routing", () => {
         from: "codex-1",
       }),
     ).toBe("claude-lead");
+    expect(
+      resolveExchangeTaskOutcomeRecipient({
+        task: { assignedBy: "claude-lead" },
+        thread: { waitingOn: ["claude-lead"] },
+        from: "claude-lead",
+      }),
+    ).toBeUndefined();
     expect(resolveExchangeReviewOutcomeRecipient({ assignedBy: " claude-lead " })).toBe("claude-lead");
   });
 });
