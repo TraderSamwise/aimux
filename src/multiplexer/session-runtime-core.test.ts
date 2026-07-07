@@ -496,6 +496,46 @@ describe("session runtime prompt submission", () => {
     }
   });
 
+  it("preserves fresh relaunchability when a stopped codex runtime exits without a backend id", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const runtime = {
+        id: "codex-no-history",
+        command: "codex",
+        startTime: Date.now() - 20_000,
+      };
+      const host: any = {
+        projectRoot: repoRoot,
+        sessions: [runtime],
+        offlineSessions: [],
+        stoppingSessionIds: new Set(["codex-no-history"]),
+        sessionOriginalArgs: new Map([["codex-no-history", ["--dangerously-bypass-approvals-and-sandbox"]]]),
+        sessionToolKeys: new Map([["codex-no-history", "codex"]]),
+        sessionWorktreePaths: new Map([["codex-no-history", repoRoot]]),
+        sessionTmuxTargets: new Map(),
+        startedInDashboard: true,
+        getSessionLabel: vi.fn(() => undefined),
+        deriveHeadline: vi.fn(() => undefined),
+        updateContextWatcherSessions: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        saveState: vi.fn(),
+        renderDashboard: vi.fn(),
+        debug: vi.fn(),
+      };
+
+      handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+      expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
+        id: "codex-no-history",
+        freshRelaunchAllowed: true,
+        restoreBlockedReason: undefined,
+      });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("writes exited runtime state to topology even when the offline projection is stale", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {

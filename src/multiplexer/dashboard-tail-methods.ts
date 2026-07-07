@@ -57,6 +57,7 @@ import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js"
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
+import { getRepoRoot } from "../paths.js";
 import type { LaunchOverride } from "../shell-args.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { setSessionOverseer } from "../metadata-store.js";
@@ -66,6 +67,7 @@ import {
   upsertTopologySession,
   type RuntimeTopologySessionState,
 } from "../runtime-core/topology-sessions.js";
+import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -78,7 +80,14 @@ function isLiveTopologyStatus(status: RuntimeTopologySessionState["status"] | un
   return status === "running" || status === "idle" || status === "starting";
 }
 
+function projectRootFor(host: Multiplexer): string {
+  const projectRoot = typeof (host as any).projectRoot === "string" ? (host as any).projectRoot.trim() : "";
+  return projectRoot || getRepoRoot();
+}
+
 function runtimeToTopologySessionState(host: Multiplexer, session: any): RuntimeTopologySessionState {
+  const projectRoot = projectRootFor(host);
+  const backendSessionId = session.backendSessionId;
   return {
     id: session.id,
     tool: session.command,
@@ -87,7 +96,8 @@ function runtimeToTopologySessionState(host: Multiplexer, session: any): Runtime
     args: (host as any).sessionOriginalArgs?.get?.(session.id) ?? [],
     lifecycle: "offline",
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
-    backendSessionId: session.backendSessionId,
+    backendSessionId,
+    freshRelaunchAllowed: shouldMarkFreshRelaunchAllowed({ id: session.id, backendSessionId }, projectRoot),
     team: session.team,
     worktreePath: (host as any).sessionWorktreePaths?.get?.(session.id),
     label: (host as any).getSessionLabel?.(session.id),
@@ -112,10 +122,11 @@ function removeOfflineSessionCache(host: Multiplexer, sessionId: string): void {
   (host as any).offlineSessions = (host as any).offlineSessions.filter((session: any) => session.id !== sessionId);
 }
 
-function findTopologySession(sessionId: string): RuntimeTopologySessionState | undefined {
-  return listTopologySessionStates({ statuses: ["running", "idle", "starting", "offline", "graveyard"] }).find(
-    (session) => session.id === sessionId,
-  );
+function findTopologySession(host: Multiplexer, sessionId: string): RuntimeTopologySessionState | undefined {
+  return listTopologySessionStates({
+    statuses: ["running", "idle", "starting", "offline", "graveyard"],
+    projectRoot: projectRootFor(host),
+  }).find((session) => session.id === sessionId);
 }
 
 function refreshLifecycleViews(host: Multiplexer): void {
@@ -357,6 +368,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     return { sessionId, label: label?.trim() || undefined };
   },
   async stopAgent(sessionId) {
+    const projectRoot = projectRootFor(this);
     const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
     if (runtime) {
       if ((this as any).graveyardAfterStopSessionIds?.has?.(sessionId)) {
@@ -366,7 +378,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
         return { sessionId, status: "offline" };
       }
       const offlineEntry = runtimeToTopologySessionState(this, runtime);
-      upsertTopologySession(offlineEntry, "offline");
+      upsertTopologySession(offlineEntry, "offline", { projectRoot });
       cacheOfflineSession(this, offlineEntry);
       (this as any).stoppingSessionIds?.add?.(sessionId);
       (this as any).startedInDashboard = true;
@@ -375,7 +387,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       (this as any).debug?.(`stopped session ${sessionId} -> offline`, "session");
       return { sessionId, status: "offline" };
     }
-    const existing = findTopologySession(sessionId);
+    const existing = findTopologySession(this, sessionId);
     if (existing?.status === "offline") {
       cacheOfflineSession(this, existing);
       return { sessionId, status: "offline" };
@@ -389,8 +401,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
     throw new Error(`Unknown session "${sessionId}"`);
   },
   async sendAgentToGraveyard(sessionId) {
+    const projectRoot = projectRootFor(this);
     const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
-    const existing = findTopologySession(sessionId);
+    const existing = findTopologySession(this, sessionId);
     const previousStatus: "running" | "offline" =
       runtime || isLiveTopologyStatus(existing?.status) ? "running" : "offline";
     if (existing?.status === "graveyard") {
@@ -400,7 +413,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
     }
     if (runtime && !existing) {
-      upsertTopologySession(runtimeToTopologySessionState(this, runtime), "running");
+      upsertTopologySession(runtimeToTopologySessionState(this, runtime), "running", { projectRoot });
     } else if (!runtime && !existing) {
       throw new Error(`Unknown session "${sessionId}"`);
     }

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   restartAimuxControlPlane: vi.fn(),
   renderRuntimeRestartResult: vi.fn(),
   stopDaemonInfo: vi.fn(),
+  ensureDaemonRunning: vi.fn(),
 }));
 
 vi.mock("./daemon-state.js", () => ({
@@ -18,6 +19,7 @@ vi.mock("./daemon-state.js", () => ({
 
 vi.mock("./daemon-supervisor.js", () => ({
   stopDaemonInfo: mocks.stopDaemonInfo,
+  ensureDaemonRunning: mocks.ensureDaemonRunning,
 }));
 
 vi.mock("./core-command-client.js", () => ({
@@ -61,6 +63,7 @@ describe("restartControlPlaneFromCli", () => {
     mocks.loadDaemonInfo.mockReset();
     mocks.loadDaemonState.mockReset();
     mocks.stopDaemonInfo.mockReset();
+    mocks.ensureDaemonRunning.mockReset();
     mocks.loadDaemonInfo.mockReturnValue(null);
     mocks.loadDaemonState.mockReturnValue({
       version: 1,
@@ -112,7 +115,14 @@ describe("restartControlPlaneFromCli", () => {
     const result = await restartControlPlaneFromCli("/repo");
 
     expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: "/repo", stopDaemon: undefined });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      projectRoot: "/repo",
+      stopDaemon: undefined,
+      ensureDaemonRunning: expect.any(Function),
+    });
+    const options = mocks.restartAimuxControlPlane.mock.calls[0][0];
+    options.ensureDaemonRunning();
+    expect(mocks.ensureDaemonRunning).toHaveBeenCalledWith({ adoptExisting: false });
   });
 
   it("uses local bootstrap repair without a project scope", async () => {
@@ -126,7 +136,11 @@ describe("restartControlPlaneFromCli", () => {
     const result = await restartControlPlaneFromCli();
 
     expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({ projectRoot: undefined, stopDaemon: undefined });
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      projectRoot: undefined,
+      stopDaemon: undefined,
+      ensureDaemonRunning: expect.any(Function),
+    });
   });
 
   it("preserves stale daemon info for local bootstrap repair", async () => {

@@ -86,6 +86,7 @@ export interface RuntimeTopologySession {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  freshRelaunchAllowed?: boolean;
   restoreBlockedReason?: string;
   graveyardReason?: string;
   team?: unknown;
@@ -251,6 +252,10 @@ function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -381,6 +386,7 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         worktreePath: asOptionalString(row.worktreePath),
         label: asOptionalString(row.label),
         headline: asOptionalString(row.headline),
+        freshRelaunchAllowed: asOptionalBoolean(row.freshRelaunchAllowed),
         restoreBlockedReason: asOptionalString(row.restoreBlockedReason),
         graveyardReason: asOptionalString(row.graveyardReason),
         team: row.team,

@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { getProjectId, getRepoRoot } from "../paths.js";
+import { getProjectId, getRepoRoot, withProjectPaths } from "../paths.js";
 import {
   createRuntimeTopologyStore,
   emptyRuntimeTopology,
@@ -26,6 +26,7 @@ export type RuntimeTopologySessionState = {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  freshRelaunchAllowed?: boolean;
   restoreBlockedReason?: string;
   graveyardReason?: string;
   tmuxTarget?: {
@@ -150,6 +151,7 @@ function sessionToTopologySession(
     worktreePath: session.worktreePath,
     label: session.label,
     headline: session.headline,
+    freshRelaunchAllowed: session.lifecycle === "offline" ? session.freshRelaunchAllowed : undefined,
     restoreBlockedReason: session.lifecycle === "offline" ? session.restoreBlockedReason : undefined,
     graveyardReason: session.graveyardReason,
     team: session.team,
@@ -204,6 +206,7 @@ export function topologySessionToSessionState(
     worktreePath: session.worktreePath ?? node?.cwd,
     label: session.label ?? node?.label,
     headline: session.headline,
+    freshRelaunchAllowed: session.freshRelaunchAllowed,
     restoreBlockedReason: session.restoreBlockedReason,
     graveyardedAt: session.graveyardedAt,
     graveyardReason: session.graveyardReason,
@@ -222,8 +225,11 @@ export function topologySessionToSessionState(
 export function listTopologySessionStates(input?: {
   statuses?: RuntimeTopologySessionStatus[];
   store?: RuntimeTopologyStore;
+  projectRoot?: string;
 }): RuntimeTopologySessionState[] {
-  const topology = (input?.store ?? createRuntimeTopologyStore()).read();
+  const readTopology = () => (input?.store ?? createRuntimeTopologyStore()).read();
+  const topology =
+    input?.projectRoot && !input.store ? withProjectPaths(input.projectRoot, readTopology) : readTopology();
   const statuses = input?.statuses ? new Set(input.statuses) : undefined;
   return topology.sessions
     .filter((session) => !statuses || statuses.has(session.status))
@@ -262,6 +268,7 @@ export function reconcileRuntimeTopologySessions(input: ReconcileRuntimeTopology
         return {
           ...session,
           backendSessionId: session.backendSessionId ?? existing.backendSessionId,
+          freshRelaunchAllowed: session.freshRelaunchAllowed ?? existing.freshRelaunchAllowed,
           restoreBlockedReason: session.restoreBlockedReason ?? existing.restoreBlockedReason,
         };
       }),

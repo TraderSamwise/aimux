@@ -284,6 +284,88 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("captures a codex backend session id from the launch transcript", async () => {
+    vi.useFakeTimers();
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-capture-"));
+    const prevCodexHome = process.env.CODEX_HOME;
+    const codexHome = mkdtempSync(join(tmpdir(), "aimux-codex-home-"));
+    try {
+      process.env.CODEX_HOME = codexHome;
+      gitInit(repoRoot);
+      const codexBin = join(repoRoot, "bin", "codex");
+      mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+      writeFileSync(
+        join(repoRoot, ".aimux/config.json"),
+        JSON.stringify(
+          {
+            tools: {
+              codex: {
+                command: codexBin,
+                args: [],
+                enabled: true,
+                resumeArgs: ["resume", "{sessionId}"],
+                resumeByBackendSessionId: true,
+                developerInstructionsConfigKey: "developer_instructions",
+              },
+            },
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      await initPaths(repoRoot);
+
+      const sessions: any[] = [];
+      const host: any = {
+        sessionBootstrap: {
+          buildSessionPreamble: vi.fn(() => ""),
+          ensurePlanFile: vi.fn(),
+          finalizePreamble: vi.fn(),
+        },
+        tmuxRuntimeManager: {
+          ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+          createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+          getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+          isWindowAlive: vi.fn(() => true),
+        },
+        sessionTmuxTargets: new Map(),
+        syncTmuxWindowMetadata: vi.fn(),
+        registerManagedSession: vi.fn((transport: any) => sessions.push(transport)),
+        sessions,
+        getSessionLabel: vi.fn(),
+        startedInDashboard: false,
+        mode: "session",
+        saveState: vi.fn(),
+        activeIndex: 0,
+        recordSessionBackendSessionId: vi.fn((sessionId: string, backendSessionId: string) => {
+          const session = sessions.find((candidate) => candidate.id === sessionId);
+          if (session) session.backendSessionId = backendSessionId;
+          return { sessionId, backendSessionId };
+        }),
+      };
+
+      const session: any = createSession(host, codexBin, [], undefined, "codex", undefined, undefined, repoRoot);
+      const backendSessionId = "11111111-2222-3333-4444-555555555555";
+      const dir = join(codexHome, "sessions", "2026", "07", "07");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, `rollout-2026-07-07T00-00-00-${backendSessionId}.jsonl`),
+        `${JSON.stringify({ type: "session_meta", payload: { id: backendSessionId, cwd: repoRoot } })}\n`,
+      );
+
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(host.recordSessionBackendSessionId).toHaveBeenCalledWith(session.id, backendSessionId);
+      expect(session.backendSessionId).toBe(backendSessionId);
+    } finally {
+      vi.useRealTimers();
+      if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = prevCodexHome;
+      rmSync(codexHome, { recursive: true, force: true });
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("assigns, passes, and persists a backend session id for a fresh claude launch", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-fresh-"));
     gitInit(repoRoot);

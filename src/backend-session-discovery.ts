@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readSync, readdirSync, type Dirent } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -90,7 +90,16 @@ function readFirstLine(path: string): string | null {
   }
 }
 
-function collectCodexSessionIdsForCwd(dir: string, cwd: string, ids: Set<string>): void {
+export interface CodexBackendSessionDiscoveryOptions {
+  sinceMs?: number;
+}
+
+function collectCodexSessionIdsForCwd(
+  dir: string,
+  cwd: string,
+  ids: Set<string>,
+  options: CodexBackendSessionDiscoveryOptions = {},
+): void {
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -101,10 +110,17 @@ function collectCodexSessionIdsForCwd(dir: string, cwd: string, ids: Set<string>
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectCodexSessionIdsForCwd(path, cwd, ids);
+      collectCodexSessionIdsForCwd(path, cwd, ids, options);
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    if (typeof options.sinceMs === "number") {
+      try {
+        if (statSync(path).mtimeMs < options.sinceMs) continue;
+      } catch {
+        continue;
+      }
+    }
 
     const line = readFirstLine(path);
     if (!line) continue;
@@ -129,10 +145,14 @@ function collectCodexSessionIdsForCwd(dir: string, cwd: string, ids: Set<string>
  * session transcripts. Returns an id only when exactly one transcript advertises
  * the target cwd, preserving targeted restore's no-guessing invariant.
  */
-export function discoverCodexBackendSessionId(cwd: string, sessionsDir = codexSessionsDir()): string | null {
+export function discoverCodexBackendSessionId(
+  cwd: string,
+  sessionsDir = codexSessionsDir(),
+  options: CodexBackendSessionDiscoveryOptions = {},
+): string | null {
   if (!existsSync(sessionsDir)) return null;
   const ids = new Set<string>();
-  collectCodexSessionIdsForCwd(sessionsDir, cwd, ids);
+  collectCodexSessionIdsForCwd(sessionsDir, cwd, ids, options);
   return ids.size === 1 ? [...ids][0] : null;
 }
 

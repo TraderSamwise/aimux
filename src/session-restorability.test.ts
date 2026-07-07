@@ -63,6 +63,23 @@ describe("describeSessionRestorability", () => {
     });
   });
 
+  it("allows backend-less offline sessions that are safe to relaunch fresh", () => {
+    expect(
+      describeSessionRestorability(
+        {
+          id: "codex-empty",
+          status: "offline",
+          command: "codex",
+          toolConfigKey: "codex",
+          freshRelaunchAllowed: true,
+        },
+        {
+          codex: { resumeArgs: ["resume", "{sessionId}"], resumeByBackendSessionId: true },
+        },
+      ),
+    ).toEqual({ restoreState: "ready" });
+  });
+
   it("keeps persisted restore blockers ahead of backend ids", () => {
     expect(
       describeSessionRestorability(

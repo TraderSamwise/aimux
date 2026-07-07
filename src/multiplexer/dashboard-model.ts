@@ -25,6 +25,7 @@ import { setPendingDashboardSessionAction } from "./dashboard-ops.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
+import { shouldRelaunchFreshSession as shouldRelaunchFreshSessionState } from "../session-fresh-relaunch.js";
 import { log } from "../debug.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
@@ -123,8 +124,8 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
 }
 
 function shouldRelaunchFreshSession(host: DashboardModelHost, sessionId: string): boolean {
-  const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
-  return derived?.activity === "error" || derived?.attention === "error";
+  const offline = resolveOfflineSessionForAction(host, sessionId);
+  return shouldRelaunchFreshSessionState(offline ?? { id: sessionId }, projectRootFor(host));
 }
 
 function findDashboardSessionSeed(

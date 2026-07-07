@@ -19,6 +19,8 @@ import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
+import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
@@ -389,7 +391,25 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
 
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
   const graveyardAfterStop = host.graveyardAfterStopSessionIds?.has?.(runtime.id) ?? false;
-  const backendSessionId = runtime.backendSessionId;
+  let backendSessionId = runtime.backendSessionId;
+  const toolConfigKey = host.sessionToolKeys.get(runtime.id) ?? runtime.command;
+  let projectRoot: string | undefined;
+  const resolveProjectRoot = () => (projectRoot ??= projectRootFor(host));
+  if (!graveyardAfterStop && !backendSessionId && toolConfigKey === "codex") {
+    try {
+      backendSessionId = discoverCodexBackendSessionId(
+        host.sessionWorktreePaths.get(runtime.id) ?? resolveProjectRoot(),
+        undefined,
+        { sinceMs: Math.max(0, (runtime.startTime ?? Date.now()) - 1000) },
+      );
+      if (backendSessionId) runtime.backendSessionId = backendSessionId;
+    } catch (error) {
+      host.debug?.(
+        `codex backend session id exit capture failed for ${runtime.id}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+    }
+  }
   const quickUnexpectedExit = !explicitStop && !graveyardAfterStop && uptime < 10_000;
   const shouldPreserveOffline = !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000);
   if (shouldPreserveOffline) {
@@ -397,12 +417,16 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       {
         id: runtime.id,
         tool: runtime.command,
-        toolConfigKey: host.sessionToolKeys.get(runtime.id) ?? runtime.command,
+        toolConfigKey,
         command: runtime.command,
         args: host.sessionOriginalArgs.get(runtime.id) ?? [],
         lifecycle: "offline",
         createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
         backendSessionId,
+        freshRelaunchAllowed: shouldMarkFreshRelaunchAllowed(
+          { id: runtime.id, backendSessionId },
+          resolveProjectRoot(),
+        ),
         team: runtime.team,
         worktreePath: host.sessionWorktreePaths.get(runtime.id),
         label: host.getSessionLabel(runtime.id),
@@ -414,7 +438,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
           : undefined,
       },
       "offline",
-      { projectRoot: projectRootFor(host) },
+      { projectRoot: resolveProjectRoot() },
     );
   } else if (!shouldPreserveOffline) {
     host.unpreservedExitedSessionIds ??= new Set<string>();

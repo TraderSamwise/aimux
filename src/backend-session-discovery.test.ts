@@ -79,13 +79,12 @@ describe("discoverCodexBackendSessionId", () => {
     rmSync(codexHome, { recursive: true, force: true });
   });
 
-  function writeTranscript(day: string, uuid: string, transcriptCwd: string): void {
+  function writeTranscript(day: string, uuid: string, transcriptCwd: string, mtimeSec?: number): void {
     const dir = join(sessionsDir, "2026", "06", day);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, `rollout-2026-06-${day}T00-00-00-${uuid}.jsonl`),
-      `${JSON.stringify({ type: "session_meta", payload: { id: uuid, cwd: transcriptCwd } })}\n{}\n`,
-    );
+    const path = join(dir, `rollout-2026-06-${day}T00-00-00-${uuid}.jsonl`);
+    writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload: { id: uuid, cwd: transcriptCwd } })}\n{}\n`);
+    if (mtimeSec !== undefined) utimesSync(path, mtimeSec, mtimeSec);
   }
 
   it("returns the single transcript id for the cwd", () => {
@@ -111,6 +110,12 @@ describe("discoverCodexBackendSessionId", () => {
     writeTranscript("14", UUID_A, cwd);
     writeTranscript("15", UUID_B, cwd);
     expect(discoverCodexBackendSessionId(cwd, sessionsDir)).toBeNull();
+  });
+
+  it("can ignore old transcripts when launch-time discovery has a lower bound", () => {
+    writeTranscript("14", UUID_A, cwd, 1000);
+    writeTranscript("15", UUID_B, cwd, 2000);
+    expect(discoverCodexBackendSessionId(cwd, sessionsDir, { sinceMs: 1500_000 })).toBe(UUID_B);
   });
 
   it("ignores transcripts for other cwd values", () => {
