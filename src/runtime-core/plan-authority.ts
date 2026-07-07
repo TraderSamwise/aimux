@@ -16,6 +16,10 @@ export function getPlanAuthorityDir(): string {
   return getPlansDir();
 }
 
+export function getPlanAuthorityDirForLocalAimuxDir(localAimuxDir: string): string {
+  return join(localAimuxDir, "plans");
+}
+
 export function getPlanAuthorityPath(sessionId: string): string {
   const validation = validatePlanSessionId(sessionId);
   if (!validation.ok) throw new Error("invalid sessionId");

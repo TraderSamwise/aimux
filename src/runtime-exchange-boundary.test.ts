@@ -37,7 +37,11 @@ const legacyExchangePathPatterns = [
   /\.aimux\/(?:threads|tasks)\b/,
 ];
 
-const planAuthorityPathPatterns = [/\bgetPlansDir\b/];
+const planAuthorityPathPatterns = [
+  /\bgetPlansDir\b/,
+  /join\([^)]*(?:getLocalAimuxDir\(\)|localAimuxDir|repoRoot)[^)]*,\s*["']plans["']/,
+  /join\([^)]*["']\.aimux["'][^)]*,\s*["']plans["']/,
+];
 
 function listSourceFiles(root: string): string[] {
   const absoluteRoot = join(process.cwd(), root);
