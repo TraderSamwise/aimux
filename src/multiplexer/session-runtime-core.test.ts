@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import {
   buildTmuxWindowMetadata,
   handleSessionRuntimeEvent,
@@ -483,11 +484,51 @@ describe("session runtime prompt submission", () => {
 
       handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
 
-      expect(host.offlineSessions[0]).toMatchObject({
+      expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
         id: "claude-current-crash",
         backendSessionId: "backend-current-crash",
         restoreBlockedReason: "agent exited during startup",
       });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writes exited runtime state to topology even when the offline projection is stale", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const runtime = {
+        id: "claude-stale-cache",
+        command: "claude",
+        startTime: Date.now() - 20_000,
+        backendSessionId: "backend-current",
+      };
+      const host: any = {
+        sessions: [runtime],
+        offlineSessions: [{ id: "claude-stale-cache", command: "claude", backendSessionId: "backend-stale" }],
+        stoppingSessionIds: new Set(),
+        sessionOriginalArgs: new Map([["claude-stale-cache", []]]),
+        sessionToolKeys: new Map([["claude-stale-cache", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-stale-cache", repoRoot]]),
+        sessionTmuxTargets: new Map(),
+        startedInDashboard: true,
+        getSessionLabel: vi.fn(() => undefined),
+        deriveHeadline: vi.fn(() => undefined),
+        updateContextWatcherSessions: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        saveState: vi.fn(),
+        loadOfflineTopologySessions: vi.fn(),
+        renderDashboard: vi.fn(),
+      };
+
+      handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+      expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
+        id: "claude-stale-cache",
+        backendSessionId: "backend-current",
+      });
+      expect(host.loadOfflineTopologySessions).toHaveBeenCalledOnce();
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -557,7 +598,7 @@ describe("session runtime prompt submission", () => {
 
       handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
 
-      expect(host.offlineSessions[0]).toMatchObject({
+      expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
         id: "claude-team-exit",
         team,
       });

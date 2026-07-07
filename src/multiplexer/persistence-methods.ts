@@ -1158,15 +1158,6 @@ export const persistenceMethods = {
     if (!restored) {
       throw new Error(`Graveyard session "${sessionId}" not found`);
     }
-    const offlineEntry = { ...restored, lifecycle: "offline" as const, status: "offline" as const };
-    if (Array.isArray(this.offlineSessions)) {
-      const existingIndex = this.offlineSessions.findIndex((session: any) => session.id === sessionId);
-      if (existingIndex >= 0) {
-        this.offlineSessions[existingIndex] = { ...this.offlineSessions[existingIndex], ...offlineEntry };
-      } else {
-        this.offlineSessions.push(offlineEntry);
-      }
-    }
     this.loadOfflineTopologySessions?.();
     this.invalidateDesktopStateSnapshot?.();
     this.writeStatuslineFile?.();
