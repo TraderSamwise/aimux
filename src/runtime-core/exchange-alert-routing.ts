@@ -34,6 +34,7 @@ export function resolveExchangeMessageAlertRecipients(input: {
   fallbackRecipients?: string[];
   from?: string;
 }): string[] {
+  // Each source tier is authoritative once populated, even if sender exclusion empties it.
   const explicit = uniqueTrimmed(input.explicitRecipients ?? []);
   if (explicit.length > 0) return recipientsExcludingSender(explicit, input.from);
 
@@ -58,6 +59,7 @@ export function resolveExchangeTaskOutcomeRecipient(input: {
   thread?: unknown;
   from?: string;
 }): string | undefined {
+  // Exchange wait state outranks task fallback; do not fall through after sender exclusion.
   const waitingOn = uniqueTrimmed(stringArrayField(input.thread, "waitingOn"));
   if (waitingOn.length > 0) return recipientsExcludingSender(waitingOn, input.from)[0];
   return recipientsExcludingSender([input.task.assignedBy], input.from)[0];
