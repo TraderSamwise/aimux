@@ -13,7 +13,7 @@ import {
   moveTopologySessionToGraveyard,
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
-import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
+import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
 import {
@@ -53,6 +53,21 @@ function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
     const { target, metadata } = entry;
     if (isDashboardWindowName(target.windowName)) continue;
     if (metadata.kind !== "agent") continue;
+    if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
+    if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
+    windows.push(entry);
+  }
+  return windows;
+}
+
+function listLiveServiceWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
+  if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return [];
+  const graveyardPaths = listWorktreeGraveyardPaths();
+  const windows: ManagedAgentWindow[] = [];
+  for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host))) {
+    const { target, metadata } = entry;
+    if (isDashboardWindowName(target.windowName)) continue;
+    if (metadata.kind !== "service") continue;
     if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
     if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
     windows.push(entry);
@@ -322,7 +337,30 @@ function offlineSessionChangeKey(session: any): string {
   ].join(":");
 }
 
+export function reconcileOrphanedTopologyServices(
+  host: RuntimeStateHost,
+  liveServiceWindows = listLiveServiceWindows(host),
+): boolean {
+  const candidates = listTopologyServiceStates({ statuses: ["running", "starting"] });
+  if (candidates.length === 0) return false;
+
+  const liveIds = new Set(liveServiceWindows.map(({ metadata }) => metadata.sessionId));
+  let changed = false;
+  for (const service of candidates) {
+    if (liveIds.has(service.id)) continue;
+    const pending = host.dashboardPendingActions?.getServiceAction?.(service.id);
+    if (pending === "creating" || pending === "starting") continue;
+
+    upsertTopologyService({ ...service, tmuxTarget: undefined }, "stopped", { projectRoot: projectRootFor(host) });
+    host.debug?.(`reconciled orphaned service ${service.id} → stopped (no live tmux window)`, "service");
+    changed = true;
+  }
+  return changed;
+}
+
 export function loadOfflineServices(host: RuntimeStateHost): boolean {
+  const liveServiceWindows = listLiveServiceWindows(host);
+  reconcileOrphanedTopologyServices(host, liveServiceWindows);
   const savedServices = listTopologyServiceStates({ statuses: ["stopped", "offline"] });
   if (savedServices.length === 0) {
     const changed = host.offlineServices.length > 0;
@@ -330,17 +368,13 @@ export function loadOfflineServices(host: RuntimeStateHost): boolean {
     return changed;
   }
 
+  const retainedIds = new Set(
+    savedServices.filter((service: any) => service.retained).map((service: any) => service.id),
+  );
   const liveServiceIds = new Set(
-    host.tmuxRuntimeManager
-      .listProjectManagedWindows(projectRootFor(host))
-      .filter(
-        ({ target, metadata }: any) =>
-          !isDashboardWindowName(target.windowName) &&
-          metadata.kind === "service" &&
-          host.tmuxRuntimeManager.isWindowAlive(target) &&
-          !savedServices.some((service: any) => service.id === metadata.sessionId && service.retained),
-      )
-      .map(({ metadata }: any) => metadata.sessionId),
+    liveServiceWindows
+      .map(({ metadata }: any) => metadata.sessionId)
+      .filter((serviceId: string) => !retainedIds.has(serviceId)),
   );
 
   const nextOfflineServices = savedServices.filter((service: any) => {

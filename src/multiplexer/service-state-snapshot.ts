@@ -69,8 +69,9 @@ export function persistProjectRuntimeSnapshotsBeforeTmuxStop(
   tmux: TmuxRuntimeManager,
 ): { sessions: []; services: ServiceState[] } {
   const services = snapshotProjectServiceWindows(projectRoot, tmux);
-  if (services.length === 0) return { sessions: [], services };
-  upsertTopologyServices(services, "stopped", { projectRoot });
+  if (services.length > 0) {
+    upsertTopologyServices(services, "stopped", { projectRoot });
+  }
 
   const statePath = getStatePath();
   let existing: SavedState | null = null;
