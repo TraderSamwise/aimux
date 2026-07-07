@@ -416,7 +416,7 @@ Update this table after each epic PR.
 | 2026-07-07 | #352 | Runtime topology authority | Partial | Partial | Runtime topology reconciliation moved into `runtime-core`, preserving recoverable topology rows while dropping explicit removals; focused and full gates passed. |
 | 2026-07-07 | #353 | Runtime topology authority | Partial | Mostly done | Stop/runtime-exit/backend recovery/graveyard resurrection write topology first and reload projections; stale offline projection can no longer suppress current topology writes; focused and full gates passed. |
 | 2026-07-07 | #354 | Runtime exchange authority | Partial | Mostly done | Legacy thread/task directory helpers renamed to explicit import-only helpers; direct legacy exchange path construction is guarded; thread/task compatibility APIs remain exchange-backed; focused and full gates passed. |
-| 2026-07-07 | TBD | Runtime exchange authority | Mostly done | Mostly done | Alert recipient derivation moved into runtime-core exchange routing helpers; metadata-server local recipient derivation is boundary-guarded; focused and full gates passed. |
+| 2026-07-07 | #355 | Runtime exchange authority | Mostly done | Mostly done | Alert recipient derivation moved into runtime-core exchange routing helpers; metadata-server local recipient derivation is boundary-guarded; focused and full gates passed. |
 
 ## How To Measure Progress
 
