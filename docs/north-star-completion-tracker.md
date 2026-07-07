@@ -37,7 +37,7 @@ Use these labels consistently:
 | Web/mobile resource lifecycle | Mostly done | Medium | Medium | Major app resources preserve stale snapshots; remaining screen-local fetch state and route-race patterns need audit. |
 | Project-service events parity | Mostly done | Medium | Medium | Shared invalidation groups cover every API-backed view; HTTP mutations publish view-scoped `project_update` events and app/TUI clients consume the same semantic event. |
 | Runtime topology authority | Mostly done | Medium | Medium | Services/worktrees are topology-owned; agent resume/graveyard/exit paths are topology-gated; `offlineSessions` is being reduced to a projection cache. Binding and team-role authority remain. |
-| Runtime exchange authority | Mostly done | Low for next build | Medium | Threads/messages/tasks are exchange-backed; handoffs/reviews/waits/inbox are exchange-derived; legacy thread/task dirs are import-only. Alert routing and plan/continuity/status/attachment boundaries remain. |
+| Runtime exchange authority | Mostly done | Low for next build | Medium | Threads/messages/tasks are exchange-backed; handoffs/reviews/waits/inbox are exchange-derived; alert recipient routing is exchange-owned; legacy thread/task dirs are import-only. Plan/continuity/status/attachment boundaries remain. |
 | tmux boundary | Mostly done | Medium | Medium | tmux is treated as substrate for local navigation/focus, but binding recovery and remote equivalents need finalization. |
 | Upgrade/restart coherence | Mostly done | High | Medium | `aimux restart` and install repair are strong; release rehearsal must prove multi-project coherence from old builds. |
 | Dead-code/dead-path deletion | Partial | Low for next build | High | Inventories exist; old paths remain until each authority cut lands. |
@@ -319,7 +319,7 @@ Remaining:
 - [x] Model handoffs as exchange-derived records.
 - [x] Model tasks and reviews as exchange-backed or exchange-derived records.
 - [x] Replace legacy wait/inbox files with exchange-derived wait/inbox state.
-- [ ] Move alert recipient derivation into exchange-owned routing semantics.
+- [x] Move alert recipient derivation into exchange-owned routing semantics.
 - [ ] Decide plan, continuity, status, and attachment authority boundaries.
 - [x] Keep old thread/task files as explicit import-only artifacts or fail-closed
   compatibility only.
@@ -416,6 +416,7 @@ Update this table after each epic PR.
 | 2026-07-07 | #352 | Runtime topology authority | Partial | Partial | Runtime topology reconciliation moved into `runtime-core`, preserving recoverable topology rows while dropping explicit removals; focused and full gates passed. |
 | 2026-07-07 | #353 | Runtime topology authority | Partial | Mostly done | Stop/runtime-exit/backend recovery/graveyard resurrection write topology first and reload projections; stale offline projection can no longer suppress current topology writes; focused and full gates passed. |
 | 2026-07-07 | #354 | Runtime exchange authority | Partial | Mostly done | Legacy thread/task directory helpers renamed to explicit import-only helpers; direct legacy exchange path construction is guarded; thread/task compatibility APIs remain exchange-backed; focused and full gates passed. |
+| 2026-07-07 | TBD | Runtime exchange authority | Mostly done | Mostly done | Alert recipient derivation moved into runtime-core exchange routing helpers; metadata-server local recipient derivation is boundary-guarded; focused and full gates passed. |
 
 ## How To Measure Progress
 
