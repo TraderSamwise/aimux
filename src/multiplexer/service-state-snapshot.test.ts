@@ -6,10 +6,12 @@ import { tmpdir } from "node:os";
 import {
   mergeRuntimeSnapshots,
   mergeServiceSnapshots,
+  persistProjectRuntimeSnapshotsBeforeTmuxStop,
   snapshotProjectServiceWindows,
 } from "./service-state-snapshot.js";
 import { initPaths } from "../paths.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 
 describe("service-state-snapshot", () => {
   it("merges runtime-stop service snapshots as offline services without stale tmux retention", () => {
@@ -112,6 +114,58 @@ describe("service-state-snapshot", () => {
         services: [],
       });
       expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("demotes observed running services to topology stopped state before tmux stop", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-service-stop-snapshot-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    const target = { sessionName: "aimux-repo", windowId: "@2", windowIndex: 2, windowName: "web" };
+    try {
+      upsertTopologyService(
+        {
+          id: "service-1",
+          label: "web",
+          launchCommandLine: "yarn web",
+          worktreePath: repoRoot,
+          tmuxTarget: target,
+        },
+        "running",
+        { projectRoot: repoRoot },
+      );
+      const tmux: any = {
+        listProjectManagedWindows: () => [
+          {
+            target,
+            metadata: {
+              kind: "service",
+              sessionId: "service-1",
+              label: "web",
+              launchCommandLine: "yarn web",
+              worktreePath: repoRoot,
+              createdAt: "2026-05-01T00:00:00.000Z",
+            },
+          },
+        ],
+        isWindowAlive: () => true,
+        displayMessage: () => repoRoot,
+      };
+
+      persistProjectRuntimeSnapshotsBeforeTmuxStop(repoRoot, tmux);
+
+      expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
+        {
+          id: "service-1",
+          status: "stopped",
+          label: "web",
+          launchCommandLine: "yarn web",
+          worktreePath: repoRoot,
+          retained: true,
+        },
+      ]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
