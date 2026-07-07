@@ -4,6 +4,7 @@ import { isSessionNotificationFocused } from "./notification-context.js";
 import type { InteractionType } from "./interaction-requests.js";
 import {
   PROJECT_API_EVENT_NAMES,
+  PROJECT_API_VIEW_INVALIDATIONS,
   PROJECT_API_VIEWS,
   type ProjectApiView,
   type ProjectUpdateEvent,
@@ -161,7 +162,7 @@ export class ProjectEventBus {
 
     this.publish(event);
     this.publishProjectUpdate({
-      views: ["coordination-worklist", "notifications"],
+      views: [...PROJECT_API_VIEW_INVALIDATIONS.notifications],
       reason: "alert",
       sessionId: alert.sessionId,
       worktreePath: alert.worktreePath,

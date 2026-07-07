@@ -34,6 +34,7 @@ describe("project API view refresh registry", () => {
         "graveyard",
         "library",
         "notifications",
+        "plans",
         "project-observability",
         "services",
         "tasks",
@@ -87,6 +88,7 @@ describe("project API view refresh registry", () => {
       "notifications",
       "project-observability",
     ]);
+    expect(projectApiViewsForRefresh(["plans"])).toEqual(["plans"]);
     expect(projectApiViewsForRefresh(["desktop-state"])).toEqual([
       "agents",
       "desktop-state",
