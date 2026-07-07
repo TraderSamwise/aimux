@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,7 +9,7 @@ import {
   persistProjectRuntimeSnapshotsBeforeTmuxStop,
   snapshotProjectServiceWindows,
 } from "./service-state-snapshot.js";
-import { initPaths } from "../paths.js";
+import { getStatePath, initPaths } from "../paths.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 
@@ -166,6 +166,33 @@ describe("service-state-snapshot", () => {
           retained: true,
         },
       ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("clears stale compatibility service snapshots when no service windows are observed", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-empty-service-stop-snapshot-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    try {
+      writeFileSync(
+        getStatePath(),
+        JSON.stringify({
+          savedAt: "2026-05-01T00:00:00.000Z",
+          cwd: repoRoot,
+          services: [{ id: "stale-service", label: "stale", launchCommandLine: "yarn stale" }],
+        }),
+      );
+      const tmux: any = {
+        listProjectManagedWindows: () => [],
+      };
+
+      const result = persistProjectRuntimeSnapshotsBeforeTmuxStop(repoRoot, tmux);
+      const state = JSON.parse(readFileSync(getStatePath(), "utf-8"));
+
+      expect(result.services).toEqual([]);
+      expect(state).toMatchObject({ cwd: repoRoot, services: [] });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
