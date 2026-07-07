@@ -11,6 +11,7 @@ import {
   removeTopologyServicesForWorktree,
   topologyServiceToServiceState,
   upsertTopologyService,
+  upsertTopologyServices,
 } from "./topology-services.js";
 
 describe("topology service lifecycle", () => {
@@ -100,6 +101,32 @@ describe("topology service lifecycle", () => {
     expect(listTopologyServiceStates({ statuses: ["stopped"], store })).toMatchObject([
       { id: "service-api", status: "stopped", launchCommandLine: "yarn api", retained: true },
     ]);
+  });
+
+  it("batch upserts multiple service records in one topology update", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologyServices(
+      [
+        {
+          id: "service-api",
+          launchCommandLine: "yarn api",
+          tmuxTarget: { sessionName: "aimux-repo", windowId: "@3", windowIndex: 3, windowName: "api" },
+        },
+        {
+          id: "service-web",
+          launchCommandLine: "yarn web",
+          tmuxTarget: { sessionName: "aimux-repo", windowId: "@4", windowIndex: 4, windowName: "web" },
+        },
+      ],
+      "stopped",
+      { store, projectRoot: repoRoot, now: "2026-05-25T00:00:00.000Z" },
+    );
+
+    expect(listTopologyServiceStates({ statuses: ["stopped"], store })).toMatchObject([
+      { id: "service-api", launchCommandLine: "yarn api", retained: true },
+      { id: "service-web", launchCommandLine: "yarn web", retained: true },
+    ]);
+    expect(store.read().bindings.map((binding) => binding.tmuxWindowId)).toEqual(["@3", "@4"]);
   });
 
   it("removes service topology and dependent operation references", () => {
