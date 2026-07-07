@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { getPlansDir, getStatusDir, getHistoryDir, getRuntimeExchangePath } from "./paths.js";
+import { getStatusDir, getHistoryDir, getRuntimeExchangePath } from "./paths.js";
 import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
 import { readHistory } from "./context/history.js";
+import { getPlanAuthorityDir, listPlanAuthorityEntries } from "./runtime-core/plan-authority.js";
 
 function safeRead(path: string): string {
   try {
@@ -80,11 +81,9 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
   const lastHistoryBySession = new Map<string, string>();
   let taskWatcherPrimed = false;
   let historyWatcherPrimed = false;
-  const planWatcher = new DirectoryPoller(getPlansDir(), () => {
-    for (const file of existsSync(getPlansDir()) ? readdirSync(getPlansDir()) : []) {
-      const sessionId = sessionIdFromFile(file, ".md");
-      if (!sessionId) continue;
-      const progress = parsePlanProgress(safeRead(join(getPlansDir(), file)));
+  const planWatcher = new DirectoryPoller(getPlanAuthorityDir(), () => {
+    for (const { sessionId, content } of listPlanAuthorityEntries()) {
+      const progress = parsePlanProgress(content);
       if (progress) {
         const progressKey = `${progress.current}/${progress.total}/${progress.label ?? ""}`;
         if (lastProgressBySession.get(sessionId) === progressKey) continue;

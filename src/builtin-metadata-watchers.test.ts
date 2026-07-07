@@ -2,10 +2,11 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths, getPlansDir, getStatusDir, getHistoryDir } from "./paths.js";
+import { initPaths, getStatusDir, getHistoryDir } from "./paths.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { writeTask } from "./tasks.js";
 import { appendTurn } from "./context/history.js";
+import { writePlanContent } from "./runtime-core/plan-authority.js";
 
 describe("createBuiltinMetadataWatchers", () => {
   let repoRoot = "";
@@ -33,12 +34,8 @@ describe("createBuiltinMetadataWatchers", () => {
 
   it("loads initial status and plan progress", () => {
     mkdirSync(getStatusDir(), { recursive: true });
-    mkdirSync(getPlansDir(), { recursive: true });
     writeFileSync(join(getStatusDir(), "s1.md"), "Working through auth\nmore");
-    writeFileSync(
-      join(getPlansDir(), "s1.md"),
-      ["# Plan", "", "- [x] inspect", "- [ ] patch", "- [ ] test"].join("\n"),
-    );
+    writePlanContent("s1", ["# Plan", "", "- [x] inspect", "- [ ] patch", "- [ ] test"].join("\n"));
 
     const watchers = createBuiltinMetadataWatchers({
       projectRoot: repoRoot,
@@ -79,9 +76,8 @@ describe("createBuiltinMetadataWatchers", () => {
   it("does not rewrite unchanged status and plan progress on every poll", async () => {
     vi.useFakeTimers();
     mkdirSync(getStatusDir(), { recursive: true });
-    mkdirSync(getPlansDir(), { recursive: true });
     writeFileSync(join(getStatusDir(), "s1.md"), "Still working\n");
-    writeFileSync(join(getPlansDir(), "s1.md"), ["- [x] inspect", "- [ ] patch"].join("\n"));
+    writePlanContent("s1", ["- [x] inspect", "- [ ] patch"].join("\n"));
 
     const watchers = createBuiltinMetadataWatchers({
       projectRoot: repoRoot,
