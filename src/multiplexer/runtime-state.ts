@@ -13,6 +13,7 @@ import {
   moveTopologySessionToGraveyard,
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
+import type { RuntimeTopologySessionStatus } from "../runtime-core/topology-store.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
@@ -75,10 +76,7 @@ function listLiveServiceWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   return windows;
 }
 
-function findTopologySession(
-  sessionId: string,
-  statuses?: Array<"running" | "idle" | "starting" | "offline" | "graveyard">,
-) {
+function findTopologySession(sessionId: string, statuses?: RuntimeTopologySessionStatus[]) {
   return listTopologySessionStates(statuses ? { statuses } : undefined).find((session) => session.id === sessionId);
 }
 
