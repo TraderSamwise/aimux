@@ -1,4 +1,5 @@
 import { createRuntimeTopologyStore } from "./topology-store.js";
+import { withProjectPaths } from "../paths.js";
 
 export interface RecordTopologyBackendSessionIdInput {
   projectRoot?: string;
@@ -26,6 +27,12 @@ export function recordTopologyBackendSessionId(
   const backendSessionId = input.backendSessionId.trim();
   if (!sessionId) throw new Error("sessionId is required");
   if (!backendSessionId) throw new Error("backendSessionId is required");
+
+  if (input.projectRoot) {
+    return withProjectPaths(input.projectRoot, () =>
+      recordTopologyBackendSessionId({ ...input, projectRoot: undefined }),
+    );
+  }
 
   const store = createRuntimeTopologyStore();
   const now = new Date().toISOString();

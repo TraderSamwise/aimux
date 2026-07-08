@@ -634,9 +634,13 @@ describe("TmuxRuntimeManager", () => {
     ).toHaveLength(2);
   });
 
-  it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
-    const prev = process.env.AIMUX_HOME;
+  it("bakes control-plane identity into the expose/meta bindings when set", () => {
+    const prevHome = process.env.AIMUX_HOME;
+    const prevHost = process.env.AIMUX_DAEMON_HOST;
+    const prevPort = process.env.AIMUX_DAEMON_PORT;
     process.env.AIMUX_HOME = "/home/user/.aimux-custom";
+    process.env.AIMUX_DAEMON_HOST = "127.0.0.2";
+    process.env.AIMUX_DAEMON_PORT = "44191";
     try {
       const exec = createExecMock();
       const manager = new TmuxRuntimeManager(exec);
@@ -644,11 +648,21 @@ describe("TmuxRuntimeManager", () => {
       const bindings = exec.calls.filter((c) => c.args[0] === "bind-key" && c.args[2] === "prefix");
       const g = bindings.find((c) => c.args[3] === "g")?.args.join(" ") ?? "";
       const m = bindings.find((c) => c.args[3] === "m")?.args.join(" ") ?? "";
-      expect(g.includes("--aimux-home") && g.includes("/home/user/.aimux-custom")).toBe(true);
-      expect(m.includes("--aimux-home") && m.includes("/home/user/.aimux-custom")).toBe(true);
+      for (const binding of [g, m]) {
+        expect(binding).toContain("--aimux-home");
+        expect(binding).toContain("/home/user/.aimux-custom");
+        expect(binding).toContain("--daemon-host");
+        expect(binding).toContain("127.0.0.2");
+        expect(binding).toContain("--daemon-port");
+        expect(binding).toContain("44191");
+      }
     } finally {
-      if (prev === undefined) delete process.env.AIMUX_HOME;
-      else process.env.AIMUX_HOME = prev;
+      if (prevHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = prevHome;
+      if (prevHost === undefined) delete process.env.AIMUX_DAEMON_HOST;
+      else process.env.AIMUX_DAEMON_HOST = prevHost;
+      if (prevPort === undefined) delete process.env.AIMUX_DAEMON_PORT;
+      else process.env.AIMUX_DAEMON_PORT = prevPort;
     }
   });
 
@@ -1737,6 +1751,135 @@ describe("TmuxRuntimeManager", () => {
       "/repo/mobile/dist/launcher-bin.js",
       "--tmux-dashboard-internal",
     ]);
+  });
+
+  it("replaces a window only after a detached replacement reports ready", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "display-message -p -t @1 #{window_active}") return "1";
+      if (joined.startsWith("new-window -d -P -t aimux-mobile-abc ")) {
+        return "@2\t2\taimux-reload-1";
+      }
+      if (joined === "show-window-options -v -t @2 @ready") return "stamp";
+      if (joined.startsWith("list-windows -t aimux-mobile-abc -F ")) {
+        return ["@2\t0\tdashboard\t1\t100\t0", "@1\t2\tdashboard-old\t0\t90\t0"].join("\n");
+      }
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    const replacement = manager.replaceWindowWhenReady(
+      {
+        sessionName: "aimux-mobile-abc",
+        windowId: "@1",
+        windowIndex: 0,
+        windowName: "dashboard",
+      },
+      {
+        cwd: "/repo/mobile",
+        command: "/usr/local/bin/node",
+        args: ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"],
+      },
+      { option: "@ready", value: "stamp", timeoutMs: 100 },
+    );
+
+    expect(replacement).toEqual({
+      sessionName: "aimux-mobile-abc",
+      windowId: "@2",
+      windowIndex: 0,
+      windowName: "dashboard",
+      paneDead: false,
+    });
+    const newWindowCall = exec.mock.calls.find((call) => call[0][0] === "new-window")?.[0] ?? [];
+    expect(newWindowCall).toContain("-d");
+    expect(newWindowCall[newWindowCall.indexOf("-n") + 1]).not.toMatch(/^dashboard/);
+    const ordered = exec.mock.calls
+      .map((call) => call[0].join(" "))
+      .filter((call) => /rename-window|swap-window|kill-window|select-window/.test(call));
+    expect(ordered).toEqual([
+      "rename-window -t @1 dashboard-old",
+      "rename-window -t @2 dashboard",
+      "swap-window -d -s @2 -t @1",
+      "kill-window -t @1",
+      "select-window -t @2",
+    ]);
+  });
+
+  it("kills a timed-out replacement without touching the original window", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "display-message -p -t @1 #{window_active}") return "0";
+      if (joined.startsWith("new-window -d -P -t aimux-mobile-abc ")) {
+        return "@2\t2\taimux-reload-1";
+      }
+      if (joined === "show-window-options -v -t @2 @ready") return "";
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    expect(() =>
+      manager.replaceWindowWhenReady(
+        {
+          sessionName: "aimux-mobile-abc",
+          windowId: "@1",
+          windowIndex: 0,
+          windowName: "dashboard",
+        },
+        {
+          cwd: "/repo/mobile",
+          command: "/usr/local/bin/node",
+          args: ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"],
+        },
+        { option: "@ready", value: "stamp", timeoutMs: 1 },
+      ),
+    ).toThrow(/Timed out waiting for replacement tmux window @2/);
+
+    expect(exec.mock.calls.map((call) => call[0].join(" "))).toContain("kill-window -t @2");
+    expect(exec.mock.calls.map((call) => call[0].join(" "))).not.toContain("kill-window -t @1");
+  });
+
+  it("rolls back a ready replacement when the window swap fails", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "display-message -p -t @1 #{window_active}") return "1";
+      if (joined.startsWith("new-window -d -P -t aimux-mobile-abc ")) {
+        return "@2\t2\taimux-reload-1";
+      }
+      if (joined === "show-window-options -v -t @2 @ready") return "stamp";
+      if (joined === "swap-window -d -s @2 -t @1") throw new Error("swap failed");
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    expect(() =>
+      manager.replaceWindowWhenReady(
+        {
+          sessionName: "aimux-mobile-abc",
+          windowId: "@1",
+          windowIndex: 0,
+          windowName: "dashboard",
+        },
+        {
+          cwd: "/repo/mobile",
+          command: "/usr/local/bin/node",
+          args: ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"],
+        },
+        { option: "@ready", value: "stamp", timeoutMs: 100 },
+      ),
+    ).toThrow(/swap failed/);
+
+    const calls = exec.mock.calls.map((call) => call[0].join(" "));
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "rename-window -t @1 dashboard-old",
+        "rename-window -t @2 dashboard",
+        "swap-window -d -s @2 -t @1",
+        "rename-window -t @1 dashboard",
+        "kill-window -t @2",
+      ]),
+    );
+    expect(calls.some((call) => /^rename-window -t @2 aimux-reload-1-[a-z0-9]+$/.test(call))).toBe(true);
+    expect(calls).not.toContain("kill-window -t @1");
   });
 
   it("detects whether aimux is already inside tmux", () => {

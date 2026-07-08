@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { getProjectId, getRepoRoot } from "../paths.js";
+import { getProjectId, getRepoRoot, withProjectPaths } from "../paths.js";
 import {
   createRuntimeTopologyStore,
   emptyRuntimeTopology,
@@ -26,6 +26,7 @@ export type RuntimeTopologySessionState = {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  freshRelaunchAllowed?: boolean;
   restoreBlockedReason?: string;
   graveyardReason?: string;
   tmuxTarget?: {
@@ -47,6 +48,11 @@ type SaveRuntimeTopologySessionsInput = {
 type ReconcileRuntimeTopologySessionsInput = SaveRuntimeTopologySessionsInput & {
   removedSessionIds?: Iterable<string>;
 };
+
+function withProjectStore<T>(projectRoot: string | undefined, store: RuntimeTopologyStore | undefined, fn: () => T): T {
+  if (projectRoot && !store) return withProjectPaths(projectRoot, fn);
+  return fn();
+}
 
 function sessionStateKey(session: RuntimeTopologySessionState): string {
   return session.backendSessionId ? `backend:${session.backendSessionId}` : `id:${session.id}`;
@@ -150,6 +156,7 @@ function sessionToTopologySession(
     worktreePath: session.worktreePath,
     label: session.label,
     headline: session.headline,
+    freshRelaunchAllowed: session.lifecycle === "offline" ? session.freshRelaunchAllowed : undefined,
     restoreBlockedReason: session.lifecycle === "offline" ? session.restoreBlockedReason : undefined,
     graveyardReason: session.graveyardReason,
     team: session.team,
@@ -204,6 +211,7 @@ export function topologySessionToSessionState(
     worktreePath: session.worktreePath ?? node?.cwd,
     label: session.label ?? node?.label,
     headline: session.headline,
+    freshRelaunchAllowed: session.freshRelaunchAllowed,
     restoreBlockedReason: session.restoreBlockedReason,
     graveyardedAt: session.graveyardedAt,
     graveyardReason: session.graveyardReason,
@@ -222,8 +230,11 @@ export function topologySessionToSessionState(
 export function listTopologySessionStates(input?: {
   statuses?: RuntimeTopologySessionStatus[];
   store?: RuntimeTopologyStore;
+  projectRoot?: string;
 }): RuntimeTopologySessionState[] {
-  const topology = (input?.store ?? createRuntimeTopologyStore()).read();
+  const readTopology = () => (input?.store ?? createRuntimeTopologyStore()).read();
+  const topology =
+    input?.projectRoot && !input.store ? withProjectPaths(input.projectRoot, readTopology) : readTopology();
   const statuses = input?.statuses ? new Set(input.statuses) : undefined;
   return topology.sessions
     .filter((session) => !statuses || statuses.has(session.status))
@@ -231,55 +242,60 @@ export function listTopologySessionStates(input?: {
 }
 
 export function saveRuntimeTopologySessions(input: SaveRuntimeTopologySessionsInput): RuntimeTopology {
-  const store = input.store ?? createRuntimeTopologyStore();
-  const now = input.now ?? new Date().toISOString();
-  const projectRoot = input.projectRoot ?? getRepoRoot();
-  return store.update((current) => {
-    const topology = current.version ? current : emptyRuntimeTopology(now);
-    return replaceRuntimeTopologySessions(topology, input.sessions, projectRoot, now);
+  return withProjectStore(input.projectRoot, input.store, () => {
+    const store = input.store ?? createRuntimeTopologyStore();
+    const now = input.now ?? new Date().toISOString();
+    const projectRoot = input.projectRoot ?? getRepoRoot();
+    return store.update((current) => {
+      const topology = current.version ? current : emptyRuntimeTopology(now);
+      return replaceRuntimeTopologySessions(topology, input.sessions, projectRoot, now);
+    });
   });
 }
 
 export function reconcileRuntimeTopologySessions(input: ReconcileRuntimeTopologySessionsInput): RuntimeTopology {
-  const store = input.store ?? createRuntimeTopologyStore();
-  const now = input.now ?? new Date().toISOString();
-  const projectRoot = input.projectRoot ?? getRepoRoot();
-  return store.update((current) => {
-    const topology = current.version ? current : emptyRuntimeTopology(now);
-    const removedSessionIds = new Set(input.removedSessionIds ?? []);
-    const topologySessions = topology.sessions
-      .filter((session) => session.status === "running" || session.status === "idle" || session.status === "offline")
-      .map((session) => topologySessionToSessionState(session, topology));
-    const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
-    const topologyById = new Map(topologySessions.map((session) => [session.id, session]));
-    const incomingSessions = dedupeSessionStates(
-      input.sessions.map((session) => {
-        if (session.lifecycle !== "offline") return session;
-        const existing =
-          topologyByKey.get(sessionStateKey(session)) ??
-          (!session.backendSessionId ? topologyById.get(session.id) : undefined);
-        if (!existing) return session;
-        return {
-          ...session,
-          backendSessionId: session.backendSessionId ?? existing.backendSessionId,
-          restoreBlockedReason: session.restoreBlockedReason ?? existing.restoreBlockedReason,
-        };
-      }),
-    );
-    const incomingBackendIds = new Set(incomingSessions.map((session) => session.backendSessionId).filter(Boolean));
-    const incomingIds = new Set(incomingSessions.map((session) => session.id));
-    const preservedSessions = topologySessions.filter((session) => {
-      if (removedSessionIds.has(session.id)) return false;
-      if (session.backendSessionId && incomingBackendIds.has(session.backendSessionId)) return false;
-      if (incomingIds.has(session.id)) return false;
-      return isRecoverableExistingSession(session);
+  return withProjectStore(input.projectRoot, input.store, () => {
+    const store = input.store ?? createRuntimeTopologyStore();
+    const now = input.now ?? new Date().toISOString();
+    const projectRoot = input.projectRoot ?? getRepoRoot();
+    return store.update((current) => {
+      const topology = current.version ? current : emptyRuntimeTopology(now);
+      const removedSessionIds = new Set(input.removedSessionIds ?? []);
+      const topologySessions = topology.sessions
+        .filter((session) => session.status === "running" || session.status === "idle" || session.status === "offline")
+        .map((session) => topologySessionToSessionState(session, topology));
+      const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
+      const topologyById = new Map(topologySessions.map((session) => [session.id, session]));
+      const incomingSessions = dedupeSessionStates(
+        input.sessions.map((session) => {
+          if (session.lifecycle !== "offline") return session;
+          const existing =
+            topologyByKey.get(sessionStateKey(session)) ??
+            (!session.backendSessionId ? topologyById.get(session.id) : undefined);
+          if (!existing) return session;
+          return {
+            ...session,
+            backendSessionId: session.backendSessionId ?? existing.backendSessionId,
+            freshRelaunchAllowed: session.freshRelaunchAllowed ?? existing.freshRelaunchAllowed,
+            restoreBlockedReason: session.restoreBlockedReason ?? existing.restoreBlockedReason,
+          };
+        }),
+      );
+      const incomingBackendIds = new Set(incomingSessions.map((session) => session.backendSessionId).filter(Boolean));
+      const incomingIds = new Set(incomingSessions.map((session) => session.id));
+      const preservedSessions = topologySessions.filter((session) => {
+        if (removedSessionIds.has(session.id)) return false;
+        if (session.backendSessionId && incomingBackendIds.has(session.backendSessionId)) return false;
+        if (incomingIds.has(session.id)) return false;
+        return isRecoverableExistingSession(session);
+      });
+      return replaceRuntimeTopologySessions(
+        topology,
+        dedupeSessionStates([...preservedSessions, ...incomingSessions]),
+        projectRoot,
+        now,
+      );
     });
-    return replaceRuntimeTopologySessions(
-      topology,
-      dedupeSessionStates([...preservedSessions, ...incomingSessions]),
-      projectRoot,
-      now,
-    );
   });
 }
 
@@ -333,28 +349,30 @@ export function upsertTopologySession(
   status: RuntimeTopologySessionStatus,
   input?: { store?: RuntimeTopologyStore; now?: string; projectRoot?: string },
 ): RuntimeTopology {
-  const store = input?.store ?? createRuntimeTopologyStore();
-  const now = input?.now ?? new Date().toISOString();
-  const projectRoot = input?.projectRoot ?? getRepoRoot();
-  return store.update((topology) => {
-    topology.generatedAt = now;
-    const rigId = ensureRig(topology, projectRoot, now);
-    const node = upsertNode(topology, session, rigId, now);
-    const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
-    if (status !== "offline") {
-      delete nextSession.restoreBlockedReason;
-    }
-    if (status !== "graveyard") {
-      delete nextSession.graveyardedAt;
-      delete nextSession.graveyardReason;
-    }
-    topology.sessions = [...topology.sessions.filter((entry) => entry.id !== session.id), nextSession];
-    const shouldBind = status === "running" || status === "idle" || status === "starting";
-    const binding = shouldBind ? sessionToBinding({ ...session, lifecycle: "live" }, node.id, now) : undefined;
-    topology.bindings = binding
-      ? [...topology.bindings.filter((entry) => entry.id !== binding.id), binding]
-      : topology.bindings.filter((entry) => entry.nodeId !== node.id);
-    return topology;
+  return withProjectStore(input?.projectRoot, input?.store, () => {
+    const store = input?.store ?? createRuntimeTopologyStore();
+    const now = input?.now ?? new Date().toISOString();
+    const projectRoot = input?.projectRoot ?? getRepoRoot();
+    return store.update((topology) => {
+      topology.generatedAt = now;
+      const rigId = ensureRig(topology, projectRoot, now);
+      const node = upsertNode(topology, session, rigId, now);
+      const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
+      if (status !== "offline") {
+        delete nextSession.restoreBlockedReason;
+      }
+      if (status !== "graveyard") {
+        delete nextSession.graveyardedAt;
+        delete nextSession.graveyardReason;
+      }
+      topology.sessions = [...topology.sessions.filter((entry) => entry.id !== session.id), nextSession];
+      const shouldBind = status === "running" || status === "idle" || status === "starting";
+      const binding = shouldBind ? sessionToBinding({ ...session, lifecycle: "live" }, node.id, now) : undefined;
+      topology.bindings = binding
+        ? [...topology.bindings.filter((entry) => entry.id !== binding.id), binding]
+        : topology.bindings.filter((entry) => entry.nodeId !== node.id);
+      return topology;
+    });
   });
 }
 

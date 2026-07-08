@@ -27,6 +27,16 @@ describe("getDashboardCommandSpec", () => {
     expect(spec.dashboardCommand.args[1]).toContain(spec.scriptPath);
   });
 
+  it("prints an immediate startup frame before launching Node", () => {
+    const command = getDashboardCommandSpec("/tmp/repo").dashboardCommand.args[1] ?? "";
+    const preludeIndex = command.indexOf("Starting Aimux dashboard...");
+    const entrypointIndex = command.indexOf("--tmux-dashboard-internal");
+
+    expect(preludeIndex).toBeGreaterThanOrEqual(0);
+    expect(entrypointIndex).toBeGreaterThan(preludeIndex);
+    expect(command).not.toContain("\x1b[?1049h");
+  });
+
   it("bakes allowlisted aimux environment into the dashboard process", () => {
     const spec = getDashboardCommandSpec("/tmp/repo", {
       AIMUX_HOME: "/tmp/custom'home; echo unsafe",

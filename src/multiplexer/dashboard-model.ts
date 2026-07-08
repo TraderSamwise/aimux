@@ -25,6 +25,7 @@ import { setPendingDashboardSessionAction } from "./dashboard-ops.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
+import { shouldRelaunchFreshSession as shouldRelaunchFreshSessionState } from "../session-fresh-relaunch.js";
 import { log } from "../debug.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { getOrCreateTuiApiRuntime, hasTuiApiRuntimeReadTransport, scheduleTuiApiRecovery } from "./tui-api-runtime.js";
@@ -96,7 +97,7 @@ function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
   for (const session of host.offlineSessions ?? []) {
     if (session?.id) sessionsById.set(session.id, session);
   }
-  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+  for (const session of listTopologySessionStates({ statuses: ["offline"], projectRoot: projectRootFor(host) })) {
     if (session?.id && !sessionsById.has(session.id)) sessionsById.set(session.id, session);
   }
   return [...sessionsById.values()];
@@ -107,7 +108,7 @@ function listOfflineSessionsForDashboard(host: DashboardModelHost): any[] {
   for (const session of host.offlineSessions ?? []) {
     if (session?.id) sessionsById.set(session.id, session);
   }
-  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+  for (const session of listTopologySessionStates({ statuses: ["offline"], projectRoot: projectRootFor(host) })) {
     if (session?.id) sessionsById.set(session.id, session);
   }
   return [...sessionsById.values()];
@@ -123,8 +124,8 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
 }
 
 function shouldRelaunchFreshSession(host: DashboardModelHost, sessionId: string): boolean {
-  const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
-  return derived?.activity === "error" || derived?.attention === "error";
+  const offline = resolveOfflineSessionForAction(host, sessionId);
+  return shouldRelaunchFreshSessionState(offline ?? { id: sessionId }, projectRootFor(host));
 }
 
 function findDashboardSessionSeed(
@@ -225,6 +226,26 @@ function isMetadataSessionRunning(host: DashboardModelHost, sessionId: string): 
   return hasLiveManagedAgentWindow(host, sessionId);
 }
 
+function findMetadataDashboardSession(host: DashboardModelHost, sessionId: string): any | undefined {
+  const raw = Array.isArray(host.dashboardRawSessionsCache) ? host.dashboardRawSessionsCache : undefined;
+  const pending = Array.isArray(host.dashboardSessionsCache) ? host.dashboardSessionsCache : undefined;
+  return (
+    raw?.find((session: any) => session.id === sessionId) ?? pending?.find((session: any) => session.id === sessionId)
+  );
+}
+
+function metadataSessionCanReceiveInput(host: DashboardModelHost, sessionId: string): boolean {
+  const session = findMetadataDashboardSession(host, sessionId);
+  if (session) {
+    if (session.status === "offline" || session.status === "exited") return false;
+    const runtime = session.semantic?.runtime;
+    if (runtime?.canReceiveInput === true) return true;
+    if (runtime?.canReceiveInput === false) return false;
+    if (runtime && runtime.isAlive === false) return false;
+  }
+  return isMetadataSessionRunning(host, sessionId);
+}
+
 async function waitForMetadataSessionRunning(host: DashboardModelHost, sessionId: string): Promise<boolean> {
   if (typeof host.waitForSessionStart === "function") {
     try {
@@ -234,11 +255,27 @@ async function waitForMetadataSessionRunning(host: DashboardModelHost, sessionId
   return waitForMetadataCondition(host, () => isMetadataSessionRunning(host, sessionId));
 }
 
+async function waitForMetadataSessionReadyForInput(host: DashboardModelHost, sessionId: string): Promise<boolean> {
+  if (typeof host.waitForSessionStart === "function") {
+    try {
+      if (!(await host.waitForSessionStart(sessionId, METADATA_PENDING_SETTLE_TIMEOUT_MS))) return false;
+    } catch {}
+  }
+  return waitForMetadataCondition(host, () => {
+    const offline = listTopologySessionStates({ statuses: ["offline"], projectRoot: projectRootFor(host) }).find(
+      (session) => session.id === sessionId,
+    );
+    if (offline?.restoreBlockedReason) throw new Error(offline.restoreBlockedReason);
+    return metadataSessionCanReceiveInput(host, sessionId);
+  });
+}
+
 async function settleMetadataPending<T>(
   host: DashboardModelHost,
   description: string,
   settle: MetadataPendingSettle<T> | undefined,
   result: T,
+  options: { throwOnError?: boolean } = {},
 ): Promise<void> {
   if (!settle) return;
   try {
@@ -251,6 +288,7 @@ async function settleMetadataPending<T>(
       `metadata pending action settle failed: ${description}: ${error instanceof Error ? error.message : String(error)}`,
       "dashboard",
     );
+    if (options.throwOnError) throw error;
   }
 }
 
@@ -302,6 +340,7 @@ export async function withMetadataSessionPending<T>(
   work: () => Promise<T> | T,
   sessionSeed?: DashboardSession,
   settle?: MetadataPendingSettle<T>,
+  options: { awaitSettle?: boolean } = {},
 ): Promise<T> {
   let token: number | undefined;
   if (sessionId) {
@@ -310,7 +349,20 @@ export async function withMetadataSessionPending<T>(
   try {
     const result = await work();
     if (sessionId) {
-      clearMetadataSessionPendingAfterSettle(host, sessionId, kind, token, settle, result);
+      if (options.awaitSettle) {
+        await settleMetadataPending(host, `session ${kind} ${sessionId}`, settle, result, { throwOnError: true });
+        if (typeof token === "number") {
+          if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
+            host.reapplyDashboardPendingActions?.();
+            scheduleDashboardModelReconcile(host);
+          }
+        } else if (host.dashboardPendingActions?.getSessionAction?.(sessionId) === kind) {
+          setPendingDashboardSessionAction(host, sessionId, null);
+          scheduleDashboardModelReconcile(host);
+        }
+      } else {
+        clearMetadataSessionPendingAfterSettle(host, sessionId, kind, token, settle, result);
+      }
     }
     return result;
   } catch (error) {
@@ -374,7 +426,8 @@ async function resumeOfflineAgentWithPending(
       return { sessionId, status: "running" as const };
     },
     findDashboardSessionSeed(host, sessionId),
-    () => waitForMetadataSessionRunning(host, sessionId),
+    () => waitForMetadataSessionReadyForInput(host, sessionId),
+    { awaitSettle: true },
   );
 }
 
@@ -382,9 +435,7 @@ async function resumeOfflineAgentWithPendingAndSettle(
   host: DashboardModelHost,
   sessionId: string,
 ): Promise<{ sessionId: string; status: "running" }> {
-  const result = await resumeOfflineAgentWithPending(host, sessionId);
-  await waitForMetadataSessionRunning(host, sessionId);
-  return result;
+  return resumeOfflineAgentWithPending(host, sessionId);
 }
 
 async function resumeAgentAndDirectTeammates(

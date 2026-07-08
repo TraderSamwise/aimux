@@ -593,6 +593,14 @@ export class TmuxRuntimeManager {
     }
   }
 
+  isWindowActive(target: TmuxTarget): boolean {
+    try {
+      return this.exec(["display-message", "-p", "-t", target.windowId, "#{window_active}"]).trim() === "1";
+    } catch {
+      return false;
+    }
+  }
+
   ensureDashboardWindow(sessionName: string, projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxTarget {
     const dashboardName = this.getDashboardWindowName();
     const existing = this.listWindows(sessionName).find((window) => isDashboardWindowName(window.name));
@@ -700,6 +708,59 @@ export class TmuxRuntimeManager {
     this.exec(["respawn-window", "-k", "-t", target.windowId, "-c", spec.cwd, spec.command, ...spec.args], {
       cwd: spec.cwd,
     });
+  }
+
+  replaceWindowWhenReady(
+    target: TmuxTarget,
+    spec: TmuxCommandSpec,
+    readiness: { option: string; value: string; timeoutMs: number },
+  ): TmuxTarget {
+    const wasActive = this.isWindowActive(target);
+    const replacementName = `aimux-reload-${target.windowId.replace(/[^a-zA-Z0-9_-]/g, "")}-${Date.now().toString(36)}`;
+    const replacement = this.createWindow(target.sessionName, replacementName, spec.cwd, spec.command, spec.args, {
+      detached: true,
+    });
+    const deadline = Date.now() + readiness.timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.getWindowOption(replacement, readiness.option) === readiness.value) {
+        const oldName = `${target.windowName}-old`;
+        let originalRenamed = false;
+        let replacementRenamed = false;
+        try {
+          this.renameWindow(target.windowId, oldName);
+          originalRenamed = true;
+          this.renameWindow(replacement.windowId, target.windowName);
+          replacementRenamed = true;
+          this.exec(["swap-window", "-d", "-s", replacement.windowId, "-t", target.windowId]);
+        } catch (error) {
+          if (replacementRenamed) {
+            try {
+              this.renameWindow(replacement.windowId, replacementName);
+            } catch {}
+          }
+          if (originalRenamed) {
+            try {
+              this.renameWindow(target.windowId, target.windowName);
+            } catch {}
+          }
+          try {
+            this.killWindow(replacement);
+          } catch {}
+          throw error;
+        }
+        const swapped = this.getTargetByWindowId(target.sessionName, replacement.windowId) ?? replacement;
+        try {
+          this.killWindow(target);
+        } catch {}
+        if (wasActive) this.selectWindow(swapped);
+        return swapped;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+    try {
+      this.killWindow(replacement);
+    } catch {}
+    throw new Error(`Timed out waiting for replacement tmux window ${replacement.windowId} to become ready`);
   }
 
   selectWindow(target: TmuxTarget): void {
@@ -1162,9 +1223,15 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-r", "-T", "prefix", "p", "run-shell", "-b", controlCommand("prev")]);
     this.exec(["bind-key", "-T", "prefix", "s", "run-shell", "-b", controlCommand("menu")]);
     this.exec(["bind-key", "-T", "prefix", "u", "run-shell", "-b", controlCommand("attention")]);
-    const metaHomeArg = process.env.AIMUX_HOME ? ` --aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "";
-    this.exec(["bind-key", "-T", "prefix", "g", "run-shell", "-b", controlCommand("expose", metaHomeArg.trim())]);
-    this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", metaHomeArg.trim())]);
+    const controlPlaneArgs = [
+      process.env.AIMUX_HOME ? `--aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "",
+      process.env.AIMUX_DAEMON_HOST ? `--daemon-host ${shellQuote(process.env.AIMUX_DAEMON_HOST)}` : "",
+      process.env.AIMUX_DAEMON_PORT ? `--daemon-port ${shellQuote(process.env.AIMUX_DAEMON_PORT)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    this.exec(["bind-key", "-T", "prefix", "g", "run-shell", "-b", controlCommand("expose", controlPlaneArgs)]);
+    this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", controlPlaneArgs)]);
     this.exec(["bind-key", "-T", "prefix", "e", "run-shell", "-b", controlCommand("team")]);
     this.exec(["bind-key", "-T", "prefix", "d", "run-shell", "-b", controlCommand("dashboard")]);
     this.exec(["bind-key", "-T", "prefix", "i", "run-shell", "-b", controlCommand("coordination")]);

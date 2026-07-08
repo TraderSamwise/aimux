@@ -279,6 +279,22 @@ describe("probeRuntimeGuard", () => {
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "stale", reason: "service-mismatch" });
   });
 
+  it("uses a restore-tolerant health timeout for local service probes", async () => {
+    loadMetadataEndpointMock.mockReturnValue({
+      host: "127.0.0.1",
+      port: 45123,
+      pid: 1234,
+      updatedAt: "2026-06-21T00:00:00.000Z",
+    });
+    requestJsonMock.mockResolvedValue({
+      status: 200,
+      json: { ok: true, pid: 1234, projectStateDir: repoProjectStateDir, serviceInfo: liveManifest },
+    });
+
+    await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "ok" });
+    expect(requestJsonMock).toHaveBeenCalledWith("http://127.0.0.1:45123/health", { timeoutMs: 10_000 });
+  });
+
   it("reports disconnected when a local service accepts the socket but misses the health timeout", async () => {
     loadMetadataEndpointMock.mockReturnValue({
       host: "127.0.0.1",
@@ -287,7 +303,7 @@ describe("probeRuntimeGuard", () => {
       updatedAt: "2026-06-21T00:00:00.000Z",
     });
     requestJsonMock.mockRejectedValue(
-      Object.assign(new Error("request timed out after 2500ms"), { code: "ETIMEDOUT" }),
+      Object.assign(new Error("request timed out after 10000ms"), { code: "ETIMEDOUT" }),
     );
 
     await expect(probeRuntimeGuard("/repo")).resolves.toEqual({ kind: "disconnected" });

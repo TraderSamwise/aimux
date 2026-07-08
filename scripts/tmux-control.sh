@@ -13,6 +13,8 @@ window_id=""
 pane_id=""
 item_index=""
 aimux_home=""
+daemon_host=""
+daemon_port=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -22,6 +24,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --aimux-home)
       aimux_home="${2-}"
+      shift 2
+      ;;
+    --daemon-host)
+      daemon_host="${2-}"
+      shift 2
+      ;;
+    --daemon-port)
+      daemon_port="${2-}"
       shift 2
       ;;
     --project-state-dir)
@@ -97,6 +107,7 @@ hydrate_from_tmux_pane() {
 hydrate_from_tmux_pane || true
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
 project_context_session() {
@@ -126,6 +137,10 @@ hydrate_project_context || true
 
 debug_log_line() {
   printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
+}
+
+shell_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
 
 resolve_live_client() {
@@ -502,7 +517,48 @@ show_local_switcher() {
 }
 
 show_local_expose() {
-  show_metadata_menu "all" "aimux project" || return 1
+  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
+    resolve_live_client || return 1
+  fi
+  popup_client_tty="${live_client_tty-}"
+  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
+  popup_session="${live_client_session-}"
+  [ -n "$popup_session" ] || popup_session="$current_client_session"
+  home_arg=""
+  [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
+  daemon_env=""
+  [ -n "$aimux_home" ] && daemon_env="$daemon_env AIMUX_HOME=$(shell_quote "$aimux_home")"
+  [ -n "$daemon_host" ] && daemon_env="$daemon_env AIMUX_DAEMON_HOST=$(shell_quote "$daemon_host")"
+  [ -n "$daemon_port" ] && daemon_env="$daemon_env AIMUX_DAEMON_PORT=$(shell_quote "$daemon_port")"
+  popup_retry_count=0
+  while :; do
+    backdrop_arg=""
+    prepaint=""
+    expose_backdrop=$(mktemp 2>/dev/null || true)
+    if [ -n "$expose_backdrop" ]; then
+      capture_target="${current_window_id:-$popup_session}"
+      if tmux capture-pane -p -e -t "$capture_target" -S 0 > "$expose_backdrop" 2>/dev/null; then
+        backdrop_arg="--backdrop-file $(shell_quote "$expose_backdrop")"
+        prepaint="printf '\\033[H'; cat $(shell_quote "$expose_backdrop"); "
+      else
+        rm -f "$expose_backdrop"
+      fi
+    fi
+    expose_cmd="${prepaint}exec env $daemon_env $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
+    if [ -n "$popup_client_tty" ]; then
+      tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      popup_status=$?
+    else
+      tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
+      popup_status=$?
+    fi
+    rm -f "$expose_backdrop"
+    if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 3 ]; then
+      popup_retry_count=$((popup_retry_count + 1))
+      continue
+    fi
+    break
+  done
   exit 0
 }
 

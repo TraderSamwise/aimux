@@ -83,6 +83,7 @@ import {
 import { buildRuntimeCoherenceReport, renderRuntimeCoherenceReport } from "./runtime-coherence.js";
 import { restartControlPlaneFromCli } from "./control-plane-restart-client.js";
 import { isAimuxBuildDriftError } from "./runtime-drift.js";
+import { registerExposeCommand } from "./popup-expose.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -3573,6 +3574,8 @@ teamCmd
     }
     printTeamInit(result.config);
   });
+
+registerExposeCommand(program);
 
 void program.parseAsync().catch((error: unknown) => {
   console.error(error);

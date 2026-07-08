@@ -4,10 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { listWorktreesMock, spawnMock } = vi.hoisted(() => ({
-  listWorktreesMock: vi.fn(() => []),
-  spawnMock: vi.fn(),
-}));
+const { findMainRepoMock, getWorktreeBaseDirMock, getWorktreeCreatePathMock, listWorktreesMock, spawnMock } =
+  vi.hoisted(() => ({
+    findMainRepoMock: vi.fn(() => "/repo"),
+    getWorktreeBaseDirMock: vi.fn(() => "/repo/.aimux/worktrees"),
+    getWorktreeCreatePathMock: vi.fn((name: string) => `/repo/.aimux/worktrees/${name}`),
+    listWorktreesMock: vi.fn(() => []),
+    spawnMock: vi.fn(),
+  }));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -21,9 +25,9 @@ vi.mock("../worktree.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../worktree.js")>();
   return {
     ...actual,
-    findMainRepo: vi.fn(() => "/repo"),
-    getWorktreeBaseDir: vi.fn(() => "/repo/.aimux/worktrees"),
-    getWorktreeCreatePath: vi.fn((name: string) => `/repo/.aimux/worktrees/${name}`),
+    findMainRepo: findMainRepoMock,
+    getWorktreeBaseDir: getWorktreeBaseDirMock,
+    getWorktreeCreatePath: getWorktreeCreatePathMock,
     getWorktreeAddArgs: vi.fn((name: string, targetPath: string) => ["worktree", "add", "-b", name, targetPath]),
     isToolInternalWorktree: vi.fn(() => false),
     listWorktrees: listWorktreesMock,
@@ -93,6 +97,12 @@ describe("persistenceMethods", () => {
   beforeEach(async () => {
     pathsRoot = mkdtempSync(join(tmpdir(), "aimux-persistence-paths-"));
     await initPaths(pathsRoot);
+    findMainRepoMock.mockReset();
+    findMainRepoMock.mockReturnValue("/repo");
+    getWorktreeBaseDirMock.mockReset();
+    getWorktreeBaseDirMock.mockReturnValue("/repo/.aimux/worktrees");
+    getWorktreeCreatePathMock.mockReset();
+    getWorktreeCreatePathMock.mockImplementation((name: string) => `/repo/.aimux/worktrees/${name}`);
     listWorktreesMock.mockReset();
     listWorktreesMock.mockReturnValue([]);
     spawnMock.mockReset();
@@ -902,6 +912,61 @@ describe("persistenceMethods", () => {
         optimistic: true,
       }),
     ]);
+  });
+
+  it("lists desktop worktrees from the host project root", () => {
+    const projectRoot = "/projects/tealstreet-next";
+    listWorktreesMock.mockReturnValue([
+      {
+        name: "tealstreet-next",
+        branch: "master",
+        path: projectRoot,
+        isBare: false,
+      },
+    ]);
+    findMainRepoMock.mockReturnValue(projectRoot);
+
+    const worktrees = persistenceMethods.listDesktopWorktrees.call({
+      projectRoot,
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+    });
+
+    expect(listWorktreesMock).toHaveBeenCalledWith(projectRoot);
+    expect(findMainRepoMock).toHaveBeenCalledWith(projectRoot);
+    expect(worktrees).toEqual([
+      expect.objectContaining({
+        name: "tealstreet-next",
+        path: projectRoot,
+      }),
+    ]);
+  });
+
+  it("creates worktrees relative to the host project root", () => {
+    const projectRoot = "/projects/tealstreet-next";
+    const targetPath = `${projectRoot}/.aimux/worktrees/smoke`;
+    getWorktreeCreatePathMock.mockImplementation((name: string, root?: string) => `${root}/.aimux/worktrees/${name}`);
+    findMainRepoMock.mockReturnValue(projectRoot);
+    spawnMock.mockImplementation(() => {
+      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
+      child.stderr = new EventEmitter();
+      setImmediate(() => child.emit("close", 0));
+      return child;
+    });
+
+    const host = {
+      projectRoot,
+      pendingWorktreeCreates: new Map(),
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      listDesktopWorktrees: vi.fn(() => []),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      mode: "project-service",
+    };
+
+    const result = persistenceMethods.createDesktopWorktree.call(host, "smoke");
+
+    expect(result).toEqual({ path: targetPath, status: "creating" });
+    expect(getWorktreeCreatePathMock).toHaveBeenCalledWith("smoke", projectRoot);
   });
 
   it("graveyards a worktree into topology", async () => {

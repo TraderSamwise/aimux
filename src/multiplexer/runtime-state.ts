@@ -17,6 +17,7 @@ import type { RuntimeTopologySessionStatus } from "../runtime-core/topology-stor
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
+import { shouldMarkFreshRelaunchAllowed, shouldRelaunchFreshSession } from "../session-fresh-relaunch.js";
 import {
   captureDashboardLifecycle,
   isDashboardLifecycleCurrent,
@@ -77,8 +78,10 @@ function listLiveServiceWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   return windows;
 }
 
-function findTopologySession(sessionId: string, statuses?: RuntimeTopologySessionStatus[]) {
-  return listTopologySessionStates(statuses ? { statuses } : undefined).find((session) => session.id === sessionId);
+function findTopologySession(sessionId: string, statuses?: RuntimeTopologySessionStatus[], projectRoot?: string) {
+  return listTopologySessionStates({ ...(statuses ? { statuses } : {}), ...(projectRoot ? { projectRoot } : {}) }).find(
+    (session) => session.id === sessionId,
+  );
 }
 
 function pruneOfflineSessionCache(host: RuntimeStateHost, sessionId: string): void {
@@ -193,7 +196,11 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
 
     if (host.mode === "dashboard") {
       const now = Date.now();
-      if (now >= host.dashboardNextBackgroundRefreshAt) {
+      if (host.dashboardStartupPriming) {
+        if (dashboardNeedsRender) {
+          host.renderCurrentDashboardView();
+        }
+      } else if (now >= host.dashboardNextBackgroundRefreshAt) {
         host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
         if (dashboardNeedsRender) {
           host.renderCurrentDashboardView();
@@ -435,7 +442,8 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
 }
 
 export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): ManagedAgentWindow[] {
-  const savedSessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  const projectRoot = projectRootFor(host);
+  const savedSessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"], projectRoot });
   const savedById = new Map<string, any>(savedSessions.map((session: any) => [session.id, session]));
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
@@ -514,6 +522,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
   if (host.stoppingSessionIds.has(session.id)) return;
   markLifecycleUsed(host, session.id);
   const backendSessionId = session.backendSessionId;
+  const projectRoot = projectRootFor(host);
   const offlineEntry = {
     id: session.id,
     tool: session.command,
@@ -523,6 +532,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     lifecycle: "offline" as const,
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId,
+    freshRelaunchAllowed: shouldMarkFreshRelaunchAllowed({ id: session.id, backendSessionId }, projectRoot),
     team: session.team,
     worktreePath: host.sessionWorktreePaths.get(session.id),
     label: host.getSessionLabel(session.id),
@@ -531,7 +541,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
 
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
-  upsertTopologySession(offlineEntry, "offline", { projectRoot: projectRootFor(host) });
+  upsertTopologySession(offlineEntry, "offline", { projectRoot });
   pruneOfflineSessionCache(host, session.id);
   host.saveState();
   session.kill();
@@ -555,7 +565,7 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
 }
 
 export function graveyardSession(host: RuntimeStateHost, sessionId: string, _sessionSeed?: any): void {
-  const session = findTopologySession(sessionId, ["running", "idle", "offline"]);
+  const session = findTopologySession(sessionId, ["running", "idle", "offline"], projectRootFor(host));
   if (!session) {
     pruneOfflineSessionCache(host, sessionId);
     host.invalidateDesktopStateSnapshot?.();
@@ -621,7 +631,8 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     evictZombieSession(host, existing);
   }
 
-  const topologySession = findTopologySession(sessionId, ["offline"]);
+  const projectRoot = projectRootFor(host);
+  const topologySession = findTopologySession(sessionId, ["offline"], projectRoot);
   if (!topologySession) {
     pruneOfflineSessionCache(host, sessionId);
     host.invalidateDesktopStateSnapshot?.();
@@ -635,16 +646,16 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const toolCfg = config.tools[session.toolConfigKey];
   if (!toolCfg) return;
 
-  const derived = loadMetadataState().sessions[session.id]?.derived;
-  const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
+  const derived = loadMetadataState(projectRoot).sessions[session.id]?.derived;
   let backendSessionId = session.backendSessionId;
-  if (!backendSessionId && !relaunchFresh) {
+  const explicitError = derived?.activity === "error" || derived?.attention === "error";
+  if (!backendSessionId && !explicitError) {
     // The durable backend id can be lost if a crash killed the tmux pane before
     // it was captured. Recover it from the tool's on-disk session store so the
     // agent stays resumable instead of being stranded.
     let discovered: string | null = null;
     try {
-      discovered = reconcileBackendSessionIdForSession(session, getRepoRoot());
+      discovered = reconcileBackendSessionIdForSession(session, projectRoot);
     } catch (error) {
       host.debug?.(
         `backend session id recovery failed for ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -655,12 +666,13 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
       backendSessionId = discovered;
       session.backendSessionId = discovered;
       upsertTopologySession({ ...session, backendSessionId: discovered }, "offline", {
-        projectRoot: projectRootFor(host),
+        projectRoot,
       });
       loadOfflineTopologySessions(host);
       host.debug?.(`reconciled backend session id for ${session.id} from disk: ${discovered}`, "session");
     }
   }
+  const relaunchFresh = shouldRelaunchFreshSession({ ...session, backendSessionId }, projectRoot);
   const useBackendResume =
     !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
 
@@ -729,6 +741,9 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   );
   if (supersededBackendSessionId && restoredSession) {
     restoredSession.supersededBackendSessionId = supersededBackendSessionId;
+  }
+  if (restoredSession) {
+    restoredSession.restoreStartedAt = Date.now();
   }
 }
 

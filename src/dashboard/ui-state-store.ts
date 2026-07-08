@@ -31,6 +31,7 @@ interface DashboardUiClientSnapshot {
 
 export class DashboardUiStateStore {
   private preferredSelection: { kind: "session" | "service"; id: string } | null = null;
+  private pendingPreferredSelection = false;
   private flatSessionId: string | null = null;
   private selectionNeedsRestore = true;
   private orderState: DashboardOrderState = {
@@ -75,6 +76,7 @@ export class DashboardUiStateStore {
           kind: snapshot.selectedEntryKind,
           id: snapshot.selectedEntryId,
         };
+        this.pendingPreferredSelection = false;
         this.selectionNeedsRestore = true;
       }
       if (snapshot.flatSessionId) {
@@ -116,6 +118,7 @@ export class DashboardUiStateStore {
           kind: selectedEntry.kind,
           id: selectedEntry.id,
         };
+        this.pendingPreferredSelection = false;
       }
     }
 
@@ -135,6 +138,7 @@ export class DashboardUiStateStore {
     state.level = "sessions";
     state.focusedWorktreePath = worktreePath;
     this.preferredSelection = { kind, id };
+    this.pendingPreferredSelection = true;
     this.selectionNeedsRestore = true;
   }
 
@@ -151,15 +155,18 @@ export class DashboardUiStateStore {
   ): void {
     if (!this.selectionNeedsRestore) return;
     if (hasWorktrees) {
+      if (this.pendingPreferredSelection && state.level !== "sessions") return;
       if (state.level === "sessions" && this.preferredSelection) {
         const preferredIndex = state.worktreeEntries.findIndex(
           (entry) => entry.kind === this.preferredSelection?.kind && entry.id === this.preferredSelection?.id,
         );
         if (preferredIndex >= 0) {
           state.sessionIndex = preferredIndex;
+          this.pendingPreferredSelection = false;
         } else if (state.sessionIndex >= state.worktreeEntries.length) {
           state.sessionIndex = Math.max(0, state.worktreeEntries.length - 1);
         }
+        if (this.pendingPreferredSelection) return;
       }
       this.selectionNeedsRestore = false;
       return;
