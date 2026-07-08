@@ -201,7 +201,7 @@ function writeRecord(record: LogRecord): void {
   }
 }
 
-function sanitizeLogString(value: string): string {
+export function sanitizeLogString(value: string): string {
   return value.replace(SENSITIVE_ASSIGNMENT_PATTERN, (match, assignment: string) => {
     const name = assignment.slice(0, -1);
     return isSensitiveLogName(name) ? `${assignment}<redacted>` : match;

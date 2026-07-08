@@ -2899,6 +2899,7 @@ describe("tmux-control.sh", () => {
     tempRoots.push(envRoot.root);
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
     writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
 
     runControl(
       envRoot,
@@ -2939,12 +2940,8 @@ describe("tmux-control.sh", () => {
     expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
     expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
     expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
-    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
-    expect(log.some((entry) => entry.includes("AIMUX_HOME=") && entry.includes("/home/user/.aimux-custom"))).toBe(true);
-    expect(log.some((entry) => entry.includes("AIMUX_DAEMON_HOST=") && entry.includes("127.0.0.2"))).toBe(true);
-    expect(log.some((entry) => entry.includes("AIMUX_DAEMON_PORT=") && entry.includes("44191"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--project-state-dir"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--current-window-id"))).toBe(true);
+    expect(log.some((entry) => entry.includes("aimux expose"))).toBe(false);
+    expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
     expect(curlLog).toHaveLength(0);
   });
 
