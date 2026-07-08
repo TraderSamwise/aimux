@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildManagedLaunchEnv, wrapCommandWithManagedLaunchEnv } from "./managed-launch-env.js";
 
 describe("managed launch env", () => {
-  it("strips tmux and transient control state while preserving stable user env", () => {
+  it("strips tmux/control env while preserving project env and credentials", () => {
     const env = buildManagedLaunchEnv(
       {
         HOME: "/Users/sam",
@@ -18,8 +18,16 @@ describe("managed launch env", () => {
         _VOLTA_TOOL_RECURSION: "1",
         FOO_RECURSION_STATE: "1",
         BUNDLE_GEMFILE: "/repo/Gemfile",
+        OPENAI_API_KEY: "sk-real",
+        TEALSTREET_DISCORD_BOT_ADMIN_TOKEN: "real-token",
+        DATABASE_URL: "postgres://localhost/app",
+        AWS_PROFILE: "prod",
+        RANDOM_PROJECT_ENV: "project-value",
+        CODEX_HOME: "/Users/sam/.codex",
+        CLAUDE_CONFIG_DIR: "/Users/sam/.claude",
+        SSH_AUTH_SOCK: "/private/tmp/ssh.sock",
       },
-      { AIMUX_SESSION_ID: "codex-1" },
+      { AIMUX_SESSION_ID: "codex-1", NOT_AIMUX_SECRET: "extra-secret" },
     );
 
     expect(env).toMatchObject({
@@ -30,8 +38,17 @@ describe("managed launch env", () => {
       CLICOLOR: "1",
       LANG: "en_US.UTF-8",
       VOLTA_HOME: "/Users/sam/.volta",
-      BUNDLE_GEMFILE: "/repo/Gemfile",
+      CODEX_HOME: "/Users/sam/.codex",
+      CLAUDE_CONFIG_DIR: "/Users/sam/.claude",
+      SSH_AUTH_SOCK: "/private/tmp/ssh.sock",
       AIMUX_SESSION_ID: "codex-1",
+      BUNDLE_GEMFILE: "/repo/Gemfile",
+      OPENAI_API_KEY: "sk-real",
+      TEALSTREET_DISCORD_BOT_ADMIN_TOKEN: "real-token",
+      DATABASE_URL: "postgres://localhost/app",
+      AWS_PROFILE: "prod",
+      RANDOM_PROJECT_ENV: "project-value",
+      NOT_AIMUX_SECRET: "extra-secret",
     });
     expect(env.TMUX).toBeUndefined();
     expect(env.TMUX_PANE).toBeUndefined();

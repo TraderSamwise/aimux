@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   updateSessionMetadata: vi.fn(),
   sendCoreCommand: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
+  isRuntimeRestartInProgress: vi.fn(),
 }));
 
 function deferred<T = unknown>() {
@@ -112,7 +113,9 @@ function resetDashboardControlMocks(): void {
   mocks.updateSessionMetadata.mockReset();
   mocks.sendCoreCommand.mockReset();
   mocks.restartAimuxControlPlane.mockReset();
+  mocks.isRuntimeRestartInProgress.mockReset();
   mocks.restartAimuxControlPlane.mockReturnValue(new Promise(() => {}));
+  mocks.isRuntimeRestartInProgress.mockReturnValue(false);
   mocks.loadMetadataEndpoint.mockReturnValue({
     host: "127.0.0.1",
     port: 43444,
@@ -147,6 +150,7 @@ vi.mock("../core-command-transport.js", () => ({
 }));
 
 vi.mock("../runtime-restart.js", () => ({
+  isRuntimeRestartInProgress: mocks.isRuntimeRestartInProgress,
   restartAimuxControlPlane: mocks.restartAimuxControlPlane,
 }));
 
@@ -700,6 +704,27 @@ describe("dashboard live target activation", () => {
     }
   });
 
+  it("does not surface a focus error when dashboard mode has no attached client tty", async () => {
+    const { waitAndOpenLiveTmuxWindowForEntry } = await import("./dashboard-control.js");
+    const host: any = {
+      mode: "dashboard",
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      tmuxRuntimeManager: {
+        currentClientSession: vi.fn(() => "aimux-repo-client-live"),
+        displayMessage: vi.fn(() => undefined),
+        listClients: vi.fn(() => []),
+      },
+      showDashboardError: vi.fn(),
+    };
+
+    await expect(waitAndOpenLiveTmuxWindowForEntry(host, { id: "codex-1", status: "running" }, 120)).resolves.toBe(
+      "missing",
+    );
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+  });
+
   it("focuses live dashboard agents through local tmux before falling back to the service API", async () => {
     const previousPane = process.env.TMUX_PANE;
     process.env.TMUX_PANE = "%dashboard";
@@ -782,7 +807,7 @@ describe("dashboard live target activation", () => {
       postToProjectService: vi.fn(async () => ({ ok: true })),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
         listClients: vi.fn(() => []),
         listProjectManagedWindows: vi.fn(() => [
           {
@@ -817,7 +842,7 @@ describe("dashboard live target activation", () => {
       postToProjectService: vi.fn(async () => ({ ok: true })),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
         listClients: vi.fn(() => []),
         listProjectManagedWindows: vi.fn(() => {
           throw new Error("tmux list failed");
@@ -849,7 +874,7 @@ describe("dashboard live target activation", () => {
       postToProjectService: vi.fn(async () => ({ ok: true })),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
       },
       showDashboardError: vi.fn(),
     };
@@ -869,7 +894,7 @@ describe("dashboard live target activation", () => {
         .mockResolvedValueOnce({ ok: true }),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
       },
       showDashboardError: vi.fn(),
     };
@@ -897,7 +922,7 @@ describe("dashboard live target activation", () => {
       }),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
       },
       showDashboardError: vi.fn(),
     };
@@ -925,7 +950,7 @@ describe("dashboard live target activation", () => {
         }),
         tmuxRuntimeManager: {
           currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-          displayMessage: vi.fn(() => undefined),
+          displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
         },
         showDashboardError: vi.fn(),
       };
@@ -954,7 +979,7 @@ describe("dashboard live target activation", () => {
       }),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
       },
       showDashboardError: vi.fn(),
     };
@@ -975,7 +1000,7 @@ describe("dashboard live target activation", () => {
       postToProjectService: vi.fn(async () => ({ ok: true })),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
       },
       showDashboardError: vi.fn(),
     };
@@ -998,7 +1023,7 @@ describe("dashboard live target activation", () => {
         sessionId: "service-1",
         focus: true,
         currentClientSession: "aimux-repo-client-live",
-        clientTty: undefined,
+        clientTty: "/dev/live",
         currentWindowId: undefined,
       },
       { timeoutMs: expect.any(Number) },
@@ -1102,7 +1127,7 @@ describe("dashboard live target activation", () => {
       postToProjectService: vi.fn(async () => ({ ok: true })),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
         listClients: vi.fn(() => []),
         listProjectManagedWindows: vi.fn(() => [
           {
@@ -1137,7 +1162,7 @@ describe("dashboard live target activation", () => {
       postToProjectService: vi.fn(async () => ({ ok: true })),
       tmuxRuntimeManager: {
         currentClientSession: vi.fn(() => "aimux-repo-client-live"),
-        displayMessage: vi.fn(() => undefined),
+        displayMessage: vi.fn((format: string) => (format === "#{client_tty}" ? "/dev/live" : undefined)),
         listClients: vi.fn(() => []),
         listProjectManagedWindows: vi.fn(() => {
           throw new Error("tmux list failed");
@@ -1309,6 +1334,7 @@ describe("startRuntimeGuardRepair", () => {
     const host = {
       projectRoot: "/repo/app",
       runtimeGuardRepairing: false,
+      runtimeGuardRepairTimedOutPending: false,
       runtimeGuardRepairFailedKey: undefined,
       dashboardBusyState: null,
       renderCurrentDashboardView: vi.fn(),
@@ -1325,6 +1351,7 @@ describe("startRuntimeGuardRepair", () => {
     const host = {
       projectRoot: "/repo/app",
       runtimeGuardRepairing: false,
+      runtimeGuardRepairTimedOutPending: false,
       runtimeGuardRepairFailedKey: undefined,
       dashboardBusyState: null,
       renderCurrentDashboardView: vi.fn(),
@@ -1358,6 +1385,7 @@ describe("startRuntimeGuardRepair", () => {
       mode: "dashboard",
       projectRoot: "/repo/app",
       runtimeGuardRepairing: false,
+      runtimeGuardRepairTimedOutPending: false,
       runtimeGuardRepairFailedKey: undefined,
       runtimeGuardRepairBusy: false,
       dashboardBusyState: null,
@@ -1432,6 +1460,33 @@ describe("startRuntimeGuardRepair", () => {
     expect(secondHost.dashboardRepairNotices).toHaveLength(1);
   });
 
+  it("waits instead of repairing while a global aimux restart is running", async () => {
+    mocks.isRuntimeRestartInProgress.mockReturnValueOnce(true);
+    const { startRuntimeGuardRepair } = await import("./dashboard-control.js");
+    const host = {
+      projectRoot: "/repo/app",
+      runtimeGuardRepairing: false,
+      runtimeGuardRepairFailedKey: undefined,
+      runtimeGuardRepairBusy: false,
+      dashboardBusyState: null,
+      renderCurrentDashboardView: vi.fn(),
+    };
+
+    startRuntimeGuardRepair(host as never, { kind: "stale", reason: "service-mismatch" });
+
+    expect(mocks.restartAimuxControlPlane).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
+    expect(host.runtimeGuardRepairBusy).toBe(true);
+    expect(host.footerFlash).toBe("Aimux repair already running");
+    expect(host.dashboardRepairNotices).toMatchObject([
+      {
+        kind: "runtime-guard-repair",
+        phase: "blocked",
+        message: "Aimux repair already running",
+      },
+    ]);
+  });
+
   it("reclaims a repair lock owned by an exited repair process", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
       if (pid === 987654) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
@@ -1461,7 +1516,7 @@ describe("startRuntimeGuardRepair", () => {
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
   });
 
-  it("does not reclaim an aged repair lock while its owner is still alive", async () => {
+  it("reclaims an aged repair lock even while its owner is still alive", async () => {
     expect(testAimuxHome).toBeTruthy();
     const lockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
     mkdirSync(lockPath, { recursive: true });
@@ -1488,9 +1543,7 @@ describe("startRuntimeGuardRepair", () => {
       killSpy.mockRestore();
     }
 
-    expect(mocks.restartAimuxControlPlane).not.toHaveBeenCalled();
-    expect(host.footerFlash).toBe("Aimux repair already running");
-    expect(existsSync(lockPath)).toBe(true);
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
   });
 
   it("does not reclaim a repair lock while another reclaim is in progress", async () => {
@@ -1563,7 +1616,7 @@ describe("startRuntimeGuardRepair", () => {
     ]);
   });
 
-  it("fails locally and keeps the dashboard repair lock while guarded repair hangs", async () => {
+  it("aborts and releases the dashboard repair lock when guarded repair hangs", async () => {
     vi.useFakeTimers();
     const host = {
       projectRoot: "/repo/app",
@@ -1584,17 +1637,20 @@ describe("startRuntimeGuardRepair", () => {
       vi.useRealTimers();
     }
 
-    expect(existsSync(join(testAimuxHome!, "locks", "dashboard-control-plane-repair"))).toBe(true);
+    const restartOptions = mocks.restartAimuxControlPlane.mock.calls[0]?.[0] as { abortSignal?: AbortSignal };
+    expect(restartOptions.abortSignal?.aborted).toBe(true);
+    expect(existsSync(join(testAimuxHome!, "locks", "dashboard-control-plane-repair"))).toBe(false);
     expect(host.runtimeGuardRepairing).toBe(false);
+    expect(host.runtimeGuardRepairTimedOutPending).toBe(true);
     expect(host.runtimeGuardRepairBusy).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
     expect(host.runtimeGuardRepairFailedKey).toBe("runtime-rebuild-required");
-    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair still running", [
+    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair timed out", [
       "aimux repair is still running after 45s",
     ]);
   });
 
-  it("releases the dashboard repair lock when a timed-out repair later rejects", async () => {
+  it("clears the timed-out repair latch when the aborted repair later rejects", async () => {
     vi.useFakeTimers();
     const repair = deferred();
     mocks.restartAimuxControlPlane.mockReturnValueOnce(repair.promise);
@@ -1614,11 +1670,13 @@ describe("startRuntimeGuardRepair", () => {
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       vi.advanceTimersByTime(45_000);
       await Promise.resolve();
-      expect(existsSync(lockPath)).toBe(true);
+      expect(existsSync(lockPath)).toBe(false);
+      expect(host.runtimeGuardRepairTimedOutPending).toBe(true);
       repair.reject(new Error("late failure"));
       await Promise.resolve();
       await Promise.resolve();
       expect(existsSync(lockPath)).toBe(false);
+      expect(host.runtimeGuardRepairTimedOutPending).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -1646,7 +1704,8 @@ describe("startRuntimeGuardRepair", () => {
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       vi.advanceTimersByTime(45_000);
       await Promise.resolve();
-      expect(existsSync(lockPath)).toBe(true);
+      expect(existsSync(lockPath)).toBe(false);
+      expect(host.runtimeGuardRepairTimedOutPending).toBe(true);
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(1);
 
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
@@ -1658,6 +1717,7 @@ describe("startRuntimeGuardRepair", () => {
       repair.resolve(undefined);
       await Promise.resolve();
       await Promise.resolve();
+      expect(host.runtimeGuardRepairTimedOutPending).toBe(false);
       expect(existsSync(lockPath)).toBe(false);
       startRuntimeGuardRepair(host as never, { kind: "runtime-rebuild-required" });
       expect(mocks.restartAimuxControlPlane).toHaveBeenCalledTimes(2);
@@ -1906,7 +1966,7 @@ describe("startRuntimeGuardRepair", () => {
 
     expect(host.runtimeGuardRepairing).toBe(false);
     expect(host.dashboardBusyState).toBeNull();
-    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair still running", [
+    expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair timed out", [
       "aimux repair is still running after 45s",
     ]);
   });
@@ -1947,7 +2007,7 @@ describe("startRuntimeGuardRepair", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
       vi.advanceTimersByTime(45_001);
       await Promise.resolve();
-      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair still running", [
+      expect(host.showDashboardError).toHaveBeenCalledWith("Aimux repair timed out", [
         "aimux repair is still running after 45s",
       ]);
       const renderCallsAfterTimeout = host.renderCurrentDashboardView.mock.calls.length;
@@ -2133,6 +2193,28 @@ describe("refreshRuntimeGuard", () => {
       }),
     );
     expect(host.dashboardBusyState).toMatchObject({ title: "Repairing Aimux" });
+  });
+
+  it("does not launch repair while dashboard startup is still priming", async () => {
+    mocks.requestJson.mockResolvedValue({
+      status: 200,
+      json: {
+        ok: true,
+        projectStateDir: getProjectStateDirFor("/repo/app"),
+        pid: 2,
+        serviceInfo: { ...getProjectServiceManifest(), buildStamp: "old-build" },
+      },
+    });
+    const host = runtimeGuardHost();
+    host.dashboardStartupPriming = true;
+
+    const { refreshRuntimeGuard } = await import("./dashboard-control.js");
+    await refreshRuntimeGuard(host as never);
+    await refreshRuntimeGuard(host as never);
+
+    expect(host.runtimeGuardState).toEqual({ kind: "stale", reason: "service-mismatch" });
+    expect(mocks.restartAimuxControlPlane).not.toHaveBeenCalled();
+    expect(host.dashboardBusyState).toBeNull();
   });
 
   it("keeps the repair overlay while a Core repair is still running", async () => {

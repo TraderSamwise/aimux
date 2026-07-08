@@ -617,6 +617,7 @@ export const persistenceMethods = {
     pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
     operationFailure?: DashboardOperationFailure;
   }> {
+    const projectRoot = projectRootFor(this);
     const hiddenPaths = listWorktreeGraveyardPaths();
     const worktrees: Array<{
       name: string;
@@ -628,7 +629,7 @@ export const persistenceMethods = {
       removing?: boolean;
       pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
       operationFailure?: DashboardOperationFailure;
-    }> = listAllWorktrees()
+    }> = listAllWorktrees(projectRoot)
       .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path) && !isToolInternalWorktree(wt))
       .map((wt) => ({
         ...wt,
@@ -647,7 +648,7 @@ export const persistenceMethods = {
       });
       worktreePaths.add(failure.worktreePath);
     }
-    sortDesktopWorktrees(worktrees);
+    sortDesktopWorktrees(worktrees, projectRoot);
     return worktrees;
   },
 
@@ -670,7 +671,8 @@ export const persistenceMethods = {
   },
 
   async graveyardDesktopWorktree(this: any, path: string): Promise<{ path: string; status: "graveyarded" }> {
-    const mainRepo = findMainRepo();
+    const projectRoot = projectRootFor(this);
+    const mainRepo = findMainRepo(projectRoot);
     if (path === mainRepo) {
       throw new Error("Cannot graveyard the main checkout");
     }
@@ -726,7 +728,8 @@ export const persistenceMethods = {
     if (!existing) {
       throw new Error(`Graveyard worktree "${path}" not found`);
     }
-    const mainRepo = findMainRepo();
+    const projectRoot = projectRootFor(this);
+    const mainRepo = findMainRepo(projectRoot);
     if (path === mainRepo) {
       throw new Error("Cannot remove the main checkout");
     }
@@ -747,7 +750,8 @@ export const persistenceMethods = {
   },
 
   createDesktopWorktree(this: any, name: string): { path: string; status: "creating" | "created" } {
-    const targetPath = getWorktreeCreatePath(name);
+    const projectRoot = projectRootFor(this);
+    const targetPath = getWorktreeCreatePath(name, projectRoot);
     const pendingCreates = this.pendingWorktreeCreates as Map<
       string,
       Promise<{ path: string; status: "creating" | "created" }>
@@ -845,7 +849,7 @@ export const persistenceMethods = {
 
     void (async () => {
       try {
-        const mainRepo = findMainRepo();
+        const mainRepo = findMainRepo(projectRoot);
         await new Promise<void>((resolve, reject) => {
           let stderr = "";
           let child;
@@ -1009,7 +1013,8 @@ export const persistenceMethods = {
       try {
         this.syncSessionsFromTopology();
 
-        const mainRepo = findMainRepo();
+        const projectRoot = projectRootFor(this);
+        const mainRepo = findMainRepo(projectRoot);
         if (path === mainRepo) {
           throw new Error("Cannot remove the main checkout");
         }
@@ -1024,7 +1029,7 @@ export const persistenceMethods = {
 
         const matching = this.listDesktopWorktrees().find((worktree: any) => worktree.path === path);
         if (!matching) {
-          const worktreeBaseDir = getWorktreeBaseDir();
+          const worktreeBaseDir = getWorktreeBaseDir(projectRoot);
           if (path.startsWith(`${worktreeBaseDir}/`) || path === worktreeBaseDir) {
             await removeOrphanedDesktopWorktree(this, mainRepo, path);
             removeTopologyWorktree(path);
@@ -1205,10 +1210,11 @@ function sortDesktopWorktrees(
     isBare: boolean;
     createdAt?: string;
   }>,
+  projectRoot?: string,
 ): void {
   let mainRepo: string | undefined;
   try {
-    mainRepo = findMainRepo();
+    mainRepo = findMainRepo(projectRoot);
   } catch {}
   worktrees.sort((a, b) => {
     const aMain = a.path === mainRepo;

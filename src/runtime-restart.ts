@@ -176,8 +176,24 @@ function runtimeRestartLockPath(): string {
   return pathResolve(getGlobalAimuxDir(), "locks", "restart");
 }
 
+export function isRuntimeRestartInProgress(isPidAlive: (pid: number) => boolean = defaultIsPidAlive): boolean {
+  const lockPath = runtimeRestartLockPath();
+  try {
+    if (!existsSync(lockPath)) return false;
+    if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) return false;
+    const ownerPid = readRuntimeRestartLockPid(lockPath);
+    return ownerPid === null || isPidAlive(ownerPid);
+  } catch {
+    return existsSync(lockPath);
+  }
+}
+
 function runtimeRestartStealLockPath(): string {
   return pathResolve(getGlobalAimuxDir(), "locks", "restart.steal");
+}
+
+function runtimeGuardRepairLockPath(): string {
+  return pathResolve(getGlobalAimuxDir(), "locks", "dashboard-control-plane-repair");
 }
 
 function readRuntimeRestartLockPid(lockPath: string): number | null {
@@ -187,6 +203,15 @@ function readRuntimeRestartLockPid(lockPath: string): number | null {
   } catch {
     return null;
   }
+}
+
+function releaseDashboardRepairLockIfOwner(ownerPid: number | null): void {
+  if (ownerPid === null) return;
+  const lockPath = runtimeGuardRepairLockPath();
+  if (readRuntimeRestartLockPid(lockPath) !== ownerPid) return;
+  try {
+    rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
 }
 
 function tryAcquireRuntimeRestartStealLock(): string | null {
@@ -245,13 +270,18 @@ function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): str
   const acquired = acquire();
   if (acquired) return acquired;
   try {
-    if (Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS) {
+    const ownerPid = readRuntimeRestartLockPid(lockPath);
+    const lockIsStale = Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS;
+    const ownerIsDead = ownerPid !== null && !isPidAlive(ownerPid);
+    if (lockIsStale || ownerIsDead) {
       const stealPath = tryAcquireRuntimeRestartStealLock();
       if (!stealPath) return null;
       try {
-        if (Date.now() - statSync(lockPath).mtimeMs <= RUNTIME_RESTART_LOCK_STALE_MS) return null;
-        const ownerPid = readRuntimeRestartLockPid(lockPath);
-        if (ownerPid !== null && isPidAlive(ownerPid)) return null;
+        const currentOwnerPid = readRuntimeRestartLockPid(lockPath);
+        const currentLockIsStale = Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS;
+        const currentOwnerIsDead = currentOwnerPid !== null && !isPidAlive(currentOwnerPid);
+        if (!currentLockIsStale && !currentOwnerIsDead) return null;
+        releaseDashboardRepairLockIfOwner(currentOwnerPid);
         rmSync(lockPath, { recursive: true, force: true });
         return acquire();
       } finally {
@@ -270,6 +300,7 @@ function joinLockOwnerPath(lockPath: string): string {
 
 function releaseRuntimeRestartLock(lockPath: string | null): void {
   if (!lockPath) return;
+  if (readRuntimeRestartLockPid(lockPath) !== process.pid) return;
   try {
     rmSync(lockPath, { recursive: true, force: true });
   } catch {}
@@ -453,6 +484,31 @@ function restoreActiveWindows(tmux: RuntimeRestartTmux, targets: TmuxTarget[]): 
   }
 }
 
+function stopPreRestartDashboardRepairWindows(
+  before: RuntimeCoherenceReport,
+  projectRoots: Set<string>,
+  tmux: RuntimeRestartTmux,
+): void {
+  if (!tmux.isAvailable() || !tmux.killWindow) return;
+  const seenWindowIds = new Set<string>();
+  for (const project of before.projects) {
+    if (!projectRoots.has(project.projectRoot)) continue;
+    for (const dashboard of project.dashboards) {
+      if (dashboard.status === "ok" || seenWindowIds.has(dashboard.windowId)) continue;
+      seenWindowIds.add(dashboard.windowId);
+      const target = {
+        sessionName: dashboard.sessionName,
+        windowId: dashboard.windowId,
+        windowIndex: dashboard.windowIndex,
+        windowName: dashboard.windowName,
+      };
+      try {
+        if (!tmux.hasWindow || tmux.hasWindow(target)) tmux.killWindow(target);
+      } catch {}
+    }
+  }
+}
+
 function repairRuntimeContract(input: {
   projectRoot: string;
   tmux: RuntimeRestartTmux;
@@ -561,6 +617,7 @@ async function verifyPostRestartCoherence(input: {
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
   intervalMs: number;
+  abortSignal?: AbortSignal;
 }): Promise<RuntimeRestartResult["verification"]> {
   const intervalMs = Math.max(1, input.intervalMs);
   const attempts = Math.max(1, Math.floor(Math.max(0, input.timeoutMs) / intervalMs) + 1);
@@ -568,8 +625,10 @@ async function verifyPostRestartCoherence(input: {
   let latestError: string | null = null;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    throwIfRestartAborted(input.abortSignal);
     try {
       const after = await input.buildRuntimeCoherenceReport(input.coherence);
+      throwIfRestartAborted(input.abortSignal);
       latestAfter = after;
       const afterProjectRoots = new Set(after.projects.map((project) => project.projectRoot));
       const missingProjects = [...input.projectRoots].filter((projectRoot) => !afterProjectRoots.has(projectRoot));
@@ -591,19 +650,25 @@ async function verifyPostRestartCoherence(input: {
       }
       if (input.ensureProjectService && attempt < attempts - 1) {
         for (const projectRoot of unhealthyProjects) {
+          throwIfRestartAborted(input.abortSignal);
           try {
             await input.ensureProjectService(projectRoot);
+            throwIfRestartAborted(input.abortSignal);
           } catch (error) {
+            throwIfRestartAborted(input.abortSignal);
             latestError = `post-restart service repair failed for ${projectRoot}: ${errorMessage(error)}`;
           }
         }
       }
     } catch (error) {
+      throwIfRestartAborted(input.abortSignal);
       latestError = errorMessage(error);
     }
 
     if (attempt < attempts - 1) {
+      throwIfRestartAborted(input.abortSignal);
       await input.sleep(intervalMs);
+      throwIfRestartAborted(input.abortSignal);
     }
   }
 
@@ -655,6 +720,9 @@ async function restartAimuxControlPlaneUnlocked(
     ];
   });
   const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
+  if (reloadDashboards) {
+    stopPreRestartDashboardRepairWindows(before, dashboardProjectRoots, tmux);
+  }
   const previousDaemon = await (options.stopDaemon ?? defaultStopDaemon)();
   throwIfRestartAborted(options.abortSignal);
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
@@ -671,6 +739,7 @@ async function restartAimuxControlPlaneUnlocked(
       sleep,
       killPid,
     });
+    throwIfRestartAborted(options.abortSignal);
     stoppedServicePids = previousDaemon.stoppedProjectServices.map((service) => service.pid);
   }
   const signaledServicePids = new Set(stoppedServicePids);
@@ -693,11 +762,14 @@ async function restartAimuxControlPlaneUnlocked(
     sleep,
     killPid,
   });
+  throwIfRestartAborted(options.abortSignal);
   const currentDaemon = await (options.ensureDaemonRunning ?? defaultEnsureDaemonRunning)();
   throwIfRestartAborted(options.abortSignal);
   const ensureService = options.ensureProjectService ?? defaultEnsureProjectService;
   const stopService =
     options.stopProjectService ?? (options.ensureProjectService ? async () => null : defaultStopProjectService);
+  const daemonWasRestarted = Boolean(previousDaemon && previousDaemon.pid !== currentDaemon.pid);
+  const shouldStopProjectServiceBeforeEnsure = !daemonWasRestarted || options.retainDaemon === true;
   const resolveDashboard =
     options.resolveDashboardTarget ??
     ((projectRoot, tmux, resolveOptions) =>
@@ -716,7 +788,7 @@ async function restartAimuxControlPlaneUnlocked(
       expectedRuntimeOwner: before.expected.runtimeOwner,
     });
     try {
-      await stopService(projectRoot);
+      if (shouldStopProjectServiceBeforeEnsure) await stopService(projectRoot);
       result.service.state = await ensureService(projectRoot);
       result.service.status = "ensured";
     } catch (error) {
@@ -782,6 +854,7 @@ async function restartAimuxControlPlaneUnlocked(
       sleep,
       timeoutMs: options.verificationTimeoutMs ?? POST_RESTART_VERIFICATION_TIMEOUT_MS,
       intervalMs: options.verificationIntervalMs ?? 250,
+      abortSignal: options.abortSignal,
     });
   }
   reconcileProjectResultsWithVerification(projects, verification);

@@ -19,10 +19,13 @@ import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
 import { upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
+import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
 import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionRuntimeHost = any;
+const RESTORE_EXIT_BLOCK_MS = 30_000;
 
 function projectRootFor(host: SessionRuntimeHost): string {
   const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
@@ -389,32 +392,63 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
 
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
   const graveyardAfterStop = host.graveyardAfterStopSessionIds?.has?.(runtime.id) ?? false;
-  const backendSessionId = runtime.backendSessionId;
+  let backendSessionId = runtime.backendSessionId;
+  const toolConfigKey = host.sessionToolKeys.get(runtime.id) ?? runtime.command;
+  let projectRoot: string | undefined;
+  const resolveProjectRoot = () => (projectRoot ??= projectRootFor(host));
+  if (!graveyardAfterStop && !backendSessionId && toolConfigKey === "codex") {
+    try {
+      backendSessionId = discoverCodexBackendSessionId(
+        host.sessionWorktreePaths.get(runtime.id) ?? resolveProjectRoot(),
+        undefined,
+        { sinceMs: Math.max(0, (runtime.startTime ?? Date.now()) - 1000) },
+      );
+      if (backendSessionId) runtime.backendSessionId = backendSessionId;
+    } catch (error) {
+      host.debug?.(
+        `codex backend session id exit capture failed for ${runtime.id}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+    }
+  }
+  const restoreStartedAt = typeof runtime.restoreStartedAt === "number" ? runtime.restoreStartedAt : undefined;
+  const restoreUptime = restoreStartedAt === undefined ? Infinity : Date.now() - restoreStartedAt;
+  const restoreExitedDuringProbe = !explicitStop && !graveyardAfterStop && restoreUptime < RESTORE_EXIT_BLOCK_MS;
   const quickUnexpectedExit = !explicitStop && !graveyardAfterStop && uptime < 10_000;
-  const shouldPreserveOffline = !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000);
+  const restoreBlockedReason = restoreExitedDuringProbe
+    ? errorHint
+      ? `agent exited after restore${errorHint}`
+      : "agent exited after restore"
+    : quickUnexpectedExit
+      ? errorHint
+        ? `agent exited during startup${errorHint}`
+        : "agent exited during startup"
+      : undefined;
+  const shouldPreserveOffline =
+    !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000 || restoreExitedDuringProbe);
   if (shouldPreserveOffline) {
     upsertTopologySession(
       {
         id: runtime.id,
         tool: runtime.command,
-        toolConfigKey: host.sessionToolKeys.get(runtime.id) ?? runtime.command,
+        toolConfigKey,
         command: runtime.command,
         args: host.sessionOriginalArgs.get(runtime.id) ?? [],
         lifecycle: "offline",
         createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
         backendSessionId,
+        freshRelaunchAllowed: shouldMarkFreshRelaunchAllowed(
+          { id: runtime.id, backendSessionId },
+          resolveProjectRoot(),
+        ),
         team: runtime.team,
         worktreePath: host.sessionWorktreePaths.get(runtime.id),
         label: host.getSessionLabel(runtime.id),
         headline: host.deriveHeadline(runtime.id),
-        restoreBlockedReason: quickUnexpectedExit
-          ? errorHint
-            ? `agent exited during startup${errorHint}`
-            : "agent exited during startup"
-          : undefined,
+        restoreBlockedReason,
       },
       "offline",
-      { projectRoot: projectRootFor(host) },
+      { projectRoot: resolveProjectRoot() },
     );
   } else if (!shouldPreserveOffline) {
     host.unpreservedExitedSessionIds ??= new Set<string>();

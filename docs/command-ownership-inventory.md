@@ -23,7 +23,6 @@ Node launcher when a matching daemon is already running:
 
 | Command                                                 | Status | Owner                    | Notes                                                                                                  |
 | ------------------------------------------------------- | ------ | ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `aimux restart`                                         | `CUT`  | daemon                   | Uses `/core/restart-text`; orchestrates daemon, services, runtime repair, and dashboard reload.        |
 | `aimux input <sessionId> <text...>`                     | `CUT`  | daemon + project service | Uses `/core/agents/input-text`; sends agent input through the project-service agent API.               |
 | `aimux ps [--json]`                                     | `CUT`  | daemon + project service | Uses `/core/agents/ps-text`; lists agents from the project service without a fresh Node process.       |
 | `aimux rename <sessionId> --label <label>`              | `CUT`  | daemon + project service | Uses `/core/agents/rename-text`; label mutation stays project-service owned.                           |
@@ -49,7 +48,6 @@ Node launcher when a matching daemon is already running:
 | `aimux daemon status [--json]`                          | `CUT`  | daemon                   | Uses `/core/daemon-status-text`.                                                                       |
 | `aimux daemon projects [--json]`                        | `CUT`  | daemon                   | Uses `/core/daemon-projects-text`.                                                                     |
 | `aimux daemon project-ensure --project <path> [--json]` | `CUT`  | daemon                   | Uses `/core/project-ensure-text` with an explicit project payload.                                     |
-| `aimux daemon restart [--json]`                         | `CUT`  | daemon                   | Uses `/core/restart-text` as the compatibility alias for `aimux restart`.                              |
 | `aimux host status [--json]`                            | `CUT`  | daemon                   | Uses `/core/host-status-text` with the current directory as project context.                           |
 | `aimux projects list [--json]`                          | `CUT`  | daemon                   | Uses `/core/projects-list-text`.                                                                       |
 | `aimux remote status [--json]`                          | `CUT`  | daemon                   | Uses `/core/remote-status-text`; status JSON never includes credential tokens.                         |
@@ -69,6 +67,7 @@ No commands currently live in this category.
 | Family                                                    | Status      | Target Owner    | Notes                                                                                                  |
 | --------------------------------------------------------- | ----------- | --------------- | ------------------------------------------------------------------------------------------------------ |
 | `aimux` dashboard entry                                   | `BOOTSTRAP` | daemon + tmux   | May bootstrap/repair, then should attach to tmux-managed dashboard.                                    |
+| `aimux restart`, `aimux daemon restart`                   | `BOOTSTRAP` | launcher + daemon + tmux | Runs local repair orchestration from the installed launcher so it can unbrick a stale or wedged daemon. |
 | `aimux init`                                              | `BOOTSTRAP` | daemon          | Project registration/setup path; allowed to start the control plane.                                   |
 | `aimux input`, `aimux ps`, `aimux rename`, `aimux migrate` | `CUT`       | project service | Agent utility commands use daemon text routes to project-service APIs in the healthy installed path.   |
 | `aimux spawn`, `aimux stop`, `aimux kill`, `aimux fork`   | `CUT`       | project service | Agent lifecycle commands use daemon text routes to project-service APIs in the healthy installed path. |
@@ -86,6 +85,7 @@ No commands currently live in this category.
 | `aimux logs path`, `tail`, `clear`                        | `CUT`       | daemon/filesystem | Healthy installed diagnostic log access uses daemon text routes; stale daemon falls back to bootstrap. |
 | `aimux serve`, `aimux host stop/kill/restart`              | `CUT`       | daemon          | Project-service management uses daemon text routes in the healthy installed path.                      |
 | `aimux dashboard-reload`, `aimux restart-runtime`          | `CUT`       | daemon + tmux   | Advanced dashboard/runtime repair commands use daemon text routes in the healthy installed path.       |
+| tmux Exposé popup / `aimux expose`                         | `TMUX`      | tmux + daemon/project service | Rich local popup surface; project/worktree tiles come from project-service APIs and global tiles/focus route through daemon `/core/expose/*`. |
 
 ## Local Runtime And Developer Plumbing
 
@@ -98,6 +98,7 @@ No commands currently live in this category.
 | `aimux host stop`, `host kill`, `host restart [--serve|--open]`          | `CUT`       | daemon + caller tmux   | Healthy installed path uses `/core/project-*-text`; `--open` sends caller tmux context to the daemon. |
 | `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
 | `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |
+| tmux Exposé popup / `aimux expose`                                      | `TMUX`      | tmux + daemon/project service | Terminal-local renderer only; switchable item data and cross-project focus routing are API-backed. |
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |
 | `aimux doctor versions`, `aimux doctor tmux`                            | `CUT`       | daemon/project service | Healthy installed diagnostics use daemon text routes instead of local CLI recompute. |
 | `aimux doctor notifications`                                            | `INTERNAL`  | desktop notifier        | Desktop notification diagnostic remains local debug plumbing.                        |

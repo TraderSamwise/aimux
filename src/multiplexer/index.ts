@@ -442,6 +442,10 @@ export class Multiplexer {
     return startProjectServiceHostImpl(this);
   }
 
+  ensureProjectServiceEndpoint(): void {
+    this.metadataServer?.ensureEndpointPublished();
+  }
+
   /**
    * Resume previous sessions using each tool's native resume mechanism.
    * Reads runtime topology and spawns sessions with resumeArgs instead of normal args.

@@ -94,6 +94,15 @@ function buildDashboardStamp(artifactPaths: string[], command: string): string {
   return `${artifactHash.digest("hex").slice(0, 16)}-${commandHash}`;
 }
 
+function buildDashboardStartupPreludeCommand(): string {
+  return [
+    "printf",
+    shellQuote("\n%s\n%s\n"),
+    shellQuote("Starting Aimux dashboard..."),
+    shellQuote("Loading local control plane."),
+  ].join(" ");
+}
+
 export function getDashboardCommandSpec(
   projectRoot: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -112,10 +121,13 @@ export function getDashboardCommandSpec(
     forStamp: true,
     unsetKeys,
   })}${aimuxCommand}`;
+  const startupPrelude = buildDashboardStartupPreludeCommand();
   const wrappedDashboardCommand = [
     "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
     ";",
     "set -o pipefail",
+    ";",
+    startupPrelude,
     ";",
     dashboardEntrypoint,
     "2>&1",

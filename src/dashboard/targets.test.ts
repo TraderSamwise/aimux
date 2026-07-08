@@ -49,11 +49,17 @@ describe("findLiveDashboardTarget", () => {
     expect(tmux.listWindows).not.toHaveBeenCalledWith("aimux-tealstreet-next-def456-client-deadbeef");
   });
 
-  it("respawns a dashboard owned by another aimux runtime", () => {
+  it("replaces a dashboard owned by another aimux runtime only after the replacement is ready", () => {
     const { dashboardBuildStamp } = getDashboardCommandSpec("/Users/sam/cs/glyde-frontend");
     const dashboardTarget = {
       sessionName: "aimux-glyde-frontend-abc123",
       windowId: "@1",
+      windowIndex: 0,
+      windowName: "dashboard",
+    };
+    const replacementTarget = {
+      sessionName: "aimux-glyde-frontend-abc123",
+      windowId: "@2",
       windowIndex: 0,
       windowName: "dashboard",
     };
@@ -85,7 +91,7 @@ describe("findLiveDashboardTarget", () => {
       displayMessage: vi.fn(() => "bash"),
       captureTarget: vi.fn(() => ""),
       killWindow: vi.fn(),
-      respawnWindow: vi.fn(),
+      replaceWindowWhenReady: vi.fn(() => replacementTarget),
       setSessionOption: vi.fn(),
       setWindowOption: vi.fn(),
     } as unknown as TmuxRuntimeManager;
@@ -94,14 +100,18 @@ describe("findLiveDashboardTarget", () => {
 
     resolveDashboardTarget("/Users/sam/cs/glyde-frontend", tmux);
 
-    expect(tmux.respawnWindow).toHaveBeenCalledWith(dashboardTarget, expect.any(Object));
+    expect(tmux.replaceWindowWhenReady).toHaveBeenCalledWith(dashboardTarget, expect.any(Object), {
+      option: "@aimux-dashboard-ready",
+      value: dashboardBuildStamp,
+      timeoutMs: 20_000,
+    });
     expect(tmux.setSessionOption).toHaveBeenCalledWith(
       "aimux-glyde-frontend-abc123",
       "@aimux-dashboard-build",
       dashboardBuildStamp,
     );
     expect(tmux.setWindowOption).toHaveBeenCalledWith(
-      dashboardTarget,
+      replacementTarget,
       TMUX_DASHBOARD_OWNER_OPTION,
       getRuntimeOwnerId(),
     );

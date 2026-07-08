@@ -40,8 +40,24 @@ export class CoreProjectActor {
     return this.started;
   }
 
+  ensureEndpointPublished(): void {
+    if (!this.started) return;
+    this.mux?.ensureProjectServiceEndpoint();
+  }
+
   async start(): Promise<CoreProjectActorState> {
-    if (this.started) return this.getState();
+    if (this.started) {
+      try {
+        this.ensureEndpointPublished();
+      } catch (error) {
+        log.warn("failed to republish core project actor endpoint", "daemon", {
+          projectId: this.state.projectId,
+          projectRoot: this.state.projectRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return this.getState();
+    }
     await withProjectPaths(this.state.projectRoot, async () => {
       ensureProjectPaths();
       initProject();

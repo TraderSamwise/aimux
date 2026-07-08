@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths } from "../paths.js";
+import { initPaths, withProjectPaths } from "../paths.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
@@ -187,6 +187,29 @@ describe("startStatusRefresh", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
+
+  it("does not run dashboard background API refresh while startup is priming", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => true) },
+      mode: "dashboard",
+      dashboardStartupPriming: true,
+      dashboardNextBackgroundRefreshAt: 0,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
 });
 
 describe("resumeOfflineSession", () => {
@@ -342,6 +365,58 @@ describe("resumeOfflineSession", () => {
     expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
     expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
     expect(listTopologySessionStates()).toEqual([]);
+  });
+
+  it("does not resume an offline cache row from another project's topology", () => {
+    const otherRepoRoot = mkdtempSync(join(tmpdir(), "aimux-runtime-state-other-"));
+    try {
+      mkdirSync(join(otherRepoRoot, ".git"), { recursive: true });
+      withProjectPaths(otherRepoRoot, () => {
+        saveRuntimeTopologySessions({
+          projectRoot: otherRepoRoot,
+          sessions: [
+            {
+              id: "codex-shared",
+              command: "codex",
+              tool: "codex",
+              toolConfigKey: "codex",
+              args: [],
+              backendSessionId: "backend-other",
+              lifecycle: "offline",
+              worktreePath: otherRepoRoot,
+            },
+          ],
+        });
+      });
+      const createSession = vi.fn();
+      const host: any = {
+        projectRoot: repoRoot,
+        sessions: [],
+        offlineSessions: [{ id: "codex-shared", command: "codex", toolConfigKey: "codex" }],
+        invalidateDesktopStateSnapshot: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        debug: vi.fn(),
+        createSession,
+      };
+
+      resumeOfflineSession(host, {
+        id: "codex-shared",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: repoRoot,
+      });
+
+      expect(createSession).not.toHaveBeenCalled();
+      expect(host.offlineSessions).toEqual([]);
+      expect(
+        withProjectPaths(otherRepoRoot, () =>
+          listTopologySessionStates({ statuses: ["offline"], projectRoot: otherRepoRoot }),
+        ),
+      ).toMatchObject([{ id: "codex-shared", backendSessionId: "backend-other" }]);
+    } finally {
+      rmSync(otherRepoRoot, { recursive: true, force: true });
+    }
   });
 
   it("settles a stale running activity to idle on backend resume", () => {
@@ -730,6 +805,42 @@ describe("resumeOfflineSession", () => {
     expect(createSession.mock.calls[0][7]).toBeUndefined();
     expect(createSession.mock.calls[0][10]).toBe(false);
     expect(restoredSession.supersededBackendSessionId).toBe("backend-old");
+  });
+
+  it("fresh relaunches backend-less sessions with no user history", () => {
+    const createSession = vi.fn(() => ({}));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-empty" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => false) },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+    seedOfflineSession({
+      id: "codex-empty",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      freshRelaunchAllowed: true,
+      worktreePath: repoRoot,
+    });
+
+    resumeOfflineSession(host, {
+      id: "codex-empty",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      freshRelaunchAllowed: true,
+      worktreePath: repoRoot,
+    });
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0][7]).toBeUndefined();
+    expect(createSession.mock.calls[0][10]).toBe(false);
   });
 
   it("records backend session ids on live and offline sessions", () => {

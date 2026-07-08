@@ -37,7 +37,6 @@ const installedShimFastPaths: Array<{ command: string; shimNeedle: string }> = [
   { command: "repair", shimNeedle: "/core/repair-text" },
   { command: "dashboard-reload", shimNeedle: "/core/dashboard-reload-text" },
   { command: "restart-runtime", shimNeedle: "/core/runtime-restart-text" },
-  { command: "restart", shimNeedle: "/core/restart-text" },
   { command: "serve", shimNeedle: "/core/project-serve-text" },
   { command: "worktree", shimNeedle: "/core/worktree/list-text" },
   { command: "worktree list", shimNeedle: "/core/worktree/list-text" },
@@ -180,14 +179,12 @@ const coreCommandDispositions: Array<{
   {
     command: "daemon restart",
     args: ["daemon", "restart"],
-    disposition: "shim-fast-path",
-    shimNeedle: "/core/restart-text",
+    disposition: "node-core-fallback",
   },
   {
     command: "daemon restart --json",
     args: ["daemon", "restart", "--json"],
-    disposition: "shim-fast-path",
-    shimNeedle: "/core/restart-text?json=1",
+    disposition: "node-core-fallback",
   },
   {
     command: "serve",
@@ -341,7 +338,7 @@ describe("core command ownership inventory", () => {
 
     expect(inventory).not.toContain("SIDEcar");
     expect(inventory).not.toContain("`LEGACY`");
-    expect(new Set(statusLabels)).toEqual(new Set(["CUT", "BOOTSTRAP", "INTERNAL"]));
+    expect(new Set(statusLabels)).toEqual(new Set(["CUT", "BOOTSTRAP", "TMUX", "INTERNAL"]));
     expect(statusLabels.every((status) => allowedInventoryStatuses.has(status))).toBe(true);
   });
 
@@ -404,7 +401,7 @@ describe("core command ownership inventory", () => {
     const shim = readFileSync(join(process.cwd(), "scripts", "installed-aimux-shim.sh"), "utf8");
     const fastPaths = coreCommandDispositions.filter((entry) => entry.disposition === "shim-fast-path");
 
-    expect(fastPaths).toHaveLength(40);
+    expect(fastPaths).toHaveLength(38);
     for (const entry of [...installedShimFastPaths, ...fastPaths]) {
       expect(entry.shimNeedle, entry.command).toBeTruthy();
       expect(shim, entry.command).toContain(entry.shimNeedle);
@@ -416,6 +413,6 @@ describe("core command ownership inventory", () => {
       .filter((entry) => entry.disposition === "node-core-fallback")
       .map((entry) => entry.command);
 
-    expect(backlog).toEqual([]);
+    expect(backlog).toEqual(["daemon restart", "daemon restart --json"]);
   });
 });

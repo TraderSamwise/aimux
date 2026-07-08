@@ -56,12 +56,14 @@ Disallowed normal paths:
 | Area                                             | Owner           | Notes                                                                           |
 | ------------------------------------------------ | --------------- | ------------------------------------------------------------------------------- |
 | project discovery and activation                 | daemon          | Host-level project registry and service supervision.                            |
-| daemon status, restart, repair orchestration     | daemon          | CLI/TUI should request the daemon to repair, not perform repair independently.  |
+| daemon status and service repair                 | daemon          | Daemon owns supervision and project-service repair.                             |
+| restart bootstrap recovery                       | launcher + daemon + tmux | Launcher performs local repair orchestration when daemon may be stale or wedged. |
 | project state and mutations                      | project service | Single writer for shared project state.                                         |
 | notifications, threads, tasks, handoffs, reviews | project service | TUI/web/mobile/CLI use the same project API contracts.                          |
 | Coordination worklist                            | project service | One server-built model for all clients.                                         |
 | worktrees, graveyard, lifecycle mutations        | project service | Same API semantics across clients.                                              |
 | PTYs, panes, windows, attach/detach, focus       | tmux runtime    | Local execution substrate; remote parity uses streams/deep links, not raw tmux. |
+| Exposé and meta-dashboard terminal surfaces      | tmux + APIs     | tmux renders/previews; daemon/project-service APIs provide item models and focus routing. |
 | TUI selection, filters, overlays, text buffers   | TUI             | Presentation state only.                                                        |
 | web/mobile preferences and view state            | app client      | Presentation state only.                                                        |
 
@@ -191,6 +193,12 @@ Service detail also uses the shared `desktop-state` resource instead of owning
 its own desktop-state fetch/retry loop.
 The Project tab's observability/tasks refreshes now run through project-store
 resource actions instead of screen-owned request bookkeeping.
+
+The tmux Exposé popup remains the rich local terminal UI, but it is no longer a
+separate switcher brain. Worktree/project scopes read switchable tiles from the
+project service, global scope reads them from daemon `/core/expose/items`, and
+focus/open goes through project-service or daemon focus routes before tmux does
+the local window switch.
 
 ## Maintenance Path
 

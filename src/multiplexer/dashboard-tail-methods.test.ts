@@ -226,6 +226,41 @@ describe("dashboard lifecycle adapter", () => {
     expect(runtime.kill).toHaveBeenCalledOnce();
   });
 
+  it("marks no-history codex sessions as fresh relaunchable when stopped through the API", async () => {
+    const runtime = {
+      id: "codex-fresh",
+      command: "codex",
+      startTime: Date.parse("2026-05-25T00:00:00.000Z"),
+      kill: vi.fn(),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      sessions: [runtime],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([["codex-fresh", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-fresh", ["--dangerously-bypass-approvals-and-sandbox"]]]),
+      sessionWorktreePaths: new Map([["codex-fresh", repoRoot]]),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    await expect(dashboardTailMethods.stopAgent.call(host, "codex-fresh")).resolves.toEqual({
+      sessionId: "codex-fresh",
+      status: "offline",
+    });
+
+    expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
+      id: "codex-fresh",
+      freshRelaunchAllowed: true,
+      status: "offline",
+    });
+  });
+
   it("moves offline agents to graveyard through topology without requiring offline cache authority", async () => {
     upsertTopologySession(
       {

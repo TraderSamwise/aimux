@@ -151,6 +151,7 @@ import {
 } from "./runtime-core/exchange-alert-routing.js";
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
+import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
   permissionRequestHookOutput,
@@ -1132,7 +1133,12 @@ function topologyDesktopSessionList(
   return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => {
     const status = session.status ?? "offline";
     const restorability =
-      status === "offline" ? describeSessionRestorability({ ...session, status }, tools) : undefined;
+      status === "offline"
+        ? describeSessionRestorability(
+            { ...session, status, freshRelaunchAllowed: shouldRelaunchFreshSession(session, getRepoRoot()) },
+            tools,
+          )
+        : undefined;
     return {
       ...session,
       status,
@@ -1271,6 +1277,11 @@ export class MetadataServer {
       },
       this.projectRoot,
     );
+  }
+
+  ensureEndpointPublished(): void {
+    if (!this.server || this.port === 0) return;
+    this.publishEndpoint();
   }
 
   stop(): void {
@@ -2399,6 +2410,7 @@ export class MetadataServer {
       const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
       const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
       const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
+      const rawLabels = url.searchParams.get("labelFormat") === "raw";
       const items = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -2411,7 +2423,7 @@ export class MetadataServer {
         { scope },
       ).map((item) => ({
         ...serializeFastControlItem(item),
-        label: item.lastUsedAt ? `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}` : item.label,
+        label: rawLabels || !item.lastUsedAt ? item.label : `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}`,
       }));
       send(res, 200, { ok: true, items });
       return;

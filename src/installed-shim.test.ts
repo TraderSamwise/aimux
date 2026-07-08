@@ -19,7 +19,6 @@ function makeFixture() {
   writeFileSync(join(aimuxRoot, "dist", "launcher-bin.js"), "");
 
   const healthFile = join(root, "health.json");
-  const restartFile = join(root, "restart.txt");
   const textRouteFile = join(root, "text-route.txt");
   const authStartFile = join(root, "auth-start.txt");
   const authWaitFile = join(root, "auth-wait.txt");
@@ -106,15 +105,6 @@ printf 'URL=%s\n' "$url" >> "$CURL_LOG"
     [ -n "$write_status" ] && printf '%s' "$text_status"
     exit 0
     ;;
-  */core/restart-text*)
-    [ -f "$RESTART_FILE" ] || exit 22
-    if [ -n "$output_file" ]; then
-      cat "$RESTART_FILE" > "$output_file"
-    else
-      cat "$RESTART_FILE"
-    fi
-    [ -n "$write_status" ] && printf '%s' "\${RESTART_STATUS:-200}"
-    ;;
   *)
     [ -f "$HEALTH_FILE" ] || exit 22
     cat "$HEALTH_FILE"
@@ -158,7 +148,6 @@ exit "\${TMUX_EXIT:-0}"
     AIMUX_DAEMON_PORT: "45678",
     CURL_LOG: curlLog,
     HEALTH_FILE: healthFile,
-    RESTART_FILE: restartFile,
     TEXT_ROUTE_FILE: textRouteFile,
     TMUX_LOG: tmuxLog,
     AUTH_START_FILE: authStartFile,
@@ -182,7 +171,6 @@ exit "\${TMUX_EXIT:-0}"
     curlPath,
     nodePath,
     healthFile,
-    restartFile,
     textRouteFile,
     tmuxPath,
     tmuxLog,
@@ -284,67 +272,65 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js daemon ensure\n`);
   });
 
-  it("serves restart from a matching daemon without launching Node", () => {
+  it("runs restart through the Node launcher even when the daemon matches", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.restartFile, "Aimux Restart\n  failures: 0\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["restart"]);
+    const result = fixture.run(["restart"], { NODE_EXIT: "17" });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("Aimux Restart\n  failures: 0\n");
-    expect(result.stderr).toBe("");
-    expect(existsSync(fixture.nodeLog)).toBe(false);
+    expect(result.status).toBe(17);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
+    expect(existsSync(fixture.curlLog)).toBe(false);
   });
 
-  it("serves restart JSON and daemon restart alias from a matching daemon without launching Node", () => {
+  it("runs restart JSON and daemon restart alias through the Node launcher", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.restartFile, '{\n  "summary": {"failures": 0}\n}\n');
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    expect(fixture.run(["restart", "--json"]).stdout).toBe('{\n  "summary": {"failures": 0}\n}\n');
-    expect(fixture.run(["daemon", "restart", "--json"]).stdout).toBe('{\n  "summary": {"failures": 0}\n}\n');
+    expect(fixture.run(["restart", "--json"], { NODE_EXIT: "18" }).status).toBe(18);
+    expect(fixture.run(["daemon", "restart", "--json"], { NODE_EXIT: "19" }).status).toBe(19);
 
-    const curlLog = readFileSync(fixture.curlLog, "utf8");
-    expect(curlLog).toContain("/core/restart-text?json=1");
-    expect(existsSync(fixture.nodeLog)).toBe(false);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js restart --json\n` +
+        `${fixture.aimuxRoot}/dist/launcher-bin.js daemon restart --json\n`,
+    );
+    expect(existsSync(fixture.curlLog)).toBe(false);
   });
 
-  it("passes restart project scope to the daemon from the healthy installed path", () => {
+  it("passes restart project scope to the Node launcher", () => {
     const fixture = makeFixture();
     const projectDir = join(fixture.root, "repo");
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.restartFile, "Aimux Restart\n  projects: 1\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["restart", "--project", "."], {}, { cwd: projectDir });
+    const result = fixture.run(["restart", "--project", "."], { NODE_EXIT: "20" }, { cwd: projectDir });
 
-    expect(result.status).toBe(0);
-    expect(readFileSync(fixture.curlLog, "utf8")).toContain(`project=${realpathSync(projectDir)}\n`);
-    expect(existsSync(fixture.nodeLog)).toBe(false);
+    expect(result.status).toBe(20);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js restart --project .\n`,
+    );
+    expect(realpathSync(projectDir)).toBeTruthy();
+    expect(existsSync(fixture.curlLog)).toBe(false);
   });
 
-  it("returns restart failures from a matching daemon without launching Node", () => {
+  it("lets the Node launcher handle restart failures", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.restartFile, "Aimux Restart\n  failures: 1\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    const result = fixture.run(["restart"], { RESTART_STATUS: "500" });
+    const result = fixture.run(["restart"], { NODE_EXIT: "21" });
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("Aimux Restart\n  failures: 1\n");
-    expect(result.stderr).toBe("");
-    expect(existsSync(fixture.nodeLog)).toBe(false);
+    expect(result.status).toBe(21);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
+    expect(existsSync(fixture.curlLog)).toBe(false);
   });
 
   it("falls back to the Node launcher for restart when the daemon build is stale", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("old-build", 321)}\n`);
-    writeFileSync(fixture.restartFile, "Aimux Restart\n  failures: 0\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
     const result = fixture.run(["restart"], { NODE_EXIT: "19" });
@@ -353,14 +339,18 @@ describe("installed aimux shim", () => {
     expect(readFileSync(fixture.nodeLog, "utf8")).toBe(`${fixture.aimuxRoot}/dist/launcher-bin.js restart\n`);
   });
 
-  it("rejects invalid restart arguments without launching Node when the daemon is healthy", () => {
+  it("lets the Node launcher validate restart arguments", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
-    writeFileSync(fixture.restartFile, "Aimux Restart\n");
     writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
 
-    expectInvalidNoNode(fixture, ["restart", "--open"]);
-    expectInvalidNoNode(fixture, ["daemon", "restart", "--project", "/repo"]);
+    expect(fixture.run(["restart", "--open"], { NODE_EXIT: "22" }).status).toBe(22);
+    expect(fixture.run(["daemon", "restart", "--project", "/repo"], { NODE_EXIT: "23" }).status).toBe(23);
+    expect(readFileSync(fixture.nodeLog, "utf8")).toBe(
+      `${fixture.aimuxRoot}/dist/launcher-bin.js restart --open\n` +
+        `${fixture.aimuxRoot}/dist/launcher-bin.js daemon restart --project /repo\n`,
+    );
+    expect(existsSync(fixture.curlLog)).toBe(false);
   });
 
   it("serves doctor and repair commands from a matching daemon without launching Node", () => {

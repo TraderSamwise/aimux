@@ -6,12 +6,14 @@ import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
+import { listAllProjectsExposeItems } from "./expose-control.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadConfig } from "./config.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { serializeFastControlItem } from "./fast-control.js";
 import {
   CORE_API_ROUTES,
   CORE_COMMAND_NAMES,
@@ -151,6 +153,7 @@ import {
   repairTmuxRuntime,
 } from "./tmux/doctor.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { openTargetForClient } from "./tmux/window-open.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -258,6 +261,8 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
+const PROJECT_SERVICE_ENDPOINT_READY_TIMEOUT_MS = 2_000;
+const PROJECT_SERVICE_ENDPOINT_READY_INTERVAL_MS = 50;
 const CORS_ALLOWED_ORIGINS = new Set([
   "http://localhost:8081",
   "http://127.0.0.1:8081",
@@ -485,7 +490,9 @@ export class AimuxDaemon {
 
   private isProjectServiceLive(entry: ProjectServiceState): boolean {
     const actor = this.projectActors.get(entry.projectId);
-    return entry.pid === process.pid && Boolean(actor?.isRunning());
+    const live = entry.pid === process.pid && Boolean(actor?.isRunning());
+    if (live) actor?.ensureEndpointPublished?.();
+    return live;
   }
 
   private listProjectsForRoute(): ProjectsRouteProject[] {
@@ -587,6 +594,71 @@ export class AimuxDaemon {
 
   private textError(status: number, message: string): DaemonRouteResponse {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private exposeItemsRoute(): DaemonRouteResponse {
+    const items = listAllProjectsExposeItems().map((item) => ({
+      ...serializeFastControlItem(item),
+      projectId: item.projectId,
+      projectName: item.projectName,
+      projectRoot: item.projectRoot,
+    }));
+    return { status: 200, body: { ok: true, items } };
+  }
+
+  private exposeFocusRoute(body: unknown): DaemonRouteResponse {
+    const payload = (body ?? {}) as {
+      windowId?: unknown;
+      projectRoot?: unknown;
+      currentClientSession?: unknown;
+      clientTty?: unknown;
+    };
+    if (payload.windowId !== undefined && typeof payload.windowId !== "string") {
+      return { status: 400, body: { ok: false, error: "windowId must be a string" } };
+    }
+    if (payload.projectRoot !== undefined && typeof payload.projectRoot !== "string") {
+      return { status: 400, body: { ok: false, error: "projectRoot must be a string" } };
+    }
+    if (payload.currentClientSession !== undefined && typeof payload.currentClientSession !== "string") {
+      return { status: 400, body: { ok: false, error: "currentClientSession must be a string" } };
+    }
+    if (payload.clientTty !== undefined && typeof payload.clientTty !== "string") {
+      return { status: 400, body: { ok: false, error: "clientTty must be a string" } };
+    }
+    const windowId = payload.windowId?.trim();
+    const projectRoot = payload.projectRoot?.trim();
+    if (!windowId) return { status: 400, body: { ok: false, error: "windowId is required" } };
+
+    const tmux = new TmuxRuntimeManager();
+    const item = listAllProjectsExposeItems({ tmux }).find((candidate) => {
+      if (candidate.target.windowId !== windowId) return false;
+      return projectRoot ? pathResolve(candidate.projectRoot) === pathResolve(projectRoot) : true;
+    });
+    if (!item) return { status: 404, body: { ok: false, error: "window not found" } };
+
+    try {
+      const focusResult = openTargetForClient(
+        tmux,
+        item.target,
+        payload.currentClientSession?.trim() || undefined,
+        payload.clientTty?.trim() || undefined,
+      );
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          action: "expose-focus",
+          ...focusResult,
+          itemId: item.id,
+          projectId: item.projectId,
+          projectName: item.projectName,
+          projectRoot: item.projectRoot,
+          target: item.target,
+        },
+      };
+    } catch (error) {
+      return { status: 500, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+    }
   }
 
   private logSelectionOptions(routeUrl: URL): { daemon: boolean; project?: string } {
@@ -2242,7 +2314,9 @@ export class AimuxDaemon {
     const existing = this.state.projects[projectId];
     const actor = this.projectActors.get(projectId);
     if (actor?.isRunning()) {
+      actor.ensureEndpointPublished?.();
       const state = actor.getState();
+      await this.waitForProjectServiceEndpoint(projectId, state.pid, () => actor.ensureEndpointPublished?.());
       this.state.projects[projectId] = state;
       this.refreshState();
       return state;
@@ -2270,9 +2344,29 @@ export class AimuxDaemon {
       throw error;
     }
     this.projectActors.set(projectId, nextActor);
+    await this.waitForProjectServiceEndpoint(projectId, state.pid, () => nextActor.ensureEndpointPublished?.());
     this.state.projects[projectId] = state;
     this.refreshState();
     return state;
+  }
+
+  private async waitForProjectServiceEndpoint(
+    projectId: string,
+    expectedPid: number,
+    republish: () => void,
+  ): Promise<void> {
+    const deadline = Date.now() + PROJECT_SERVICE_ENDPOINT_READY_TIMEOUT_MS;
+    let lastError = "endpoint was not published";
+    while (Date.now() <= deadline) {
+      republish();
+      const endpoint = loadMetadataEndpointByProjectId(projectId);
+      if (endpoint?.pid === expectedPid) return;
+      if (endpoint) {
+        lastError = `endpoint pid ${endpoint.pid} did not match ${expectedPid}`;
+      }
+      await new Promise((resolve) => setTimeout(resolve, PROJECT_SERVICE_ENDPOINT_READY_INTERVAL_MS));
+    }
+    throw new Error(`project service endpoint did not become ready: ${lastError}`);
   }
 
   private async terminateLegacyProjectService(existing: ProjectServiceState): Promise<void> {
@@ -3186,6 +3280,16 @@ export class AimuxDaemon {
       if (!this.pushThrottle.allow(payload)) return { status: 200, body: { ok: true, suppressed: true } };
       this.relayClient.pushNotification(payload);
       return { status: 200, body: { ok: true } };
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
+      if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
+      return this.exposeItemsRoute();
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.exposeFocus) {
+      if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
+      return this.exposeFocusRoute(body);
     }
 
     if (method === "GET" && pathname === "/projects") {

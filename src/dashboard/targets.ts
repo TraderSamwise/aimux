@@ -9,6 +9,8 @@ import {
   TMUX_RUNTIME_OWNER_OPTION,
 } from "../runtime-owner.js";
 
+const DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS = 20_000;
+
 export interface DashboardTargetRef {
   dashboardSession: TmuxSessionRef;
   dashboardTarget: TmuxTarget;
@@ -102,7 +104,7 @@ export function resolveDashboardTarget(
   const openSessionName = options.openInHostSession
     ? dashboardSession.sessionName
     : tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
-  const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
+  let dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
   const currentReadyStamp = tmux.getWindowOption(dashboardTarget, TMUX_DASHBOARD_READY_OPTION);
   const currentOwner = getRuntimeOwnerId();
@@ -114,8 +116,11 @@ export function resolveDashboardTarget(
     currentReadyStamp !== dashboardBuildStamp ||
     currentDashboardOwner !== currentOwner;
   if (shouldRespawn) {
-    tmux.setWindowOption(dashboardTarget, TMUX_DASHBOARD_READY_OPTION, "");
-    tmux.respawnWindow(dashboardTarget, dashboardCommand);
+    dashboardTarget = tmux.replaceWindowWhenReady(dashboardTarget, dashboardCommand, {
+      option: TMUX_DASHBOARD_READY_OPTION,
+      value: dashboardBuildStamp,
+      timeoutMs: DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
+    });
   }
   tmux.setSessionOption(dashboardSession.sessionName, "@aimux-dashboard-build", dashboardBuildStamp);
   tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);

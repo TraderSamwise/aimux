@@ -57,6 +57,7 @@ const allowedChildProcessFiles = new Set([
   "src/paths.ts",
   "src/process-inspector.ts",
   "src/tmux/doctor.ts",
+  "src/tmux/expose.ts",
   "src/tmux/runtime-manager.ts",
   "src/worktree.ts",
 ]);
