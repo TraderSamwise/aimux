@@ -19,6 +19,20 @@ interface PendingActionEntry {
   worktreeSeed?: WorktreeGroup;
 }
 
+export interface PendingSessionActionEntry {
+  id: string;
+  kind: PendingSessionActionKind;
+  token: number;
+  startedAt: string;
+}
+
+export interface PendingServiceActionEntry {
+  id: string;
+  kind: PendingServiceActionKind;
+  token: number;
+  startedAt: string;
+}
+
 interface PendingActionOptions {
   timeoutMs?: number;
   onTimeout?: () => void;
@@ -145,6 +159,28 @@ export class DashboardPendingActions {
       DashboardPendingActions.actionKey("worktree", DashboardPendingActions.worktreeKey(path)),
     );
     return entry?.target === "worktree" ? (entry.kind as PendingWorktreeActionKind) : undefined;
+  }
+
+  listSessionActions(): PendingSessionActionEntry[] {
+    return [...this.actions.entries()]
+      .filter(([, entry]) => entry.target === "session")
+      .map(([key, entry]) => ({
+        id: key.slice("session:".length),
+        kind: entry.kind as PendingSessionActionKind,
+        token: entry.token,
+        startedAt: entry.startedAt,
+      }));
+  }
+
+  listServiceActions(): PendingServiceActionEntry[] {
+    return [...this.actions.entries()]
+      .filter(([, entry]) => entry.target === "service")
+      .map(([key, entry]) => ({
+        id: key.slice("service:".length),
+        kind: entry.kind as PendingServiceActionKind,
+        token: entry.token,
+        startedAt: entry.startedAt,
+      }));
   }
 
   private setEntry(

@@ -22,6 +22,7 @@ import {
   type DashboardLifecycleToken,
 } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
+import { userFacingErrorLines } from "../error-display.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -234,7 +235,7 @@ function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: Dashbo
   })().catch((error: unknown) => {
     opts.clearPending();
     if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
-    host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+    host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
   });
 }
 
@@ -391,9 +392,11 @@ async function waitForDashboardSessionResumeSettle(
   timeoutMs = 10_000,
   modelLifecycle?: DashboardLifecycleToken,
   renderLifecycle?: DashboardLifecycleToken,
+  opts?: { allowInactiveSettle?: () => boolean },
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   let hasFreshSnapshot = false;
+  let inactiveSince: number | null = null;
   while (Date.now() < deadline) {
     const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
     hasFreshSnapshot ||= refreshed;
@@ -408,6 +411,16 @@ async function waitForDashboardSessionResumeSettle(
       renderDashboardDuringSettlement(host, renderLifecycle);
     }
     if (
+      opts?.allowInactiveSettle?.() &&
+      (hasFreshSnapshot || !hasRawSnapshot) &&
+      isDashboardSessionRestoreInactive(host, sessionId)
+    ) {
+      inactiveSince ??= Date.now();
+      if (Date.now() - inactiveSince >= 350) return true;
+    } else {
+      inactiveSince = null;
+    }
+    if (
       typeof host.waitForSessionStart === "function" &&
       (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
     ) {
@@ -420,6 +433,22 @@ async function waitForDashboardSessionResumeSettle(
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  return (
+    isDashboardSessionResumeSettled(host, sessionId) ||
+    Boolean(opts?.allowInactiveSettle?.() && isDashboardSessionRestoreInactive(host, sessionId))
+  );
+}
+
+function isDashboardSessionRestoreInactive(host: DashboardOpsHost, sessionId: string): boolean {
+  if (hasLiveManagedAgentWindow(host, sessionId)) return false;
+  const { known, session } = getDashboardSessionSettlementEntry(host, sessionId);
+  if (!known) return false;
+  if (!session) return true;
+  if (session.pendingAction || session.optimistic) return false;
+  return !isLiveDashboardSessionEntry(session);
+}
+
+function isDashboardSessionRestored(host: DashboardOpsHost, sessionId: string): boolean {
   return isDashboardSessionResumeSettled(host, sessionId);
 }
 
@@ -608,7 +637,7 @@ async function runDashboardSessionMutation(
     clearPending();
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
-    host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+    host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
     return "failed";
   }
 }
@@ -665,7 +694,7 @@ async function runDashboardServiceMutation(
     clearPending();
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
-    host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+    host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
     return "failed";
   }
 }
@@ -1015,6 +1044,13 @@ export async function resumeOfflineSessionWithFeedback(
       restoreWarningsShown = true;
       host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
     };
+    let resumeRequestSettled = false;
+    const resumeStartedAt = Date.now();
+    const applyRestoreSettlementFlash = () => {
+      showRestoreWarnings();
+      host.footerFlash = isDashboardSessionRestored(host, session.id) ? `Restored ${label}` : `${label} stayed offline`;
+      host.footerFlashTicks = 3;
+    };
     const mutationResult =
       (await enqueueDashboardAgentRestore(host, session.id, async () =>
         runDashboardSessionMutation(host, {
@@ -1027,18 +1063,23 @@ export async function resumeOfflineSessionWithFeedback(
             host.footerFlashTicks = 3;
           },
           request: async () => {
-            resumeResult = await mutateDashboardApi(
-              host,
-              PROJECT_API_ROUTES.agents.resume,
-              { sessionId: session.id },
-              { timeoutMs: 60_000 },
-            );
+            try {
+              resumeResult = await mutateDashboardApi(
+                host,
+                PROJECT_API_ROUTES.agents.resume,
+                { sessionId: session.id },
+                { timeoutMs: 60_000 },
+              );
+            } finally {
+              resumeRequestSettled = true;
+            }
           },
           settle: (modelLifecycle, renderLifecycle) =>
-            waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
+            waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle, {
+              allowInactiveSettle: () => resumeRequestSettled || Date.now() - resumeStartedAt >= 5_000,
+            }),
           onAfterRequest: showRestoreWarnings,
-          onAfterSettle: showRestoreWarnings,
-          successFlash: { message: `Restored ${label}` },
+          onAfterSettle: applyRestoreSettlementFlash,
           onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
           errorTitle: `Failed to restore "${label}"`,
         }),

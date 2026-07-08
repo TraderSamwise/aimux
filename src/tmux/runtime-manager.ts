@@ -678,7 +678,18 @@ export class TmuxRuntimeManager {
       command,
       ...args,
     ];
-    const raw = this.exec(argv, { cwd });
+    let raw: string;
+    try {
+      raw = this.exec(argv, { cwd });
+    } catch (error) {
+      log.warn("tmux new-window failed", "tmux", {
+        sessionName,
+        windowName: name,
+        cwd,
+        error,
+      });
+      throw new Error(`tmux failed to create window "${name}" in session ${sessionName}`, { cause: error });
+    }
     const [windowId, index, windowName] = raw.split("\t");
     return {
       sessionName,
