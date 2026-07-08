@@ -9,7 +9,7 @@ import {
   listDashboardOperationFailures,
   type DashboardOperationFailure,
 } from "../dashboard/operation-failures.js";
-import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
+import { composeDashboardWorktreeGroups, reconcileDashboardPendingActionsFromRawModel } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon-state.js";
 import { type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
@@ -580,6 +580,7 @@ export const persistenceMethods = {
             ...service
           }: any) => service,
         );
+    reconcileDashboardPendingActionsFromRawModel(this, rawSessions, rawTeammates, rawServices);
     const rawWorktreeGroups = Array.isArray(this.dashboardRawWorktreeGroupsCache)
       ? this.dashboardRawWorktreeGroupsCache
       : this.dashboardWorktreeGroupsCache.map(

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildManagedLaunchEnv, wrapCommandWithManagedLaunchEnv } from "./managed-launch-env.js";
 
 describe("managed launch env", () => {
-  it("strips tmux/control env while preserving project env and credentials", () => {
+  it("preserves only the launch allowlist plus aimux-owned extras", () => {
     const env = buildManagedLaunchEnv(
       {
         HOME: "/Users/sam",
@@ -23,6 +23,7 @@ describe("managed launch env", () => {
         DATABASE_URL: "postgres://localhost/app",
         AWS_PROFILE: "prod",
         RANDOM_PROJECT_ENV: "project-value",
+        LC_ALL: "C.UTF-8",
         CODEX_HOME: "/Users/sam/.codex",
         CLAUDE_CONFIG_DIR: "/Users/sam/.claude",
         SSH_AUTH_SOCK: "/private/tmp/ssh.sock",
@@ -37,17 +38,12 @@ describe("managed launch env", () => {
       COLORTERM: "truecolor",
       CLICOLOR: "1",
       LANG: "en_US.UTF-8",
+      LC_ALL: "C.UTF-8",
       VOLTA_HOME: "/Users/sam/.volta",
       CODEX_HOME: "/Users/sam/.codex",
       CLAUDE_CONFIG_DIR: "/Users/sam/.claude",
       SSH_AUTH_SOCK: "/private/tmp/ssh.sock",
       AIMUX_SESSION_ID: "codex-1",
-      BUNDLE_GEMFILE: "/repo/Gemfile",
-      OPENAI_API_KEY: "sk-real",
-      TEALSTREET_DISCORD_BOT_ADMIN_TOKEN: "real-token",
-      DATABASE_URL: "postgres://localhost/app",
-      AWS_PROFILE: "prod",
-      RANDOM_PROJECT_ENV: "project-value",
       NOT_AIMUX_SECRET: "extra-secret",
     });
     expect(env.TMUX).toBeUndefined();
@@ -56,6 +52,12 @@ describe("managed launch env", () => {
     expect(env.SHLVL).toBeUndefined();
     expect(env._VOLTA_TOOL_RECURSION).toBeUndefined();
     expect(env.FOO_RECURSION_STATE).toBeUndefined();
+    expect(env.BUNDLE_GEMFILE).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.TEALSTREET_DISCORD_BOT_ADMIN_TOKEN).toBeUndefined();
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.AWS_PROFILE).toBeUndefined();
+    expect(env.RANDOM_PROJECT_ENV).toBeUndefined();
   });
 
   it("normalizes control-process terminal env for interactive agents", () => {

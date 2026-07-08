@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { initPaths, withProjectPaths } from "../paths.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
-import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import {
+  listTopologySessionStates,
+  saveRuntimeTopologySessions,
+  upsertTopologySession,
+} from "../runtime-core/topology-sessions.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import {
@@ -2050,5 +2054,38 @@ describe("reconcileOrphanedTopologySessions", () => {
 
     expect(changed).toBe(false);
     expect(listTopologySessionStates({ statuses: ["running", "idle"] }).map((s) => s.id)).toEqual(["codex-starting"]);
+  });
+
+  it("demotes a stale starting session without a live tmux window", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("claude-starting", "starting");
+    upsertTopologySession(
+      {
+        id: "claude-starting",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "backend-1",
+        worktreePath: repoRoot,
+      },
+      "starting",
+      { projectRoot: repoRoot, now: new Date(Date.now() - 10_000).toISOString() },
+    );
+
+    const host = noWindowsHost({ dashboardPendingActions: pending, projectRoot: repoRoot });
+    const changed = reconcileOrphanedTopologySessions(host);
+
+    expect(changed).toBe(true);
+    expect(listTopologySessionStates({ statuses: ["starting"] })).toEqual([]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] });
+    expect(offline).toMatchObject([
+      {
+        id: "claude-starting",
+        backendSessionId: "backend-1",
+        restoreBlockedReason: "agent did not stay alive during startup",
+      },
+    ]);
   });
 });

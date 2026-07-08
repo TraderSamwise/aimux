@@ -205,6 +205,108 @@ describe("applyDashboardModel", () => {
     expect(applyDashboardModel(host, [], [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
     expect(host.dashboardServicesCache).toEqual([]);
   });
+
+  it("clears create pending when the raw snapshot reports a live session", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: () => {},
+      },
+    };
+    const session = {
+      index: 1,
+      id: "codex-new",
+      command: "codex",
+      status: "running" as const,
+      active: false,
+      tmuxWindowId: "@42",
+    };
+
+    pending.setSessionAction(session.id, "creating", { sessionSeed: session });
+
+    expect(applyDashboardModel(host, [session], [], [], [], { name: "Main Checkout", branch: "master" })).toBe(true);
+    expect(pending.getSessionAction(session.id)).toBeUndefined();
+    expect(host.dashboardSessionsCache[0]).toEqual(expect.objectContaining({ id: session.id, status: "running" }));
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction");
+  });
+
+  it("clears stop pending when the raw snapshot reports an offline session", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: () => {},
+      },
+    };
+    const session = {
+      index: 1,
+      id: "claude-old",
+      command: "claude",
+      status: "offline" as const,
+      active: false,
+    };
+
+    pending.setSessionAction(session.id, "stopping", { sessionSeed: session });
+
+    expect(applyDashboardModel(host, [session], [], [], [], { name: "Main Checkout", branch: "master" })).toBe(true);
+    expect(pending.getSessionAction(session.id)).toBeUndefined();
+    expect(host.dashboardSessionsCache[0]).toEqual(expect.objectContaining({ id: session.id, status: "offline" }));
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction");
+  });
+
+  it("clears old start pending when the raw snapshot settles back offline", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: () => {},
+      },
+    };
+    const session = {
+      index: 1,
+      id: "claude-stale",
+      command: "claude",
+      status: "offline" as const,
+      active: false,
+    };
+
+    pending.setSessionAction(session.id, "starting", { sessionSeed: session });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.now() + 6_000));
+
+    expect(applyDashboardModel(host, [session], [], [], [], { name: "Main Checkout", branch: "master" })).toBe(true);
+    expect(pending.getSessionAction(session.id)).toBeUndefined();
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction");
+    vi.useRealTimers();
+  });
+
+  it("clears service pending when the raw snapshot proves the service settled", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: () => {},
+      },
+    };
+    const service = {
+      id: "svc-1",
+      command: "shell",
+      args: [],
+      status: "running" as const,
+      active: false,
+    };
+
+    pending.setServiceAction(service.id, "starting", { serviceSeed: service });
+
+    expect(applyDashboardModel(host, [], [], [service], [], { name: "Main Checkout", branch: "master" })).toBe(true);
+    expect(pending.getServiceAction(service.id)).toBeUndefined();
+    expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
+  });
 });
 
 describe("metadata pending actions", () => {

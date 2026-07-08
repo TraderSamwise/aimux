@@ -1626,6 +1626,18 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("does not leak raw tmux launch argv when window creation fails", () => {
+    const manager = new TmuxRuntimeManager(
+      vi.fn<TmuxExec>(() => {
+        throw new Error("Command failed: tmux new-window env -i OPENAI_API_KEY=sk-real SECRET_TOKEN=abc");
+      }),
+    );
+
+    expect(() =>
+      manager.createWindow("aimux-proj", "claude", "/repo", "env", ["-i", "OPENAI_API_KEY=sk-real", "claude"]),
+    ).toThrow('tmux failed to create window "claude" in session aimux-proj');
+  });
+
   it("stores and reads aimux metadata on tmux windows", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
