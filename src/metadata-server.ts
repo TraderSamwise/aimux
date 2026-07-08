@@ -2405,6 +2405,7 @@ export class MetadataServer {
       const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
       const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
       const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
+      const rawLabels = url.searchParams.get("labelFormat") === "raw";
       const items = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -2417,7 +2418,7 @@ export class MetadataServer {
         { scope },
       ).map((item) => ({
         ...serializeFastControlItem(item),
-        label: item.lastUsedAt ? `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}` : item.label,
+        label: rawLabels || !item.lastUsedAt ? item.label : `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}`,
       }));
       send(res, 200, { ok: true, items });
       return;

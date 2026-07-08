@@ -91,7 +91,7 @@ describe("cliEntryFor", () => {
     expect(cliEntryFor(["node", "/p/bin/aimux", "projects", "list", "extra", "--json"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "remote", "enable", "extra", "--debug"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"])).toBe("main");
-    expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("main");
+    expect(cliEntryFor(["node", "/p/bin/aimux", "expose", "--project-root", "/p"])).toBe("expose");
     expect(cliEntryFor(["node", "/p/bin/aimux", "spawn"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "daemon", "restart", "--project", "/p"])).toBe("main");
     expect(cliEntryFor(["node", "/p/bin/aimux", "serve", "--json"])).toBe("main");

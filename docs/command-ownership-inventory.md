@@ -86,6 +86,7 @@ No commands currently live in this category.
 | `aimux logs path`, `tail`, `clear`                        | `CUT`       | daemon/filesystem | Healthy installed diagnostic log access uses daemon text routes; stale daemon falls back to bootstrap. |
 | `aimux serve`, `aimux host stop/kill/restart`              | `CUT`       | daemon          | Project-service management uses daemon text routes in the healthy installed path.                      |
 | `aimux dashboard-reload`, `aimux restart-runtime`          | `CUT`       | daemon + tmux   | Advanced dashboard/runtime repair commands use daemon text routes in the healthy installed path.       |
+| tmux Exposé popup / `aimux expose`                         | `TMUX`      | tmux + daemon/project service | Rich local popup surface; project/worktree tiles come from project-service APIs and global tiles/focus route through daemon `/core/expose/*`. |
 
 ## Local Runtime And Developer Plumbing
 
@@ -98,6 +99,7 @@ No commands currently live in this category.
 | `aimux host stop`, `host kill`, `host restart [--serve|--open]`          | `CUT`       | daemon + caller tmux   | Healthy installed path uses `/core/project-*-text`; `--open` sends caller tmux context to the daemon. |
 | `aimux host agent-read`                                                | `CUT`       | project service + tmux | Healthy installed path uses daemon text routes to project-service live-pane output.  |
 | `aimux host agent-stream`                                              | `CUT`       | project service + tmux | Healthy installed path uses daemon stream text route to project-service SSE output.  |
+| tmux Exposé popup / `aimux expose`                                      | `TMUX`      | tmux + daemon/project service | Terminal-local renderer only; switchable item data and cross-project focus routing are API-backed. |
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |
 | `aimux doctor versions`, `aimux doctor tmux`                            | `CUT`       | daemon/project service | Healthy installed diagnostics use daemon text routes instead of local CLI recompute. |
 | `aimux doctor notifications`                                            | `INTERNAL`  | desktop notifier        | Desktop notification diagnostic remains local debug plumbing.                        |

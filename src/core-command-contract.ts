@@ -9,6 +9,8 @@ export const CORE_API_ROUTES = {
   doctorTmuxText: "/core/doctor/tmux-text",
   doctorVersionsText: "/core/doctor/versions-text",
   dashboardReloadText: "/core/dashboard-reload-text",
+  exposeFocus: "/core/expose/focus",
+  exposeItems: "/core/expose/items",
   hostAgentReadText: "/core/host-agent-read-text",
   hostAgentStreamText: "/core/host-agent-stream-text",
   hostStatusText: "/core/host-status-text",

@@ -80,6 +80,9 @@ vi.mock("./paths.js", () => ({
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectStateDirById: (projectId: string) => join(tmpRoot, ".aimux", "projects", projectId),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
+  listProjects: () => [
+    { id: `proj-${basename(projectRoot)}`, name: basename(projectRoot), repoRoot: projectRoot, lastSeen: "" },
+  ],
   ensureProjectPaths: ensureProjectPathsMock,
   initPaths: initPathsMock,
 }));
