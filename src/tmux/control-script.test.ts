@@ -2918,6 +2918,10 @@ describe("tmux-control.sh", () => {
         "/repo/project/worktree",
         "--aimux-home",
         "/home/user/.aimux-custom",
+        "--daemon-host",
+        "127.0.0.2",
+        "--daemon-port",
+        "44191",
       ],
       {
         TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
@@ -2936,6 +2940,9 @@ describe("tmux-control.sh", () => {
     expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
     expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
     expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
+    expect(log.some((entry) => entry.includes("AIMUX_HOME=") && entry.includes("/home/user/.aimux-custom"))).toBe(true);
+    expect(log.some((entry) => entry.includes("AIMUX_DAEMON_HOST=") && entry.includes("127.0.0.2"))).toBe(true);
+    expect(log.some((entry) => entry.includes("AIMUX_DAEMON_PORT=") && entry.includes("44191"))).toBe(true);
     expect(log.some((entry) => entry.includes("--project-state-dir"))).toBe(true);
     expect(log.some((entry) => entry.includes("--current-window-id"))).toBe(true);
     expect(curlLog).toHaveLength(0);

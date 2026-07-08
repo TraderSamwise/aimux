@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -447,7 +447,7 @@ describe("restartAimuxControlPlane", () => {
     expect(stopDaemon).toHaveBeenCalledOnce();
   });
 
-  it("preempts fresh restart locks owned by dashboard repair", async () => {
+  it("does not preempt fresh restart locks owned by dashboard repair", async () => {
     expect(testAimuxHome).toBeTruthy();
     const restartLockPath = join(testAimuxHome!, "locks", "restart");
     const repairLockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
@@ -463,6 +463,30 @@ describe("restartAimuxControlPlane", () => {
     );
 
     const stopDaemon = vi.fn(async () => stoppedDaemon());
+    await expect(
+      restartAimuxControlPlane({
+        now: () => new Date("2026-06-20T00:00:01.000Z"),
+        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+        stopDaemon,
+        ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+        ensureProjectService: vi.fn(),
+        createTmux: () => ({ isAvailable: () => true }),
+        isPidAlive: (pid) => pid === 12345,
+      }),
+    ).rejects.toThrow("aimux restart is already running");
+
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(existsSync(repairLockPath)).toBe(true);
+  });
+
+  it("does not release restart locks acquired by a newer owner", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const lockPath = join(testAimuxHome!, "locks", "restart");
+    const stopDaemon = vi.fn(async () => {
+      writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 12345, acquiredAt: "after-steal" }));
+      return stoppedDaemon();
+    });
+
     await restartAimuxControlPlane({
       now: () => new Date("2026-06-20T00:00:01.000Z"),
       buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
@@ -480,11 +504,10 @@ describe("restartAimuxControlPlane", () => {
         dashboardSession: { sessionName: "aimux-alpha-111" },
         dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
       })),
-      isPidAlive: (pid) => pid === 12345,
+      isPidAlive: () => false,
     });
 
-    expect(stopDaemon).toHaveBeenCalledOnce();
-    expect(existsSync(repairLockPath)).toBe(false);
+    expect(JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8"))).toMatchObject({ pid: 12345 });
   });
 
   it("replaces stale restart locks when the recorded owner is gone", async () => {

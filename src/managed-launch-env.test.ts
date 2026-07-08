@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildManagedLaunchEnv, wrapCommandWithManagedLaunchEnv } from "./managed-launch-env.js";
 
 describe("managed launch env", () => {
-  it("strips tmux, transient, unbounded, and sensitive env while preserving stable launch env", () => {
+  it("strips tmux/control env while preserving project env and credentials", () => {
     const env = buildManagedLaunchEnv(
       {
         HOME: "/Users/sam",
@@ -20,12 +20,14 @@ describe("managed launch env", () => {
         BUNDLE_GEMFILE: "/repo/Gemfile",
         OPENAI_API_KEY: "sk-real",
         TEALSTREET_DISCORD_BOT_ADMIN_TOKEN: "real-token",
-        RANDOM_PROJECT_ENV: "too much",
+        DATABASE_URL: "postgres://localhost/app",
+        AWS_PROFILE: "prod",
+        RANDOM_PROJECT_ENV: "project-value",
         CODEX_HOME: "/Users/sam/.codex",
         CLAUDE_CONFIG_DIR: "/Users/sam/.claude",
         SSH_AUTH_SOCK: "/private/tmp/ssh.sock",
       },
-      { AIMUX_SESSION_ID: "codex-1", NOT_AIMUX_SECRET: "drop" },
+      { AIMUX_SESSION_ID: "codex-1", NOT_AIMUX_SECRET: "extra-secret" },
     );
 
     expect(env).toMatchObject({
@@ -40,6 +42,13 @@ describe("managed launch env", () => {
       CLAUDE_CONFIG_DIR: "/Users/sam/.claude",
       SSH_AUTH_SOCK: "/private/tmp/ssh.sock",
       AIMUX_SESSION_ID: "codex-1",
+      BUNDLE_GEMFILE: "/repo/Gemfile",
+      OPENAI_API_KEY: "sk-real",
+      TEALSTREET_DISCORD_BOT_ADMIN_TOKEN: "real-token",
+      DATABASE_URL: "postgres://localhost/app",
+      AWS_PROFILE: "prod",
+      RANDOM_PROJECT_ENV: "project-value",
+      NOT_AIMUX_SECRET: "extra-secret",
     });
     expect(env.TMUX).toBeUndefined();
     expect(env.TMUX_PANE).toBeUndefined();
@@ -47,11 +56,6 @@ describe("managed launch env", () => {
     expect(env.SHLVL).toBeUndefined();
     expect(env._VOLTA_TOOL_RECURSION).toBeUndefined();
     expect(env.FOO_RECURSION_STATE).toBeUndefined();
-    expect(env.BUNDLE_GEMFILE).toBeUndefined();
-    expect(env.OPENAI_API_KEY).toBeUndefined();
-    expect(env.TEALSTREET_DISCORD_BOT_ADMIN_TOKEN).toBeUndefined();
-    expect(env.RANDOM_PROJECT_ENV).toBeUndefined();
-    expect(env.NOT_AIMUX_SECRET).toBeUndefined();
   });
 
   it("normalizes control-process terminal env for interactive agents", () => {

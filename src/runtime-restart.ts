@@ -205,11 +205,6 @@ function readRuntimeRestartLockPid(lockPath: string): number | null {
   }
 }
 
-function isDashboardRepairOwnedRestartLock(ownerPid: number | null): boolean {
-  if (ownerPid === null) return false;
-  return readRuntimeRestartLockPid(runtimeGuardRepairLockPath()) === ownerPid;
-}
-
 function releaseDashboardRepairLockIfOwner(ownerPid: number | null): void {
   if (ownerPid === null) return;
   const lockPath = runtimeGuardRepairLockPath();
@@ -278,16 +273,14 @@ function tryAcquireRuntimeRestartLock(isPidAlive: (pid: number) => boolean): str
     const ownerPid = readRuntimeRestartLockPid(lockPath);
     const lockIsStale = Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS;
     const ownerIsDead = ownerPid !== null && !isPidAlive(ownerPid);
-    const ownedByDashboardRepair = isDashboardRepairOwnedRestartLock(ownerPid);
-    if (lockIsStale || ownerIsDead || ownedByDashboardRepair) {
+    if (lockIsStale || ownerIsDead) {
       const stealPath = tryAcquireRuntimeRestartStealLock();
       if (!stealPath) return null;
       try {
         const currentOwnerPid = readRuntimeRestartLockPid(lockPath);
         const currentLockIsStale = Date.now() - statSync(lockPath).mtimeMs > RUNTIME_RESTART_LOCK_STALE_MS;
         const currentOwnerIsDead = currentOwnerPid !== null && !isPidAlive(currentOwnerPid);
-        const currentOwnedByDashboardRepair = isDashboardRepairOwnedRestartLock(currentOwnerPid);
-        if (!currentLockIsStale && !currentOwnerIsDead && !currentOwnedByDashboardRepair) return null;
+        if (!currentLockIsStale && !currentOwnerIsDead) return null;
         releaseDashboardRepairLockIfOwner(currentOwnerPid);
         rmSync(lockPath, { recursive: true, force: true });
         return acquire();
@@ -307,6 +300,7 @@ function joinLockOwnerPath(lockPath: string): string {
 
 function releaseRuntimeRestartLock(lockPath: string | null): void {
   if (!lockPath) return;
+  if (readRuntimeRestartLockPid(lockPath) !== process.pid) return;
   try {
     rmSync(lockPath, { recursive: true, force: true });
   } catch {}
