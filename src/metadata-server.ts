@@ -1339,7 +1339,13 @@ export class MetadataServer {
       await this.listen(0);
     });
     this.publishEndpoint();
-    await this.startExposeSocket();
+    await this.startExposeSocket().catch((error: unknown) => {
+      this.stopExposeSocket();
+      log.warn("expose socket startup failed", "api", {
+        projectRoot: this.currentProjectRoot(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private publishEndpoint(): void {
@@ -1364,11 +1370,7 @@ export class MetadataServer {
   stop(): void {
     this.server?.close();
     this.server = null;
-    this.exposeServer?.close();
-    this.exposeServer = null;
-    if (this.exposeSocketPath) rmSync(this.exposeSocketPath, { force: true });
-    rmSync(join(getProjectStateDirFor(this.currentProjectRoot()), "expose.sock.path"), { force: true });
-    this.exposeSocketPath = null;
+    this.stopExposeSocket();
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
     if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
@@ -1377,6 +1379,14 @@ export class MetadataServer {
     this.desktopStateRefreshing = false;
     this.unsubscribeAlertSink?.();
     this.unsubscribeAlertSink = null;
+  }
+
+  private stopExposeSocket(): void {
+    this.exposeServer?.close();
+    this.exposeServer = null;
+    if (this.exposeSocketPath) rmSync(this.exposeSocketPath, { force: true });
+    rmSync(join(getProjectStateDirFor(this.currentProjectRoot()), "expose.sock.path"), { force: true });
+    this.exposeSocketPath = null;
   }
 
   private async startExposeSocket(): Promise<void> {
@@ -1390,6 +1400,9 @@ export class MetadataServer {
     rmSync(socketPath, { force: true });
     rmSync(join(projectStateDir, "expose.sock.path"), { force: true });
     this.exposeServer = createNetServer((socket) => {
+      socket.on("error", () => {
+        socket.destroy();
+      });
       void this.runInProjectContext(() => this.handleExposeSocket(socket)).catch(() => {
         socket.destroy();
       });

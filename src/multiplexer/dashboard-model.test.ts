@@ -307,6 +307,33 @@ describe("applyDashboardModel", () => {
     expect(pending.getServiceAction(service.id)).toBeUndefined();
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
   });
+
+  it("clears stale service start pending when the raw service remains offline", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: () => {},
+      },
+    };
+    const service = {
+      id: "svc-stale",
+      command: "shell",
+      args: [],
+      status: "offline" as const,
+      active: false,
+    };
+
+    pending.setServiceAction(service.id, "starting", { serviceSeed: service });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.now() + 6_000));
+
+    expect(applyDashboardModel(host, [], [], [service], [], { name: "Main Checkout", branch: "master" })).toBe(true);
+    expect(pending.getServiceAction(service.id)).toBeUndefined();
+    expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
+    vi.useRealTimers();
+  });
 });
 
 describe("metadata pending actions", () => {
