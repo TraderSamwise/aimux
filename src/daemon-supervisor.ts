@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { getDaemonStdioLogPath, getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
@@ -25,6 +25,8 @@ import {
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 const DAEMON_HEALTH_PROBE_TIMEOUT_MS = 2_500;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
+const DAEMON_START_LOCK_STALE_MS = 30_000;
+const DAEMON_PORT_TERMINATION_TIMEOUT_MS = 7_000;
 
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -86,6 +88,14 @@ function readLockPid(lockPath: string): number | null {
   }
 }
 
+function isLockStale(lockPath: string, staleMs: number): boolean {
+  try {
+    return Date.now() - statSync(lockPath).mtimeMs > staleMs;
+  } catch {
+    return true;
+  }
+}
+
 function tryAcquireDaemonStartLock(): string | null {
   const lockPath = daemonStartLockPath();
   mkdirSync(dirname(lockPath), { recursive: true });
@@ -102,7 +112,7 @@ function tryAcquireDaemonStartLock(): string | null {
   const acquired = acquire();
   if (acquired) return acquired;
   const pid = readLockPid(lockPath);
-  if (pid && isPidAlive(pid)) return null;
+  if (pid && isPidAlive(pid) && !isLockStale(lockPath, DAEMON_START_LOCK_STALE_MS)) return null;
   rmSync(lockPath, { recursive: true, force: true });
   return acquire();
 }
@@ -158,15 +168,35 @@ async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> 
   return !isPidAlive(pid);
 }
 
+async function readDefaultDaemonHealth(): Promise<any | null> {
+  try {
+    const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`, {
+      timeoutMs: DAEMON_HEALTH_PROBE_TIMEOUT_MS,
+    });
+    if (status >= 200 && status < 300 && json?.ok !== false && isAimuxDaemonHealth(json)) return json;
+  } catch {}
+  return null;
+}
+
 async function terminateDaemonOnDefaultPort(pid: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {}
-  if (await waitForPidExit(pid, 2_000)) return;
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {}
-  await waitForPidExit(pid, 2_000);
+  const deadline = Date.now() + DAEMON_PORT_TERMINATION_TIMEOUT_MS;
+  let targetPid = pid;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(targetPid, "SIGTERM");
+    } catch {}
+    if (!(await waitForPidExit(targetPid, 1_500))) {
+      try {
+        process.kill(targetPid, "SIGKILL");
+      } catch {}
+      await waitForPidExit(targetPid, 1_500);
+    }
+    const health = await readDefaultDaemonHealth();
+    if (!health) return;
+    targetPid = health.pid;
+    await sleep(100);
+  }
+  throw new Error(`timed out terminating aimux daemon on default port pid=${targetPid}`);
 }
 
 export async function stopDaemonInfo(

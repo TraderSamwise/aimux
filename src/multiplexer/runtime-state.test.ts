@@ -187,6 +187,29 @@ describe("startStatusRefresh", () => {
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
     expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
+
+  it("does not run dashboard background API refresh while startup is priming", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      statusInterval: null,
+      sessions: [],
+      prevStatuses: new Map(),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => true) },
+      mode: "dashboard",
+      dashboardStartupPriming: true,
+      dashboardNextBackgroundRefreshAt: 0,
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderCurrentDashboardView: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    await vi.advanceTimersByTimeAsync(1000);
+    stopStatusRefresh(host);
+
+    expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+  });
 });
 
 describe("resumeOfflineSession", () => {

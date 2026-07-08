@@ -261,6 +261,8 @@ const LOCAL_CLI_TEXT_ROUTES = new Set<string>([
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
+const PROJECT_SERVICE_ENDPOINT_READY_TIMEOUT_MS = 2_000;
+const PROJECT_SERVICE_ENDPOINT_READY_INTERVAL_MS = 50;
 const CORS_ALLOWED_ORIGINS = new Set([
   "http://localhost:8081",
   "http://127.0.0.1:8081",
@@ -488,7 +490,9 @@ export class AimuxDaemon {
 
   private isProjectServiceLive(entry: ProjectServiceState): boolean {
     const actor = this.projectActors.get(entry.projectId);
-    return entry.pid === process.pid && Boolean(actor?.isRunning());
+    const live = entry.pid === process.pid && Boolean(actor?.isRunning());
+    if (live) actor?.ensureEndpointPublished?.();
+    return live;
   }
 
   private listProjectsForRoute(): ProjectsRouteProject[] {
@@ -2298,7 +2302,9 @@ export class AimuxDaemon {
     const existing = this.state.projects[projectId];
     const actor = this.projectActors.get(projectId);
     if (actor?.isRunning()) {
+      actor.ensureEndpointPublished?.();
       const state = actor.getState();
+      await this.waitForProjectServiceEndpoint(projectId, state.pid, () => actor.ensureEndpointPublished?.());
       this.state.projects[projectId] = state;
       this.refreshState();
       return state;
@@ -2326,9 +2332,29 @@ export class AimuxDaemon {
       throw error;
     }
     this.projectActors.set(projectId, nextActor);
+    await this.waitForProjectServiceEndpoint(projectId, state.pid, () => nextActor.ensureEndpointPublished?.());
     this.state.projects[projectId] = state;
     this.refreshState();
     return state;
+  }
+
+  private async waitForProjectServiceEndpoint(
+    projectId: string,
+    expectedPid: number,
+    republish: () => void,
+  ): Promise<void> {
+    const deadline = Date.now() + PROJECT_SERVICE_ENDPOINT_READY_TIMEOUT_MS;
+    let lastError = "endpoint was not published";
+    while (Date.now() <= deadline) {
+      republish();
+      const endpoint = loadMetadataEndpointByProjectId(projectId);
+      if (endpoint?.pid === expectedPid) return;
+      if (endpoint) {
+        lastError = `endpoint pid ${endpoint.pid} did not match ${expectedPid}`;
+      }
+      await new Promise((resolve) => setTimeout(resolve, PROJECT_SERVICE_ENDPOINT_READY_INTERVAL_MS));
+    }
+    throw new Error(`project service endpoint did not become ready: ${lastError}`);
   }
 
   private async terminateLegacyProjectService(existing: ProjectServiceState): Promise<void> {

@@ -1279,6 +1279,11 @@ export class MetadataServer {
     );
   }
 
+  ensureEndpointPublished(): void {
+    if (!this.server || this.port === 0) return;
+    this.publishEndpoint();
+  }
+
   stop(): void {
     this.server?.close();
     this.server = null;

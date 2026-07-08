@@ -1944,7 +1944,7 @@ describe("MetadataServer threads API", () => {
 
       TmuxRuntimeManager.prototype.listWindows = (sessionName) =>
         sessionName === "aimux-test-client-12345678" ? [{ id: "@7", index: 7, name: "codex", active: true }] : [];
-      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      TmuxRuntimeManager.prototype.isWindowAlive = (target) => target.windowId !== "@7";
       const deadManagedRes = await fetch(`${base}/control/active-window`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -3114,7 +3114,7 @@ describe("MetadataServer threads API", () => {
     const ensureDashboardWindow = TmuxRuntimeManager.prototype.ensureDashboardWindow;
     const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
-    const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const replaceWindowWhenReady = TmuxRuntimeManager.prototype.replaceWindowWhenReady;
     const setSessionOption = TmuxRuntimeManager.prototype.setSessionOption;
     const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
     const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
@@ -3126,7 +3126,7 @@ describe("MetadataServer threads API", () => {
     const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
     const setSessionOptionMock = vi.fn();
     const setWindowOptionMock = vi.fn();
-    const respawnWindowMock = vi.fn();
+    const replaceWindowWhenReadyMock = vi.fn((target) => target);
     const expectedDashboardBuildStamp = getDashboardCommandSpec(process.cwd()).dashboardBuildStamp;
     const switchClientToTargetMock = vi.fn((_tty: string, _target: unknown) => {
       expect(dashboardReadyStamp).toBe(expectedDashboardBuildStamp);
@@ -3158,7 +3158,7 @@ describe("MetadataServer threads API", () => {
             ? expectedDashboardBuildStamp
             : "";
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
-    TmuxRuntimeManager.prototype.respawnWindow = respawnWindowMock;
+    TmuxRuntimeManager.prototype.replaceWindowWhenReady = replaceWindowWhenReadyMock;
     TmuxRuntimeManager.prototype.setSessionOption = setSessionOptionMock;
     TmuxRuntimeManager.prototype.setWindowOption = setWindowOptionMock;
     TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
@@ -3192,7 +3192,7 @@ describe("MetadataServer threads API", () => {
       const body = (await res.json()) as { ok: boolean; error?: string };
       expect(body.ok).toBe(true);
       expect(res.ok).toBe(true);
-      expect(respawnWindowMock).not.toHaveBeenCalled();
+      expect(replaceWindowWhenReadyMock).not.toHaveBeenCalled();
       expect(setSessionOptionMock).toHaveBeenCalledWith("aimux-repo-abc", "@aimux-dashboard-build", expect.any(String));
       expect(setWindowOptionMock).toHaveBeenCalledWith(
         expect.objectContaining({ windowId: "@99" }),
@@ -3228,19 +3228,13 @@ describe("MetadataServer threads API", () => {
       ) as Record<string, unknown>;
       expect(coordinationSnapshot.screen).toBe("coordination");
 
-      TmuxRuntimeManager.prototype.isWindowAlive = () => false;
+      TmuxRuntimeManager.prototype.isWindowAlive = (target) => target.windowId !== "@42";
       const deadRes = await fetch(
         `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-12345678&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042&focus=true`,
       );
       const deadBody = (await deadRes.json()) as { ok: boolean };
       expect(deadRes.ok).toBe(true);
       expect(deadBody.ok).toBe(true);
-      expect(setWindowOptionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ windowId: "@99" }),
-        TMUX_DASHBOARD_READY_OPTION,
-        "",
-      );
-      expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
       const deadSnapshot = JSON.parse(
         readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-12345678"), "utf-8"),
       ) as Record<string, unknown>;
@@ -3256,7 +3250,7 @@ describe("MetadataServer threads API", () => {
       );
       expect(liveAgainRes.ok).toBe(true);
       setWindowOptionMock.mockClear();
-      respawnWindowMock.mockClear();
+      replaceWindowWhenReadyMock.mockClear();
       switchClientToTargetMock.mockClear();
       sendFocusInMock.mockClear();
       dashboardReadyStamp = "pending-ready";
@@ -3271,13 +3265,17 @@ describe("MetadataServer threads API", () => {
         TMUX_DASHBOARD_READY_OPTION,
         "",
       );
-      expect(respawnWindowMock).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@99" }), expect.any(Object));
+      expect(replaceWindowWhenReadyMock).toHaveBeenCalledWith(
+        expect.objectContaining({ windowId: "@99" }),
+        expect.any(Object),
+        expect.any(Object),
+      );
       const clearReadyCallIndex = setWindowOptionMock.mock.calls.findIndex(
         ([, key, value]) => key === TMUX_DASHBOARD_READY_OPTION && value === "",
       );
       expect(clearReadyCallIndex).toBeGreaterThanOrEqual(0);
       expect(setWindowOptionMock.mock.invocationCallOrder[clearReadyCallIndex]).toBeLessThan(
-        respawnWindowMock.mock.invocationCallOrder[0],
+        replaceWindowWhenReadyMock.mock.invocationCallOrder[0],
       );
       expect(switchClientToTargetMock).toHaveBeenCalledOnce();
       expect(sendFocusInMock).toHaveBeenCalledOnce();
@@ -3303,7 +3301,7 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
       TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
-      TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.replaceWindowWhenReady = replaceWindowWhenReady;
       TmuxRuntimeManager.prototype.setSessionOption = setSessionOption;
       TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
       TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;

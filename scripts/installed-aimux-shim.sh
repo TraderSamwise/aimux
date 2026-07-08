@@ -117,71 +117,6 @@ aimux_try_daemon_ensure() {
   aimux_print_daemon_ensure "$json" "$port"
 }
 
-aimux_try_restart() {
-  allow_project=0
-  if [ "${1:-}" = "restart" ]; then
-    allow_project=1
-    shift
-  elif [ "${1:-}" = "daemon" ] && [ "${2:-}" = "restart" ]; then
-    shift 2
-  else
-    return 1
-  fi
-  project_root=""
-  json=0
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --json)
-        json=1
-        ;;
-      --project)
-        [ "$allow_project" -eq 1 ] || return 1
-        shift
-        aimux_require_arg_value "$@" || return 1
-        project_root="$AIMUX_ARG_VALUE"
-        ;;
-      --project=*)
-        [ "$allow_project" -eq 1 ] || return 1
-        aimux_require_inline_value "${1#--project=}" || return 1
-        project_root="$AIMUX_ARG_VALUE"
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-    shift
-  done
-  if [ -n "$project_root" ]; then
-    project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-  fi
-  path="/core/restart-text"
-  [ "$json" -eq 1 ] && path="/core/restart-text?json=1"
-  port="$(aimux_matching_daemon_port)" || return 1
-  body_file="$(mktemp "${TMPDIR:-/tmp}/aimux-restart.XXXXXX")" || return 1
-  trap 'rm -f "$body_file"' EXIT
-  trap 'rm -f "$body_file"; exit 130' INT TERM
-  set --
-  [ -n "$project_root" ] && set -- --get --data-urlencode "project=$project_root"
-  status="$(
-    curl -sS --max-time 300 -o "$body_file" -w '%{http_code}' -X POST "$@" \
-      "http://127.0.0.1:$port$path" 2>/dev/null || true
-  )"
-  case "$status" in
-    '' | 000)
-      rm -f "$body_file"
-      trap - EXIT INT TERM
-      return 1
-      ;;
-  esac
-  cat "$body_file"
-  rm -f "$body_file"
-  trap - EXIT INT TERM
-  case "$status" in
-    2*) return 0 ;;
-    *) return 2 ;;
-  esac
-}
-
 aimux_curl_text_route() {
   path="$1"
   port="$(aimux_matching_daemon_port)" || return 1
@@ -2682,13 +2617,6 @@ case "${1:-} ${2:-}" in
     fi
     aimux_handle_fast_path_failure "$*" "$?"
     ;;
-  "daemon restart")
-    if aimux_try_restart "$@"; then
-      exit 0
-    else
-      aimux_handle_fast_path_failure "$*" "$?"
-    fi
-    ;;
   "daemon status")
     if [ "$#" -eq 2 ] && aimux_curl_text_route "/core/daemon-status-text"; then
       exit 0
@@ -2793,13 +2721,6 @@ case "${1:-} ${2:-}" in
     ;;
   "repair " | "repair --"*)
     if aimux_try_repair "$@"; then
-      exit 0
-    else
-      aimux_handle_fast_path_failure "$*" "$?"
-    fi
-    ;;
-  "restart " | "restart --"*)
-    if aimux_try_restart "$@"; then
       exit 0
     else
       aimux_handle_fast_path_failure "$*" "$?"

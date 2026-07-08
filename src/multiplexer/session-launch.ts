@@ -27,7 +27,7 @@ import { isDashboardModelRefreshUsable, refreshDashboardModelThroughApi } from "
 import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-mutations.js";
 import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
-import { TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
+import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
 import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
 
 type SessionLaunchHost = any;
@@ -226,6 +226,8 @@ function markDashboardReadyForInput(host: SessionLaunchHost): void {
   if (!paneId || !host.tmuxRuntimeManager?.setWindowOption) return;
   try {
     const { dashboardBuildStamp } = getDashboardCommandSpec(projectRootFor(host));
+    host.tmuxRuntimeManager.setWindowOption(paneId, "@aimux-dashboard-build", dashboardBuildStamp);
+    host.tmuxRuntimeManager.setWindowOption(paneId, TMUX_DASHBOARD_OWNER_OPTION, getRuntimeOwnerId());
     host.tmuxRuntimeManager.setWindowOption(paneId, TMUX_DASHBOARD_READY_OPTION, dashboardBuildStamp);
   } catch {}
 }
@@ -291,7 +293,6 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     }
   };
   process.stdin.on("data", host.onStdinData);
-  markDashboardReadyForInput(host);
 
   host.onResize = () => {
     host.dashboardLastViewportKey = host.getViewportKey();
@@ -316,6 +317,18 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.loadDashboardUiState();
   host.hydrateDashboardScreenState?.();
   host.writeDashboardClientStatuslineFile?.();
+  const startupBusyState = {
+    title: "Connecting Aimux",
+    lines: ["Loading project state from the local service."],
+    spinnerFrame: 0,
+    startedAt: Date.now(),
+  };
+  host.dashboardBusyState = startupBusyState;
+  host.dashboardStartupPriming = true;
+  host.terminalHost.enterAlternateScreen(true);
+  host.startStatusRefresh();
+  host.renderCurrentDashboardView();
+
   const startupModelLifecycle = captureDashboardLifecycle(host);
   const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupModelLifecycle });
   let projectEventStreamStarted = false;
@@ -325,13 +338,6 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     startDashboardProjectEventStream(host);
   };
   if (!isDashboardModelRefreshUsable(primed)) {
-    const startupBusyState = {
-      title: "Connecting Aimux",
-      lines: ["Loading project state from the local service."],
-      spinnerFrame: 0,
-      startedAt: Date.now(),
-    };
-    host.dashboardBusyState = startupBusyState;
     const repairModelLifecycle = captureDashboardLifecycle(host);
     const repairRenderLifecycle = captureDashboardLifecycle(host, { inputEpoch: true });
     const isRepairLifecycleCurrent = () =>
@@ -342,13 +348,16 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       .then(async () => {
         if (!isRepairLifecycleCurrent()) {
           if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+          host.dashboardStartupPriming = false;
           return;
         }
         const refreshed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: repairModelLifecycle });
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
         if (!isRepairLifecycleCurrent()) return;
+        host.dashboardStartupPriming = false;
         if (isDashboardModelRefreshUsable(refreshed) || !host.dashboardModelServiceRefreshError) {
           startProjectEventStreamOnce();
+          markDashboardReadyForInput(host);
           host.renderCurrentDashboardView();
           return;
         }
@@ -362,15 +371,17 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       })
       .catch((error: unknown) => {
         if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+        host.dashboardStartupPriming = false;
         if (!isRepairLifecycleCurrent()) return;
         startProjectEventStreamOnce();
         host.showDashboardError?.("Aimux repair failed", [error instanceof Error ? error.message : String(error)]);
       });
   } else {
+    if (host.dashboardBusyState === startupBusyState) host.dashboardBusyState = null;
+    host.dashboardStartupPriming = false;
     startProjectEventStreamOnce();
+    markDashboardReadyForInput(host);
   }
-  host.terminalHost.enterAlternateScreen(true);
-  host.startStatusRefresh();
   host.renderCurrentDashboardView();
 
   const exitCode = await new Promise<number>((resolve) => {

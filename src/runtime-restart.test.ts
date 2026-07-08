@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupStaleDashboardLinks,
   isExitedProcessState,
+  isRuntimeRestartInProgress,
   restartAimuxControlPlane,
   renderRuntimeRestartResult,
 } from "./runtime-restart.js";
@@ -305,6 +306,19 @@ describe("restartAimuxControlPlane", () => {
     expect(processKill).not.toHaveBeenCalledWith(9001, "SIGKILL");
   });
 
+  it("reports only fresh live restart locks as in progress", () => {
+    const lockPath = join(testAimuxHome!, "locks", "restart");
+    mkdirSync(lockPath, { recursive: true });
+    writeFileSync(join(lockPath, "owner.json"), `${JSON.stringify({ pid: process.pid })}\n`);
+
+    expect(isRuntimeRestartInProgress()).toBe(true);
+
+    const old = new Date("2000-01-01T00:00:00.000Z");
+    utimesSync(lockPath, old, old);
+
+    expect(isRuntimeRestartInProgress()).toBe(false);
+  });
+
   it("serializes concurrent control-plane restarts with a global lock", async () => {
     let releaseStopDaemon: ((value: ReturnType<typeof stoppedDaemon>) => void) | undefined;
     const stopDaemon = vi.fn(
@@ -401,7 +415,7 @@ describe("restartAimuxControlPlane", () => {
     ).resolves.toMatchObject({ daemon: { current: { pid: 9003 } } });
   });
 
-  it("does not replace stale restart locks while the recorded owner is alive", async () => {
+  it("replaces stale restart locks even when the recorded owner is still alive", async () => {
     expect(testAimuxHome).toBeTruthy();
     const lockPath = join(testAimuxHome!, "locks", "restart");
     mkdirSync(lockPath, { recursive: true });
@@ -410,19 +424,67 @@ describe("restartAimuxControlPlane", () => {
     utimesSync(lockPath, old, old);
 
     const stopDaemon = vi.fn(async () => stoppedDaemon());
-    await expect(
-      restartAimuxControlPlane({
-        now: () => new Date("2026-06-20T00:00:01.000Z"),
-        buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
-        stopDaemon,
-        ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
-        ensureProjectService: vi.fn(),
-        createTmux: () => ({ isAvailable: () => true }),
-        isPidAlive: (pid) => pid === 12345,
-      }),
-    ).rejects.toThrow("aimux restart is already running");
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon,
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: (pid) => pid === 12345,
+    });
 
-    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(stopDaemon).toHaveBeenCalledOnce();
+  });
+
+  it("preempts fresh restart locks owned by dashboard repair", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const restartLockPath = join(testAimuxHome!, "locks", "restart");
+    const repairLockPath = join(testAimuxHome!, "locks", "dashboard-control-plane-repair");
+    mkdirSync(restartLockPath, { recursive: true });
+    mkdirSync(repairLockPath, { recursive: true });
+    writeFileSync(
+      join(restartLockPath, "owner.json"),
+      JSON.stringify({ pid: 12345, acquiredAt: "2026-06-20T00:00:00.000Z" }),
+    );
+    writeFileSync(
+      join(repairLockPath, "owner.json"),
+      JSON.stringify({ pid: 12345, projectRoot: "/repo/app", acquiredAt: "2026-06-20T00:00:00.000Z" }),
+    );
+
+    const stopDaemon = vi.fn(async () => stoppedDaemon());
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon,
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: (pid) => pid === 12345,
+    });
+
+    expect(stopDaemon).toHaveBeenCalledOnce();
+    expect(existsSync(repairLockPath)).toBe(false);
   });
 
   it("replaces stale restart locks when the recorded owner is gone", async () => {
@@ -432,6 +494,36 @@ describe("restartAimuxControlPlane", () => {
     writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 12345, acquiredAt: "2026-06-20T00:00:00.000Z" }));
     const old = new Date("2000-01-01T00:00:00.000Z");
     utimesSync(lockPath, old, old);
+
+    const stopDaemon = vi.fn(async () => stoppedDaemon());
+    await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon,
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      resolveDashboardTarget: vi.fn(() => ({
+        dashboardSession: { sessionName: "aimux-alpha-111" },
+        dashboardTarget: { sessionName: "aimux-alpha-111", windowId: "@1", windowIndex: 0, windowName: "dashboard" },
+      })),
+      isPidAlive: () => false,
+    });
+
+    expect(stopDaemon).toHaveBeenCalledOnce();
+  });
+
+  it("replaces fresh restart locks when the recorded owner is gone", async () => {
+    expect(testAimuxHome).toBeTruthy();
+    const lockPath = join(testAimuxHome!, "locks", "restart");
+    mkdirSync(lockPath, { recursive: true });
+    writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ pid: 12345, acquiredAt: "2026-06-20T00:00:00.000Z" }));
 
     const stopDaemon = vi.fn(async () => stoppedDaemon());
     await restartAimuxControlPlane({
@@ -598,21 +690,51 @@ describe("restartAimuxControlPlane", () => {
       failures: 0,
     });
     expect(ensureDaemonRunning).toHaveBeenCalledWith();
-    expect(stopProjectService).toHaveBeenCalledWith("/repo/alpha");
-    expect(stopProjectService).toHaveBeenCalledWith("/repo/beta");
+    expect(stopProjectService).not.toHaveBeenCalled();
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/alpha");
     expect(ensureProjectService).toHaveBeenCalledWith("/repo/beta");
+    expect(resolveDashboardTarget).toHaveBeenCalledOnce();
+    expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/alpha", expect.any(Object), {
+      forceReload: true,
+      openInHostSession: true,
+    });
+  });
+
+  it("stops project services before ensuring them when retaining the daemon", async () => {
+    const ensureProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+      startedAt: "after",
+      updatedAt: "after",
+    }));
+    const stopProjectService = vi.fn(async (projectRoot: string) => ({
+      projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+      projectRoot,
+      pid: projectRoot.endsWith("alpha") ? 1001 : 1002,
+      startedAt: "before",
+      updatedAt: "before",
+    }));
+
+    await restartAimuxControlPlane({
+      buildRuntimeCoherenceReport: vi.fn(async () => coherenceReport()),
+      stopDaemon: vi.fn(async () => null),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9001, port: 43190, startedAt: "then", updatedAt: "now" })),
+      ensureProjectService,
+      stopProjectService,
+      createTmux: () => ({ isAvailable: () => false }),
+      retainDaemon: true,
+      isPidAlive: () => false,
+    });
+
+    expect(stopProjectService).toHaveBeenCalledWith("/repo/alpha");
+    expect(stopProjectService).toHaveBeenCalledWith("/repo/beta");
     expect(stopProjectService.mock.invocationCallOrder[0]).toBeLessThan(
       ensureProjectService.mock.invocationCallOrder[0]!,
     );
     expect(stopProjectService.mock.invocationCallOrder[1]).toBeLessThan(
       ensureProjectService.mock.invocationCallOrder[1]!,
     );
-    expect(resolveDashboardTarget).toHaveBeenCalledOnce();
-    expect(resolveDashboardTarget).toHaveBeenCalledWith("/repo/alpha", expect.any(Object), {
-      forceReload: true,
-      openInHostSession: true,
-    });
   });
 
   it("recreates missing dashboards for tmux-backed projects during global restart", async () => {
@@ -1057,7 +1179,7 @@ describe("restartAimuxControlPlane", () => {
     expect(calls).toEqual(["stop", "sleep", "ensure-daemon"]);
   });
 
-  it("does not kill pre-restart dashboard windows before stopping the daemon", async () => {
+  it("stops stale dashboard windows before stopping the daemon", async () => {
     const calls: string[] = [];
     const tmux = {
       isAvailable: () => true,
@@ -1090,8 +1212,13 @@ describe("restartAimuxControlPlane", () => {
       isPidAlive: () => false,
     });
 
-    expect(calls).toEqual(["stop-daemon"]);
-    expect(tmux.killWindow).not.toHaveBeenCalled();
+    expect(calls).toEqual(["kill-dashboard:@1", "stop-daemon"]);
+    expect(tmux.killWindow).toHaveBeenCalledWith({
+      sessionName: "aimux-alpha-111",
+      windowId: "@1",
+      windowIndex: 0,
+      windowName: "dashboard",
+    });
   });
 
   it("relinks recreated host dashboards into existing client sessions and restores active agents", async () => {

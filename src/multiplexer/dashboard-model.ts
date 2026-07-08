@@ -226,6 +226,25 @@ function isMetadataSessionRunning(host: DashboardModelHost, sessionId: string): 
   return hasLiveManagedAgentWindow(host, sessionId);
 }
 
+function findMetadataDashboardSession(host: DashboardModelHost, sessionId: string): any | undefined {
+  const raw = Array.isArray(host.dashboardRawSessionsCache) ? host.dashboardRawSessionsCache : undefined;
+  const pending = Array.isArray(host.dashboardSessionsCache) ? host.dashboardSessionsCache : undefined;
+  return (
+    raw?.find((session: any) => session.id === sessionId) ?? pending?.find((session: any) => session.id === sessionId)
+  );
+}
+
+function metadataSessionCanReceiveInput(host: DashboardModelHost, sessionId: string): boolean {
+  const session = findMetadataDashboardSession(host, sessionId);
+  if (session) {
+    if (session.status === "offline" || session.status === "exited") return false;
+    const runtime = session.semantic?.runtime;
+    if (runtime?.canReceiveInput === true) return true;
+    if (runtime && runtime.isAlive === false) return false;
+  }
+  return isMetadataSessionRunning(host, sessionId);
+}
+
 async function waitForMetadataSessionRunning(host: DashboardModelHost, sessionId: string): Promise<boolean> {
   if (typeof host.waitForSessionStart === "function") {
     try {
@@ -235,11 +254,25 @@ async function waitForMetadataSessionRunning(host: DashboardModelHost, sessionId
   return waitForMetadataCondition(host, () => isMetadataSessionRunning(host, sessionId));
 }
 
+async function waitForMetadataSessionReadyForInput(host: DashboardModelHost, sessionId: string): Promise<boolean> {
+  if (typeof host.waitForSessionStart === "function") {
+    try {
+      if (!(await host.waitForSessionStart(sessionId, METADATA_PENDING_SETTLE_TIMEOUT_MS))) return false;
+    } catch {}
+  }
+  return waitForMetadataCondition(host, () => {
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((session) => session.id === sessionId);
+    if (offline?.restoreBlockedReason) throw new Error(offline.restoreBlockedReason);
+    return metadataSessionCanReceiveInput(host, sessionId);
+  });
+}
+
 async function settleMetadataPending<T>(
   host: DashboardModelHost,
   description: string,
   settle: MetadataPendingSettle<T> | undefined,
   result: T,
+  options: { throwOnError?: boolean } = {},
 ): Promise<void> {
   if (!settle) return;
   try {
@@ -252,6 +285,7 @@ async function settleMetadataPending<T>(
       `metadata pending action settle failed: ${description}: ${error instanceof Error ? error.message : String(error)}`,
       "dashboard",
     );
+    if (options.throwOnError) throw error;
   }
 }
 
@@ -303,6 +337,7 @@ export async function withMetadataSessionPending<T>(
   work: () => Promise<T> | T,
   sessionSeed?: DashboardSession,
   settle?: MetadataPendingSettle<T>,
+  options: { awaitSettle?: boolean } = {},
 ): Promise<T> {
   let token: number | undefined;
   if (sessionId) {
@@ -311,7 +346,20 @@ export async function withMetadataSessionPending<T>(
   try {
     const result = await work();
     if (sessionId) {
-      clearMetadataSessionPendingAfterSettle(host, sessionId, kind, token, settle, result);
+      if (options.awaitSettle) {
+        await settleMetadataPending(host, `session ${kind} ${sessionId}`, settle, result, { throwOnError: true });
+        if (typeof token === "number") {
+          if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
+            host.reapplyDashboardPendingActions?.();
+            scheduleDashboardModelReconcile(host);
+          }
+        } else if (host.dashboardPendingActions?.getSessionAction?.(sessionId) === kind) {
+          setPendingDashboardSessionAction(host, sessionId, null);
+          scheduleDashboardModelReconcile(host);
+        }
+      } else {
+        clearMetadataSessionPendingAfterSettle(host, sessionId, kind, token, settle, result);
+      }
     }
     return result;
   } catch (error) {
@@ -375,7 +423,8 @@ async function resumeOfflineAgentWithPending(
       return { sessionId, status: "running" as const };
     },
     findDashboardSessionSeed(host, sessionId),
-    () => waitForMetadataSessionRunning(host, sessionId),
+    () => waitForMetadataSessionReadyForInput(host, sessionId),
+    { awaitSettle: true },
   );
 }
 
@@ -383,9 +432,7 @@ async function resumeOfflineAgentWithPendingAndSettle(
   host: DashboardModelHost,
   sessionId: string,
 ): Promise<{ sessionId: string; status: "running" }> {
-  const result = await resumeOfflineAgentWithPending(host, sessionId);
-  await waitForMetadataSessionRunning(host, sessionId);
-  return result;
+  return resumeOfflineAgentWithPending(host, sessionId);
 }
 
 async function resumeAgentAndDirectTeammates(

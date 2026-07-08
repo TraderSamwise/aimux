@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CORE_COMMAND_NAMES } from "./core-command-contract.js";
 import type { RuntimeRestartResult } from "./runtime-restart.js";
 
 const mocks = vi.hoisted(() => ({
   loadDaemonInfo: vi.fn(),
   loadDaemonState: vi.fn(),
-  requestCoreCommand: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
   renderRuntimeRestartResult: vi.fn(),
   stopDaemonInfo: vi.fn(),
@@ -20,10 +18,6 @@ vi.mock("./daemon-state.js", () => ({
 vi.mock("./daemon-supervisor.js", () => ({
   stopDaemonInfo: mocks.stopDaemonInfo,
   ensureDaemonRunning: mocks.ensureDaemonRunning,
-}));
-
-vi.mock("./core-command-client.js", () => ({
-  requestCoreCommand: mocks.requestCoreCommand,
 }));
 
 vi.mock("./runtime-restart.js", () => ({
@@ -57,7 +51,6 @@ function restartResult(): RuntimeRestartResult {
 
 describe("restartControlPlaneFromCli", () => {
   beforeEach(() => {
-    mocks.requestCoreCommand.mockReset();
     mocks.restartAimuxControlPlane.mockReset();
     mocks.renderRuntimeRestartResult.mockReset();
     mocks.loadDaemonInfo.mockReset();
@@ -72,64 +65,8 @@ describe("restartControlPlaneFromCli", () => {
     });
   });
 
-  it("delegates normal restart work to the daemon core command", async () => {
+  it("runs restart through local repair orchestration", async () => {
     const restart = restartResult();
-    mocks.requestCoreCommand.mockResolvedValueOnce({
-      ok: true,
-      id: "restart",
-      command: CORE_COMMAND_NAMES.restart,
-      issuedAt: "2026-01-01T00:00:00.000Z",
-      result: { restart, text: "daemon text" },
-    });
-
-    const result = await restartControlPlaneFromCli();
-
-    expect(result).toEqual({ restart, text: "daemon text", source: "daemon" });
-    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.restart, undefined);
-    expect(mocks.restartAimuxControlPlane).not.toHaveBeenCalled();
-  });
-
-  it("passes project-scoped restart requests to the daemon core command", async () => {
-    const restart = restartResult();
-    mocks.requestCoreCommand.mockResolvedValueOnce({
-      ok: true,
-      id: "restart",
-      command: CORE_COMMAND_NAMES.restart,
-      issuedAt: "2026-01-01T00:00:00.000Z",
-      result: { restart, text: "project text" },
-    });
-
-    await restartControlPlaneFromCli("/repo");
-
-    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.restart, { projectRoot: "/repo" });
-  });
-
-  it("uses local bootstrap repair when the daemon is from another build", async () => {
-    const restart = restartResult();
-    mocks.requestCoreCommand.mockRejectedValueOnce(
-      new Error("aimux daemon on default port is from a different local build"),
-    );
-    mocks.restartAimuxControlPlane.mockResolvedValueOnce(restart);
-    mocks.renderRuntimeRestartResult.mockReturnValueOnce("local text");
-
-    const result = await restartControlPlaneFromCli("/repo");
-
-    expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
-    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
-      projectRoot: "/repo",
-      stopDaemon: undefined,
-      ensureDaemonRunning: expect.any(Function),
-    });
-    const options = mocks.restartAimuxControlPlane.mock.calls[0][0];
-    options.ensureDaemonRunning();
-    expect(mocks.ensureDaemonRunning).toHaveBeenCalledWith({ adoptExisting: false });
-  });
-
-  it("uses local bootstrap repair without a project scope", async () => {
-    const restart = restartResult();
-    mocks.requestCoreCommand.mockRejectedValueOnce(
-      new Error("aimux daemon on default port is from a different local build"),
-    );
     mocks.restartAimuxControlPlane.mockResolvedValueOnce(restart);
     mocks.renderRuntimeRestartResult.mockReturnValueOnce("local text");
 
@@ -138,6 +75,24 @@ describe("restartControlPlaneFromCli", () => {
     expect(result).toEqual({ restart, text: "local text", source: "local-bootstrap" });
     expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
       projectRoot: undefined,
+      stopDaemon: undefined,
+      ensureDaemonRunning: expect.any(Function),
+    });
+    const options = mocks.restartAimuxControlPlane.mock.calls[0][0];
+    options.ensureDaemonRunning();
+    expect(mocks.ensureDaemonRunning).toHaveBeenCalledWith({ adoptExisting: false });
+  });
+
+  it("passes project-scoped restart requests to local repair orchestration", async () => {
+    const restart = restartResult();
+    mocks.restartAimuxControlPlane.mockResolvedValueOnce(restart);
+    mocks.renderRuntimeRestartResult.mockReturnValueOnce("project text");
+
+    const result = await restartControlPlaneFromCli("/repo");
+
+    expect(result.text).toBe("project text");
+    expect(mocks.restartAimuxControlPlane).toHaveBeenCalledWith({
+      projectRoot: "/repo",
       stopDaemon: undefined,
       ensureDaemonRunning: expect.any(Function),
     });
@@ -166,9 +121,6 @@ describe("restartControlPlaneFromCli", () => {
     };
     mocks.loadDaemonInfo.mockReturnValueOnce(daemon);
     mocks.loadDaemonState.mockReturnValueOnce(state);
-    mocks.requestCoreCommand.mockRejectedValueOnce(
-      new Error("stored daemon health response does not match this Aimux build"),
-    );
     mocks.restartAimuxControlPlane.mockImplementationOnce(async (options: { stopDaemon?: () => Promise<unknown> }) => {
       expect(options.stopDaemon).toEqual(expect.any(Function));
       await options.stopDaemon?.();
@@ -181,12 +133,5 @@ describe("restartControlPlaneFromCli", () => {
 
     expect(result.source).toBe("local-bootstrap");
     expect(mocks.stopDaemonInfo).toHaveBeenCalledWith(daemon, state);
-  });
-
-  it("does not mask non-bootstrap daemon errors", async () => {
-    mocks.requestCoreCommand.mockRejectedValueOnce(new Error("permission denied"));
-
-    await expect(restartControlPlaneFromCli()).rejects.toThrow("permission denied");
-    expect(mocks.restartAimuxControlPlane).not.toHaveBeenCalled();
   });
 });

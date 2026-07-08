@@ -16,8 +16,9 @@ import {
   type ProjectServiceManifest,
 } from "../project-service-manifest.js";
 
-// A dead/wedged service must not stall the dashboard loop, so the health probe is bounded.
-const HEALTH_TIMEOUT_MS = 2500;
+// Restore/start mutations can briefly delay the same-process health route while tmux is busy.
+// Keep the probe bounded, but do not classify a healthy local service as disconnected mid-mutation.
+const HEALTH_TIMEOUT_MS = 10_000;
 
 function sameFilesystemPath(a: string | null, b: string): boolean {
   if (!a) return false;
