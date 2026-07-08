@@ -1838,6 +1838,50 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.mock.calls.map((call) => call[0].join(" "))).not.toContain("kill-window -t @1");
   });
 
+  it("rolls back a ready replacement when the window swap fails", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "display-message -p -t @1 #{window_active}") return "1";
+      if (joined.startsWith("new-window -d -P -t aimux-mobile-abc ")) {
+        return "@2\t2\taimux-reload-1";
+      }
+      if (joined === "show-window-options -v -t @2 @ready") return "stamp";
+      if (joined === "swap-window -d -s @2 -t @1") throw new Error("swap failed");
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    expect(() =>
+      manager.replaceWindowWhenReady(
+        {
+          sessionName: "aimux-mobile-abc",
+          windowId: "@1",
+          windowIndex: 0,
+          windowName: "dashboard",
+        },
+        {
+          cwd: "/repo/mobile",
+          command: "/usr/local/bin/node",
+          args: ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"],
+        },
+        { option: "@ready", value: "stamp", timeoutMs: 100 },
+      ),
+    ).toThrow(/swap failed/);
+
+    const calls = exec.mock.calls.map((call) => call[0].join(" "));
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "rename-window -t @1 dashboard-old",
+        "rename-window -t @2 dashboard",
+        "swap-window -d -s @2 -t @1",
+        "rename-window -t @1 dashboard",
+        "kill-window -t @2",
+      ]),
+    );
+    expect(calls.some((call) => /^rename-window -t @2 aimux-reload-1-[a-z0-9]+$/.test(call))).toBe(true);
+    expect(calls).not.toContain("kill-window -t @1");
+  });
+
   it("detects whether aimux is already inside tmux", () => {
     const manager = new TmuxRuntimeManager(createExecMock());
     expect(manager.isInsideTmux({ TMUX: "/tmp/tmux-1000/default,123,0" } as NodeJS.ProcessEnv)).toBe(true);

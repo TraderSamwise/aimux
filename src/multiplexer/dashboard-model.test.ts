@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
-import { initPaths } from "../paths.js";
+import { initPaths, withProjectPaths } from "../paths.js";
 import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { addNotification } from "../notifications.js";
 import {
@@ -1214,8 +1214,10 @@ describe("computeDashboardSessions thread stats", () => {
 
   it("includes offline topology sessions when the host offline cache is empty", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-topology-"));
+    const otherRepoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-offline-other-"));
     try {
       mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      mkdirSync(join(otherRepoRoot, ".git"), { recursive: true });
       await initPaths(repoRoot);
       saveRuntimeTopologySessions({
         projectRoot: repoRoot,
@@ -1231,6 +1233,23 @@ describe("computeDashboardSessions thread stats", () => {
             worktreePath: repoRoot,
           },
         ],
+      });
+      withProjectPaths(otherRepoRoot, () => {
+        saveRuntimeTopologySessions({
+          projectRoot: otherRepoRoot,
+          sessions: [
+            {
+              id: "codex-other",
+              tool: "codex",
+              toolConfigKey: "codex",
+              command: "codex",
+              args: [],
+              lifecycle: "offline",
+              createdAt: "2026-05-09T12:00:00.000Z",
+              worktreePath: otherRepoRoot,
+            },
+          ],
+        });
       });
       const syncSessionsFromTopology = vi.fn(() => {
         throw new Error("should not sync runtime state");
@@ -1259,6 +1278,7 @@ describe("computeDashboardSessions thread stats", () => {
       expect(syncSessionsFromTopology).not.toHaveBeenCalled();
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(otherRepoRoot, { recursive: true, force: true });
     }
   });
 

@@ -56,7 +56,8 @@ Disallowed normal paths:
 | Area                                             | Owner           | Notes                                                                           |
 | ------------------------------------------------ | --------------- | ------------------------------------------------------------------------------- |
 | project discovery and activation                 | daemon          | Host-level project registry and service supervision.                            |
-| daemon status, restart, repair orchestration     | daemon          | CLI/TUI should request the daemon to repair, not perform repair independently.  |
+| daemon status and service repair                 | daemon          | Daemon owns supervision and project-service repair.                             |
+| restart bootstrap recovery                       | launcher + daemon + tmux | Launcher performs local repair orchestration when daemon may be stale or wedged. |
 | project state and mutations                      | project service | Single writer for shared project state.                                         |
 | notifications, threads, tasks, handoffs, reviews | project service | TUI/web/mobile/CLI use the same project API contracts.                          |
 | Coordination worklist                            | project service | One server-built model for all clients.                                         |

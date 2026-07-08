@@ -47,7 +47,15 @@ export class CoreProjectActor {
 
   async start(): Promise<CoreProjectActorState> {
     if (this.started) {
-      this.ensureEndpointPublished();
+      try {
+        this.ensureEndpointPublished();
+      } catch (error) {
+        log.warn("failed to republish core project actor endpoint", "daemon", {
+          projectId: this.state.projectId,
+          projectRoot: this.state.projectRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       return this.getState();
     }
     await withProjectPaths(this.state.projectRoot, async () => {

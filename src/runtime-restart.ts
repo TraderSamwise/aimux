@@ -655,11 +655,13 @@ async function verifyPostRestartCoherence(input: {
             await input.ensureProjectService(projectRoot);
             throwIfRestartAborted(input.abortSignal);
           } catch (error) {
+            throwIfRestartAborted(input.abortSignal);
             latestError = `post-restart service repair failed for ${projectRoot}: ${errorMessage(error)}`;
           }
         }
       }
     } catch (error) {
+      throwIfRestartAborted(input.abortSignal);
       latestError = errorMessage(error);
     }
 

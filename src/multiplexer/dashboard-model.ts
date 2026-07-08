@@ -97,7 +97,7 @@ function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
   for (const session of host.offlineSessions ?? []) {
     if (session?.id) sessionsById.set(session.id, session);
   }
-  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+  for (const session of listTopologySessionStates({ statuses: ["offline"], projectRoot: projectRootFor(host) })) {
     if (session?.id && !sessionsById.has(session.id)) sessionsById.set(session.id, session);
   }
   return [...sessionsById.values()];
@@ -108,7 +108,7 @@ function listOfflineSessionsForDashboard(host: DashboardModelHost): any[] {
   for (const session of host.offlineSessions ?? []) {
     if (session?.id) sessionsById.set(session.id, session);
   }
-  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+  for (const session of listTopologySessionStates({ statuses: ["offline"], projectRoot: projectRootFor(host) })) {
     if (session?.id) sessionsById.set(session.id, session);
   }
   return [...sessionsById.values()];
@@ -240,6 +240,7 @@ function metadataSessionCanReceiveInput(host: DashboardModelHost, sessionId: str
     if (session.status === "offline" || session.status === "exited") return false;
     const runtime = session.semantic?.runtime;
     if (runtime?.canReceiveInput === true) return true;
+    if (runtime?.canReceiveInput === false) return false;
     if (runtime && runtime.isAlive === false) return false;
   }
   return isMetadataSessionRunning(host, sessionId);
@@ -261,7 +262,9 @@ async function waitForMetadataSessionReadyForInput(host: DashboardModelHost, ses
     } catch {}
   }
   return waitForMetadataCondition(host, () => {
-    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((session) => session.id === sessionId);
+    const offline = listTopologySessionStates({ statuses: ["offline"], projectRoot: projectRootFor(host) }).find(
+      (session) => session.id === sessionId,
+    );
     if (offline?.restoreBlockedReason) throw new Error(offline.restoreBlockedReason);
     return metadataSessionCanReceiveInput(host, sessionId);
   });

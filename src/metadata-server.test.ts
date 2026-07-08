@@ -3260,11 +3260,6 @@ describe("MetadataServer threads API", () => {
       );
       expect(staleReadyRes.ok).toBe(true);
       expect(readyPollsBeforeReady).toBeGreaterThan(1);
-      expect(setWindowOptionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ windowId: "@99" }),
-        TMUX_DASHBOARD_READY_OPTION,
-        "",
-      );
       expect(replaceWindowWhenReadyMock).toHaveBeenCalledWith(
         expect.objectContaining({ windowId: "@99" }),
         expect.any(Object),
@@ -3273,10 +3268,7 @@ describe("MetadataServer threads API", () => {
       const clearReadyCallIndex = setWindowOptionMock.mock.calls.findIndex(
         ([, key, value]) => key === TMUX_DASHBOARD_READY_OPTION && value === "",
       );
-      expect(clearReadyCallIndex).toBeGreaterThanOrEqual(0);
-      expect(setWindowOptionMock.mock.invocationCallOrder[clearReadyCallIndex]).toBeLessThan(
-        replaceWindowWhenReadyMock.mock.invocationCallOrder[0],
-      );
+      expect(clearReadyCallIndex).toBe(-1);
       expect(switchClientToTargetMock).toHaveBeenCalledOnce();
       expect(sendFocusInMock).toHaveBeenCalledOnce();
       TmuxRuntimeManager.prototype.isWindowAlive = () => false;

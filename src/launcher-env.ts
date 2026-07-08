@@ -38,14 +38,14 @@ export function cliEntryFor(argv: string[]): CliEntry {
 }
 
 export function runRoutedCli(): void {
+  const entry = cliEntryFor(process.argv);
   const run =
-    cliEntryFor(process.argv) === "core"
+    entry === "core"
       ? import("./core-cli.js").then(async ({ runCoreCli }) => {
           const code = await runCoreCli(process.argv.slice(2));
           process.exitCode = code;
-          process.exit(code);
         })
-      : cliEntryFor(process.argv) === "expose"
+      : entry === "expose"
         ? import("./popup-expose.js").then((m) => m.runExpose())
         : import("./main.js").then(() => undefined);
 

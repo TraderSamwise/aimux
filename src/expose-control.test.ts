@@ -38,5 +38,11 @@ describe("listAllProjectsExposeItems", () => {
       ["two", "/repo/two"],
     ]);
     expect(listItemsFn).toHaveBeenCalledTimes(2);
+    expect(listItemsFn).toHaveBeenCalledWith({ projectRoot: "/repo/one", sessionNames: ["aimux-one"] }, tmux, {
+      scope: "all",
+    });
+    expect(listItemsFn).toHaveBeenCalledWith({ projectRoot: "/repo/two", sessionNames: ["aimux-two"] }, tmux, {
+      scope: "all",
+    });
   });
 });

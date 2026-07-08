@@ -116,7 +116,6 @@ export function resolveDashboardTarget(
     currentReadyStamp !== dashboardBuildStamp ||
     currentDashboardOwner !== currentOwner;
   if (shouldRespawn) {
-    tmux.setWindowOption(dashboardTarget, TMUX_DASHBOARD_READY_OPTION, "");
     dashboardTarget = tmux.replaceWindowWhenReady(dashboardTarget, dashboardCommand, {
       option: TMUX_DASHBOARD_READY_OPTION,
       value: dashboardBuildStamp,

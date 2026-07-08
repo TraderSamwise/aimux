@@ -158,6 +158,30 @@ describe("DashboardUiStateStore", () => {
     expect(state.sessionIndex).toBe(0);
   });
 
+  it("keeps command-requested selection pending across temporary non-session views", () => {
+    const state = new DashboardState();
+    state.level = "sessions";
+    state.focusedWorktreePath = "/repo/wt";
+    state.worktreeEntries = [{ kind: "session", id: "old-agent" }];
+    state.sessionIndex = 0;
+
+    const store = new DashboardUiStateStore();
+    store.preferEntrySelection(state, "session", "new-agent", "/repo/wt");
+    state.level = "worktrees";
+    store.consumeSelectionRestore(state, [], true, 0, () => undefined);
+
+    expect(state.sessionIndex).toBe(0);
+
+    state.level = "sessions";
+    state.worktreeEntries = [
+      { kind: "session", id: "old-agent" },
+      { kind: "session", id: "new-agent" },
+    ];
+    store.consumeSelectionRestore(state, [], true, 0, () => undefined);
+
+    expect(state.sessionIndex).toBe(1);
+  });
+
   it("does not keep stale persisted selection pending when the entry is gone", () => {
     const writer = new DashboardUiStateStore();
     writer.persist(

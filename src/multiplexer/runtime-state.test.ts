@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths } from "../paths.js";
+import { initPaths, withProjectPaths } from "../paths.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
@@ -365,6 +365,58 @@ describe("resumeOfflineSession", () => {
     expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
     expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
     expect(listTopologySessionStates()).toEqual([]);
+  });
+
+  it("does not resume an offline cache row from another project's topology", () => {
+    const otherRepoRoot = mkdtempSync(join(tmpdir(), "aimux-runtime-state-other-"));
+    try {
+      mkdirSync(join(otherRepoRoot, ".git"), { recursive: true });
+      withProjectPaths(otherRepoRoot, () => {
+        saveRuntimeTopologySessions({
+          projectRoot: otherRepoRoot,
+          sessions: [
+            {
+              id: "codex-shared",
+              command: "codex",
+              tool: "codex",
+              toolConfigKey: "codex",
+              args: [],
+              backendSessionId: "backend-other",
+              lifecycle: "offline",
+              worktreePath: otherRepoRoot,
+            },
+          ],
+        });
+      });
+      const createSession = vi.fn();
+      const host: any = {
+        projectRoot: repoRoot,
+        sessions: [],
+        offlineSessions: [{ id: "codex-shared", command: "codex", toolConfigKey: "codex" }],
+        invalidateDesktopStateSnapshot: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        debug: vi.fn(),
+        createSession,
+      };
+
+      resumeOfflineSession(host, {
+        id: "codex-shared",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: repoRoot,
+      });
+
+      expect(createSession).not.toHaveBeenCalled();
+      expect(host.offlineSessions).toEqual([]);
+      expect(
+        withProjectPaths(otherRepoRoot, () =>
+          listTopologySessionStates({ statuses: ["offline"], projectRoot: otherRepoRoot }),
+        ),
+      ).toMatchObject([{ id: "codex-shared", backendSessionId: "backend-other" }]);
+    } finally {
+      rmSync(otherRepoRoot, { recursive: true, force: true });
+    }
   });
 
   it("settles a stale running activity to idle on backend resume", () => {
