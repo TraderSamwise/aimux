@@ -194,7 +194,11 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
 
     if (host.mode === "dashboard") {
       const now = Date.now();
-      if (now >= host.dashboardNextBackgroundRefreshAt) {
+      if (host.dashboardStartupPriming) {
+        if (dashboardNeedsRender) {
+          host.renderCurrentDashboardView();
+        }
+      } else if (now >= host.dashboardNextBackgroundRefreshAt) {
         host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
         if (dashboardNeedsRender) {
           host.renderCurrentDashboardView();
@@ -734,6 +738,9 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   );
   if (supersededBackendSessionId && restoredSession) {
     restoredSession.supersededBackendSessionId = supersededBackendSessionId;
+  }
+  if (restoredSession) {
+    restoredSession.restoreStartedAt = Date.now();
   }
 }
 

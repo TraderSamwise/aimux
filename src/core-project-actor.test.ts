@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const actorMocks = vi.hoisted(() => ({
   cleanups: vi.fn(),
   cleanupPromise: null as Promise<void> | null,
+  publishEndpoint: vi.fn(),
   removeEndpoint: vi.fn(),
   startError: null as Error | null,
   starts: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock("./multiplexer/index.js", () => ({
       actorMocks.cleanups();
       if (actorMocks.cleanupPromise) await actorMocks.cleanupPromise;
     }
+
+    ensureProjectServiceEndpoint() {
+      actorMocks.publishEndpoint();
+    }
   },
 }));
 
@@ -40,6 +45,7 @@ describe("CoreProjectActor", () => {
   beforeEach(() => {
     actorMocks.cleanups.mockReset();
     actorMocks.cleanupPromise = null;
+    actorMocks.publishEndpoint.mockReset();
     actorMocks.removeEndpoint.mockReset();
     actorMocks.startError = null;
     actorMocks.starts.mockReset();
@@ -82,5 +88,19 @@ describe("CoreProjectActor", () => {
     expect(actor.isRunning()).toBe(false);
     expect(actorMocks.cleanups).toHaveBeenCalledTimes(1);
     expect(actorMocks.removeEndpoint).toHaveBeenCalledWith("/repo/alpha");
+  });
+
+  it("republishes endpoint metadata when an already-running actor is ensured", async () => {
+    const { CoreProjectActor } = await import("./core-project-actor.js");
+    const actor = new CoreProjectActor("/repo/alpha");
+    await actor.start();
+
+    await expect(actor.start()).resolves.toMatchObject({
+      projectRoot: "/repo/alpha",
+      pid: process.pid,
+    });
+
+    expect(actorMocks.starts).toHaveBeenCalledTimes(1);
+    expect(actorMocks.publishEndpoint).toHaveBeenCalledTimes(1);
   });
 });

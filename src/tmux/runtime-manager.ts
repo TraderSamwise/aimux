@@ -593,6 +593,14 @@ export class TmuxRuntimeManager {
     }
   }
 
+  isWindowActive(target: TmuxTarget): boolean {
+    try {
+      return this.exec(["display-message", "-p", "-t", target.windowId, "#{window_active}"]).trim() === "1";
+    } catch {
+      return false;
+    }
+  }
+
   ensureDashboardWindow(sessionName: string, projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxTarget {
     const dashboardName = this.getDashboardWindowName();
     const existing = this.listWindows(sessionName).find((window) => isDashboardWindowName(window.name));
@@ -700,6 +708,37 @@ export class TmuxRuntimeManager {
     this.exec(["respawn-window", "-k", "-t", target.windowId, "-c", spec.cwd, spec.command, ...spec.args], {
       cwd: spec.cwd,
     });
+  }
+
+  replaceWindowWhenReady(
+    target: TmuxTarget,
+    spec: TmuxCommandSpec,
+    readiness: { option: string; value: string; timeoutMs: number },
+  ): TmuxTarget {
+    const wasActive = this.isWindowActive(target);
+    const replacementName = `aimux-reload-${target.windowId.replace(/[^a-zA-Z0-9_-]/g, "")}-${Date.now().toString(36)}`;
+    const replacement = this.createWindow(target.sessionName, replacementName, spec.cwd, spec.command, spec.args, {
+      detached: true,
+    });
+    const deadline = Date.now() + readiness.timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.getWindowOption(replacement, readiness.option) === readiness.value) {
+        this.renameWindow(target.windowId, `${target.windowName}-old`);
+        this.renameWindow(replacement.windowId, target.windowName);
+        this.exec(["swap-window", "-d", "-s", replacement.windowId, "-t", target.windowId]);
+        const swapped = this.getTargetByWindowId(target.sessionName, replacement.windowId) ?? replacement;
+        try {
+          this.killWindow(target);
+        } catch {}
+        if (wasActive) this.selectWindow(swapped);
+        return swapped;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+    try {
+      this.killWindow(replacement);
+    } catch {}
+    throw new Error(`Timed out waiting for replacement tmux window ${replacement.windowId} to become ready`);
   }
 
   selectWindow(target: TmuxTarget): void {

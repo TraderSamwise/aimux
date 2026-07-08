@@ -496,6 +496,46 @@ describe("session runtime prompt submission", () => {
     }
   });
 
+  it("blocks restore when a restored session exits during the restore probe", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const runtime = {
+        id: "claude-restored-exit",
+        command: "claude",
+        startTime: Date.now() - 20_000,
+        restoreStartedAt: Date.now() - 5_000,
+        backendSessionId: "backend-restored-exit",
+      };
+      const host: any = {
+        sessions: [runtime],
+        offlineSessions: [],
+        stoppingSessionIds: new Set(),
+        sessionOriginalArgs: new Map([["claude-restored-exit", ["--resume", "backend-restored-exit"]]]),
+        sessionToolKeys: new Map([["claude-restored-exit", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-restored-exit", repoRoot]]),
+        sessionTmuxTargets: new Map(),
+        startedInDashboard: true,
+        getSessionLabel: vi.fn(() => undefined),
+        deriveHeadline: vi.fn(() => undefined),
+        updateContextWatcherSessions: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        saveState: vi.fn(),
+        renderDashboard: vi.fn(),
+      };
+
+      handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+      expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
+        id: "claude-restored-exit",
+        backendSessionId: "backend-restored-exit",
+        restoreBlockedReason: "agent exited after restore",
+      });
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("preserves fresh relaunchability when a stopped codex runtime exits without a backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {

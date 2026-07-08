@@ -23,7 +23,6 @@ Node launcher when a matching daemon is already running:
 
 | Command                                                 | Status | Owner                    | Notes                                                                                                  |
 | ------------------------------------------------------- | ------ | ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `aimux restart`                                         | `CUT`  | daemon                   | Uses `/core/restart-text`; orchestrates daemon, services, runtime repair, and dashboard reload.        |
 | `aimux input <sessionId> <text...>`                     | `CUT`  | daemon + project service | Uses `/core/agents/input-text`; sends agent input through the project-service agent API.               |
 | `aimux ps [--json]`                                     | `CUT`  | daemon + project service | Uses `/core/agents/ps-text`; lists agents from the project service without a fresh Node process.       |
 | `aimux rename <sessionId> --label <label>`              | `CUT`  | daemon + project service | Uses `/core/agents/rename-text`; label mutation stays project-service owned.                           |
@@ -49,7 +48,6 @@ Node launcher when a matching daemon is already running:
 | `aimux daemon status [--json]`                          | `CUT`  | daemon                   | Uses `/core/daemon-status-text`.                                                                       |
 | `aimux daemon projects [--json]`                        | `CUT`  | daemon                   | Uses `/core/daemon-projects-text`.                                                                     |
 | `aimux daemon project-ensure --project <path> [--json]` | `CUT`  | daemon                   | Uses `/core/project-ensure-text` with an explicit project payload.                                     |
-| `aimux daemon restart [--json]`                         | `CUT`  | daemon                   | Uses `/core/restart-text` as the compatibility alias for `aimux restart`.                              |
 | `aimux host status [--json]`                            | `CUT`  | daemon                   | Uses `/core/host-status-text` with the current directory as project context.                           |
 | `aimux projects list [--json]`                          | `CUT`  | daemon                   | Uses `/core/projects-list-text`.                                                                       |
 | `aimux remote status [--json]`                          | `CUT`  | daemon                   | Uses `/core/remote-status-text`; status JSON never includes credential tokens.                         |
@@ -69,6 +67,7 @@ No commands currently live in this category.
 | Family                                                    | Status      | Target Owner    | Notes                                                                                                  |
 | --------------------------------------------------------- | ----------- | --------------- | ------------------------------------------------------------------------------------------------------ |
 | `aimux` dashboard entry                                   | `BOOTSTRAP` | daemon + tmux   | May bootstrap/repair, then should attach to tmux-managed dashboard.                                    |
+| `aimux restart`, `aimux daemon restart`                   | `BOOTSTRAP` | launcher + daemon + tmux | Runs local repair orchestration from the installed launcher so it can unbrick a stale or wedged daemon. |
 | `aimux init`                                              | `BOOTSTRAP` | daemon          | Project registration/setup path; allowed to start the control plane.                                   |
 | `aimux input`, `aimux ps`, `aimux rename`, `aimux migrate` | `CUT`       | project service | Agent utility commands use daemon text routes to project-service APIs in the healthy installed path.   |
 | `aimux spawn`, `aimux stop`, `aimux kill`, `aimux fork`   | `CUT`       | project service | Agent lifecycle commands use daemon text routes to project-service APIs in the healthy installed path. |

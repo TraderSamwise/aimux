@@ -25,6 +25,7 @@ import { captureDashboardLifecycle, isDashboardLifecycleCurrent } from "./dashbo
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
 type SessionRuntimeHost = any;
+const RESTORE_EXIT_BLOCK_MS = 30_000;
 
 function projectRootFor(host: SessionRuntimeHost): string {
   const projectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
@@ -410,8 +411,21 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       );
     }
   }
+  const restoreStartedAt = typeof runtime.restoreStartedAt === "number" ? runtime.restoreStartedAt : undefined;
+  const restoreUptime = restoreStartedAt === undefined ? Infinity : Date.now() - restoreStartedAt;
+  const restoreExitedDuringProbe = !explicitStop && !graveyardAfterStop && restoreUptime < RESTORE_EXIT_BLOCK_MS;
   const quickUnexpectedExit = !explicitStop && !graveyardAfterStop && uptime < 10_000;
-  const shouldPreserveOffline = !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000);
+  const restoreBlockedReason = restoreExitedDuringProbe
+    ? errorHint
+      ? `agent exited after restore${errorHint}`
+      : "agent exited after restore"
+    : quickUnexpectedExit
+      ? errorHint
+        ? `agent exited during startup${errorHint}`
+        : "agent exited during startup"
+      : undefined;
+  const shouldPreserveOffline =
+    !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000 || restoreExitedDuringProbe);
   if (shouldPreserveOffline) {
     upsertTopologySession(
       {
@@ -431,11 +445,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
         worktreePath: host.sessionWorktreePaths.get(runtime.id),
         label: host.getSessionLabel(runtime.id),
         headline: host.deriveHeadline(runtime.id),
-        restoreBlockedReason: quickUnexpectedExit
-          ? errorHint
-            ? `agent exited during startup${errorHint}`
-            : "agent exited during startup"
-          : undefined,
+        restoreBlockedReason,
       },
       "offline",
       { projectRoot: resolveProjectRoot() },

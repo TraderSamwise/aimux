@@ -43,6 +43,7 @@ export function runRoutedCli(): void {
       ? import("./core-cli.js").then(async ({ runCoreCli }) => {
           const code = await runCoreCli(process.argv.slice(2));
           process.exitCode = code;
+          process.exit(code);
         })
       : cliEntryFor(process.argv) === "expose"
         ? import("./popup-expose.js").then((m) => m.runExpose())

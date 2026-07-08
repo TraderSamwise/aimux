@@ -2115,7 +2115,7 @@ describe("runDashboard", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.showDashboardError).not.toHaveBeenCalled();
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 
   it("initializes dashboard input epoch before hydrate and priming refresh", async () => {
@@ -2216,6 +2216,9 @@ describe("runDashboard", () => {
 
     const runPromise = runDashboard(host);
     await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+    expect(host.dashboardBusyState).toMatchObject({ title: "Connecting Aimux" });
+    expect(host.terminalHost.enterAlternateScreen).toHaveBeenCalledWith(true);
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
     host.dashboardInputEpoch = 1;
     resolvePriming();
     await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
@@ -2228,9 +2231,9 @@ describe("runDashboard", () => {
         lifecycle: expect.objectContaining({ mode: "dashboard", inputEpoch: undefined }),
       }),
     );
-    expect(host.dashboardBusyState).toBeUndefined();
+    expect(host.dashboardBusyState).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 
   it("does not render or report stale startup repair after a newer dashboard run starts", async () => {
@@ -2280,6 +2283,6 @@ describe("runDashboard", () => {
 
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce();
     expect(host.showDashboardError).not.toHaveBeenCalled();
-    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 });

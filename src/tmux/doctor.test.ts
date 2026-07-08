@@ -185,6 +185,7 @@ describe("tmux doctor", () => {
         getWindowOption: () => null,
         isWindowAlive: () => true,
         respawnWindow: () => undefined,
+        replaceWindowWhenReady: () => target,
         setSessionOption: () => undefined,
         setWindowOption: () => undefined,
         listManagedWindows: () => [],

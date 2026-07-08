@@ -19,7 +19,7 @@ import { TmuxRuntimeManager, type TmuxClientInfo } from "../tmux/runtime-manager
 import { openManagedServiceWindow, openManagedSessionWindow, type TmuxServiceTarget } from "../tmux/window-open.js";
 import { PROJECT_API_ROUTES, type OrchestrationRouteOption } from "../project-api-contract.js";
 import { isPidAlive } from "../process-inspector.js";
-import { restartAimuxControlPlane, type RuntimeRestartResult } from "../runtime-restart.js";
+import { isRuntimeRestartInProgress, restartAimuxControlPlane, type RuntimeRestartResult } from "../runtime-restart.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import {
   buildDashboardBusyOverlayOutput,
@@ -389,18 +389,13 @@ function tryAcquireRuntimeGuardRepairLock(projectRoot: string): string | null {
   try {
     const ownerPid = readRuntimeGuardRepairLockPid(lockPath);
     const ageMs = Date.now() - statSync(lockPath).mtimeMs;
-    if ((ownerPid && !isPidAlive(ownerPid)) || (!ownerPid && ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)) {
+    if ((ownerPid && !isPidAlive(ownerPid)) || ageMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS) {
       const stealPath = tryAcquireRuntimeGuardRepairStealLock();
       if (!stealPath) return null;
       try {
         const currentOwnerPid = readRuntimeGuardRepairLockPid(lockPath);
         const currentAgeMs = Date.now() - statSync(lockPath).mtimeMs;
-        if (
-          !(
-            (currentOwnerPid && !isPidAlive(currentOwnerPid)) ||
-            (!currentOwnerPid && currentAgeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)
-          )
-        ) {
+        if (!((currentOwnerPid && !isPidAlive(currentOwnerPid)) || currentAgeMs > RUNTIME_GUARD_REPAIR_LOCK_STALE_MS)) {
           return null;
         }
         rmSync(lockPath, { recursive: true, force: true });
@@ -496,6 +491,22 @@ function runtimeGuardRepairBlockedNoticeReady(host: DashboardControlHost): boole
   return true;
 }
 
+function blockRuntimeGuardRepair(host: DashboardControlHost, lifecycle: DashboardLifecycleToken): void {
+  host.runtimeGuardRepairBusy = true;
+  if (!runtimeGuardRepairBlockedNoticeReady(host)) return;
+  recordDashboardRepairNotice(
+    host,
+    {
+      kind: "runtime-guard-repair",
+      phase: "blocked",
+      message: "Aimux repair already running",
+    },
+    { flash: false },
+  );
+  showDashboardFooterFlash(host, "Aimux repair already running", 3);
+  renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
+}
+
 function stabilizeRepairRuntimeGuardProbe(
   host: DashboardControlHost,
   current: RuntimeGuardState,
@@ -515,27 +526,20 @@ function stabilizeRepairRuntimeGuardProbe(
 }
 
 export function startRuntimeGuardRepair(host: DashboardControlHost, state: RuntimeGuardState): void {
-  if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing) return;
+  if (!shouldAutoRepairRuntimeGuard(state) || host.runtimeGuardRepairing || host.runtimeGuardRepairTimedOutPending) {
+    return;
+  }
   const lifecycle = captureDashboardLifecycle(host);
   const repairKey = runtimeGuardRepairKey(state);
   if (!runtimeGuardRepairRetryReady(host, repairKey)) return;
   const projectRoot = dashboardProjectRoot(host);
+  if (isRuntimeRestartInProgress()) {
+    blockRuntimeGuardRepair(host, lifecycle);
+    return;
+  }
   const lockPath = tryAcquireRuntimeGuardRepairLock(projectRoot);
   if (!lockPath) {
-    host.runtimeGuardRepairBusy = true;
-    if (runtimeGuardRepairBlockedNoticeReady(host)) {
-      recordDashboardRepairNotice(
-        host,
-        {
-          kind: "runtime-guard-repair",
-          phase: "blocked",
-          message: "Aimux repair already running",
-        },
-        { flash: false },
-      );
-      showDashboardFooterFlash(host, "Aimux repair already running", 3);
-      renderDashboardIfCurrent(host, lifecycle, () => host.renderCurrentDashboardView?.());
-    }
+    blockRuntimeGuardRepair(host, lifecycle);
     return;
   }
   host.runtimeGuardRepairBlockedNoticeAt = undefined;
@@ -573,11 +577,11 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
     clearTimeout(repairTimeout);
     repairTimeout = null;
   };
-  const fail = (message: string, options: { keepRepairLock?: boolean; title?: string } = {}) => {
+  const fail = (message: string, options: { title?: string } = {}) => {
     if (settled) return;
     settled = true;
     clearRepairTimeout();
-    if (!options.keepRepairLock) releaseRepairLock();
+    releaseRepairLock();
     host.runtimeGuardRepairing = false;
     host.runtimeGuardRepairFailedKey = repairKey;
     host.runtimeGuardRepairRetryAt = Date.now() + RUNTIME_GUARD_REPAIR_RETRY_MS;
@@ -657,15 +661,18 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
 
   try {
     writeRuntimeGuardRepairLockOwner(lockPath, process.pid, projectRoot);
+    const repairAbort = new AbortController();
     const repair = restartAimuxControlPlane({
       projectRoot,
       reloadDashboards: false,
       verifyDashboards: false,
+      abortSignal: repairAbort.signal,
     });
     repairTimeout = setTimeout(() => {
+      host.runtimeGuardRepairTimedOutPending = true;
+      repairAbort.abort();
       fail(`aimux repair is still running after ${Math.round(RUNTIME_GUARD_REPAIR_TIMEOUT_MS / 1000)}s`, {
-        keepRepairLock: true,
-        title: "Aimux repair still running",
+        title: "Aimux repair timed out",
       });
     }, RUNTIME_GUARD_REPAIR_TIMEOUT_MS);
     repairTimeout.unref?.();
@@ -675,6 +682,7 @@ export function startRuntimeGuardRepair(host: DashboardControlHost, state: Runti
         (error) => fail(error instanceof Error ? error.message : String(error)),
       )
       .finally(() => {
+        host.runtimeGuardRepairTimedOutPending = false;
         releaseRepairLock();
       });
   } catch (error) {
@@ -714,7 +722,8 @@ export async function refreshRuntimeGuard(host: DashboardControlHost): Promise<v
       }
       host.renderCurrentDashboardView();
     }
-    if (shouldAutoRepairRuntimeGuard(next.state)) startRuntimeGuardRepair(host, next.state);
+    if (shouldAutoRepairRuntimeGuard(next.state) && !host.dashboardStartupPriming)
+      startRuntimeGuardRepair(host, next.state);
   } finally {
     host.runtimeGuardProbing = false;
   }
@@ -1035,6 +1044,7 @@ async function openProjectServiceNotificationTarget(
 ): Promise<"opened" | "missing" | "error"> {
   try {
     const context = dashboardControlClientContext(host);
+    if (!hasDashboardFocusClient(context)) return "missing";
     const startedAt = Date.now();
     await mutateDashboardApi(
       host,
@@ -1066,6 +1076,10 @@ async function openProjectServiceNotificationTarget(
     ]);
     return "error";
   }
+}
+
+function hasDashboardFocusClient(context: { clientTty?: string }): boolean {
+  return Boolean(context.clientTty?.trim());
 }
 
 function dashboardControlClientContext(host: DashboardControlHost): {

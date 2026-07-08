@@ -40,8 +40,16 @@ export class CoreProjectActor {
     return this.started;
   }
 
+  ensureEndpointPublished(): void {
+    if (!this.started) return;
+    this.mux?.ensureProjectServiceEndpoint();
+  }
+
   async start(): Promise<CoreProjectActorState> {
-    if (this.started) return this.getState();
+    if (this.started) {
+      this.ensureEndpointPublished();
+      return this.getState();
+    }
     await withProjectPaths(this.state.projectRoot, async () => {
       ensureProjectPaths();
       initProject();

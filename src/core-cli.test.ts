@@ -234,7 +234,7 @@ describe("runCoreCli", () => {
     mocks.restartControlPlaneFromCli.mockResolvedValue({
       restart: runtimeRestartResult(),
       text: "Aimux Restart\nfailures: 0",
-      source: "daemon",
+      source: "local-bootstrap",
     });
     mocks.setRemoteEnabled.mockReset();
     mocks.clearCredentials.mockReset();
@@ -393,7 +393,7 @@ describe("runCoreCli", () => {
     mocks.restartControlPlaneFromCli.mockResolvedValueOnce({
       restart: runtimeRestartResult(1),
       text: "Aimux Restart\nfailures: 1",
-      source: "daemon",
+      source: "local-bootstrap",
     });
 
     const result = await run(["restart"]);
