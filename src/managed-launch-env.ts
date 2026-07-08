@@ -1,18 +1,54 @@
-const EXCLUDED_ENV_KEYS = new Set([
-  "TMUX",
-  "TMUX_PANE",
-  "TMUX_CLIENT",
-  "TMUX_TMPDIR",
-  "PWD",
-  "OLDPWD",
-  "SHLVL",
-  "_",
-  "ZDOTDIR",
-  "AIMUX_SESSION_ID",
-  "AIMUX_TOOL",
-  "AIMUX_METADATA_ENDPOINT_FILE",
-  "AIMUX_SHELL_INTEGRATION_SCRIPT",
-  "NO_COLOR",
+const ALLOWED_ENV_KEYS = new Set([
+  "AIMUX_DAEMON_PORT",
+  "AIMUX_ENV",
+  "AIMUX_HOME",
+  "BUN_INSTALL",
+  "CARGO_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "CLICOLOR",
+  "CODEX_HOME",
+  "CODEX_MANAGED_PACKAGE_ROOT",
+  "COLORTERM",
+  "CONDA_DEFAULT_ENV",
+  "CONDA_EXE",
+  "CONDA_PREFIX",
+  "CONDA_PROMPT_MODIFIER",
+  "CONDA_SHLVL",
+  "EDITOR",
+  "GEM_HOME",
+  "GEM_PATH",
+  "GHOSTTY_RESOURCES_DIR",
+  "GOPATH",
+  "GOROOT",
+  "GPG_TTY",
+  "HOME",
+  "JAVA_HOME",
+  "LANG",
+  "LOGNAME",
+  "MANPATH",
+  "NVM_BIN",
+  "NVM_DIR",
+  "NVM_INC",
+  "PAGER",
+  "PATH",
+  "PNPM_HOME",
+  "PYENV_ROOT",
+  "RBENV_ROOT",
+  "RUSTUP_HOME",
+  "SHELL",
+  "SSH_AGENT_PID",
+  "SSH_AUTH_SOCK",
+  "TERM",
+  "TERM_PROGRAM",
+  "TERM_PROGRAM_VERSION",
+  "TMPDIR",
+  "USER",
+  "VISUAL",
+  "VOLTA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "ZSH",
 ]);
 
 const TRANSIENT_CONTROL_PATTERNS = [
@@ -25,7 +61,8 @@ const TRANSIENT_CONTROL_PATTERNS = [
 ];
 
 function shouldExcludeEnvKey(key: string): boolean {
-  if (EXCLUDED_ENV_KEYS.has(key)) return true;
+  if (key.startsWith("LC_")) return false;
+  if (!ALLOWED_ENV_KEYS.has(key)) return true;
   return TRANSIENT_CONTROL_PATTERNS.some((pattern) => pattern.test(key));
 }
 

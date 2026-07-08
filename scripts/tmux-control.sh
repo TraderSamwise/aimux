@@ -107,7 +107,6 @@ hydrate_from_tmux_pane() {
 hydrate_from_tmux_pane || true
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
 project_context_session() {
@@ -524,27 +523,46 @@ show_local_expose() {
   [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
   popup_session="${live_client_session-}"
   [ -n "$popup_session" ] || popup_session="$current_client_session"
-  home_arg=""
-  [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
-  daemon_env=""
-  [ -n "$aimux_home" ] && daemon_env="$daemon_env AIMUX_HOME=$(shell_quote "$aimux_home")"
-  [ -n "$daemon_host" ] && daemon_env="$daemon_env AIMUX_DAEMON_HOST=$(shell_quote "$daemon_host")"
-  [ -n "$daemon_port" ] && daemon_env="$daemon_env AIMUX_DAEMON_PORT=$(shell_quote "$daemon_port")"
+  expose_socket="$project_state_dir/expose.sock"
+  expose_socket_file="$project_state_dir/expose.sock.path"
+  if [ -r "$expose_socket_file" ]; then
+    resolved_socket=$(head -n 1 "$expose_socket_file" 2>/dev/null || true)
+    [ -n "$resolved_socket" ] && expose_socket="$resolved_socket"
+  fi
+  [ -e "$expose_socket" ] || return 1
+  expose_daemon_endpoint=""
+  if [ -n "$daemon_host" ] && [ -n "$daemon_port" ]; then
+    expose_daemon_endpoint="http://$daemon_host:$daemon_port"
+  fi
   popup_retry_count=0
   while :; do
-    backdrop_arg=""
-    prepaint=""
-    expose_backdrop=$(mktemp 2>/dev/null || true)
-    if [ -n "$expose_backdrop" ]; then
-      capture_target="${current_window_id:-$popup_session}"
-      if tmux capture-pane -p -e -t "$capture_target" -S 0 > "$expose_backdrop" 2>/dev/null; then
-        backdrop_arg="--backdrop-file $(shell_quote "$expose_backdrop")"
-        prepaint="printf '\\033[H'; cat $(shell_quote "$expose_backdrop"); "
-      else
-        rm -f "$expose_backdrop"
-      fi
+    expose_status=$(mktemp 2>/dev/null || true)
+    expose_context=$(mktemp 2>/dev/null || true)
+    [ -n "$expose_status" ] && [ -n "$expose_context" ] || return 1
+    client_cols=""
+    client_rows=""
+    if [ -n "$popup_client_tty" ]; then
+      client_size=$(tmux display-message -c "$popup_client_tty" -p -F '#{client_width}|#{client_height}' 2>/dev/null || true)
+      client_cols="${client_size%%|*}"
+      client_rows="${client_size#*|}"
     fi
-    expose_cmd="${prepaint}exec env $daemon_env $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
+    {
+      printf '%s\n' "$project_root"
+      printf '%s\n' "$project_state_dir"
+      printf '%s\n' "$popup_session"
+      printf '%s\n' "$popup_client_tty"
+      printf '%s\n' "$current_window"
+      printf '%s\n' "$current_window_id"
+      printf '%s\n' "$current_path"
+      printf '%s\n' "$pane_id"
+      printf '%s\n' "$aimux_home"
+      printf '\n'
+      printf '%s\n' "$expose_status"
+      printf '%s\n' "$client_cols"
+      printf '%s\n' "$client_rows"
+      printf '%s\n' "$expose_daemon_endpoint"
+    } > "$expose_context"
+    expose_cmd="old_stty=\$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; { cat $(shell_quote "$expose_context"); cat; } | nc -U $(shell_quote "$expose_socket"); nc_status=\$?; if [ -n \"\$old_stty\" ]; then stty \"\$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; exit \$nc_status"
     if [ -n "$popup_client_tty" ]; then
       tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
       popup_status=$?
@@ -552,13 +570,17 @@ show_local_expose() {
       tmux display-popup -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
       popup_status=$?
     fi
-    rm -f "$expose_backdrop"
+    if [ -s "$expose_status" ]; then
+      popup_status=$(cat "$expose_status" 2>/dev/null || printf '%s' "$popup_status")
+    fi
+    rm -f "$expose_context" "$expose_status"
     if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 3 ]; then
       popup_retry_count=$((popup_retry_count + 1))
       continue
     fi
     break
   done
+  [ "$popup_status" = 0 ] || return 1
   exit 0
 }
 

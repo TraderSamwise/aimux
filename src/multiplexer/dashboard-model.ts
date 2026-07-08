@@ -19,7 +19,11 @@ import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js
 import { isDashboardWindowName, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
-import type { PendingSessionActionKind, PendingWorktreeActionKind } from "../pending-actions.js";
+import type {
+  PendingServiceActionKind,
+  PendingSessionActionKind,
+  PendingWorktreeActionKind,
+} from "../pending-actions.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardSessionAction } from "./dashboard-ops.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
@@ -51,6 +55,7 @@ const METADATA_PENDING_SETTLE_INTERVAL_MS = 100;
 const DESKTOP_STATE_REFRESH_TIMEOUT_MS = 3_000;
 const DESKTOP_STATE_FORCE_REFRESH_TIMEOUT_MS = 5_000;
 const PROJECT_SERVICE_UI_REFRESH_IDLE_MS = 1_000;
+const PENDING_START_OFFLINE_SETTLE_MS = 5_000;
 
 function projectRootFor(host: DashboardModelHost): string {
   const configuredProjectRoot = typeof host.projectRoot === "string" ? host.projectRoot.trim() : "";
@@ -90,6 +95,70 @@ function hydrateLiveAgentWindowsForSnapshot(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pendingActionAgeMs(startedAt: string, now = Date.now()): number {
+  const started = Date.parse(startedAt);
+  return Number.isFinite(started) ? Math.max(0, now - started) : Number.POSITIVE_INFINITY;
+}
+
+function sessionPendingSettled(
+  action: { kind: PendingSessionActionKind; startedAt: string },
+  rawSession: DashboardSession | undefined,
+): boolean {
+  if (action.kind === "creating" || action.kind === "forking" || action.kind === "migrating") {
+    return rawSession?.status === "running";
+  }
+  if (action.kind === "starting") {
+    if (rawSession?.status === "running") return true;
+    return Boolean(rawSession && pendingActionAgeMs(action.startedAt) >= PENDING_START_OFFLINE_SETTLE_MS);
+  }
+  if (action.kind === "stopping") {
+    return !rawSession || rawSession.status !== "running";
+  }
+  if (action.kind === "graveyarding") {
+    return !rawSession;
+  }
+  return false;
+}
+
+function servicePendingSettled(
+  action: { kind: PendingServiceActionKind; startedAt: string },
+  rawService: DashboardService | undefined,
+): boolean {
+  if (action.kind === "creating" || action.kind === "starting") {
+    if (rawService?.status === "running") return true;
+    return Boolean(rawService && pendingActionAgeMs(action.startedAt) >= PENDING_START_OFFLINE_SETTLE_MS);
+  }
+  if (action.kind === "stopping") {
+    return !rawService || rawService.status !== "running";
+  }
+  return !rawService;
+}
+
+export function reconcileDashboardPendingActionsFromRawModel(
+  host: DashboardModelHost,
+  rawSessions: DashboardSession[],
+  rawTeammates: DashboardSession[],
+  rawServices: DashboardService[],
+): boolean {
+  const pending = host.dashboardPendingActions;
+  if (!pending) return false;
+  let changed = false;
+  const sessionsById = new Map<string, DashboardSession>();
+  for (const session of [...rawSessions, ...rawTeammates]) {
+    sessionsById.set(session.id, session);
+  }
+  for (const action of pending.listSessionActions?.() ?? []) {
+    if (!sessionPendingSettled(action, sessionsById.get(action.id))) continue;
+    changed = pending.clearSessionActionIfToken?.(action.id, action.token) || changed;
+  }
+  const servicesById = new Map(rawServices.map((service) => [service.id, service]));
+  for (const action of pending.listServiceActions?.() ?? []) {
+    if (!servicePendingSettled(action, servicesById.get(action.id))) continue;
+    changed = pending.clearServiceActionIfToken?.(action.id, action.token) || changed;
+  }
+  return changed;
 }
 
 function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
@@ -620,6 +689,7 @@ export function applyDashboardModel(
   mainCheckoutInfo: { name: string; branch: string },
   operationFailures: DashboardOperationFailure[] = [],
 ): boolean {
+  reconcileDashboardPendingActionsFromRawModel(host, dashSessions, dashTeammates, dashServices);
   const snapshotKey = JSON.stringify({
     sessions: dashSessions,
     teammates: dashTeammates,

@@ -162,7 +162,9 @@ switch (args[0]) {
   case "display-menu":
     if (process.env.TMUX_FAKE_DISPLAY_MENU_EXIT === "1") fail();
     break;
-  case "display-popup": break;
+  case "display-popup":
+    if (process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT) process.exit(Number(process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT));
+    break;
   case "new-window": break;
   case "show-options": showOptions(); break;
   case "show-window-options": showWindowOptions(); break;
@@ -2899,6 +2901,7 @@ describe("tmux-control.sh", () => {
     tempRoots.push(envRoot.root);
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
     writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
 
     runControl(
       envRoot,
@@ -2939,13 +2942,105 @@ describe("tmux-control.sh", () => {
     expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
     expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
     expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
-    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
-    expect(log.some((entry) => entry.includes("AIMUX_HOME=") && entry.includes("/home/user/.aimux-custom"))).toBe(true);
-    expect(log.some((entry) => entry.includes("AIMUX_DAEMON_HOST=") && entry.includes("127.0.0.2"))).toBe(true);
-    expect(log.some((entry) => entry.includes("AIMUX_DAEMON_PORT=") && entry.includes("44191"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--project-state-dir"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--current-window-id"))).toBe(true);
+    expect(log.some((entry) => entry.includes("aimux expose"))).toBe(false);
+    expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
     expect(curlLog).toHaveLength(0);
+  });
+
+  it("falls back to the default expose socket when the socket path file is empty", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [{ id: "@claude", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", command: "claude", worktreePath: "/repo/project" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock.path"), "\n");
+
+    runControl(envRoot, [
+      "expose",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-deadbeef",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project",
+      "--pane-id",
+      "%1",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
+  });
+
+  it("reports expose socket popup failure instead of failing silently", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [{ id: "@claude", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", command: "claude", worktreePath: "/repo/project" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
+
+    runControl(
+      envRoot,
+      [
+        "expose",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-deadbeef",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project",
+        "--pane-id",
+        "%1",
+      ],
+      { TMUX_FAKE_DISPLAY_POPUP_EXIT: "1" },
+    );
+
+    const log = readLog(envRoot);
+    expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
+    expect(log.some((entry) => entry.includes("couldn't expose sessions - no local tmux target available"))).toBe(true);
   });
 
   it("opens meta as a tmux-native project-service menu", () => {

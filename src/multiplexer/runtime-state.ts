@@ -31,6 +31,7 @@ type ManagedAgentWindow = { target: any; metadata: any };
 
 const DASHBOARD_BACKGROUND_REFRESH_MS = 2000;
 const IDLE_NOTIFICATION_SETTLE_MS = 10_000;
+const STARTING_ORPHAN_RECONCILE_GRACE_MS = 5_000;
 
 const idleNotificationCandidates = new WeakMap<
   RuntimeStateHost,
@@ -267,7 +268,7 @@ export function reconcileOrphanedTopologySessions(
   host: RuntimeStateHost,
   liveAgentWindows = listLiveAgentWindows(host),
 ): boolean {
-  const candidates = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  const candidates = listTopologySessionStates({ statuses: ["starting", "running", "idle", "offline"] });
   if (candidates.length === 0) return false;
 
   const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
@@ -284,7 +285,12 @@ export function reconcileOrphanedTopologySessions(
     if (liveIds.has(session.id)) continue;
     if (ownedIds.has(session.id)) continue;
     if (session.backendSessionId && ownedBackendIds.has(session.backendSessionId)) continue;
-    if (host.dashboardPendingActions?.getSessionAction?.(session.id) === "starting") continue;
+    const pendingStart = host.dashboardPendingActions?.getSessionAction?.(session.id) === "starting";
+    const startingUpdatedAt = Date.parse(session.updatedAt ?? "");
+    const staleStarting =
+      session.status === "starting" &&
+      (!Number.isFinite(startingUpdatedAt) || Date.now() - startingUpdatedAt >= STARTING_ORPHAN_RECONCILE_GRACE_MS);
+    if (pendingStart && !staleStarting) continue;
 
     if (isOrphanWorktreeUnrecoverable(session.worktreePath, graveyardPaths)) {
       const reason = `worktree missing after restart: ${session.worktreePath}`;
@@ -295,7 +301,19 @@ export function reconcileOrphanedTopologySessions(
     }
 
     if (session.status === "offline") continue;
-    upsertTopologySession({ ...session, lifecycle: "offline", tmuxTarget: undefined }, "offline");
+    upsertTopologySession(
+      {
+        ...session,
+        lifecycle: "offline",
+        tmuxTarget: undefined,
+        restoreBlockedReason:
+          session.status === "starting"
+            ? (session.restoreBlockedReason ?? "agent did not stay alive during startup")
+            : session.restoreBlockedReason,
+      },
+      "offline",
+      { projectRoot: projectRootFor(host) },
+    );
     host.debug?.(`reconciled orphaned session ${session.id} → offline (no live tmux window)`, "session");
     changed = true;
   }

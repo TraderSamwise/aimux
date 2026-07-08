@@ -13,7 +13,9 @@ import {
   initialExposeScope,
   loadExposeScopeItems,
   nextExposeScope,
+  type ExposeScope,
   type ExposeScopeItem,
+  type ExposeScopeView,
   type ExposeSublabel,
 } from "./expose-model.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
@@ -27,10 +29,16 @@ export interface TmuxExposeOptions {
   currentWindowId?: string;
   currentPath?: string;
   paneId?: string;
-  /** Baked AIMUX_HOME so cross-project Exposé reads the right project registry. */
+  /** Legacy standalone CLI value; the sidecar path passes daemonEndpoint instead. */
   aimuxHome?: string;
+  daemonEndpoint?: string;
   /** Host snapshot captured by the launcher before the popup opened (read once, then deleted). */
   backdropFile?: string;
+  input?: NodeJS.ReadableStream;
+  output?: NodeJS.WritableStream & { columns?: number; rows?: number };
+  manageTerminal?: boolean;
+  columns?: number;
+  rows?: number;
 }
 
 const CAPTURE_LINES = 40;
@@ -308,9 +316,27 @@ export function drawTile(
   return out;
 }
 
+function defaultExposeScopeView(scope: ExposeScope): ExposeScopeView {
+  if (scope === "global") {
+    return { scope, items: [], scopeLabel: "all projects", sublabel: "project-worktree" };
+  }
+  return {
+    scope,
+    items: [],
+    scopeLabel: scope === "worktree" ? "this worktree" : "all worktrees",
+    sublabel: scope === "worktree" ? "none" : "worktree",
+  };
+}
+
 export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number> {
-  if (options.aimuxHome) process.env.AIMUX_HOME = options.aimuxHome;
   const tmux = new TmuxRuntimeManager();
+  const input = options.input ?? process.stdin;
+  const output = options.output ?? process.stdout;
+  const manageTerminal = options.manageTerminal !== false;
+  const terminalSize = () => ({
+    cols: output.columns ?? options.columns ?? 80,
+    rows: output.rows ?? options.rows ?? 24,
+  });
 
   // On the meta-dashboard window Exposé starts cross-project (global); otherwise it
   // starts scoped to the launch context. Pressing `g` zooms out along the ladder
@@ -323,11 +349,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     currentWindowId: options.currentWindowId,
     currentClientSession: options.currentClientSession,
   };
+  const exposeDeps = { daemonEndpoint: options.daemonEndpoint };
   let scope = initialExposeScope(crossProject, context);
-  let view = await loadExposeScopeItems(scope, context, options.projectStateDir);
+  let view = defaultExposeScopeView(scope);
   let items = view.items;
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
+  let loading = true;
 
   const tileSublabel = (item: ExposeScopeItem): string => {
     if (sublabel === "worktree") return shortWorktree(item, options.projectRoot);
@@ -352,23 +380,40 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     } catch {}
   }
 
-  const terminal = new TerminalHost();
-  terminal.enterRawMode();
-  terminal.enterAlternateScreen(true);
-  process.stdout.write("\x1b[?25l");
+  const terminal = manageTerminal ? new TerminalHost() : null;
+  if (terminal) {
+    terminal.enterRawMode();
+    terminal.enterAlternateScreen(true);
+  } else {
+    output.write("\x1b[2J\x1b[H");
+  }
+  output.write("\x1b[?25l");
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const exit = (code: number): number => {
     if (timer) clearTimeout(timer);
-    process.stdout.write("\x1b[?25h");
-    terminal.restoreTerminalState();
+    output.write("\x1b[?25h");
+    if (terminal) {
+      terminal.restoreTerminalState();
+    } else {
+      output.write(
+        "\x1b[0m" +
+          "\x1b[?25h" +
+          "\x1b[?1l" +
+          "\x1b>" +
+          "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+          "\x1b[?2004l",
+      );
+    }
     return code;
   };
 
   // Restore the terminal if tmux (or anything) kills the popup with a signal.
   const onFatalSignal = () => process.exit(exit(0));
-  process.once("SIGINT", onFatalSignal);
-  process.once("SIGTERM", onFatalSignal);
+  if (manageTerminal) {
+    process.once("SIGINT", onFatalSignal);
+    process.once("SIGTERM", onFatalSignal);
+  }
 
   const captures = new Map<string, string>();
   // Returns whether any capture changed, so the refresh loop can skip a repaint when
@@ -388,27 +433,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return changed;
   };
 
-  // Fall back to capturing the host pane now only when the launcher passed no snapshot.
-  if (!hostCapture) {
-    // Prefer the exact host window; fall back to the client session's active pane.
-    const hostTarget = options.currentWindowId || options.currentClientSession;
-    if (hostTarget) {
-      try {
-        hostCapture = tmux.captureTarget(
-          { sessionName: "", windowId: hostTarget, windowIndex: 0, windowName: "" },
-          { startLine: 0, includeEscapes: true },
-        );
-      } catch {
-        hostCapture = "";
-      }
-    }
-  }
-
   const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
   let index = currentIdx >= 0 ? currentIdx : 0;
   // Baseline the controlling client size at launch; a later change means the terminal
   // was resized and the popup must be relaunched to re-fit it.
-  const clientBaseline = queryClientSize(options.clientTty);
+  const clientBaseline =
+    options.columns && options.rows ? `${options.columns}x${options.rows}` : queryClientSize(options.clientTty);
   let tileCols = 1;
   let visibleCount = items.length;
   let lastRenderSize = "";
@@ -417,8 +447,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let refreshTick = 0;
 
   const render = (full = true) => {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
+    const { cols, rows } = terminalSize();
     const geo = panelGeometry(cols, rows);
     const innerW = geo.width - 2;
     const innerH = geo.height - 2;
@@ -452,11 +481,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const titleAt = `\x1b[${geo.top + 1};${geo.left + 2}H${title}`;
     const helpAt = `\x1b[${geo.top + innerH};${geo.left + 2}H${help}`;
 
-    if (visibleCount === 0) {
-      const msg = `No active agents in ${scopeLabel}.`;
+    if (loading || visibleCount === 0) {
+      const msg = loading ? "Loading sessions..." : `No active agents in ${scopeLabel}.`;
       const msgCol = geo.left + 1 + Math.max(0, Math.floor((innerW - msg.length) / 2));
       const msgRow = geo.top + Math.floor(innerH / 2);
-      process.stdout.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
+      output.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
       return;
     }
 
@@ -482,38 +511,61 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       );
     }
     out += `${helpAt}\x1b[?2026l`;
-    process.stdout.write(out);
+    output.write(out);
   };
 
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
   // captures, re-seek the selection to the current window, and re-capture.
-  const reload = async () => {
-    view = await loadExposeScopeItems(scope, context, options.projectStateDir);
+  const reload = async (capture = true) => {
+    view = await loadExposeScopeItems(scope, context, options.projectStateDir, exposeDeps);
     items = view.items;
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
+    loading = false;
     captures.clear();
     const idx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
     index = idx >= 0 ? idx : 0;
-    refreshCaptures();
+    if (capture) refreshCaptures();
   };
 
-  // Paint the backdrop, panel, and tile chrome immediately (previews blank), then capture
-  // previews and repaint just the tiles — so entry shows the framed exposé at once instead
-  // of a blank wait, without re-blanking the backdrop.
   render();
-  if (refreshCaptures()) render(false);
 
   return await new Promise<number>((resolve) => {
+    let finished = false;
     const finish = (code: number) => {
-      process.stdin.off("data", onData);
+      if (finished) return;
+      finished = true;
+      input.off("data", onData);
+      input.off("end", onEnd);
+      if (manageTerminal) {
+        process.off("SIGINT", onFatalSignal);
+        process.off("SIGTERM", onFatalSignal);
+      }
       resolve(exit(code));
+    };
+
+    const onEnd = () => finish(0);
+
+    const loadInitialItems = () => {
+      void reload(false)
+        .then(() => {
+          if (finished) return;
+          render();
+          if (refreshCaptures()) render(false);
+          scheduleRefresh();
+        })
+        .catch(() => {
+          if (finished) return;
+          loading = false;
+          render();
+          scheduleRefresh();
+        });
     };
 
     const selectTile = (i: number) => {
       const item = items[i];
       if (!item) return;
-      void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir)
+      void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir, exposeDeps)
         .then(async (ok) => {
           if (ok) {
             finish(0);
@@ -536,24 +588,42 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           return;
         }
         if (key === "g") {
+          if (loading) return;
           const next = nextExposeScope(scope);
           if (next !== scope) {
+            const previousScope = scope;
             scope = next;
-            void reload()
-              .then(() => render())
+            view = defaultExposeScopeView(scope);
+            items = view.items;
+            scopeLabel = view.scopeLabel;
+            sublabel = view.sublabel;
+            loading = true;
+            render();
+            void reload(false)
+              .then(() => {
+                render();
+                if (refreshCaptures()) render(false);
+              })
               .catch(() => {
-                scope = view.scope;
+                scope = previousScope;
+                view = defaultExposeScopeView(scope);
+                items = view.items;
+                scopeLabel = view.scopeLabel;
+                sublabel = view.sublabel;
+                loading = false;
                 render();
               });
           }
           return;
         }
         if (key >= "1" && key <= "9") {
+          if (loading) return;
           const target = Number.parseInt(key, 10) - 1;
           if (target < visibleCount) selectTile(target);
           return;
         }
         if (key === "enter" || key === "return") {
+          if (loading) return;
           selectTile(index);
           return;
         }
@@ -606,7 +676,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
             await reload();
           }
           const captureChanged = reloadedItems || refreshCaptures();
-          const sizeNow = `${process.stdout.columns ?? 80}x${process.stdout.rows ?? 24}`;
+          const { cols, rows } = terminalSize();
+          const sizeNow = `${cols}x${rows}`;
           if (captureChanged || sizeNow !== staticSize) render(false);
           scheduleRefresh();
         } catch {
@@ -614,8 +685,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         }
       }, refreshDelayMs(items.length));
     };
-    scheduleRefresh();
-
-    process.stdin.on("data", onData);
+    input.on("data", onData);
+    input.on("end", onEnd);
+    loadInitialItems();
   });
 }

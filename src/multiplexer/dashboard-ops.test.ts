@@ -615,6 +615,94 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("clears restore pending without a modal when the service reconciles a failed start offline", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "offline" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardRawSessionsCache = [];
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.length > 0
+          ? [{ ...host.dashboardRawSessionsCache[0], pendingAction: "starting" }]
+          : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = resumeOfflineSessionWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("claude stayed offline");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("clears restore pending before a hung restore request times out when no runtime appears", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
+    const request = deferred<any>();
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "offline" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardRawSessionsCache = [];
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.length > 0
+          ? [{ ...host.dashboardRawSessionsCache[0], pendingAction: "starting" }]
+          : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = resumeOfflineSessionWithFeedback(host, session);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await action;
+      request.resolve({});
+      await Promise.resolve();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("claude stayed offline");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("clears restore pending from the raw service snapshot even while the rendered row is still pending", async () => {
     const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const host = {
