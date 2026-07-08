@@ -1201,9 +1201,15 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-r", "-T", "prefix", "p", "run-shell", "-b", controlCommand("prev")]);
     this.exec(["bind-key", "-T", "prefix", "s", "run-shell", "-b", controlCommand("menu")]);
     this.exec(["bind-key", "-T", "prefix", "u", "run-shell", "-b", controlCommand("attention")]);
-    const metaHomeArg = process.env.AIMUX_HOME ? ` --aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "";
-    this.exec(["bind-key", "-T", "prefix", "g", "run-shell", "-b", controlCommand("expose", metaHomeArg.trim())]);
-    this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", metaHomeArg.trim())]);
+    const controlPlaneArgs = [
+      process.env.AIMUX_HOME ? `--aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "",
+      process.env.AIMUX_DAEMON_HOST ? `--daemon-host ${shellQuote(process.env.AIMUX_DAEMON_HOST)}` : "",
+      process.env.AIMUX_DAEMON_PORT ? `--daemon-port ${shellQuote(process.env.AIMUX_DAEMON_PORT)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    this.exec(["bind-key", "-T", "prefix", "g", "run-shell", "-b", controlCommand("expose", controlPlaneArgs)]);
+    this.exec(["bind-key", "-T", "prefix", "m", "run-shell", "-b", controlCommand("meta", controlPlaneArgs)]);
     this.exec(["bind-key", "-T", "prefix", "e", "run-shell", "-b", controlCommand("team")]);
     this.exec(["bind-key", "-T", "prefix", "d", "run-shell", "-b", controlCommand("dashboard")]);
     this.exec(["bind-key", "-T", "prefix", "i", "run-shell", "-b", controlCommand("coordination")]);

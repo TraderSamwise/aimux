@@ -13,6 +13,8 @@ window_id=""
 pane_id=""
 item_index=""
 aimux_home=""
+daemon_host=""
+daemon_port=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -22,6 +24,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --aimux-home)
       aimux_home="${2-}"
+      shift 2
+      ;;
+    --daemon-host)
+      daemon_host="${2-}"
+      shift 2
+      ;;
+    --daemon-port)
+      daemon_port="${2-}"
       shift 2
       ;;
     --project-state-dir)
@@ -516,6 +526,10 @@ show_local_expose() {
   [ -n "$popup_session" ] || popup_session="$current_client_session"
   home_arg=""
   [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
+  daemon_env=""
+  [ -n "$aimux_home" ] && daemon_env="$daemon_env AIMUX_HOME=$(shell_quote "$aimux_home")"
+  [ -n "$daemon_host" ] && daemon_env="$daemon_env AIMUX_DAEMON_HOST=$(shell_quote "$daemon_host")"
+  [ -n "$daemon_port" ] && daemon_env="$daemon_env AIMUX_DAEMON_PORT=$(shell_quote "$daemon_port")"
   while :; do
     backdrop_arg=""
     prepaint=""
@@ -529,7 +543,7 @@ show_local_expose() {
         rm -f "$expose_backdrop"
       fi
     fi
-    expose_cmd="${prepaint}exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
+    expose_cmd="${prepaint}exec env $daemon_env $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg $backdrop_arg"
     if [ -n "$popup_client_tty" ]; then
       tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
       popup_status=$?

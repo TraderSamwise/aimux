@@ -634,9 +634,13 @@ describe("TmuxRuntimeManager", () => {
     ).toHaveLength(2);
   });
 
-  it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
-    const prev = process.env.AIMUX_HOME;
+  it("bakes control-plane identity into the expose/meta bindings when set", () => {
+    const prevHome = process.env.AIMUX_HOME;
+    const prevHost = process.env.AIMUX_DAEMON_HOST;
+    const prevPort = process.env.AIMUX_DAEMON_PORT;
     process.env.AIMUX_HOME = "/home/user/.aimux-custom";
+    process.env.AIMUX_DAEMON_HOST = "127.0.0.2";
+    process.env.AIMUX_DAEMON_PORT = "44191";
     try {
       const exec = createExecMock();
       const manager = new TmuxRuntimeManager(exec);
@@ -644,11 +648,21 @@ describe("TmuxRuntimeManager", () => {
       const bindings = exec.calls.filter((c) => c.args[0] === "bind-key" && c.args[2] === "prefix");
       const g = bindings.find((c) => c.args[3] === "g")?.args.join(" ") ?? "";
       const m = bindings.find((c) => c.args[3] === "m")?.args.join(" ") ?? "";
-      expect(g.includes("--aimux-home") && g.includes("/home/user/.aimux-custom")).toBe(true);
-      expect(m.includes("--aimux-home") && m.includes("/home/user/.aimux-custom")).toBe(true);
+      for (const binding of [g, m]) {
+        expect(binding).toContain("--aimux-home");
+        expect(binding).toContain("/home/user/.aimux-custom");
+        expect(binding).toContain("--daemon-host");
+        expect(binding).toContain("127.0.0.2");
+        expect(binding).toContain("--daemon-port");
+        expect(binding).toContain("44191");
+      }
     } finally {
-      if (prev === undefined) delete process.env.AIMUX_HOME;
-      else process.env.AIMUX_HOME = prev;
+      if (prevHome === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = prevHome;
+      if (prevHost === undefined) delete process.env.AIMUX_DAEMON_HOST;
+      else process.env.AIMUX_DAEMON_HOST = prevHost;
+      if (prevPort === undefined) delete process.env.AIMUX_DAEMON_PORT;
+      else process.env.AIMUX_DAEMON_PORT = prevPort;
     }
   });
 
