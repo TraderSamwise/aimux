@@ -529,6 +529,10 @@ show_local_expose() {
     expose_socket=$(head -n 1 "$expose_socket_file" 2>/dev/null || printf '%s' "$expose_socket")
   fi
   [ -e "$expose_socket" ] || return 1
+  expose_daemon_endpoint=""
+  if [ -n "$daemon_host" ] && [ -n "$daemon_port" ]; then
+    expose_daemon_endpoint="http://$daemon_host:$daemon_port"
+  fi
   popup_retry_count=0
   while :; do
     expose_status=$(mktemp 2>/dev/null || true)
@@ -555,6 +559,7 @@ show_local_expose() {
       printf '%s\n' "$expose_status"
       printf '%s\n' "$client_cols"
       printf '%s\n' "$client_rows"
+      printf '%s\n' "$expose_daemon_endpoint"
     } > "$expose_context"
     expose_cmd="old_stty=\$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; { cat $(shell_quote "$expose_context"); cat; } | nc -U $(shell_quote "$expose_socket"); nc_status=\$?; if [ -n \"\$old_stty\" ]; then stty \"\$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; exit \$nc_status"
     if [ -n "$popup_client_tty" ]; then
@@ -574,6 +579,7 @@ show_local_expose() {
     fi
     break
   done
+  [ "$popup_status" = 0 ] || return 1
   exit 0
 }
 

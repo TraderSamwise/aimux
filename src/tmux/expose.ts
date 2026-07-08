@@ -29,8 +29,9 @@ export interface TmuxExposeOptions {
   currentWindowId?: string;
   currentPath?: string;
   paneId?: string;
-  /** Baked AIMUX_HOME so cross-project Exposé reads the right project registry. */
+  /** Legacy standalone CLI value; the sidecar path passes daemonEndpoint instead. */
   aimuxHome?: string;
+  daemonEndpoint?: string;
   /** Host snapshot captured by the launcher before the popup opened (read once, then deleted). */
   backdropFile?: string;
   input?: NodeJS.ReadableStream;
@@ -328,7 +329,6 @@ function defaultExposeScopeView(scope: ExposeScope): ExposeScopeView {
 }
 
 export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number> {
-  if (options.aimuxHome) process.env.AIMUX_HOME = options.aimuxHome;
   const tmux = new TmuxRuntimeManager();
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
@@ -349,6 +349,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     currentWindowId: options.currentWindowId,
     currentClientSession: options.currentClientSession,
   };
+  const exposeDeps = { daemonEndpoint: options.daemonEndpoint };
   let scope = initialExposeScope(crossProject, context);
   let view = defaultExposeScopeView(scope);
   let items = view.items;
@@ -516,7 +517,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
   // captures, re-seek the selection to the current window, and re-capture.
   const reload = async (capture = true) => {
-    view = await loadExposeScopeItems(scope, context, options.projectStateDir);
+    view = await loadExposeScopeItems(scope, context, options.projectStateDir, exposeDeps);
     items = view.items;
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
@@ -564,7 +565,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectTile = (i: number) => {
       const item = items[i];
       if (!item) return;
-      void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir)
+      void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir, exposeDeps)
         .then(async (ok) => {
           if (ok) {
             finish(0);

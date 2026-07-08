@@ -350,7 +350,9 @@ function metadataProjectRoot(): string | undefined {
   }
 }
 
-const EXPOSE_SOCKET_HEADER_LINES = 13;
+const EXPOSE_SOCKET_HEADER_LINES = 14;
+const EXPOSE_SOCKET_HEADER_MAX_BYTES = 8192;
+const EXPOSE_SOCKET_HEADER_TIMEOUT_MS = 2000;
 
 function parsePositiveHeaderInteger(value: string | undefined): number | undefined {
   const parsed = Number.parseInt(value ?? "", 10);
@@ -377,7 +379,13 @@ async function readExposeSocketHeader(socket: Socket): Promise<{ header: string[
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    const timer = setTimeout(() => {
+      cleanup();
+      socket.destroy();
+      reject(new Error("timed out reading expose socket launch header"));
+    }, EXPOSE_SOCKET_HEADER_TIMEOUT_MS);
     const cleanup = () => {
+      clearTimeout(timer);
       socket.off("data", onData);
       socket.off("end", onEnd);
       socket.off("error", onError);
@@ -393,6 +401,12 @@ async function readExposeSocketHeader(socket: Socket): Promise<{ header: string[
     const onData = (chunk: Buffer) => {
       chunks.push(chunk);
       total += chunk.length;
+      if (total > EXPOSE_SOCKET_HEADER_MAX_BYTES) {
+        cleanup();
+        socket.destroy();
+        reject(new Error("expose socket launch header is too large"));
+        return;
+      }
       const parsed = splitExposeHeader(Buffer.concat(chunks, total));
       if (!parsed) return;
       cleanup();
@@ -1407,6 +1421,7 @@ export class MetadataServer {
       paneId: header[7] || undefined,
       aimuxHome: header[8] || undefined,
       backdropFile: header[9] || undefined,
+      daemonEndpoint: header[13] || undefined,
       input,
       output: socket,
       manageTerminal: false,
