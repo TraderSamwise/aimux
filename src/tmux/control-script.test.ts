@@ -2874,7 +2874,7 @@ describe("tmux-control.sh", () => {
     expect(curlLog[0]).toContain("currentWindowId=%40claude");
   });
 
-  it("opens expose as a tmux-native project-service menu", () => {
+  it("opens expose as the rich popup surface", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
       windows: {
@@ -2932,14 +2932,13 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux project"))).toBe(true);
-    expect(log.some((entry) => entry.includes("--window-id @codex"))).toBe(true);
-    expect(log.some((entry) => entry.includes("display-popup"))).toBe(false);
+    expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
+    expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
     expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
-    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(false);
-    expect(curlLog).toHaveLength(1);
-    expect(curlLog[0]).toContain("/control/switchable-agents");
-    expect(curlLog[0]).toContain("scope=all");
+    expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--project-state-dir"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--current-window-id"))).toBe(true);
+    expect(curlLog).toHaveLength(0);
   });
 
   it("opens meta as a tmux-native project-service menu", () => {

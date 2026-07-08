@@ -26,9 +26,10 @@ export function prepareStableCliEnv(env: MutableEnv = process.env): void {
   if (blank(env.AIMUX_WEB_APP_URL)) env.AIMUX_WEB_APP_URL = DEFAULT_WEB_APP_URL;
 }
 
-export type CliEntry = "core" | "main";
+export type CliEntry = "core" | "expose" | "main";
 
 export function cliEntryFor(argv: string[]): CliEntry {
+  if (argv[2] === "expose") return "expose";
   const args = coreCommandArgs(argv);
   if (hasCoreGlobalLoggingArgs(argv)) {
     return isCoreProjectEnsureCommand(args) && !isValidCoreProjectEnsureArgs(args) ? "core" : "main";
@@ -43,7 +44,9 @@ export function runRoutedCli(): void {
           const code = await runCoreCli(process.argv.slice(2));
           process.exitCode = code;
         })
-      : import("./main.js").then(() => undefined);
+      : cliEntryFor(process.argv) === "expose"
+        ? import("./popup-expose.js").then((m) => m.runExpose())
+        : import("./main.js").then(() => undefined);
 
   void run.catch((error: unknown) => {
     console.error(error);

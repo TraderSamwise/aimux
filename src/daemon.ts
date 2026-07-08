@@ -6,12 +6,14 @@ import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
+import { listAllProjectsExposeItems } from "./expose-control.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadConfig } from "./config.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { serializeFastControlItem } from "./fast-control.js";
 import {
   CORE_API_ROUTES,
   CORE_COMMAND_NAMES,
@@ -151,6 +153,7 @@ import {
   repairTmuxRuntime,
 } from "./tmux/doctor.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { openTargetForClient } from "./tmux/window-open.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -587,6 +590,59 @@ export class AimuxDaemon {
 
   private textError(status: number, message: string): DaemonRouteResponse {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private exposeItemsRoute(): DaemonRouteResponse {
+    const items = listAllProjectsExposeItems().map((item) => ({
+      ...serializeFastControlItem(item),
+      projectId: item.projectId,
+      projectName: item.projectName,
+      projectRoot: item.projectRoot,
+    }));
+    return { status: 200, body: { ok: true, items } };
+  }
+
+  private exposeFocusRoute(body: unknown): DaemonRouteResponse {
+    const payload = (body ?? {}) as {
+      windowId?: string;
+      projectRoot?: string;
+      currentClientSession?: string;
+      clientTty?: string;
+    };
+    const windowId = payload.windowId?.trim();
+    const projectRoot = payload.projectRoot?.trim();
+    if (!windowId) return { status: 400, body: { ok: false, error: "windowId is required" } };
+
+    const tmux = new TmuxRuntimeManager();
+    const item = listAllProjectsExposeItems({ tmux }).find((candidate) => {
+      if (candidate.target.windowId !== windowId) return false;
+      return projectRoot ? pathResolve(candidate.projectRoot) === pathResolve(projectRoot) : true;
+    });
+    if (!item) return { status: 404, body: { ok: false, error: "window not found" } };
+
+    try {
+      const focusResult = openTargetForClient(
+        tmux,
+        item.target,
+        payload.currentClientSession?.trim() || undefined,
+        payload.clientTty?.trim() || undefined,
+      );
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          action: "expose-focus",
+          ...focusResult,
+          itemId: item.id,
+          projectId: item.projectId,
+          projectName: item.projectName,
+          projectRoot: item.projectRoot,
+          target: item.target,
+        },
+      };
+    } catch (error) {
+      return { status: 500, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+    }
   }
 
   private logSelectionOptions(routeUrl: URL): { daemon: boolean; project?: string } {
@@ -3186,6 +3242,14 @@ export class AimuxDaemon {
       if (!this.pushThrottle.allow(payload)) return { status: 200, body: { ok: true, suppressed: true } };
       this.relayClient.pushNotification(payload);
       return { status: 200, body: { ok: true } };
+    }
+
+    if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
+      return this.exposeItemsRoute();
+    }
+
+    if (method === "POST" && pathname === CORE_API_ROUTES.exposeFocus) {
+      return this.exposeFocusRoute(body);
     }
 
     if (method === "GET" && pathname === "/projects") {
