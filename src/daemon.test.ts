@@ -487,6 +487,32 @@ describe("daemon supervision", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed expose focus payloads before touching tmux", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const response = await daemon.routeRequest("POST", CORE_API_ROUTES.exposeFocus, {
+      windowId: 123,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ ok: false, error: "windowId must be a string" });
+  });
+
+  it("keeps expose routes loopback-only", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const headers = { "x-aimux-actor-role": "owner", "x-aimux-actor-user-id": "user_123" };
+    const list = await daemon.routeRequest("GET", CORE_API_ROUTES.exposeItems, undefined, headers);
+    const focus = await daemon.routeRequest("POST", CORE_API_ROUTES.exposeFocus, { windowId: "@1" }, headers);
+
+    expect(list.status).toBe(403);
+    expect(list.body).toEqual({ ok: false, error: "expose routes are loopback-only" });
+    expect(focus.status).toBe(403);
+    expect(focus.body).toEqual({ ok: false, error: "expose routes are loopback-only" });
+  });
+
   it("stops project actors through the core command bus", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 

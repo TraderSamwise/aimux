@@ -34,6 +34,7 @@ export interface TmuxExposeOptions {
 }
 
 const CAPTURE_LINES = 40;
+const ITEM_RELOAD_EVERY_TICKS = 5;
 // Preview refresh cadence scales with tile count: snappy for a few tiles, easier
 // on CPU when many panes are captured per tick (each tile is one capture-pane).
 function refreshDelayMs(count: number): number {
@@ -413,6 +414,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let lastRenderSize = "";
   let staticSize = "";
   let staticVisibleCount = -1;
+  let refreshTick = 0;
 
   const render = (full = true) => {
     const cols = process.stdout.columns ?? 80;
@@ -512,7 +514,14 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const item = items[i];
       if (!item) return;
       void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir)
-        .then((ok) => finish(ok ? 0 : 1))
+        .then(async (ok) => {
+          if (ok) {
+            finish(0);
+            return;
+          }
+          await reload();
+          render();
+        })
         .catch(() => finish(1));
     };
 
@@ -577,7 +586,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     // Recursive timeout (not setInterval) so the cadence re-derives from the
     // current tile count after a zoom changes how many panes are captured.
     const scheduleRefresh = () => {
-      timer = setTimeout(() => {
+      timer = setTimeout(async () => {
         try {
           // A fixed-size popup can't grow with the terminal, so exit and let the launcher
           // relaunch us at the new bounds when the controlling client size changes.
@@ -590,7 +599,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
           // idle exposé still reflows when the window size changes.
-          const captureChanged = refreshCaptures();
+          refreshTick += 1;
+          const reloadedItems = refreshTick >= ITEM_RELOAD_EVERY_TICKS;
+          if (reloadedItems) {
+            refreshTick = 0;
+            await reload();
+          }
+          const captureChanged = reloadedItems || refreshCaptures();
           const sizeNow = `${process.stdout.columns ?? 80}x${process.stdout.rows ?? 24}`;
           if (captureChanged || sizeNow !== staticSize) render(false);
           scheduleRefresh();

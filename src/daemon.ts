@@ -608,11 +608,23 @@ export class AimuxDaemon {
 
   private exposeFocusRoute(body: unknown): DaemonRouteResponse {
     const payload = (body ?? {}) as {
-      windowId?: string;
-      projectRoot?: string;
-      currentClientSession?: string;
-      clientTty?: string;
+      windowId?: unknown;
+      projectRoot?: unknown;
+      currentClientSession?: unknown;
+      clientTty?: unknown;
     };
+    if (payload.windowId !== undefined && typeof payload.windowId !== "string") {
+      return { status: 400, body: { ok: false, error: "windowId must be a string" } };
+    }
+    if (payload.projectRoot !== undefined && typeof payload.projectRoot !== "string") {
+      return { status: 400, body: { ok: false, error: "projectRoot must be a string" } };
+    }
+    if (payload.currentClientSession !== undefined && typeof payload.currentClientSession !== "string") {
+      return { status: 400, body: { ok: false, error: "currentClientSession must be a string" } };
+    }
+    if (payload.clientTty !== undefined && typeof payload.clientTty !== "string") {
+      return { status: 400, body: { ok: false, error: "clientTty must be a string" } };
+    }
     const windowId = payload.windowId?.trim();
     const projectRoot = payload.projectRoot?.trim();
     if (!windowId) return { status: 400, body: { ok: false, error: "windowId is required" } };
@@ -3271,10 +3283,12 @@ export class AimuxDaemon {
     }
 
     if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
+      if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
       return this.exposeItemsRoute();
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.exposeFocus) {
+      if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
       return this.exposeFocusRoute(body);
     }
 

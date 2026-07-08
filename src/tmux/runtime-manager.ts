@@ -723,9 +723,31 @@ export class TmuxRuntimeManager {
     const deadline = Date.now() + readiness.timeoutMs;
     while (Date.now() < deadline) {
       if (this.getWindowOption(replacement, readiness.option) === readiness.value) {
-        this.renameWindow(target.windowId, `${target.windowName}-old`);
-        this.renameWindow(replacement.windowId, target.windowName);
-        this.exec(["swap-window", "-d", "-s", replacement.windowId, "-t", target.windowId]);
+        const oldName = `${target.windowName}-old`;
+        let originalRenamed = false;
+        let replacementRenamed = false;
+        try {
+          this.renameWindow(target.windowId, oldName);
+          originalRenamed = true;
+          this.renameWindow(replacement.windowId, target.windowName);
+          replacementRenamed = true;
+          this.exec(["swap-window", "-d", "-s", replacement.windowId, "-t", target.windowId]);
+        } catch (error) {
+          if (replacementRenamed) {
+            try {
+              this.renameWindow(replacement.windowId, replacementName);
+            } catch {}
+          }
+          if (originalRenamed) {
+            try {
+              this.renameWindow(target.windowId, target.windowName);
+            } catch {}
+          }
+          try {
+            this.killWindow(replacement);
+          } catch {}
+          throw error;
+        }
         const swapped = this.getTargetByWindowId(target.sessionName, replacement.windowId) ?? replacement;
         try {
           this.killWindow(target);

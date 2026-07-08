@@ -103,4 +103,22 @@ describe("CoreProjectActor", () => {
     expect(actorMocks.starts).toHaveBeenCalledTimes(1);
     expect(actorMocks.publishEndpoint).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps an already-running actor alive when endpoint republish fails", async () => {
+    const { CoreProjectActor } = await import("./core-project-actor.js");
+    const actor = new CoreProjectActor("/repo/alpha");
+    await actor.start();
+    actorMocks.publishEndpoint.mockImplementationOnce(() => {
+      throw new Error("publish failed");
+    });
+
+    await expect(actor.start()).resolves.toMatchObject({
+      projectRoot: "/repo/alpha",
+      pid: process.pid,
+    });
+
+    expect(actor.isRunning()).toBe(true);
+    expect(actorMocks.starts).toHaveBeenCalledTimes(1);
+    expect(actorMocks.publishEndpoint).toHaveBeenCalledTimes(1);
+  });
 });

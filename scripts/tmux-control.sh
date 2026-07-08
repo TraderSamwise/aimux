@@ -530,6 +530,7 @@ show_local_expose() {
   [ -n "$aimux_home" ] && daemon_env="$daemon_env AIMUX_HOME=$(shell_quote "$aimux_home")"
   [ -n "$daemon_host" ] && daemon_env="$daemon_env AIMUX_DAEMON_HOST=$(shell_quote "$daemon_host")"
   [ -n "$daemon_port" ] && daemon_env="$daemon_env AIMUX_DAEMON_PORT=$(shell_quote "$daemon_port")"
+  popup_retry_count=0
   while :; do
     backdrop_arg=""
     prepaint=""
@@ -552,7 +553,10 @@ show_local_expose() {
       popup_status=$?
     fi
     rm -f "$expose_backdrop"
-    [ "$popup_status" = 75 ] && continue
+    if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 3 ]; then
+      popup_retry_count=$((popup_retry_count + 1))
+      continue
+    fi
     break
   done
   exit 0

@@ -155,6 +155,7 @@ export class DashboardUiStateStore {
   ): void {
     if (!this.selectionNeedsRestore) return;
     if (hasWorktrees) {
+      if (this.pendingPreferredSelection && state.level !== "sessions") return;
       if (state.level === "sessions" && this.preferredSelection) {
         const preferredIndex = state.worktreeEntries.findIndex(
           (entry) => entry.kind === this.preferredSelection?.kind && entry.id === this.preferredSelection?.id,
