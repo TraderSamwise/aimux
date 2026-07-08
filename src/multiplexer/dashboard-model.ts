@@ -127,7 +127,8 @@ function servicePendingSettled(
   rawService: DashboardService | undefined,
 ): boolean {
   if (action.kind === "creating" || action.kind === "starting") {
-    return rawService?.status === "running";
+    if (rawService?.status === "running") return true;
+    return Boolean(rawService && pendingActionAgeMs(action.startedAt) >= PENDING_START_OFFLINE_SETTLE_MS);
   }
   if (action.kind === "stopping") {
     return !rawService || rawService.status !== "running";

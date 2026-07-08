@@ -526,7 +526,8 @@ show_local_expose() {
   expose_socket="$project_state_dir/expose.sock"
   expose_socket_file="$project_state_dir/expose.sock.path"
   if [ -r "$expose_socket_file" ]; then
-    expose_socket=$(head -n 1 "$expose_socket_file" 2>/dev/null || printf '%s' "$expose_socket")
+    resolved_socket=$(head -n 1 "$expose_socket_file" 2>/dev/null || true)
+    [ -n "$resolved_socket" ] && expose_socket="$resolved_socket"
   fi
   [ -e "$expose_socket" ] || return 1
   expose_daemon_endpoint=""

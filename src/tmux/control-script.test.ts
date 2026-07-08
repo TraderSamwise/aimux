@@ -2947,6 +2947,52 @@ describe("tmux-control.sh", () => {
     expect(curlLog).toHaveLength(0);
   });
 
+  it("falls back to the default expose socket when the socket path file is empty", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [{ id: "@claude", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", command: "claude", worktreePath: "/repo/project" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock.path"), "\n");
+
+    runControl(envRoot, [
+      "expose",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-deadbeef",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project",
+      "--pane-id",
+      "%1",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
+  });
+
   it("reports expose socket popup failure instead of failing silently", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
