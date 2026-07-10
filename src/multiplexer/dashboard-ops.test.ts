@@ -481,6 +481,62 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("keeps reconciling a stop after the project service request times out", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    let offline = false;
+    const timeout = Object.assign(new Error("request timed out after 9970ms"), { code: "ETIMEDOUT" });
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      postToProjectService: vi.fn(async () => {
+        throw timeout;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawSessionsCache = [{ ...session, status: offline ? "offline" : "running" }];
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getSessionAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopSessionToOfflineWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("stopping is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      offline = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.footerFlash).toBe("Stopped codex");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("keeps dashboard restore settlement active across later input", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const request = deferred();

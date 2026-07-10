@@ -23,6 +23,7 @@ import {
 } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 import { userFacingErrorLines } from "../error-display.js";
+import { isHttpTimeoutError } from "../http-client.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -99,6 +100,7 @@ interface DashboardSessionMutationOptions {
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
+  reconcileOnRequestTimeout?: boolean;
   errorTitle: string;
 }
 
@@ -605,22 +607,22 @@ async function runDashboardSessionMutation(
       host.setPendingDashboardSessionAction(opts.sessionId, null);
     }
   };
+  const reconcileOptions = {
+    targetKind: "session" as const,
+    targetId: opts.sessionId,
+    pendingAction: opts.pendingAction,
+    request: opts.request,
+    settle: opts.settle,
+    modelLifecycle,
+    renderLifecycle: lifecycle,
+    clearPending,
+    onAfterRequest: opts.onAfterRequest,
+    onAfterSettle: opts.onAfterSettle,
+    onError: opts.onError,
+    successFlash: opts.successFlash,
+    errorTitle: opts.errorTitle,
+  };
   try {
-    const reconcileOptions = {
-      targetKind: "session" as const,
-      targetId: opts.sessionId,
-      pendingAction: opts.pendingAction,
-      request: opts.request,
-      settle: opts.settle,
-      modelLifecycle,
-      renderLifecycle: lifecycle,
-      clearPending,
-      onAfterRequest: opts.onAfterRequest,
-      onAfterSettle: opts.onAfterSettle,
-      onError: opts.onError,
-      successFlash: opts.successFlash,
-      errorTitle: opts.errorTitle,
-    };
     const requestState = await runDashboardMutationRequestUntilSettled(host, reconcileOptions);
     if (requestState === "settled") return "settled";
     if (requestState === "inactive" || !isDashboardLifecycleCurrent(host, lifecycle)) {
@@ -634,6 +636,10 @@ async function runDashboardSessionMutation(
     scheduleDashboardMutationReconcile(host, reconcileOptions);
     return "pending";
   } catch (error) {
+    if (opts.reconcileOnRequestTimeout && isHttpTimeoutError(error)) {
+      scheduleDashboardMutationReconcile(host, reconcileOptions);
+      return "pending";
+    }
     clearPending();
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
@@ -870,6 +876,7 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
       settle: (modelLifecycle, renderLifecycle) =>
         waitForDashboardSessionStopSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
       successFlash: { message: `Stopped ${label}` },
+      reconcileOnRequestTimeout: true,
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to stop "${label}"`,
     });
