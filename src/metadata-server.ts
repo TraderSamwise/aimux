@@ -2706,11 +2706,18 @@ export class MetadataServer {
     }
 
     let activeLifecycleTransition: LifecycleTransitionInput | undefined;
+    let failedLifecycleTransition: LifecycleTransitionInput | undefined;
     const runLifecycle = async <T>(input: LifecycleTransitionInput, action: () => Promise<T> | T): Promise<T> => {
       activeLifecycleTransition = input;
-      const result = await action();
-      activeLifecycleTransition = undefined;
-      return result;
+      failedLifecycleTransition = undefined;
+      try {
+        return await action();
+      } catch (error) {
+        failedLifecycleTransition = input;
+        throw error;
+      } finally {
+        activeLifecycleTransition = undefined;
+      }
     };
 
     try {
@@ -5337,12 +5344,14 @@ export class MetadataServer {
       }
     } catch (error) {
       const message = userFacingErrorMessage(error);
-      if (activeLifecycleTransition) {
+      const lifecycleTransition = activeLifecycleTransition ?? failedLifecycleTransition;
+      failedLifecycleTransition = undefined;
+      if (lifecycleTransition) {
         send(res, 500, {
           ok: false,
           error: message,
           transition: buildLifecycleTransition({
-            ...activeLifecycleTransition,
+            ...lifecycleTransition,
             phase: "failed",
             error: message,
           }),
