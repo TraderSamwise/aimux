@@ -1334,7 +1334,7 @@ describe("resumeOfflineSession", () => {
     expect(changed).toBe(true);
     expect(listTopologyServiceStates({ statuses: ["running"] })).toEqual([]);
     expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
-      { id: "service-orphan", launchCommandLine: "yarn web", retained: false },
+      { id: "service-orphan", launchCommandLine: "yarn web" },
     ]);
     expect(host.offlineServices).toMatchObject([{ id: "service-orphan", launchCommandLine: "yarn web" }]);
   });
@@ -1363,8 +1363,9 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
-  it("keeps retained topology services offline even when their tmux window is alive", () => {
+  it("cleans up legacy stopped service windows and keeps the service offline", () => {
     const target = { sessionName: "aimux-repo", windowId: "@7", windowIndex: 7, windowName: "web" };
+    const killWindow = vi.fn();
     upsertTopologyService(
       {
         id: "service-retained",
@@ -1386,6 +1387,7 @@ describe("resumeOfflineSession", () => {
           },
         ]),
         isWindowAlive: vi.fn(() => true),
+        killWindow,
       },
       dashboardPendingActions: new DashboardPendingActions(() => {}),
     };
@@ -1393,7 +1395,10 @@ describe("resumeOfflineSession", () => {
     const changed = loadOfflineServices(host);
 
     expect(changed).toBe(true);
-    expect(host.offlineServices).toMatchObject([{ id: "service-retained", retained: true }]);
+    expect(killWindow).toHaveBeenCalledWith(target);
+    expect(host.offlineServices).toMatchObject([{ id: "service-retained" }]);
+    expect(host.offlineServices[0]).not.toHaveProperty("tmuxTarget");
+    expect(host.offlineServices[0]).not.toHaveProperty("retained", true);
   });
 
   it("does not resurrect legacy live snapshots as offline sessions", () => {

@@ -404,21 +404,32 @@ export function loadOfflineServices(host: RuntimeStateHost): boolean {
     return changed;
   }
 
-  const retainedIds = new Set(
-    savedServices.filter((service: any) => service.retained).map((service: any) => service.id),
-  );
+  const savedIds = new Set(savedServices.map((service: any) => service.id));
+  const killedStaleLiveIds = new Set<string>();
+  for (const { target, metadata } of liveServiceWindows) {
+    if (!savedIds.has(metadata.sessionId)) continue;
+    try {
+      host.tmuxRuntimeManager.killWindow?.(target);
+      killedStaleLiveIds.add(metadata.sessionId);
+    } catch {}
+  }
   const liveServiceIds = new Set(
     liveServiceWindows
       .map(({ metadata }: any) => metadata.sessionId)
-      .filter((serviceId: string) => !retainedIds.has(serviceId)),
+      .filter((serviceId: string) => !killedStaleLiveIds.has(serviceId)),
   );
 
-  const nextOfflineServices = savedServices.filter((service: any) => {
-    if (liveServiceIds.has(service.id)) return false;
-    if (host.dashboardPendingActions?.getServiceAction?.(service.id) === "starting") return false;
-    if (!isAvailableWorktreePath(service.worktreePath)) return false;
-    return true;
-  });
+  const nextOfflineServices = savedServices
+    .filter((service: any) => {
+      if (liveServiceIds.has(service.id)) return false;
+      if (host.dashboardPendingActions?.getServiceAction?.(service.id) === "starting") return false;
+      if (!isAvailableWorktreePath(service.worktreePath)) return false;
+      return true;
+    })
+    .map((service: any) => {
+      const { tmuxTarget: _tmuxTarget, retained: _retained, ...offlineService } = service;
+      return offlineService;
+    });
   const previousKey = host.offlineServices
     .map(
       (service: any) =>
