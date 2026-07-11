@@ -163,7 +163,6 @@ describe("service-state-snapshot", () => {
           label: "web",
           launchCommandLine: "yarn web",
           worktreePath: repoRoot,
-          retained: true,
         },
       ]);
     } finally {
