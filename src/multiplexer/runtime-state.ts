@@ -404,21 +404,19 @@ export function loadOfflineServices(host: RuntimeStateHost): boolean {
     return changed;
   }
 
-  const retainedIds = new Set(
-    savedServices.filter((service: any) => service.retained).map((service: any) => service.id),
-  );
-  const liveServiceIds = new Set(
-    liveServiceWindows
-      .map(({ metadata }: any) => metadata.sessionId)
-      .filter((serviceId: string) => !retainedIds.has(serviceId)),
-  );
+  const liveServiceIds = new Set(liveServiceWindows.map(({ metadata }: any) => metadata.sessionId));
 
-  const nextOfflineServices = savedServices.filter((service: any) => {
-    if (liveServiceIds.has(service.id)) return false;
-    if (host.dashboardPendingActions?.getServiceAction?.(service.id) === "starting") return false;
-    if (!isAvailableWorktreePath(service.worktreePath)) return false;
-    return true;
-  });
+  const nextOfflineServices = savedServices
+    .filter((service: any) => {
+      if (liveServiceIds.has(service.id)) return false;
+      if (host.dashboardPendingActions?.getServiceAction?.(service.id) === "starting") return false;
+      if (!isAvailableWorktreePath(service.worktreePath)) return false;
+      return true;
+    })
+    .map((service: any) => {
+      const { tmuxTarget: _tmuxTarget, retained: _retained, ...offlineService } = service;
+      return offlineService;
+    });
   const previousKey = host.offlineServices
     .map(
       (service: any) =>

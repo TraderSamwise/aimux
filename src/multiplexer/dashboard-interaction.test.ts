@@ -28,6 +28,20 @@ vi.mock("../team.js", async () => {
   };
 });
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("dashboardInteractionMethods", () => {
   beforeEach(() => {
     dashboardApiClientMock.mutateDashboardApi.mockClear();
@@ -541,6 +555,158 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("queues stop instead of deleting an offline service that is still starting", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      pendingAction: "starting",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      removeDashboardServiceWithFeedback: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+  });
+
+  it("queues stop instead of deleting a service whose activation is in flight", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      dashboardActivatingServiceIds: new Set(["service-1"]),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      removeDashboardServiceWithFeedback: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+  });
+
+  it("does not drop a coalesced stop key after starting a selected service", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardOverlayState: { kind: "none" },
+      dashboardActivatingServiceIds: new Set<string>(),
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      activateSelectedDashboardWorktreeEntry: vi.fn(function (this: any) {
+        this.dashboardActivatingServiceIds.add("service-1");
+      }),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      removeDashboardServiceWithFeedback: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\rx"));
+
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+  });
+
+  it("does not replay a generic coalesced mutation after starting a selected service", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardOverlayState: { kind: "none" },
+      dashboardActivatingServiceIds: new Set<string>(),
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      activateSelectedDashboardWorktreeEntry: vi.fn(function (this: any) {
+        this.dashboardActivatingServiceIds.add("service-1");
+      }),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      showToolPicker: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\rn"));
+
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    expect(host.stopDashboardServiceWithFeedback).not.toHaveBeenCalled();
+    expect(host.showToolPicker).not.toHaveBeenCalled();
+  });
+
   it("stops a live dashboard agent row even when this process has no local runtime", () => {
     const entry = {
       id: "claude-1",
@@ -996,6 +1162,47 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not let stale service activation clear a newer activation marker", async () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const firstResume = deferred<"pending">();
+    const secondResume = deferred<"pending">();
+    let resumeCalls = 0;
+    const host: any = {
+      mode: "dashboard",
+      dashboardActivatingServiceIds: new Set<string>(),
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      getDashboardServices: vi.fn(() => [service]),
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      resumeOfflineServiceWithFeedback: vi.fn(() => {
+        resumeCalls += 1;
+        return resumeCalls === 1 ? firstResume.promise : secondResume.promise;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    const firstActivation = dashboardInteractionMethods.activateDashboardService.call(host, service);
+    await Promise.resolve();
+    const secondActivation = dashboardInteractionMethods.activateDashboardService.call(host, service);
+    await Promise.resolve();
+
+    firstResume.resolve("pending");
+    await expect(firstActivation).resolves.toBe("missing");
+    expect(host.dashboardActivatingServiceIds.has("service-1")).toBe(true);
+
+    secondResume.resolve("pending");
+    await expect(secondActivation).resolves.toBe("pending");
+    expect(host.dashboardActivatingServiceIds.has("service-1")).toBe(false);
   });
 
   it("refreshes and reports unavailable service when a running service open misses", async () => {
