@@ -115,6 +115,7 @@ interface DashboardServiceMutationOptions {
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
+  reconcileOnRequestTimeout?: boolean;
   errorTitle: string;
 }
 
@@ -668,22 +669,22 @@ async function runDashboardServiceMutation(
       host.setPendingDashboardServiceAction(opts.serviceId, null);
     }
   };
+  const reconcileOptions = {
+    targetKind: "service" as const,
+    targetId: opts.serviceId,
+    pendingAction: opts.pendingAction,
+    request: opts.request,
+    settle: opts.settle,
+    modelLifecycle,
+    renderLifecycle: lifecycle,
+    clearPending,
+    onAfterRequest: opts.onAfterRequest,
+    onAfterSettle: opts.onAfterSettle,
+    onError: opts.onError,
+    successFlash: opts.successFlash,
+    errorTitle: opts.errorTitle,
+  };
   try {
-    const reconcileOptions = {
-      targetKind: "service" as const,
-      targetId: opts.serviceId,
-      pendingAction: opts.pendingAction,
-      request: opts.request,
-      settle: opts.settle,
-      modelLifecycle,
-      renderLifecycle: lifecycle,
-      clearPending,
-      onAfterRequest: opts.onAfterRequest,
-      onAfterSettle: opts.onAfterSettle,
-      onError: opts.onError,
-      successFlash: opts.successFlash,
-      errorTitle: opts.errorTitle,
-    };
     const requestState = await runDashboardMutationRequestUntilSettled(host, reconcileOptions);
     if (requestState === "settled") return "settled";
     if (requestState === "inactive" || !isDashboardLifecycleCurrent(host, lifecycle)) {
@@ -697,6 +698,10 @@ async function runDashboardServiceMutation(
     scheduleDashboardMutationReconcile(host, reconcileOptions);
     return "pending";
   } catch (error) {
+    if (opts.reconcileOnRequestTimeout && isHttpTimeoutError(error)) {
+      scheduleDashboardMutationReconcile(host, reconcileOptions);
+      return "pending";
+    }
     clearPending();
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
@@ -755,6 +760,7 @@ export async function spawnDashboardAgentWithFeedback(
     },
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, input.sessionId, 10_000, modelLifecycle, renderLifecycle),
+    reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to create ${input.tool} agent`,
   });
@@ -802,6 +808,7 @@ export async function forkDashboardAgentWithFeedback(
     },
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, input.targetSessionId, 10_000, modelLifecycle, renderLifecycle),
+    reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Cannot fork session",
   });
@@ -1005,6 +1012,7 @@ export async function graveyardSessionWithFeedback(
       settle: (modelLifecycle) => waitForStableDashboardSessionAbsence(host, sessionId, 10_000, 350, modelLifecycle),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
       successFlash: { message: `Sent ${label} to graveyard` },
+      reconcileOnRequestTimeout: true,
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: `Failed to graveyard "${label}"`,
     });
@@ -1087,6 +1095,7 @@ export async function resumeOfflineSessionWithFeedback(
             }),
           onAfterRequest: showRestoreWarnings,
           onAfterSettle: applyRestoreSettlementFlash,
+          reconcileOnRequestTimeout: true,
           onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
           errorTitle: `Failed to restore "${label}"`,
         }),
@@ -1139,6 +1148,7 @@ export async function resumeOfflineServiceWithFeedback(
           "starting",
         ),
       successFlash: { message: `◆ Started service ${service.label ?? service.id}` },
+      reconcileOnRequestTimeout: true,
       onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
       errorTitle: "Failed to start service",
     });
@@ -1209,6 +1219,7 @@ export async function createDashboardServiceWithFeedback(
         "creating",
       ),
     successFlash: { message: `◆ Created service ${label}` },
+    reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to create service",
   });
@@ -1244,6 +1255,7 @@ export async function stopDashboardServiceWithFeedback(
     },
     settle: (modelLifecycle) => waitForDashboardServiceStopSettle(host, service.id, 10_000, modelLifecycle),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
+    reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to stop service",
   });
@@ -1266,6 +1278,7 @@ export async function removeDashboardServiceWithFeedback(
     },
     settle: (modelLifecycle) => waitForStableDashboardServiceAbsence(host, service.id, 10_000, 350, modelLifecycle),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
+    reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: "Failed to delete service",
   });
@@ -1366,6 +1379,7 @@ export async function migrateSessionWithFeedback(
     settle: (modelLifecycle, renderLifecycle) =>
       waitForDashboardSessionResumeSettle(host, session.id, 10_000, modelLifecycle, renderLifecycle),
     successFlash: { message: `Migrated ${label} to ${targetName}` },
+    reconcileOnRequestTimeout: true,
     onError: (lifecycle) => refreshDashboardModelAfterMutationError(host, lifecycle),
     errorTitle: `Failed to migrate "${label}"`,
   });
