@@ -29,6 +29,7 @@ vi.mock("../config.js", () => ({
 
 import { agentIoMethods } from "./agent-io-methods.js";
 import { dashboardTailMethods } from "./dashboard-tail-methods.js";
+import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { initPaths } from "../paths.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 
@@ -159,6 +160,25 @@ describe("dashboard lifecycle adapter", () => {
       { command: "codex", args: ["--fast"] },
     );
     expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({ id: "codex-fork" });
+  });
+
+  it("returns pending action tokens from the dashboard host wrappers", () => {
+    const host: any = {
+      dashboardPendingActions: new DashboardPendingActions(() => undefined),
+      reapplyDashboardPendingActions: vi.fn(),
+    };
+
+    const sessionToken = dashboardTailMethods.setPendingDashboardSessionAction.call(host, "codex-1", "starting");
+    const serviceToken = dashboardTailMethods.setPendingDashboardServiceAction.call(host, "svc-1", "stopping");
+
+    expect(sessionToken).toEqual(expect.any(Number));
+    expect(serviceToken).toEqual(expect.any(Number));
+    expect(host.dashboardPendingActions.listSessionActions()).toMatchObject([
+      { id: "codex-1", kind: "starting", token: sessionToken },
+    ]);
+    expect(host.dashboardPendingActions.listServiceActions()).toMatchObject([
+      { id: "svc-1", kind: "stopping", token: serviceToken },
+    ]);
   });
 
   it("delegates rename and migrate operations to multiplexer methods", async () => {
