@@ -1363,7 +1363,7 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
-  it("cleans up legacy stopped service windows and keeps the service offline", () => {
+  it("does not kill live service windows when stopped topology is stale", () => {
     const target = { sessionName: "aimux-repo", windowId: "@7", windowIndex: 7, windowName: "web" };
     const killWindow = vi.fn();
     upsertTopologyService(
@@ -1394,11 +1394,9 @@ describe("resumeOfflineSession", () => {
 
     const changed = loadOfflineServices(host);
 
-    expect(changed).toBe(true);
-    expect(killWindow).toHaveBeenCalledWith(target);
-    expect(host.offlineServices).toMatchObject([{ id: "service-retained" }]);
-    expect(host.offlineServices[0]).not.toHaveProperty("tmuxTarget");
-    expect(host.offlineServices[0]).not.toHaveProperty("retained", true);
+    expect(changed).toBe(false);
+    expect(killWindow).not.toHaveBeenCalled();
+    expect(host.offlineServices).toEqual([]);
   });
 
   it("does not resurrect legacy live snapshots as offline sessions", () => {

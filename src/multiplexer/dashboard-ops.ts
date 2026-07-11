@@ -97,6 +97,7 @@ interface DashboardSessionMutationOptions {
   lifecycle?: DashboardLifecycleToken;
   onBeforeRequest?: () => void;
   onAfterRequest?: () => void;
+  allowSettleBeforeRequest?: boolean;
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
@@ -112,6 +113,7 @@ interface DashboardServiceMutationOptions {
   settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   onBeforeRequest?: () => void;
   onAfterRequest?: () => void;
+  allowSettleBeforeRequest?: boolean;
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
@@ -137,6 +139,7 @@ interface DashboardMutationReconcileOptions {
 interface DashboardMutationRequestOptions extends DashboardMutationReconcileOptions {
   request: () => Promise<void>;
   onAfterRequest?: () => void;
+  allowSettleBeforeRequest?: boolean;
 }
 
 function restoreWarningLines(result: any): string[] {
@@ -285,6 +288,7 @@ async function runDashboardMutationRequestUntilSettled(
       opts.clearPending();
       return "inactive";
     }
+    if (opts.allowSettleBeforeRequest === false) continue;
     if (!(await opts.settle(opts.modelLifecycle, opts.renderLifecycle))) continue;
     if (!applyDashboardMutationSuccess(host, opts)) return "inactive";
     settledBeforeRequest = true;
@@ -643,6 +647,7 @@ async function runDashboardSessionMutation(
     renderLifecycle: lifecycle,
     clearPending,
     onAfterRequest: opts.onAfterRequest,
+    allowSettleBeforeRequest: opts.allowSettleBeforeRequest,
     onAfterSettle: opts.onAfterSettle,
     onError: opts.onError,
     successFlash: opts.successFlash,
@@ -707,6 +712,7 @@ async function runDashboardServiceMutation(
     renderLifecycle: lifecycle,
     clearPending,
     onAfterRequest: opts.onAfterRequest,
+    allowSettleBeforeRequest: opts.allowSettleBeforeRequest,
     onAfterSettle: opts.onAfterSettle,
     onError: opts.onError,
     successFlash: opts.successFlash,
@@ -1283,6 +1289,7 @@ export async function stopDashboardServiceWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
+    allowSettleBeforeRequest: !cancelingStartup,
     settle: (modelLifecycle) => waitForDashboardServiceStopSettle(host, service.id, 10_000, modelLifecycle),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
     reconcileOnRequestTimeout: true,

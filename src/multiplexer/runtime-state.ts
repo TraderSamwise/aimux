@@ -404,20 +404,7 @@ export function loadOfflineServices(host: RuntimeStateHost): boolean {
     return changed;
   }
 
-  const savedIds = new Set(savedServices.map((service: any) => service.id));
-  const killedStaleLiveIds = new Set<string>();
-  for (const { target, metadata } of liveServiceWindows) {
-    if (!savedIds.has(metadata.sessionId)) continue;
-    try {
-      host.tmuxRuntimeManager.killWindow?.(target);
-      killedStaleLiveIds.add(metadata.sessionId);
-    } catch {}
-  }
-  const liveServiceIds = new Set(
-    liveServiceWindows
-      .map(({ metadata }: any) => metadata.sessionId)
-      .filter((serviceId: string) => !killedStaleLiveIds.has(serviceId)),
-  );
+  const liveServiceIds = new Set(liveServiceWindows.map(({ metadata }: any) => metadata.sessionId));
 
   const nextOfflineServices = savedServices
     .filter((service: any) => {
