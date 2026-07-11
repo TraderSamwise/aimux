@@ -225,13 +225,13 @@ export type DashboardTailMethods = {
     sessionId: string,
     kind: PendingSessionActionKind | null,
     opts?: { sessionSeed?: DashboardSession },
-  ): void;
+  ): number | undefined;
   setPendingDashboardServiceAction(
     this: Multiplexer,
     serviceId: string,
     kind: PendingServiceActionKind | null,
     opts?: { serviceSeed?: DashboardService },
-  ): void;
+  ): number | undefined;
   stopSessionToOfflineWithFeedback(this: Multiplexer, session: SessionRuntime): Promise<void>;
   clearDashboardSubscreens(this: Multiplexer): void;
   renderSessionDetails(
@@ -505,10 +505,10 @@ export const dashboardTailMethods: DashboardTailMethods = {
     return runDashboardOperationImpl(this, title, lines, work, errorTitle);
   },
   setPendingDashboardSessionAction(sessionId, kind, opts) {
-    setPendingDashboardSessionActionImpl(this, sessionId, kind, opts);
+    return setPendingDashboardSessionActionImpl(this, sessionId, kind, opts);
   },
   setPendingDashboardServiceAction(serviceId, kind, opts) {
-    setPendingDashboardServiceActionImpl(this, serviceId, kind, opts);
+    return setPendingDashboardServiceActionImpl(this, serviceId, kind, opts);
   },
   async stopSessionToOfflineWithFeedback(session) {
     await stopSessionToOfflineWithFeedbackImpl(this, session);
