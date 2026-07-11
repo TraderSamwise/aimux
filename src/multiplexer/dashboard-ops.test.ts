@@ -13,25 +13,54 @@ import {
 } from "./dashboard-ops.js";
 
 function makePendingActionsFake() {
-  const actions = new Map<string, string | null>();
+  const actions = new Map<string, { kind: string; token: number } | null>();
+  let nextToken = 0;
   return {
     getSessionAction(sessionId: string) {
-      return actions.get(`session:${sessionId}`);
+      const action = actions.get(`session:${sessionId}`);
+      return action === null ? null : action?.kind;
     },
     getServiceAction(serviceId: string) {
-      return actions.get(`service:${serviceId}`);
+      const action = actions.get(`service:${serviceId}`);
+      return action === null ? null : action?.kind;
     },
     setSessionAction(sessionId: string, kind: string) {
-      actions.set(`session:${sessionId}`, kind);
+      const token = ++nextToken;
+      actions.set(`session:${sessionId}`, { kind, token });
+      return token;
     },
     clearSessionAction(sessionId: string) {
       actions.set(`session:${sessionId}`, null);
     },
+    clearSessionActionIfToken(sessionId: string, token: number) {
+      const key = `session:${sessionId}`;
+      if (actions.get(key)?.token !== token) return false;
+      actions.set(key, null);
+      return true;
+    },
+    listSessionActions() {
+      return [...actions.entries()]
+        .filter(([key, value]) => key.startsWith("session:") && value)
+        .map(([key, value]) => ({ id: key.slice("session:".length), kind: value!.kind, token: value!.token }));
+    },
     setServiceAction(serviceId: string, kind: string) {
-      actions.set(`service:${serviceId}`, kind);
+      const token = ++nextToken;
+      actions.set(`service:${serviceId}`, { kind, token });
+      return token;
     },
     clearServiceAction(serviceId: string) {
       actions.set(`service:${serviceId}`, null);
+    },
+    clearServiceActionIfToken(serviceId: string, token: number) {
+      const key = `service:${serviceId}`;
+      if (actions.get(key)?.token !== token) return false;
+      actions.set(key, null);
+      return true;
+    },
+    listServiceActions() {
+      return [...actions.entries()]
+        .filter(([key, value]) => key.startsWith("service:") && value)
+        .map(([key, value]) => ({ id: key.slice("service:".length), kind: value!.kind, token: value!.token }));
     },
   };
 }
@@ -52,6 +81,10 @@ function deferred<T = void>(): {
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function requestTimeoutError(): Error & { code: string } {
+  return Object.assign(new Error("request timed out after 9970ms"), { code: "ETIMEDOUT" });
 }
 
 describe("dashboard-ops", () => {
@@ -156,6 +189,61 @@ describe("dashboard-ops", () => {
 
     expect(host.footerFlash).toBe("◆ Created service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not let stale service reconciliation settle a newer pending action", async () => {
+    vi.useFakeTimers();
+    let createdServiceId = "";
+    let live = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) {
+          this.dashboardPendingActions.clearServiceAction(serviceId);
+          return undefined;
+        }
+        this.serviceSeed = opts?.serviceSeed;
+        return this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      serviceSeed: undefined as any,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        createdServiceId = body.serviceId;
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() =>
+        live
+          ? [{ id: createdServiceId, status: "running" }]
+          : createdServiceId && host.dashboardPendingActions.getServiceAction(createdServiceId) === "creating"
+            ? [{ id: createdServiceId, status: "running", pendingAction: "creating", optimistic: true }]
+            : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = createDashboardServiceWithFeedback(host, "", "/repo");
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
+      host.setPendingDashboardServiceAction(createdServiceId, "creating");
+      live = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
+      expect(host.footerFlash).not.toBe("◆ Created service shell");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("escalates a service create that never reconciles", async () => {
@@ -361,6 +449,58 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("keeps reconciling service stop after the project service request times out", async () => {
+    vi.useFakeTimers();
+    let offline = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawServicesCache: [{ id: "svc-1", label: "shell", status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawServicesCache = [{ id: "svc-1", label: "shell", status: offline ? "offline" : "running" }];
+        return true;
+      }),
+      getDashboardServices: vi.fn(() =>
+        host.dashboardRawServicesCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getServiceAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("stopping is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      offline = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
     const services = [[{ id: "svc-1", status: "offline" }], []];
     let serviceIndex = 0;
@@ -478,6 +618,61 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Stopped claude");
     expect(host.renderDashboard).toHaveBeenCalledTimes(2);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps reconciling a stop after the project service request times out", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    let offline = false;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawSessionsCache = [{ ...session, status: offline ? "offline" : "running" }];
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getSessionAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopSessionToOfflineWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("stopping is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      offline = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.footerFlash).toBe("Stopped codex");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -1733,6 +1928,61 @@ describe("dashboard-ops", () => {
     await spawn;
 
     expect(host.dashboardPendingActions.getSessionAction("codex-race12")).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps reconciling agent create after the project service request times out", async () => {
+    vi.useFakeTimers();
+    let live = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() =>
+        live
+          ? [{ id: "codex-timeout", status: "running", tmuxWindowId: "@44" }]
+          : [
+              {
+                id: "codex-timeout",
+                command: "codex",
+                status: "waiting",
+                pendingAction: "creating",
+                optimistic: true,
+              },
+            ],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const spawn = spawnDashboardAgentWithFeedback(host, {
+        sessionId: "codex-timeout",
+        tool: "codex",
+        worktreePath: "/repo",
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      await spawn;
+
+      expect(host.dashboardPendingActions.getSessionAction("codex-timeout")).toBe("creating");
+      expect(host.footerFlash).toBe("creating is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      live = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("codex-timeout")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
