@@ -13,25 +13,54 @@ import {
 } from "./dashboard-ops.js";
 
 function makePendingActionsFake() {
-  const actions = new Map<string, string | null>();
+  const actions = new Map<string, { kind: string; token: number } | null>();
+  let nextToken = 0;
   return {
     getSessionAction(sessionId: string) {
-      return actions.get(`session:${sessionId}`);
+      const action = actions.get(`session:${sessionId}`);
+      return action === null ? null : action?.kind;
     },
     getServiceAction(serviceId: string) {
-      return actions.get(`service:${serviceId}`);
+      const action = actions.get(`service:${serviceId}`);
+      return action === null ? null : action?.kind;
     },
     setSessionAction(sessionId: string, kind: string) {
-      actions.set(`session:${sessionId}`, kind);
+      const token = ++nextToken;
+      actions.set(`session:${sessionId}`, { kind, token });
+      return token;
     },
     clearSessionAction(sessionId: string) {
       actions.set(`session:${sessionId}`, null);
     },
+    clearSessionActionIfToken(sessionId: string, token: number) {
+      const key = `session:${sessionId}`;
+      if (actions.get(key)?.token !== token) return false;
+      actions.set(key, null);
+      return true;
+    },
+    listSessionActions() {
+      return [...actions.entries()]
+        .filter(([key, value]) => key.startsWith("session:") && value)
+        .map(([key, value]) => ({ id: key.slice("session:".length), kind: value!.kind, token: value!.token }));
+    },
     setServiceAction(serviceId: string, kind: string) {
-      actions.set(`service:${serviceId}`, kind);
+      const token = ++nextToken;
+      actions.set(`service:${serviceId}`, { kind, token });
+      return token;
     },
     clearServiceAction(serviceId: string) {
       actions.set(`service:${serviceId}`, null);
+    },
+    clearServiceActionIfToken(serviceId: string, token: number) {
+      const key = `service:${serviceId}`;
+      if (actions.get(key)?.token !== token) return false;
+      actions.set(key, null);
+      return true;
+    },
+    listServiceActions() {
+      return [...actions.entries()]
+        .filter(([key, value]) => key.startsWith("service:") && value)
+        .map(([key, value]) => ({ id: key.slice("service:".length), kind: value!.kind, token: value!.token }));
     },
   };
 }
@@ -160,6 +189,61 @@ describe("dashboard-ops", () => {
 
     expect(host.footerFlash).toBe("◆ Created service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not let stale service reconciliation settle a newer pending action", async () => {
+    vi.useFakeTimers();
+    let createdServiceId = "";
+    let live = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) {
+          this.dashboardPendingActions.clearServiceAction(serviceId);
+          return undefined;
+        }
+        this.serviceSeed = opts?.serviceSeed;
+        return this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      serviceSeed: undefined as any,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        createdServiceId = body.serviceId;
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() =>
+        live
+          ? [{ id: createdServiceId, status: "running" }]
+          : createdServiceId && host.dashboardPendingActions.getServiceAction(createdServiceId) === "creating"
+            ? [{ id: createdServiceId, status: "running", pendingAction: "creating", optimistic: true }]
+            : [],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = createDashboardServiceWithFeedback(host, "", "/repo");
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
+      host.setPendingDashboardServiceAction(createdServiceId, "creating");
+      live = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
+      expect(host.footerFlash).not.toBe("◆ Created service shell");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("escalates a service create that never reconciles", async () => {
