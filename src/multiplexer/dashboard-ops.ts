@@ -123,10 +123,11 @@ interface DashboardMutationReconcileOptions {
   targetKind: "session" | "service";
   targetId: string;
   pendingAction: PendingSessionActionKind | PendingServiceActionKind;
+  pendingToken?: number;
   settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   modelLifecycle: DashboardLifecycleToken;
   renderLifecycle: DashboardLifecycleToken;
-  clearPending: () => void;
+  clearPending: () => boolean;
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
@@ -196,23 +197,33 @@ function hasPendingDashboardServiceAction(
 }
 
 function hasPendingDashboardMutationAction(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
+  if (opts.pendingToken !== undefined) {
+    const entries =
+      opts.targetKind === "session"
+        ? host.dashboardPendingActions?.listSessionActions?.()
+        : host.dashboardPendingActions?.listServiceActions?.();
+    const entry = Array.isArray(entries) ? entries.find((candidate: any) => candidate.id === opts.targetId) : undefined;
+    return entry?.kind === opts.pendingAction && entry.token === opts.pendingToken;
+  }
   return opts.targetKind === "session"
     ? hasPendingDashboardSessionAction(host, opts.targetId, opts.pendingAction as PendingSessionActionKind)
     : hasPendingDashboardServiceAction(host, opts.targetId, opts.pendingAction as PendingServiceActionKind);
 }
 
-function applyDashboardMutationSuccess(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): void {
-  opts.clearPending();
-  if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
+function applyDashboardMutationSuccess(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): boolean {
+  if (!opts.clearPending()) return false;
+  if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return false;
   opts.onAfterSettle?.();
   if (opts.successFlash) {
     host.footerFlash = opts.successFlash.message;
     host.footerFlashTicks = opts.successFlash.ticks ?? 3;
   }
   renderDashboardMutationFrame(host, opts.renderLifecycle);
+  return true;
 }
 
 function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: DashboardMutationReconcileOptions): void {
+  if (!hasPendingDashboardMutationAction(host, opts)) return;
   const startedAt = Date.now();
   const maxReconcileMs = 60_000;
   if (isDashboardLifecycleCurrent(host, opts.renderLifecycle)) {
@@ -224,11 +235,11 @@ function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: Dashbo
     while (Date.now() - startedAt < maxReconcileMs && hasPendingDashboardMutationAction(host, opts)) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       if (!(await opts.settle(opts.modelLifecycle, opts.renderLifecycle))) continue;
-      applyDashboardMutationSuccess(host, opts);
+      if (!applyDashboardMutationSuccess(host, opts)) return;
       return;
     }
     if (!hasPendingDashboardMutationAction(host, opts)) return;
-    opts.clearPending();
+    if (!opts.clearPending()) return;
     await opts.onError?.(opts.modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
     host.showDashboardError(opts.errorTitle, [
@@ -236,7 +247,7 @@ function scheduleDashboardMutationReconcile(host: DashboardOpsHost, opts: Dashbo
       "Run aimux restart if it does not recover automatically.",
     ]);
   })().catch((error: unknown) => {
-    opts.clearPending();
+    if (!opts.clearPending()) return;
     if (!isDashboardLifecycleCurrent(host, opts.renderLifecycle)) return;
     host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
   });
@@ -248,12 +259,13 @@ async function runDashboardMutationRequestUntilSettled(
 ): Promise<"request" | "settled" | "inactive"> {
   let requestDone = false;
   let requestError: unknown;
+  let settledBeforeRequest = false;
   const requestDonePromise = Promise.resolve()
     .then(opts.request)
     .then(
       () => {
         requestDone = true;
-        if (isDashboardLifecycleCurrent(host, opts.renderLifecycle) && !hasPendingDashboardMutationAction(host, opts)) {
+        if (isDashboardLifecycleCurrent(host, opts.renderLifecycle) && settledBeforeRequest) {
           opts.onAfterRequest?.();
         }
       },
@@ -274,7 +286,8 @@ async function runDashboardMutationRequestUntilSettled(
       return "inactive";
     }
     if (!(await opts.settle(opts.modelLifecycle, opts.renderLifecycle))) continue;
-    applyDashboardMutationSuccess(host, opts);
+    if (!applyDashboardMutationSuccess(host, opts)) return "inactive";
+    settledBeforeRequest = true;
     return "settled";
   }
 
@@ -603,15 +616,19 @@ async function runDashboardSessionMutation(
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
         host.reapplyDashboardPendingActions?.();
+        return true;
       }
+      return false;
     } else {
       host.setPendingDashboardSessionAction(opts.sessionId, null);
+      return true;
     }
   };
   const reconcileOptions = {
     targetKind: "session" as const,
     targetId: opts.sessionId,
     pendingAction: opts.pendingAction,
+    pendingToken: typeof token === "number" ? token : undefined,
     request: opts.request,
     settle: opts.settle,
     modelLifecycle,
@@ -631,8 +648,7 @@ async function runDashboardSessionMutation(
       return "failed";
     }
     if (await opts.settle(modelLifecycle, lifecycle)) {
-      applyDashboardMutationSuccess(host, reconcileOptions);
-      return "settled";
+      return applyDashboardMutationSuccess(host, reconcileOptions) ? "settled" : "pending";
     }
     scheduleDashboardMutationReconcile(host, reconcileOptions);
     return "pending";
@@ -641,7 +657,7 @@ async function runDashboardSessionMutation(
       scheduleDashboardMutationReconcile(host, reconcileOptions);
       return "pending";
     }
-    clearPending();
+    if (!clearPending()) return "pending";
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
     host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
@@ -664,15 +680,19 @@ async function runDashboardServiceMutation(
     if (typeof token === "number") {
       if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
         host.reapplyDashboardPendingActions?.();
+        return true;
       }
+      return false;
     } else {
       host.setPendingDashboardServiceAction(opts.serviceId, null);
+      return true;
     }
   };
   const reconcileOptions = {
     targetKind: "service" as const,
     targetId: opts.serviceId,
     pendingAction: opts.pendingAction,
+    pendingToken: typeof token === "number" ? token : undefined,
     request: opts.request,
     settle: opts.settle,
     modelLifecycle,
@@ -692,8 +712,7 @@ async function runDashboardServiceMutation(
       return "failed";
     }
     if (await opts.settle(modelLifecycle, lifecycle)) {
-      applyDashboardMutationSuccess(host, reconcileOptions);
-      return "settled";
+      return applyDashboardMutationSuccess(host, reconcileOptions) ? "settled" : "pending";
     }
     scheduleDashboardMutationReconcile(host, reconcileOptions);
     return "pending";
@@ -702,7 +721,7 @@ async function runDashboardServiceMutation(
       scheduleDashboardMutationReconcile(host, reconcileOptions);
       return "pending";
     }
-    clearPending();
+    if (!clearPending()) return "pending";
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) return "failed";
     host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
