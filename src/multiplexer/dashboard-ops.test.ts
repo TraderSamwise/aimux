@@ -54,6 +54,10 @@ function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function requestTimeoutError(): Error & { code: string } {
+  return Object.assign(new Error("request timed out after 9970ms"), { code: "ETIMEDOUT" });
+}
+
 describe("dashboard-ops", () => {
   it("creates a service through the project service and clears creating when a live row appears", async () => {
     let createdServiceId = "";
@@ -361,6 +365,58 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("keeps reconciling service stop after the project service request times out", async () => {
+    vi.useFakeTimers();
+    let offline = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawServicesCache: [{ id: "svc-1", label: "shell", status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawServicesCache = [{ id: "svc-1", label: "shell", status: offline ? "offline" : "running" }];
+        return true;
+      }),
+      getDashboardServices: vi.fn(() =>
+        host.dashboardRawServicesCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getServiceAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("stopping is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      offline = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
     const services = [[{ id: "svc-1", status: "offline" }], []];
     let serviceIndex = 0;
@@ -485,7 +541,6 @@ describe("dashboard-ops", () => {
     vi.useFakeTimers();
     const session = { id: "sess-1", command: "codex", label: "codex" };
     let offline = false;
-    const timeout = Object.assign(new Error("request timed out after 9970ms"), { code: "ETIMEDOUT" });
     const host = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
@@ -501,7 +556,7 @@ describe("dashboard-ops", () => {
       renderDashboard: vi.fn(),
       getSessionLabel: vi.fn(() => "codex"),
       postToProjectService: vi.fn(async () => {
-        throw timeout;
+        throw requestTimeoutError();
       }),
       refreshDashboardModelFromService: vi.fn(async () => {
         host.dashboardModelServiceRefreshedAt += 1;
@@ -1789,6 +1844,61 @@ describe("dashboard-ops", () => {
     await spawn;
 
     expect(host.dashboardPendingActions.getSessionAction("codex-race12")).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps reconciling agent create after the project service request times out", async () => {
+    vi.useFakeTimers();
+    let live = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() =>
+        live
+          ? [{ id: "codex-timeout", status: "running", tmuxWindowId: "@44" }]
+          : [
+              {
+                id: "codex-timeout",
+                command: "codex",
+                status: "waiting",
+                pendingAction: "creating",
+                optimistic: true,
+              },
+            ],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const spawn = spawnDashboardAgentWithFeedback(host, {
+        sessionId: "codex-timeout",
+        tool: "codex",
+        worktreePath: "/repo",
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      await spawn;
+
+      expect(host.dashboardPendingActions.getSessionAction("codex-timeout")).toBe("creating");
+      expect(host.footerFlash).toBe("creating is still settling");
+      expect(host.showDashboardError).not.toHaveBeenCalled();
+
+      live = true;
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("codex-timeout")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
