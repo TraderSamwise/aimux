@@ -611,6 +611,88 @@ describe("dashboardInteractionMethods", () => {
     expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
   });
 
+  it("does not drop a coalesced stop key after starting a selected service", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardOverlayState: { kind: "none" },
+      dashboardActivatingServiceIds: new Set<string>(),
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      activateSelectedDashboardWorktreeEntry: vi.fn(function (this: any) {
+        this.dashboardActivatingServiceIds.add("service-1");
+      }),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      removeDashboardServiceWithFeedback: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\rx"));
+
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+  });
+
+  it("does not replay a generic coalesced mutation after starting a selected service", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardOverlayState: { kind: "none" },
+      dashboardActivatingServiceIds: new Set<string>(),
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      activateSelectedDashboardWorktreeEntry: vi.fn(function (this: any) {
+        this.dashboardActivatingServiceIds.add("service-1");
+      }),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      showToolPicker: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\rn"));
+
+    expect(host.activateSelectedDashboardWorktreeEntry).toHaveBeenCalledOnce();
+    expect(host.stopDashboardServiceWithFeedback).not.toHaveBeenCalled();
+    expect(host.showToolPicker).not.toHaveBeenCalled();
+  });
+
   it("stops a live dashboard agent row even when this process has no local runtime", () => {
     const entry = {
       id: "claude-1",
