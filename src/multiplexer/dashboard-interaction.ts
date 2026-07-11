@@ -24,6 +24,18 @@ function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | n
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
 }
 
+function isStoppableStartingService(
+  host: any,
+  entry: { id?: string; pendingAction?: string } | null | undefined,
+): boolean {
+  return Boolean(
+    entry &&
+    (entry.pendingAction === "creating" ||
+      entry.pendingAction === "starting" ||
+      (typeof entry.id === "string" && host.dashboardActivatingServiceIds?.has?.(entry.id))),
+  );
+}
+
 function pendingDashboardItemMessage(
   entry: { pendingAction?: string; label?: string; command?: string; id?: string },
   fallbackKind: "agent" | "service",
@@ -126,6 +138,14 @@ function isPlainDashboardNavigationEvent(event: KeyEvent, key: string): boolean 
   if (["up", "down", "left", "right", "enter", "escape"].includes(key)) return true;
   if (!["h", "j", "k", "l"].includes(key)) return false;
   return event.name === "" && event.char === key;
+}
+
+function shouldContinueCoalescedDashboardInputAfterActivation(host: any, key: string, nextEvent: KeyEvent): boolean {
+  if (!(key === "enter" || key === "return" || key === "right" || key === "l")) return false;
+  if (commandKey(nextEvent) !== "x") return false;
+  const service = host.getSelectedDashboardServiceForActions?.();
+  if (!service) return false;
+  return isStoppableStartingService(host, service);
 }
 
 function stepIntoFocusedDashboardWorktree(host: any): void {
@@ -469,7 +489,8 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
     if (events.length > 1) {
-      for (const event of events) {
+      for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
         const beforeMode = this.mode;
         const beforeOverlay = this.dashboardOverlayState?.kind ?? "none";
         const key = commandKey(event);
@@ -490,6 +511,15 @@ export const dashboardInteractionMethods = {
           key === "l" ||
           key === "q"
         ) {
+          const nextEvent = events[index + 1];
+          if (
+            nextEvent &&
+            this.mode === beforeMode &&
+            afterOverlay === beforeOverlay &&
+            shouldContinueCoalescedDashboardInputAfterActivation(this, key, nextEvent)
+          ) {
+            continue;
+          }
           break;
         }
       }
@@ -668,11 +698,16 @@ export const dashboardInteractionMethods = {
 
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
-          if (hasBlockingPendingDashboardAction(selectedService)) {
+          if (
+            hasBlockingPendingDashboardAction(selectedService) &&
+            !isStoppableStartingService(this, selectedService)
+          ) {
             flashPendingDashboardItem(this, selectedService, "service");
             return;
           }
-          if (selectedService.status === "offline") {
+          if (isStoppableStartingService(this, selectedService)) {
+            void this.stopDashboardServiceWithFeedback(selectedService);
+          } else if (selectedService.status === "offline") {
             void this.removeDashboardServiceWithFeedback(selectedService);
           } else {
             void this.stopDashboardServiceWithFeedback(selectedService);
@@ -773,21 +808,29 @@ export const dashboardInteractionMethods = {
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
     this.persistDashboardUiState();
     if (service.status !== "running") {
-      const resumeResult = await this.resumeOfflineServiceWithFeedback(service);
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      if (resumeResult === "pending") return "pending";
-      if (resumeResult === "failed") return "error";
-      const serviceForOpen =
-        this.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? service;
-      const result = await this.waitAndOpenLiveTmuxWindowForService(serviceForOpen, 60_000);
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      void refreshDashboardAfterServiceOpen(this, activationToken);
-      if (result !== "opened") {
-        this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
-        this.footerFlashTicks = 3;
-        this.renderDashboard();
+      this.dashboardActivatingServiceIds ??= new Set<string>();
+      this.dashboardActivatingServiceIds.add(service.id);
+      try {
+        const resumeResult = await this.resumeOfflineServiceWithFeedback(service);
+        if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+        if (resumeResult === "pending") return "pending";
+        if (resumeResult === "failed") return "error";
+        const serviceForOpen =
+          this.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? service;
+        const result = await this.waitAndOpenLiveTmuxWindowForService(serviceForOpen, 60_000);
+        if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+        void refreshDashboardAfterServiceOpen(this, activationToken);
+        if (result !== "opened") {
+          this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
+          this.footerFlashTicks = 3;
+          this.renderDashboard();
+        }
+        return result;
+      } finally {
+        if (isCurrentDashboardActivation(this, activationToken)) {
+          this.dashboardActivatingServiceIds.delete(service.id);
+        }
       }
-      return result;
     }
     const openResult = await this.waitAndOpenLiveTmuxWindowForService(service);
     if (!isCurrentDashboardActivation(this, activationToken)) return "missing";

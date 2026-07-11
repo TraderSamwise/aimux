@@ -115,7 +115,7 @@ function serviceToBinding(
   status: RuntimeTopologyServiceStatus,
   now: string,
 ): RuntimeTopologyBinding | undefined {
-  if (status !== "running" && status !== "starting" && status !== "stopped") return undefined;
+  if (status !== "running" && status !== "starting") return undefined;
   const target = service.tmuxTarget;
   if (!target) return undefined;
   return {
@@ -146,9 +146,11 @@ export function topologyServiceToServiceState(
     label: service.label ?? node?.label,
     createdAt: service.createdAt,
     lastSeenAt: service.lastSeenAt,
-    retained: service.status === "stopped" && Boolean(binding),
     tmuxTarget:
-      binding?.tmuxSession && binding.tmuxWindowId && typeof binding.tmuxWindowIndex === "number"
+      (service.status === "running" || service.status === "starting") &&
+      binding?.tmuxSession &&
+      binding.tmuxWindowId &&
+      typeof binding.tmuxWindowIndex === "number"
         ? {
             sessionName: binding.tmuxSession,
             windowId: binding.tmuxWindowId,

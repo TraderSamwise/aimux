@@ -97,6 +97,7 @@ interface DashboardSessionMutationOptions {
   lifecycle?: DashboardLifecycleToken;
   onBeforeRequest?: () => void;
   onAfterRequest?: () => void;
+  allowSettleBeforeRequest?: boolean;
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
@@ -112,6 +113,7 @@ interface DashboardServiceMutationOptions {
   settle: (modelLifecycle: DashboardLifecycleToken, renderLifecycle: DashboardLifecycleToken) => Promise<boolean>;
   onBeforeRequest?: () => void;
   onAfterRequest?: () => void;
+  allowSettleBeforeRequest?: boolean;
   onAfterSettle?: () => void;
   onError?: (lifecycle: DashboardLifecycleToken) => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
@@ -137,6 +139,7 @@ interface DashboardMutationReconcileOptions {
 interface DashboardMutationRequestOptions extends DashboardMutationReconcileOptions {
   request: () => Promise<void>;
   onAfterRequest?: () => void;
+  allowSettleBeforeRequest?: boolean;
 }
 
 function restoreWarningLines(result: any): string[] {
@@ -285,6 +288,7 @@ async function runDashboardMutationRequestUntilSettled(
       opts.clearPending();
       return "inactive";
     }
+    if (opts.allowSettleBeforeRequest === false) continue;
     if (!(await opts.settle(opts.modelLifecycle, opts.renderLifecycle))) continue;
     if (!applyDashboardMutationSuccess(host, opts)) return "inactive";
     settledBeforeRequest = true;
@@ -517,6 +521,14 @@ function getDashboardServiceSettlementEntry(
   return { known: true, service };
 }
 
+function serviceStartPendingKind(host: DashboardOpsHost, serviceId: string): PendingServiceActionKind | undefined {
+  const pending =
+    host.dashboardPendingActions?.getServiceAction?.(serviceId) ??
+    getDashboardServiceEntry(host, serviceId)?.pendingAction;
+  if (!pending && host.dashboardActivatingServiceIds?.has?.(serviceId)) return "starting";
+  return pending === "creating" || pending === "starting" ? pending : undefined;
+}
+
 async function waitForRenderedDashboardServiceState(
   host: DashboardOpsHost,
   serviceId: string,
@@ -635,6 +647,7 @@ async function runDashboardSessionMutation(
     renderLifecycle: lifecycle,
     clearPending,
     onAfterRequest: opts.onAfterRequest,
+    allowSettleBeforeRequest: opts.allowSettleBeforeRequest,
     onAfterSettle: opts.onAfterSettle,
     onError: opts.onError,
     successFlash: opts.successFlash,
@@ -699,6 +712,7 @@ async function runDashboardServiceMutation(
     renderLifecycle: lifecycle,
     clearPending,
     onAfterRequest: opts.onAfterRequest,
+    allowSettleBeforeRequest: opts.allowSettleBeforeRequest,
     onAfterSettle: opts.onAfterSettle,
     onError: opts.onError,
     successFlash: opts.successFlash,
@@ -1248,6 +1262,7 @@ export async function stopDashboardServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
 ): Promise<void> {
+  const cancelingStartup = Boolean(serviceStartPendingKind(host, service.id));
   const serviceSeed = host.getDashboardServices?.().find((entry: any) => entry.id === service.id) ?? {
     id: service.id,
     command: service.label ?? "service",
@@ -1261,7 +1276,9 @@ export async function stopDashboardServiceWithFeedback(
     pendingAction: "stopping",
     serviceSeed,
     onBeforeRequest: () => {
-      host.footerFlash = `Stopping ${service.label ?? service.id}`;
+      host.footerFlash = cancelingStartup
+        ? `Canceling ${service.label ?? service.id} startup`
+        : `Stopping ${service.label ?? service.id}`;
       host.footerFlashTicks = 3;
     },
     request: async () => {
@@ -1272,6 +1289,7 @@ export async function stopDashboardServiceWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
+    allowSettleBeforeRequest: !cancelingStartup,
     settle: (modelLifecycle) => waitForDashboardServiceStopSettle(host, service.id, 10_000, modelLifecycle),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
     reconcileOnRequestTimeout: true,
