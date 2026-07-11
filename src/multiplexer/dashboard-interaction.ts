@@ -140,6 +140,14 @@ function isPlainDashboardNavigationEvent(event: KeyEvent, key: string): boolean 
   return event.name === "" && event.char === key;
 }
 
+function shouldContinueCoalescedDashboardInputAfterActivation(host: any, key: string, nextEvent: KeyEvent): boolean {
+  if (!(key === "enter" || key === "return" || key === "right" || key === "l")) return false;
+  if (commandKey(nextEvent) !== "x") return false;
+  const service = host.getSelectedDashboardServiceForActions?.();
+  if (!service) return false;
+  return isStoppableStartingService(host, service);
+}
+
 function stepIntoFocusedDashboardWorktree(host: any): void {
   const focusedGroup = findDashboardWorktreeGroup(host, host.dashboardState.focusedWorktreePath);
   if (isCreatingDashboardWorktree(focusedGroup)) {
@@ -481,7 +489,8 @@ export const dashboardInteractionMethods = {
     const events = parseKeys(data);
     if (events.length === 0) return;
     if (events.length > 1) {
-      for (const event of events) {
+      for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
         const beforeMode = this.mode;
         const beforeOverlay = this.dashboardOverlayState?.kind ?? "none";
         const key = commandKey(event);
@@ -502,6 +511,15 @@ export const dashboardInteractionMethods = {
           key === "l" ||
           key === "q"
         ) {
+          const nextEvent = events[index + 1];
+          if (
+            nextEvent &&
+            this.mode === beforeMode &&
+            afterOverlay === beforeOverlay &&
+            shouldContinueCoalescedDashboardInputAfterActivation(this, key, nextEvent)
+          ) {
+            continue;
+          }
           break;
         }
       }
