@@ -84,7 +84,7 @@ describe("topology service lifecycle", () => {
     ]);
   });
 
-  it("marks stopped services with retained tmux bindings", () => {
+  it("drops tmux bindings for stopped services", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     upsertTopologyService(
       {
@@ -98,8 +98,9 @@ describe("topology service lifecycle", () => {
       { store, projectRoot: repoRoot },
     );
 
+    expect(store.read().bindings).toEqual([]);
     expect(listTopologyServiceStates({ statuses: ["stopped"], store })).toMatchObject([
-      { id: "service-api", status: "stopped", launchCommandLine: "yarn api", retained: true },
+      { id: "service-api", status: "stopped", launchCommandLine: "yarn api" },
     ]);
   });
 
@@ -123,10 +124,10 @@ describe("topology service lifecycle", () => {
     );
 
     expect(listTopologyServiceStates({ statuses: ["stopped"], store })).toMatchObject([
-      { id: "service-api", launchCommandLine: "yarn api", retained: true },
-      { id: "service-web", launchCommandLine: "yarn web", retained: true },
+      { id: "service-api", launchCommandLine: "yarn api" },
+      { id: "service-web", launchCommandLine: "yarn web" },
     ]);
-    expect(store.read().bindings.map((binding) => binding.tmuxWindowId)).toEqual(["@3", "@4"]);
+    expect(store.read().bindings).toEqual([]);
   });
 
   it("removes service topology and dependent operation references", () => {
