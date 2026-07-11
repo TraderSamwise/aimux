@@ -338,6 +338,7 @@ describe("dashboard-ops", () => {
   it("stops a service immediately when startup is still pending", async () => {
     vi.useFakeTimers();
     let phase: "starting" | "offline" = "starting";
+    const request = deferred<void>();
     const host = {
       dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
@@ -350,6 +351,7 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async (route: string) => {
+        await request.promise;
         if (route === "/services/stop") phase = "offline";
       }),
       refreshDashboardModelFromService: vi.fn(async () => {
@@ -380,6 +382,10 @@ describe("dashboard-ops", () => {
       );
 
       await vi.advanceTimersByTimeAsync(500);
+      expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("Canceling shell startup");
+      request.resolve();
+      await vi.advanceTimersByTimeAsync(500);
       await action;
     } finally {
       vi.useRealTimers();
@@ -398,6 +404,7 @@ describe("dashboard-ops", () => {
   it("stops a service immediately while activation is in flight before pending state renders", async () => {
     vi.useFakeTimers();
     let phase: "starting" | "offline" = "starting";
+    const request = deferred<void>();
     const host = {
       dashboardInputEpoch: 0,
       dashboardModelServiceRefreshedAt: 0,
@@ -411,6 +418,7 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async (route: string) => {
+        await request.promise;
         if (route === "/services/stop") phase = "offline";
       }),
       refreshDashboardModelFromService: vi.fn(async () => {
@@ -430,6 +438,10 @@ describe("dashboard-ops", () => {
         { timeoutMs: 10_000 },
       );
 
+      await vi.advanceTimersByTimeAsync(500);
+      expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBe("stopping");
+      expect(host.footerFlash).toBe("Canceling shell startup");
+      request.resolve();
       await vi.advanceTimersByTimeAsync(500);
       await action;
     } finally {
