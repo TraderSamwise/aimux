@@ -13,6 +13,7 @@ import {
   upsertTopologyService,
   type RuntimeTopologyServiceState,
 } from "../runtime-core/topology-services.js";
+import type { TmuxTarget } from "../tmux/runtime-manager.js";
 
 type ServiceHost = any;
 
@@ -363,45 +364,38 @@ export function resumeOfflineService(
     worktreePath: service.worktreePath,
     label,
   };
-  let target: any;
-  let createdWindow = false;
-  if (!target) {
-    const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
-    let projectRoot = root;
-    try {
-      projectRoot = findMainRepo(cwd);
-    } catch {
-      projectRoot = root;
-    }
-    const wrapped = launchCommandLine
-      ? wrapCommandWithShellIntegration({
-          projectRoot,
-          sessionId: service.id,
-          tool: "service",
-          command: shell,
-          args: ["-lc", launchScript],
-          shellPath: shell,
-        })
-      : wrapInteractiveShellWithIntegration({
-          projectRoot,
-          sessionId: service.id,
-          tool: "service",
-          shellPath: shell,
-        });
-    const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
-    target = host.tmuxRuntimeManager.createWindow(
-      tmuxSession.sessionName,
-      label,
-      resumeCwd,
-      wrapped.command,
-      wrapped.args,
-      {
-        detached: true,
-      },
-    );
-    createdWindow = true;
-    host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
+  const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
+  let projectRoot = root;
+  try {
+    projectRoot = findMainRepo(cwd);
+  } catch {
+    projectRoot = root;
   }
+  const wrapped = launchCommandLine
+    ? wrapCommandWithShellIntegration({
+        projectRoot,
+        sessionId: service.id,
+        tool: "service",
+        command: shell,
+        args: ["-lc", launchScript],
+        shellPath: shell,
+      })
+    : wrapInteractiveShellWithIntegration({
+        projectRoot,
+        sessionId: service.id,
+        tool: "service",
+        shellPath: shell,
+      });
+  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
+  const target: TmuxTarget = host.tmuxRuntimeManager.createWindow(
+    tmuxSession.sessionName,
+    label,
+    resumeCwd,
+    wrapped.command,
+    wrapped.args,
+    { detached: true },
+  );
+  host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
   upsertTopologyService(
     {
       ...serviceStateToTopologyState(service),
@@ -412,9 +406,7 @@ export function resumeOfflineService(
     },
     "running",
   );
-  if (createdWindow) {
-    host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
-  }
+  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
   host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
   markServiceUsed(host, service.id);
   commitServiceState(host, {

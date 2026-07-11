@@ -827,7 +827,9 @@ export const dashboardInteractionMethods = {
         }
         return result;
       } finally {
-        this.dashboardActivatingServiceIds.delete(service.id);
+        if (isCurrentDashboardActivation(this, activationToken)) {
+          this.dashboardActivatingServiceIds.delete(service.id);
+        }
       }
     }
     const openResult = await this.waitAndOpenLiveTmuxWindowForService(service);
