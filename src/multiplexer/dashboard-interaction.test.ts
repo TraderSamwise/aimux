@@ -28,6 +28,20 @@ vi.mock("../team.js", async () => {
   };
 });
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("dashboardInteractionMethods", () => {
   beforeEach(() => {
     dashboardApiClientMock.mutateDashboardApi.mockClear();
@@ -1148,6 +1162,47 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
     expect(host.refreshDashboardModelFromService).not.toHaveBeenCalled();
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not let stale service activation clear a newer activation marker", async () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const firstResume = deferred<"pending">();
+    const secondResume = deferred<"pending">();
+    let resumeCalls = 0;
+    const host: any = {
+      mode: "dashboard",
+      dashboardActivatingServiceIds: new Set<string>(),
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", sessions: [], services: [] }],
+      getDashboardServices: vi.fn(() => [service]),
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      resumeOfflineServiceWithFeedback: vi.fn(() => {
+        resumeCalls += 1;
+        return resumeCalls === 1 ? firstResume.promise : secondResume.promise;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      renderDashboard: vi.fn(),
+      showDashboardError: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    const firstActivation = dashboardInteractionMethods.activateDashboardService.call(host, service);
+    await Promise.resolve();
+    const secondActivation = dashboardInteractionMethods.activateDashboardService.call(host, service);
+    await Promise.resolve();
+
+    firstResume.resolve("pending");
+    await expect(firstActivation).resolves.toBe("missing");
+    expect(host.dashboardActivatingServiceIds.has("service-1")).toBe(true);
+
+    secondResume.resolve("pending");
+    await expect(secondActivation).resolves.toBe("pending");
+    expect(host.dashboardActivatingServiceIds.has("service-1")).toBe(false);
   });
 
   it("refreshes and reports unavailable service when a running service open misses", async () => {
