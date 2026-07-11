@@ -335,6 +335,121 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("queues a service stop requested while startup is still pending", async () => {
+    vi.useFakeTimers();
+    let phase: "starting" | "running" | "offline" = "starting";
+    let refreshCount = 0;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async (route: string) => {
+        if (route === "/services/stop") phase = "offline";
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        host.dashboardModelServiceRefreshedAt += 1;
+        if (refreshCount >= 2 && phase === "starting") {
+          phase = "running";
+          host.dashboardPendingActions.clearServiceAction("svc-1");
+        }
+        return true;
+      }),
+      getDashboardServices: vi.fn(() => [
+        {
+          id: "svc-1",
+          label: "shell",
+          status: phase === "running" ? "running" : "offline",
+          ...(host.dashboardPendingActions.getServiceAction("svc-1") === "starting"
+            ? { pendingAction: "starting" }
+            : {}),
+        },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+    host.dashboardPendingActions.setServiceAction("svc-1", "starting");
+
+    try {
+      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.footerFlash).toBe("Stopping shell when startup finishes");
+
+      await vi.advanceTimersByTimeAsync(500);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/services/stop",
+      { serviceId: "svc-1" },
+      { timeoutMs: 10_000 },
+    );
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("queues a service stop requested while activation is in flight before pending state renders", async () => {
+    vi.useFakeTimers();
+    let phase: "starting" | "running" | "offline" = "starting";
+    let refreshCount = 0;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardActivatingServiceIds: new Set(["svc-1"]),
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async (route: string) => {
+        if (route === "/services/stop") phase = "offline";
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        host.dashboardModelServiceRefreshedAt += 1;
+        if (refreshCount >= 2 && phase === "starting") {
+          phase = "running";
+          host.dashboardActivatingServiceIds.delete("svc-1");
+        }
+        return true;
+      }),
+      getDashboardServices: vi.fn(() => [{ id: "svc-1", label: "shell", status: phase }]),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.footerFlash).toBe("Stopping shell when startup finishes");
+
+      await vi.advanceTimersByTimeAsync(500);
+      await action;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/services/stop",
+      { serviceId: "svc-1" },
+      { timeoutMs: 10_000 },
+    );
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("refreshes local state and shows a dashboard error when service resume fails", async () => {
     const host = {
       dashboardPendingActions: makePendingActionsFake(),

@@ -32,6 +32,7 @@ export type DashboardMutationResult = "settled" | "pending" | "failed";
 
 const dashboardAgentRestoreQueues = new WeakMap<object, Promise<void>>();
 const dashboardQueuedAgentRestores = new WeakMap<object, Set<string>>();
+const dashboardQueuedServiceStops = new WeakMap<object, Set<string>>();
 const DASHBOARD_MUTATION_SETTLE_INTERVAL_MS = 100;
 
 function queuedAgentRestoresFor(host: object): Set<string> {
@@ -39,6 +40,15 @@ function queuedAgentRestoresFor(host: object): Set<string> {
   if (!queued) {
     queued = new Set();
     dashboardQueuedAgentRestores.set(host, queued);
+  }
+  return queued;
+}
+
+function queuedServiceStopsFor(host: object): Set<string> {
+  let queued = dashboardQueuedServiceStops.get(host);
+  if (!queued) {
+    queued = new Set();
+    dashboardQueuedServiceStops.set(host, queued);
   }
   return queued;
 }
@@ -517,6 +527,14 @@ function getDashboardServiceSettlementEntry(
   return { known: true, service };
 }
 
+function serviceStartPendingKind(host: DashboardOpsHost, serviceId: string): PendingServiceActionKind | undefined {
+  const pending =
+    host.dashboardPendingActions?.getServiceAction?.(serviceId) ??
+    getDashboardServiceEntry(host, serviceId)?.pendingAction;
+  if (!pending && host.dashboardActivatingServiceIds?.has?.(serviceId)) return "starting";
+  return pending === "creating" || pending === "starting" ? pending : undefined;
+}
+
 async function waitForRenderedDashboardServiceState(
   host: DashboardOpsHost,
   serviceId: string,
@@ -569,6 +587,27 @@ async function waitForDashboardServiceStopSettle(
     undefined,
     "stopping",
   );
+}
+
+async function waitForDashboardServiceStartBeforeStop(
+  host: DashboardOpsHost,
+  serviceId: string,
+  timeoutMs = 15_000,
+  lifecycle?: DashboardLifecycleToken,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await refreshDashboardModelForSettlement(host, lifecycle);
+    if (serviceStartPendingKind(host, serviceId)) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      continue;
+    }
+    const service = getDashboardServiceEntry(host, serviceId);
+    if (isLiveDashboardServiceEntry(service)) return true;
+    if (service?.status === "offline" || !service) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return isLiveDashboardServiceEntry(getDashboardServiceEntry(host, serviceId));
 }
 
 async function waitForStableDashboardServiceAbsence(
@@ -1248,6 +1287,35 @@ export async function stopDashboardServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
 ): Promise<void> {
+  const queuedStop = serviceStartPendingKind(host, service.id);
+  if (queuedStop) {
+    const queued = queuedServiceStopsFor(host);
+    const label = service.label ?? service.id;
+    if (queued.has(service.id)) {
+      host.footerFlash = `Stop already queued for ${label}`;
+      host.footerFlashTicks = 3;
+      host.renderDashboard();
+      return;
+    }
+    queued.add(service.id);
+    const lifecycle = captureDashboardLifecycle(host);
+    const modelLifecycle = captureDashboardLifecycle(host);
+    host.footerFlash = `Stopping ${label} when startup finishes`;
+    host.footerFlashTicks = 3;
+    renderDashboardMutationFrame(host, lifecycle);
+    try {
+      const started = await waitForDashboardServiceStartBeforeStop(host, service.id, 15_000, modelLifecycle);
+      if (!isDashboardLifecycleCurrent(host, lifecycle)) return;
+      if (!started) {
+        host.footerFlash = `${label} is not running`;
+        host.footerFlashTicks = 3;
+        renderDashboardMutationFrame(host, lifecycle);
+        return;
+      }
+    } finally {
+      queued.delete(service.id);
+    }
+  }
   const serviceSeed = host.getDashboardServices?.().find((entry: any) => entry.id === service.id) ?? {
     id: service.id,
     command: service.label ?? "service",

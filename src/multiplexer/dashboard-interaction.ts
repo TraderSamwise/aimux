@@ -24,6 +24,18 @@ function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | n
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
 }
 
+function isStoppableStartingService(
+  host: any,
+  entry: { id?: string; pendingAction?: string } | null | undefined,
+): boolean {
+  return Boolean(
+    entry &&
+    (entry.pendingAction === "creating" ||
+      entry.pendingAction === "starting" ||
+      (typeof entry.id === "string" && host.dashboardActivatingServiceIds?.has?.(entry.id))),
+  );
+}
+
 function pendingDashboardItemMessage(
   entry: { pendingAction?: string; label?: string; command?: string; id?: string },
   fallbackKind: "agent" | "service",
@@ -668,11 +680,16 @@ export const dashboardInteractionMethods = {
 
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
-          if (hasBlockingPendingDashboardAction(selectedService)) {
+          if (
+            hasBlockingPendingDashboardAction(selectedService) &&
+            !isStoppableStartingService(this, selectedService)
+          ) {
             flashPendingDashboardItem(this, selectedService, "service");
             return;
           }
-          if (selectedService.status === "offline") {
+          if (isStoppableStartingService(this, selectedService)) {
+            void this.stopDashboardServiceWithFeedback(selectedService);
+          } else if (selectedService.status === "offline") {
             void this.removeDashboardServiceWithFeedback(selectedService);
           } else {
             void this.stopDashboardServiceWithFeedback(selectedService);
@@ -773,21 +790,27 @@ export const dashboardInteractionMethods = {
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
     this.persistDashboardUiState();
     if (service.status !== "running") {
-      const resumeResult = await this.resumeOfflineServiceWithFeedback(service);
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      if (resumeResult === "pending") return "pending";
-      if (resumeResult === "failed") return "error";
-      const serviceForOpen =
-        this.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? service;
-      const result = await this.waitAndOpenLiveTmuxWindowForService(serviceForOpen, 60_000);
-      if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
-      void refreshDashboardAfterServiceOpen(this, activationToken);
-      if (result !== "opened") {
-        this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
-        this.footerFlashTicks = 3;
-        this.renderDashboard();
+      this.dashboardActivatingServiceIds ??= new Set<string>();
+      this.dashboardActivatingServiceIds.add(service.id);
+      try {
+        const resumeResult = await this.resumeOfflineServiceWithFeedback(service);
+        if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+        if (resumeResult === "pending") return "pending";
+        if (resumeResult === "failed") return "error";
+        const serviceForOpen =
+          this.getDashboardServices?.().find((entry: DashboardService) => entry.id === service.id) ?? service;
+        const result = await this.waitAndOpenLiveTmuxWindowForService(serviceForOpen, 60_000);
+        if (!isCurrentDashboardActivation(this, activationToken)) return "missing";
+        void refreshDashboardAfterServiceOpen(this, activationToken);
+        if (result !== "opened") {
+          this.footerFlash = `Service ${service.label ?? service.command ?? service.id} is not available yet`;
+          this.footerFlashTicks = 3;
+          this.renderDashboard();
+        }
+        return result;
+      } finally {
+        this.dashboardActivatingServiceIds.delete(service.id);
       }
-      return result;
     }
     const openResult = await this.waitAndOpenLiveTmuxWindowForService(service);
     if (!isCurrentDashboardActivation(this, activationToken)) return "missing";

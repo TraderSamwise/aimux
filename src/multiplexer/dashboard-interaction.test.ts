@@ -541,6 +541,76 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("queues stop instead of deleting an offline service that is still starting", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      pendingAction: "starting",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      removeDashboardServiceWithFeedback: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+  });
+
+  it("queues stop instead of deleting a service whose activation is in flight", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+      },
+      dashboardActivatingServiceIds: new Set(["service-1"]),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => service),
+      stopDashboardServiceWithFeedback: vi.fn(),
+      removeDashboardServiceWithFeedback: vi.fn(),
+      getDashboardSessions: vi.fn(() => []),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopDashboardServiceWithFeedback).toHaveBeenCalledWith(service);
+    expect(host.removeDashboardServiceWithFeedback).not.toHaveBeenCalled();
+  });
+
   it("stops a live dashboard agent row even when this process has no local runtime", () => {
     const entry = {
       id: "claude-1",
