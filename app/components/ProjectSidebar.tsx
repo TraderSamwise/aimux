@@ -18,7 +18,6 @@ import type { DesktopState } from "@/lib/desktop-state";
 import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
 import {
   buildViewHref,
-  buildViewPath,
   detailHrefForPath,
   parentViewHrefForPath,
   projectPathFromSearchOrLocation,
@@ -338,11 +337,16 @@ function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
         return (
           <Pressable
             key={id}
-            onPress={() =>
-              router.replace(
-                buildViewPath(MAIN_TAB_ROUTES[tabId].href, { project: routeProjectPath }),
-              )
-            }
+            onPress={() => {
+              const href = buildViewHref(MAIN_TAB_ROUTES[tabId].href, {
+                project: routeProjectPath,
+              });
+              if (Platform.OS === "web" && typeof window !== "undefined") {
+                window.location.assign(String(href));
+                return;
+              }
+              router.push(href);
+            }}
             className={cn(
               "mb-0.5 flex-row items-center gap-2 rounded-md px-2 py-2",
               active ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",

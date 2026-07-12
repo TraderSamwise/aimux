@@ -1,12 +1,9 @@
 import { useCallback } from "react";
-import { useGlobalSearchParams, useRouter, type Href } from "expo-router";
+import { TabActions } from "@react-navigation/native";
+import { useGlobalSearchParams, useNavigation, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
 import { selectedProjectPathAtom } from "@/stores/projects";
-import {
-  buildViewPath,
-  projectPathFromSearchOrLocation,
-  type SearchValue,
-} from "@/lib/view-location";
+import { projectPathFromSearchOrLocation, type SearchValue } from "@/lib/view-location";
 
 export type MainTabId =
   | "dashboard"
@@ -36,10 +33,15 @@ export interface MainTabRoute {
     | "topology"
     | "project"
     | "library"
-    | "(inbox)"
-    | "(threads)"
+    | "notifications"
+    | "threads"
     | "(settings)";
 }
+
+type MainTabNavigation = {
+  dispatch: (action: ReturnType<typeof TabActions.jumpTo>) => void;
+  navigate?: (screen: MainTabRoute["screen"], params?: { project: string }) => void;
+};
 
 export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
   dashboard: {
@@ -63,26 +65,26 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
   project: {
     id: "project",
     href: "/project",
-    internalHref: "/project" as Href,
+    internalHref: "/(main)/(tabs)/project" as Href,
     screen: "project",
   },
   library: {
     id: "library",
     href: "/library",
-    internalHref: "/library" as Href,
+    internalHref: "/(main)/(tabs)/library" as Href,
     screen: "library",
   },
   inbox: {
     id: "inbox",
     href: "/notifications",
-    internalHref: "/(main)/(tabs)/(inbox)/notifications",
-    screen: "(inbox)",
+    internalHref: "/(main)/(tabs)/notifications",
+    screen: "notifications",
   },
   threads: {
     id: "threads",
     href: "/threads",
-    internalHref: "/(main)/(tabs)/(threads)/threads",
-    screen: "(threads)",
+    internalHref: "/(main)/(tabs)/threads",
+    screen: "threads",
   },
   settings: {
     id: "settings",
@@ -91,6 +93,14 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
     screen: "(settings)",
   },
 };
+
+export function buildMainTabHref(tabId: MainTabId, projectPath?: string | null): Href {
+  const params =
+    typeof projectPath === "string" && projectPath.trim().length > 0
+      ? { project: projectPath }
+      : {};
+  return { pathname: MAIN_TAB_ROUTES[tabId].internalHref, params } as Href;
+}
 
 export function mainTabForPath(pathname: string): MainTabId {
   if (pathname.startsWith("/coordination")) return "coordination";
@@ -104,7 +114,7 @@ export function mainTabForPath(pathname: string): MainTabId {
 }
 
 export function useMainTabNavigation() {
-  const router = useRouter();
+  const navigation = useNavigation() as MainTabNavigation;
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
   const currentProjectPath =
@@ -112,8 +122,24 @@ export function useMainTabNavigation() {
 
   return useCallback(
     (tabId: MainTabId) => {
-      router.replace(buildViewPath(MAIN_TAB_ROUTES[tabId].href, { project: currentProjectPath }));
+      navigateMainTab(navigation, tabId, currentProjectPath);
     },
-    [currentProjectPath, router],
+    [currentProjectPath, navigation],
   );
+}
+
+export function navigateMainTab(
+  navigation: MainTabNavigation,
+  tabId: MainTabId,
+  projectPath?: string | null,
+) {
+  const params =
+    typeof projectPath === "string" && projectPath.trim().length > 0
+      ? { project: projectPath }
+      : undefined;
+  if (navigation.navigate) {
+    navigation.navigate(MAIN_TAB_ROUTES[tabId].screen, params);
+    return;
+  }
+  navigation.dispatch(TabActions.jumpTo(MAIN_TAB_ROUTES[tabId].screen, params));
 }
