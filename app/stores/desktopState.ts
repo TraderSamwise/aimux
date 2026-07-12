@@ -84,6 +84,7 @@ export const beginDesktopStateRefreshAtom = atom(null, (get, set, projectPath: s
   const current = get(desktopStateResourceFamily(projectPath));
   set(desktopStateResourceFamily(projectPath), {
     ...current,
+    error: null,
     pending: true,
     stale: current.value !== null,
   });

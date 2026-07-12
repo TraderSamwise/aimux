@@ -102,6 +102,7 @@ export const beginNotificationFeedRefreshAtom = atom(null, (get, set, projectPat
   const current = get(notificationFeedResourceFamily(projectPath));
   set(notificationFeedResourceFamily(projectPath), {
     ...current,
+    error: null,
     pending: true,
     stale: current.value !== null,
   });

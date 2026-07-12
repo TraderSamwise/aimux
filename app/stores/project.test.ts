@@ -314,6 +314,30 @@ describe("project resource lifecycle", () => {
     });
   });
 
+  it("clears stale project observability errors when retrying", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const current = observability();
+    const requestKey = "request-1";
+
+    putObservability(store, projectPath, current);
+    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey });
+    store.set(applyProjectObservabilityFailureAtom, {
+      projectPath,
+      requestKey,
+      error: "request timed out after 10000ms",
+    });
+    store.set(beginProjectObservabilityRefreshAtom, { projectPath, requestKey: "request-2" });
+
+    expect(store.get(projectObservabilityResourceFamily(projectPath))).toMatchObject({
+      value: current,
+      error: null,
+      pending: true,
+      pendingRequestKey: "request-2",
+      stale: true,
+    });
+  });
+
   it("keeps stale project tasks after a refresh failure", () => {
     const store = createStore();
     const projectPath = "/repo";
