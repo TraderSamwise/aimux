@@ -12,7 +12,11 @@ import type { DesktopSession } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
-import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
+import {
+  failLocalProjectLifecycleTransition,
+  localProjectLifecycleTransition,
+  recordProjectLifecycleTransitionAtom,
+} from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type LucideIcon = typeof Square;
@@ -65,12 +69,22 @@ export function AgentActions({
 
   function runAction(
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
-    opts?: { isKill?: boolean },
+    opts?: { isKill?: boolean; localTransition?: () => ProjectLifecycleTransition },
   ) {
     return async () => {
       if (!endpoint) return;
       setBusy(true);
       setError(null);
+      const localTransition = opts?.localTransition?.();
+      if (localTransition) {
+        recordTransition({
+          projectPath,
+          transition: localTransition,
+          label: session.label || session.id,
+          tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
+          worktreePath: session.worktreePath,
+        });
+      }
       try {
         const response = await fn();
         recordTransition({
@@ -86,6 +100,15 @@ export function AgentActions({
         );
         if (opts?.isKill) onKilled?.();
       } catch (e) {
+        if (localTransition) {
+          recordTransition({
+            projectPath,
+            transition: failLocalProjectLifecycleTransition(localTransition),
+            label: session.label || session.id,
+            tool: forkTool || session.toolConfigKey || firstTokenOf(session.command),
+            worktreePath: session.worktreePath,
+          });
+        }
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
@@ -108,7 +131,14 @@ export function AgentActions({
             icon={Square}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() => stopAgent(endpoint, session.id, { token }))}
+            onPress={runAction(() => stopAgent(endpoint, session.id, { token }), {
+              localTransition: () =>
+                localProjectLifecycleTransition({
+                  operation: "agent.stop",
+                  targetKind: "agent",
+                  targetId: session.id,
+                }),
+            })}
             disabled={!canAct}
             label={`Stop ${session.label || session.id}`}
           />
@@ -117,7 +147,14 @@ export function AgentActions({
             icon={Play}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() => resumeAgent(endpoint, session.id, { token }))}
+            onPress={runAction(() => resumeAgent(endpoint, session.id, { token }), {
+              localTransition: () =>
+                localProjectLifecycleTransition({
+                  operation: "agent.resume",
+                  targetKind: "agent",
+                  targetId: session.id,
+                }),
+            })}
             disabled={!canAct}
             label={`Resume ${session.label || session.id}`}
           />
@@ -156,7 +193,15 @@ export function AgentActions({
           icon={Trash2}
           iconSize={iconSize}
           sizeClass={sizeClass}
-          onPress={runAction(() => killAgent(endpoint, session.id, { token }), { isKill: true })}
+          onPress={runAction(() => killAgent(endpoint, session.id, { token }), {
+            isKill: true,
+            localTransition: () =>
+              localProjectLifecycleTransition({
+                operation: "agent.kill",
+                targetKind: "agent",
+                targetId: session.id,
+              }),
+          })}
           disabled={!canAct}
           label={`Kill ${session.label || session.id}`}
         />

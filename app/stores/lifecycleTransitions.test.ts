@@ -9,6 +9,8 @@ import type {
 import { applyDesktopStateSuccessAtom, desktopStateFamily } from "./desktopState";
 import {
   applyProjectLifecycleTransitionsToDesktopState,
+  failLocalProjectLifecycleTransition,
+  localProjectLifecycleTransition,
   projectLifecycleTransitionsFamily,
   recordProjectLifecycleTransitionAtom,
 } from "./lifecycleTransitions";
@@ -43,6 +45,27 @@ function transition(
 }
 
 describe("project lifecycle transition projection", () => {
+  it("builds local transitions and failed clearing transitions for slow client actions", () => {
+    const local = localProjectLifecycleTransition({
+      operation: "agent.stop",
+      targetKind: "agent",
+      targetId: "agent-1",
+    });
+
+    expect(local).toMatchObject({
+      operation: "agent.stop",
+      targetKind: "agent",
+      targetId: "agent-1",
+      phase: "started",
+    });
+    expect(local.operationId).toContain("client:agent.stop:agent-1:");
+
+    expect(failLocalProjectLifecycleTransition(local)).toMatchObject({
+      operationId: local.operationId,
+      phase: "failed",
+    });
+  });
+
   it("overlays an in-flight agent resume over stale desktop-state", () => {
     const state = desktopState({
       sessions: [{ id: "agent-1", label: "claude", status: "offline" }],

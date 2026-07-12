@@ -32,6 +32,13 @@ export interface SettleProjectLifecycleTransitionsInput {
   state: DesktopState;
 }
 
+export interface LocalProjectLifecycleTransitionInput {
+  operation: ProjectLifecycleTransitionOperation;
+  targetKind: ProjectLifecycleTransition["targetKind"];
+  targetId?: string;
+  targetPath?: string;
+}
+
 const PROJECTABLE_PHASES = new Set(["queued", "started", "settling", "succeeded"]);
 
 export const projectLifecycleTransitionsFamily = atomFamily((_projectPath: string) =>
@@ -75,6 +82,36 @@ export const settleProjectLifecycleTransitionsAtom = atom(
 export const clearProjectLifecycleTransitionsAtom = atom(null, (_get, set, projectPath: string) => {
   set(projectLifecycleTransitionsFamily(projectPath), []);
 });
+
+export function localProjectLifecycleTransition({
+  operation,
+  targetKind,
+  targetId,
+  targetPath,
+}: LocalProjectLifecycleTransitionInput): ProjectLifecycleTransition {
+  const now = new Date().toISOString();
+  const target = targetId ?? targetPath ?? "unknown";
+  return {
+    operationId: `client:${operation}:${target}:${Date.now()}`,
+    operation,
+    targetKind,
+    targetId,
+    targetPath,
+    phase: "started",
+    startedAt: now,
+    updatedAt: now,
+  };
+}
+
+export function failLocalProjectLifecycleTransition(
+  transition: ProjectLifecycleTransition,
+): ProjectLifecycleTransition {
+  return {
+    ...transition,
+    phase: "failed",
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 export function applyProjectLifecycleTransitionsToDesktopState(
   state: DesktopState | null,
