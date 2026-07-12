@@ -10,6 +10,7 @@ import { createWorktree, removeWorktree } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
+import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
@@ -152,7 +153,27 @@ export function WorktreeManagementPanel({
               onPress={() =>
                 removePath
                   ? runAction("remove", async () => {
-                      const response = await removeWorktree(endpoint, removePath, { token });
+                      const localTransition = localWorktreeRemoveTransition(removePath);
+                      recordTransition({
+                        projectPath,
+                        transition: localTransition,
+                        worktreePath: removePath,
+                      });
+                      let response: Awaited<ReturnType<typeof removeWorktree>>;
+                      try {
+                        response = await removeWorktree(endpoint, removePath, { token });
+                      } catch (e) {
+                        recordTransition({
+                          projectPath,
+                          transition: {
+                            ...localTransition,
+                            phase: "failed",
+                            updatedAt: new Date().toISOString(),
+                          },
+                          worktreePath: removePath,
+                        });
+                        throw e;
+                      }
                       recordTransition({
                         projectPath,
                         transition: response.transition,
@@ -173,6 +194,21 @@ export function WorktreeManagementPanel({
       {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
     </Card>
   );
+}
+
+function localWorktreeRemoveTransition(path: string): ProjectLifecycleTransition {
+  const now = new Date().toISOString();
+  const name = path.split(/[\\/]/).pop() ?? path;
+  return {
+    operationId: `client:worktree.remove:${path}:${Date.now()}`,
+    operation: "worktree.remove",
+    targetKind: "worktree",
+    targetId: name,
+    targetPath: path,
+    phase: "started",
+    startedAt: now,
+    updatedAt: now,
+  };
 }
 
 function WorktreeChip({

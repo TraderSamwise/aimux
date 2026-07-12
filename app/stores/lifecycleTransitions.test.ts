@@ -239,6 +239,38 @@ describe("project lifecycle transition projection", () => {
     ]);
   });
 
+  it("keeps removed worktrees marked while dependent rows are still settling", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const path = "/repo/.aimux/worktrees/old";
+
+    store.set(recordProjectLifecycleTransitionAtom, {
+      projectPath,
+      transition: transition("worktree.remove", "old", "worktree", path, "settling"),
+      worktreePath: path,
+    });
+    store.set(applyDesktopStateSuccessAtom, {
+      projectPath,
+      state: desktopState({
+        sessions: [{ id: "agent-1", label: "codex", status: "offline", worktreePath: path }],
+        worktrees: [],
+      }),
+    });
+
+    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(1);
+    expect(store.get(desktopStateFamily(projectPath))?.worktrees).toEqual([
+      { name: "old", path, branch: "old", removing: true },
+    ]);
+
+    store.set(applyDesktopStateSuccessAtom, {
+      projectPath,
+      state: desktopState({ sessions: [], services: [], worktrees: [] }),
+    });
+
+    expect(store.get(projectLifecycleTransitionsFamily(projectPath))).toHaveLength(0);
+    expect(store.get(desktopStateFamily(projectPath))?.worktrees ?? []).toEqual([]);
+  });
+
   it("projects worktree resurrect transitions like worktree creation", () => {
     const path = "/repo/.aimux/worktrees/restored";
     const projected = applyProjectLifecycleTransitionsToDesktopState(desktopState(), [

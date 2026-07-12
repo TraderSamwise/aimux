@@ -183,6 +183,12 @@ function overlayWorktreeTransition(
     worktrees.push({ name, path, branch: name, pending: true });
     return;
   }
+  if (isRemovingWorktreeOperation(record.transition.operation) && index < 0) {
+    const name =
+      record.worktreeName ?? record.transition.targetId ?? path.split(/[\\/]/).pop() ?? path;
+    worktrees.push({ name, path, branch: name, removing: true });
+    return;
+  }
   if (index >= 0) {
     worktrees[index] = { ...worktrees[index], removing: true };
   }
@@ -258,7 +264,11 @@ function isWorktreeTransitionSettled(
     case "worktree.remove":
     case "worktree.graveyard":
     case "graveyard.worktree.delete":
-      return !worktree;
+      return (
+        !worktree &&
+        !state.sessions.some((session) => session.worktreePath === path) &&
+        !state.services.some((service) => service.worktreePath === path)
+      );
     default:
       return true;
   }
@@ -322,4 +332,12 @@ function shouldCreateOptimisticAgent(operation: ProjectLifecycleTransitionOperat
 
 function shouldCreateOptimisticWorktree(operation: ProjectLifecycleTransitionOperation): boolean {
   return operation === "worktree.create" || operation === "graveyard.worktree.resurrect";
+}
+
+function isRemovingWorktreeOperation(operation: ProjectLifecycleTransitionOperation): boolean {
+  return (
+    operation === "worktree.remove" ||
+    operation === "worktree.graveyard" ||
+    operation === "graveyard.worktree.delete"
+  );
 }

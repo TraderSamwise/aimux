@@ -240,17 +240,21 @@ export default function MainLayout() {
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let activeController: AbortController | null = null;
 
     async function poll() {
       if (cancelled) return;
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
       beginDesktopStateRefresh(effectiveProjectPath!);
       try {
         const token = await getTokenRef.current();
-        const state = await getDesktopState(endpoint!, { token });
+        const state = await getDesktopState(endpoint!, { token, signal: controller.signal });
         if (cancelled) return;
         applyDesktopStateSuccess({ projectPath: effectiveProjectPath!, state });
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           const msg = err instanceof Error ? err.message : String(err);
           applyDesktopStateFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
@@ -265,6 +269,7 @@ export default function MainLayout() {
     void poll();
     return () => {
       cancelled = true;
+      activeController?.abort();
       if (timer) clearTimeout(timer);
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
@@ -294,13 +299,17 @@ export default function MainLayout() {
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let activeController: AbortController | null = null;
 
     async function poll() {
       if (cancelled) return;
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
       beginNotificationFeedRefresh(effectiveProjectPath!);
       try {
         const token = await getTokenRef.current();
-        const feed = await listNotifications(endpoint!, { token });
+        const feed = await listNotifications(endpoint!, { token, signal: controller.signal });
         if (cancelled) return;
         applyNotificationFeedSuccess({
           projectPath: effectiveProjectPath!,
@@ -311,7 +320,7 @@ export default function MainLayout() {
           },
         });
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           const msg = err instanceof Error ? err.message : String(err);
           applyNotificationFeedFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
@@ -326,6 +335,7 @@ export default function MainLayout() {
     void poll();
     return () => {
       cancelled = true;
+      activeController?.abort();
       if (timer) clearTimeout(timer);
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
