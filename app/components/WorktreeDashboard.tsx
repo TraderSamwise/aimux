@@ -10,6 +10,7 @@ import { ServiceActions } from "@/components/service-actions";
 import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
 import { StatusDotMini } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
+import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
@@ -633,11 +634,13 @@ export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   }, [getToken]);
 
   function handlePickSession(sessionId: string) {
+    blurWebActiveElement();
     selectSession(sessionId);
     router.push(detailHrefForPath(pathname, "agent", sessionId, projectPath));
   }
 
   function handlePickService(serviceId: string) {
+    blurWebActiveElement();
     router.push(detailHrefForPath(pathname, "service", serviceId, projectPath));
   }
 

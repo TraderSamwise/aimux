@@ -13,6 +13,7 @@ import {
 import { Text } from "@/components/ui/text";
 import { WorktreeList } from "@/components/WorktreeDashboard";
 import { useAuth } from "@/lib/auth";
+import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopState } from "@/lib/desktop-state";
 import { MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
@@ -338,6 +339,7 @@ function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
           <Pressable
             key={id}
             onPress={() => {
+              blurWebActiveElement();
               const href = buildViewHref(MAIN_TAB_ROUTES[tabId].href, {
                 project: routeProjectPath,
               });
@@ -440,6 +442,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const pickerMode = !effectiveProject || showPicker;
 
   function handlePickProject(path: string) {
+    blurWebActiveElement();
     selectProject(path);
     setShowPicker(false);
     // Selecting a project always lands on the Project screen's Dashboard section.
@@ -447,11 +450,13 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   }
 
   function handlePickSession(sessionId: string) {
+    blurWebActiveElement();
     setSelectedSession(sessionId);
     router.push(detailHrefForPath(pathname, "agent", sessionId, routeProjectPath));
   }
 
   function handlePickService(serviceId: string) {
+    blurWebActiveElement();
     router.push(detailHrefForPath(pathname, "service", serviceId, routeProjectPath));
   }
 

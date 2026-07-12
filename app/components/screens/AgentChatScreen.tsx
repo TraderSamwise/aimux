@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
+import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
   getShare,
@@ -474,6 +475,7 @@ export default function ChatScreen() {
   }
 
   function goBack() {
+    blurWebActiveElement();
     if (router.canGoBack()) router.back();
     else router.replace(parentViewHrefForPath(pathname, projectPath));
   }
@@ -549,15 +551,16 @@ export default function ChatScreen() {
                     )}
                   </Pressable>
                   <Pressable
-                    onPress={() =>
+                    onPress={() => {
+                      blurWebActiveElement();
                       router.push({
                         pathname: "/plans/[sessionId]",
                         params: {
                           sessionId: session.id,
                           ...(projectPath ? { project: projectPath } : {}),
                         },
-                      })
-                    }
+                      });
+                    }}
                   >
                     <Text className="text-sm text-primary">Plan</Text>
                   </Pressable>
