@@ -22,8 +22,8 @@ export default function MainTabsLayout() {
       <Tabs.Screen name="topology" />
       <Tabs.Screen name="project" />
       <Tabs.Screen name="library" />
-      <Tabs.Screen name="(inbox)" />
-      <Tabs.Screen name="(threads)" />
+      <Tabs.Screen name="notifications" />
+      <Tabs.Screen name="threads" />
       <Tabs.Screen name="(settings)" />
     </Tabs>
   );

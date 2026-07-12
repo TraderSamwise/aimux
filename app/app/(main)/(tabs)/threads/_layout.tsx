@@ -4,7 +4,7 @@ import { Stack } from "expo-router";
 export default function ThreadsStackLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="threads" />
+      <Stack.Screen name="index" />
     </Stack>
   );
 }
