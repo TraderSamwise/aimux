@@ -43,7 +43,7 @@ export function AgentManagementPanel({
   const worktreeChoices = useMemo(
     () =>
       groups
-        .filter((group) => group.path)
+        .filter((group) => group.path && !group.pending && !group.removing)
         .map((group) => ({
           key: group.key,
           label: group.name,

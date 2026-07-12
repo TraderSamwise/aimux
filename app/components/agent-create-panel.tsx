@@ -38,10 +38,13 @@ export function AgentCreatePanel({
   const worktreeChoices = useMemo(
     () =>
       groups
-        .filter((group) => !group.isMainCheckout && group.path)
+        .filter((group) => !group.isMainCheckout && group.path && !group.pending && !group.removing)
         .map((group) => ({ key: group.key, label: group.name, path: group.path })),
     [groups],
   );
+  const selectedWorktreePath = worktreeChoices.some((choice) => choice.path === worktreePath)
+    ? worktreePath
+    : null;
 
   async function createAgent() {
     if (!endpoint || busy) return;
@@ -52,7 +55,7 @@ export function AgentCreatePanel({
         endpoint,
         {
           tool,
-          worktreePath: worktreePath ?? undefined,
+          worktreePath: selectedWorktreePath ?? undefined,
           open: false,
         },
         { token },
@@ -62,7 +65,7 @@ export function AgentCreatePanel({
         transition: response.transition,
         label: response.sessionId,
         tool,
-        worktreePath: worktreePath ?? undefined,
+        worktreePath: selectedWorktreePath ?? undefined,
       });
       kickDesktopRefresh();
       kickProjectViewRefresh([
@@ -112,7 +115,7 @@ export function AgentCreatePanel({
         <View className="min-w-[180px] flex-1 flex-row flex-wrap gap-2">
           <WorktreeChip
             label="Main checkout"
-            active={worktreePath === null}
+            active={selectedWorktreePath === null}
             onPress={() => setWorktreePath(null)}
           />
           {worktreeChoices
@@ -121,7 +124,7 @@ export function AgentCreatePanel({
               <WorktreeChip
                 key={choice.key}
                 label={choice.label}
-                active={worktreePath === choice.path}
+                active={selectedWorktreePath === choice.path}
                 onPress={() => setWorktreePath(choice.path)}
               />
             ))}
