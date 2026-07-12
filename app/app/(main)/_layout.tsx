@@ -77,7 +77,9 @@ function isTransientPollError(err: unknown): boolean {
   const message = getErrorMessage(err);
   return (
     name === "AbortError" ||
-    /aborted|aborterror|user aborted a request/i.test(message) ||
+    /aborted|aborterror|user aborted a request|failed to fetch|network request failed|load failed/i.test(
+      message,
+    ) ||
     /^request timed out after \d+ms$/i.test(message)
   );
 }
