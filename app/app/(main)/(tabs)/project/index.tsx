@@ -59,7 +59,7 @@ function resolveProjectSection(value: string | null): ProjectSection {
   return SECTIONS.some((section) => section.id === value) ? (value as ProjectSection) : "dashboard";
 }
 
-function SummaryTile({ label, value }: { label: string; value: number }) {
+function SummaryTile({ label, value }: { label: string; value: number | string }) {
   return (
     <Card className="mr-2 mb-2 min-w-[112px] flex-1 rounded-lg p-3">
       <Text className="text-[22px] font-bold leading-tight text-foreground">{value}</Text>
@@ -214,6 +214,8 @@ export default function ProjectScreen() {
     };
   }, [endpointKey, projectPathKey]);
 
+  const projectModelReady = projectResource.value?.project !== undefined;
+  const tasksReady = tasksResource.value !== null;
   const visibleModel = projectResource.value?.project ?? emptyProjectObservability();
   const visibleTasks = useMemo(() => tasksResource.value?.tasks ?? [], [tasksResource.value]);
 
@@ -272,6 +274,7 @@ export default function ProjectScreen() {
     visibleModel.summary.agentsWaiting +
     visibleModel.summary.agentsOffline;
   const taskCount = visibleModel.summary.openTasks + visibleModel.summary.doneTasks;
+  const summaryValue = (value: number) => (projectModelReady ? value : "...");
   const visibleProjectError = projectResource.error;
   const visibleTaskError = tasksResource.error;
 
@@ -299,11 +302,14 @@ export default function ProjectScreen() {
       {!projectLoading ? (
         <>
           <View className="mb-5 flex-row flex-wrap">
-            <SummaryTile label="Agents" value={agentCount} />
-            <SummaryTile label="Services" value={visibleModel.summary.services} />
-            <SummaryTile label="Worktrees" value={visibleModel.summary.worktrees} />
-            <SummaryTile label="Tasks" value={taskCount} />
-            <SummaryTile label="Unread" value={visibleModel.summary.unreadNotifications} />
+            <SummaryTile label="Agents" value={summaryValue(agentCount)} />
+            <SummaryTile label="Services" value={summaryValue(visibleModel.summary.services)} />
+            <SummaryTile label="Worktrees" value={summaryValue(visibleModel.summary.worktrees)} />
+            <SummaryTile label="Tasks" value={summaryValue(taskCount)} />
+            <SummaryTile
+              label="Unread"
+              value={summaryValue(visibleModel.summary.unreadNotifications)}
+            />
           </View>
 
           <View className="mb-4 flex-row flex-wrap">
@@ -347,12 +353,28 @@ export default function ProjectScreen() {
       {project && endpoint ? (
         <>
           {section === "dashboard" ? <WorktreeDashboard padded={false} /> : null}
-          {section === "story" ? <StoryList items={visibleModel.story} /> : null}
-          {section === "progress" ? <ProgressSection model={visibleModel} /> : null}
-          {section === "artifacts" ? <StoryList items={artifactHints} /> : null}
-          {section === "tests" ? <StoryList items={verificationHints} /> : null}
-          {section === "queue" ? <TaskList tasks={openTasks} endpoint={endpoint} /> : null}
-          {section === "topology" ? (
+          {section !== "dashboard" && !projectModelReady ? (
+            <EmptyCard title="Loading project state..." body="Fetching project state." />
+          ) : null}
+          {section === "story" && projectModelReady ? (
+            <StoryList items={visibleModel.story} />
+          ) : null}
+          {section === "progress" && projectModelReady ? (
+            <ProgressSection model={visibleModel} />
+          ) : null}
+          {section === "artifacts" && projectModelReady ? (
+            <StoryList items={artifactHints} />
+          ) : null}
+          {section === "tests" && projectModelReady ? (
+            <StoryList items={verificationHints} />
+          ) : null}
+          {section === "queue" && projectModelReady && !tasksReady ? (
+            <EmptyCard title="Loading project queue..." body="Fetching queue state." />
+          ) : null}
+          {section === "queue" && projectModelReady && tasksReady ? (
+            <TaskList tasks={openTasks} endpoint={endpoint} />
+          ) : null}
+          {section === "topology" && projectModelReady ? (
             <View>
               <Card className="mb-3 rounded-lg p-4">
                 <View className="flex-row items-center">
