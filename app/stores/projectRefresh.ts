@@ -26,6 +26,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isTransientRefreshError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : "";
+  const message = errorMessage(error);
+  return (
+    name === "AbortError" ||
+    /aborted|aborterror|user aborted a request/i.test(message) ||
+    /^request timed out after \d+ms$/i.test(message)
+  );
+}
+
 export const refreshProjectObservabilityResourceAtom = atom(
   null,
   async (
@@ -60,11 +70,15 @@ export const refreshProjectObservabilityResourceAtom = atom(
         set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
         return;
       }
-      set(applyProjectObservabilityFailureAtom, {
-        projectPath,
-        requestKey,
-        error: errorMessage(err),
-      });
+      if (isTransientRefreshError(err)) {
+        set(settleProjectObservabilityRefreshAtom, { projectPath, requestKey });
+      } else {
+        set(applyProjectObservabilityFailureAtom, {
+          projectPath,
+          requestKey,
+          error: errorMessage(err),
+        });
+      }
     }
   },
 );
@@ -103,11 +117,15 @@ export const refreshProjectTasksResourceAtom = atom(
         set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
         return;
       }
-      set(applyProjectTasksFailureAtom, {
-        projectPath,
-        requestKey,
-        error: errorMessage(err),
-      });
+      if (isTransientRefreshError(err)) {
+        set(settleProjectTasksRefreshAtom, { projectPath, requestKey });
+      } else {
+        set(applyProjectTasksFailureAtom, {
+          projectPath,
+          requestKey,
+          error: errorMessage(err),
+        });
+      }
     }
   },
 );

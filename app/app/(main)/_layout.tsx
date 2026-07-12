@@ -72,6 +72,16 @@ const PROJECT_SCOPED_PATH_PREFIXES = [
   "/threads",
 ];
 
+function isTransientPollError(err: unknown): boolean {
+  const name = err instanceof Error ? err.name : "";
+  const message = getErrorMessage(err);
+  return (
+    name === "AbortError" ||
+    /aborted|aborterror|user aborted a request/i.test(message) ||
+    /^request timed out after \d+ms$/i.test(message)
+  );
+}
+
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const projects = useAtomValue(projectsAtom);
@@ -211,7 +221,9 @@ export default function MainLayout() {
         if (!cancelled) reconcileProjects(projects);
       } catch (err) {
         // Failed fetches report inline per-operation; no global UI per task description.
-        if (!cancelled) console.warn("project list refresh failed:", err);
+        if (!cancelled && !isTransientPollError(err)) {
+          console.warn("project list refresh failed:", err);
+        }
       }
       if (cancelled) return;
       timer = setTimeout(loop, PROJECT_LIST_POLL_INTERVAL_MS);
@@ -254,8 +266,8 @@ export default function MainLayout() {
         if (cancelled) return;
         applyDesktopStateSuccess({ projectPath: effectiveProjectPath!, state });
       } catch (err) {
-        if (!cancelled && !controller.signal.aborted) {
-          const msg = err instanceof Error ? err.message : String(err);
+        if (!cancelled && !controller.signal.aborted && !isTransientPollError(err)) {
+          const msg = getErrorMessage(err);
           applyDesktopStateFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("desktop-state fetch failed:", err);
@@ -320,8 +332,8 @@ export default function MainLayout() {
           },
         });
       } catch (err) {
-        if (!cancelled && !controller.signal.aborted) {
-          const msg = err instanceof Error ? err.message : String(err);
+        if (!cancelled && !controller.signal.aborted && !isTransientPollError(err)) {
+          const msg = getErrorMessage(err);
           applyNotificationFeedFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
             console.warn("notification fetch failed:", err);

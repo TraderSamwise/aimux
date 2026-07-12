@@ -59,6 +59,30 @@ describe("notification feed resource lifecycle", () => {
     });
   });
 
+  it("clears stale refresh errors when retrying with a previous feed", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const current = feed();
+
+    store.set(applyNotificationFeedSuccessAtom, {
+      projectPath,
+      feed: current,
+      updatedAt: 10,
+    });
+    store.set(applyNotificationFeedFailureAtom, {
+      projectPath,
+      error: "request timed out after 10000ms",
+    });
+    store.set(beginNotificationFeedRefreshAtom, projectPath);
+
+    expect(store.get(notificationFeedResourceFamily(projectPath))).toMatchObject({
+      value: current,
+      error: null,
+      pending: true,
+      stale: true,
+    });
+  });
+
   it("keeps the last good feed after a refresh failure", () => {
     const store = createStore();
     const projectPath = "/repo";

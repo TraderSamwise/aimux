@@ -69,6 +69,30 @@ describe("desktop state resource lifecycle", () => {
     });
   });
 
+  it("clears stale refresh errors when retrying with a previous desktop-state", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const state = desktopState();
+
+    store.set(applyDesktopStateSuccessAtom, {
+      projectPath,
+      state,
+      updatedAt: 10,
+    });
+    store.set(applyDesktopStateFailureAtom, {
+      projectPath,
+      error: "request timed out after 10000ms",
+    });
+    store.set(beginDesktopStateRefreshAtom, projectPath);
+
+    expect(store.get(desktopStateResourceFamily(projectPath))).toMatchObject({
+      value: state,
+      error: null,
+      pending: true,
+      stale: true,
+    });
+  });
+
   it("keeps last good desktop-state after a critical refresh failure", () => {
     const store = createStore();
     const projectPath = "/repo";

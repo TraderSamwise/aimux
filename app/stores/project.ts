@@ -228,6 +228,7 @@ export const beginProjectObservabilityRefreshAtom = atom(
     const current = get(projectObservabilityResourceFamily(projectPath));
     set(projectObservabilityResourceFamily(projectPath), {
       ...current,
+      error: null,
       pending: true,
       pendingRequestKey: requestKey,
       stale: current.value !== null,
@@ -241,6 +242,7 @@ export const beginProjectTasksRefreshAtom = atom(
     const current = get(projectTasksResourceFamily(projectPath));
     set(projectTasksResourceFamily(projectPath), {
       ...current,
+      error: null,
       pending: true,
       pendingRequestKey: requestKey,
       stale: current.value !== null,
@@ -254,6 +256,7 @@ export const beginProjectThreadsRefreshAtom = atom(
     const current = get(projectThreadsResourceFamily(projectPath));
     set(projectThreadsResourceFamily(projectPath), {
       ...current,
+      error: null,
       pending: true,
       pendingRequestKey: requestKey,
       stale: current.value !== null,
@@ -267,6 +270,7 @@ export const beginProjectGraveyardRefreshAtom = atom(
     const current = get(projectGraveyardResourceFamily(projectPath));
     set(projectGraveyardResourceFamily(projectPath), {
       ...current,
+      error: null,
       pending: true,
       pendingRequestKey: requestKey,
       stale: current.value !== null,
@@ -280,6 +284,7 @@ export const beginProjectPlanRefreshAtom = atom(
     const current = get(projectPlanResourceFamily(planKey));
     set(projectPlanResourceFamily(planKey), {
       ...current,
+      error: null,
       pending: true,
       pendingRequestKey: requestKey,
       stale: current.value !== null,
