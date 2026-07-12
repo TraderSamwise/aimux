@@ -100,9 +100,17 @@ function EmptyCard({ title, body }: { title: string; body: string }) {
   return <PageStateCard title={title} body={body} />;
 }
 
-function StoryList({ items }: { items: ProjectStoryItem[] }) {
+function StoryList({
+  items,
+  emptyTitle = "No story yet",
+  emptyBody = "Project activity will appear here.",
+}: {
+  items: ProjectStoryItem[];
+  emptyTitle?: string;
+  emptyBody?: string;
+}) {
   if (items.length === 0) {
-    return <EmptyCard title="No story yet" body="Project activity will appear here." />;
+    return <EmptyCard title={emptyTitle} body={emptyBody} />;
   }
   return (
     <View>
@@ -363,10 +371,18 @@ export default function ProjectScreen() {
             <ProgressSection model={visibleModel} />
           ) : null}
           {section === "artifacts" && projectModelReady ? (
-            <StoryList items={artifactHints} />
+            <StoryList
+              items={artifactHints}
+              emptyTitle="No artifacts yet"
+              emptyBody="Artifact, file, doc, plan, and handoff activity will appear here."
+            />
           ) : null}
           {section === "tests" && projectModelReady ? (
-            <StoryList items={verificationHints} />
+            <StoryList
+              items={verificationHints}
+              emptyTitle="No test activity yet"
+              emptyBody="Test, verification, lint, build, and typecheck activity will appear here."
+            />
           ) : null}
           {section === "queue" && projectModelReady && !tasksReady ? (
             <EmptyCard title="Loading project queue..." body="Fetching queue state." />
