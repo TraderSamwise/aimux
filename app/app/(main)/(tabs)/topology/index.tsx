@@ -11,6 +11,7 @@ import { StatusDot, StatusPill } from "@/components/status-dot";
 import { getProjectTopology, type ProjectTopologyResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useSerializedProjectApiRefresh } from "@/lib/project-api-refresh";
+import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { useRouteProject } from "@/lib/use-route-project";
 import { cn } from "@/lib/utils";
 import { projectApiViewRefreshNonceFamily } from "@/stores/projectViews";
@@ -21,6 +22,7 @@ import {
   beginTopologyRefreshAtom,
   clearTopologyResourceAtom,
   isCurrentTopologyRequest,
+  settleTopologyRefreshAtom,
   topologyResourceFamily,
   type TopologyRequestScope,
 } from "@/stores/topology";
@@ -212,6 +214,7 @@ export default function TopologyScreen() {
   const beginTopologyRefresh = useSetAtom(beginTopologyRefreshAtom);
   const applyTopologySuccess = useSetAtom(applyTopologySuccessAtom);
   const applyTopologyFailure = useSetAtom(applyTopologyFailureAtom);
+  const settleTopologyRefresh = useSetAtom(settleTopologyRefreshAtom);
   const clearTopologyResource = useSetAtom(clearTopologyResourceAtom);
   const searchParams = useGlobalSearchParams<{
     mode?: string | string[];
@@ -280,12 +283,22 @@ export default function TopologyScreen() {
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
       if (!isCurrentTopologyRequest(requestScope, requestScopeRef.current)) return;
+      if (isTransientRequestError(err)) {
+        settleTopologyRefresh(currentProjectPath);
+        return;
+      }
       applyTopologyFailure({
         projectPath: currentProjectPath,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
-  }, [applyTopologyFailure, applyTopologySuccess, beginTopologyRefresh, clearTopologyResource]);
+  }, [
+    applyTopologyFailure,
+    applyTopologySuccess,
+    beginTopologyRefresh,
+    clearTopologyResource,
+    settleTopologyRefresh,
+  ]);
   const serializedRefresh = useSerializedProjectApiRefresh(refresh);
 
   useEffect(() => {

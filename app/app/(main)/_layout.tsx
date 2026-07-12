@@ -17,6 +17,7 @@ import {
 } from "@/lib/project-connection-display";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
+import { getErrorMessage, isTransientRequestError } from "@/lib/request-errors";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   applyDesktopStateFailureAtom,
@@ -71,18 +72,6 @@ const PROJECT_SCOPED_PATH_PREFIXES = [
   "/notifications",
   "/threads",
 ];
-
-function isTransientPollError(err: unknown): boolean {
-  const name = err instanceof Error ? err.name : "";
-  const message = getErrorMessage(err);
-  return (
-    name === "AbortError" ||
-    /aborted|aborterror|user aborted a request|failed to fetch|network request failed|load failed/i.test(
-      message,
-    ) ||
-    /^request timed out after \d+ms$/i.test(message)
-  );
-}
 
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
@@ -223,7 +212,7 @@ export default function MainLayout() {
         if (!cancelled) reconcileProjects(projects);
       } catch (err) {
         // Failed fetches report inline per-operation; no global UI per task description.
-        if (!cancelled && !isTransientPollError(err)) {
+        if (!cancelled && !isTransientRequestError(err)) {
           console.warn("project list refresh failed:", err);
         }
       }
@@ -268,7 +257,7 @@ export default function MainLayout() {
         if (cancelled) return;
         applyDesktopStateSuccess({ projectPath: effectiveProjectPath!, state });
       } catch (err) {
-        if (!cancelled && !controller.signal.aborted && !isTransientPollError(err)) {
+        if (!cancelled && !controller.signal.aborted && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
           applyDesktopStateFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
@@ -334,7 +323,7 @@ export default function MainLayout() {
           },
         });
       } catch (err) {
-        if (!cancelled && !controller.signal.aborted && !isTransientPollError(err)) {
+        if (!cancelled && !controller.signal.aborted && !isTransientRequestError(err)) {
           const msg = getErrorMessage(err);
           applyNotificationFeedFailure({ projectPath: effectiveProjectPath!, error: msg });
           if (!isProjectHostOfflineError(msg)) {
@@ -509,8 +498,4 @@ function isProjectScopedPath(pathname: string) {
   return PROJECT_SCOPED_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || (prefix !== "/" && pathname.startsWith(`${prefix}/`)),
   );
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
