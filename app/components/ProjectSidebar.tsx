@@ -341,10 +341,6 @@ function SidebarPrimaryNav({ projectPath }: { projectPath: string | null }) {
               const href = buildViewHref(MAIN_TAB_ROUTES[tabId].href, {
                 project: routeProjectPath,
               });
-              if (Platform.OS === "web" && typeof window !== "undefined") {
-                window.location.assign(String(href));
-                return;
-              }
               router.push(href);
             }}
             className={cn(
