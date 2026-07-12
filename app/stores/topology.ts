@@ -86,6 +86,15 @@ export const applyTopologyFailureAtom = atom(
   },
 );
 
+export const settleTopologyRefreshAtom = atom(null, (get, set, projectPath: string) => {
+  const current = get(topologyResourceFamily(projectPath));
+  set(topologyResourceFamily(projectPath), {
+    ...current,
+    pending: false,
+    stale: current.value !== null && current.stale,
+  });
+});
+
 export const clearTopologyResourceAtom = atom(null, (_get, set, projectPath: string) => {
   set(topologyResourceFamily(projectPath), emptyTopologyResource());
 });

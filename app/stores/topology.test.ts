@@ -7,6 +7,7 @@ import {
   beginTopologyRefreshAtom,
   clearTopologyResourceAtom,
   isCurrentTopologyRequest,
+  settleTopologyRefreshAtom,
   topologyErrorFamily,
   topologyFamily,
   topologyResourceFamily,
@@ -91,6 +92,28 @@ describe("topology resource lifecycle", () => {
       error: "service unavailable",
       pending: false,
       stale: true,
+    });
+  });
+
+  it("settles transient refreshes without surfacing a stale failure", () => {
+    const store = createStore();
+    const projectPath = "/repo";
+    const current = topology();
+
+    store.set(applyTopologySuccessAtom, {
+      projectPath,
+      topology: current,
+      updatedAt: 10,
+    });
+    store.set(beginTopologyRefreshAtom, projectPath);
+    store.set(settleTopologyRefreshAtom, projectPath);
+
+    expect(store.get(topologyResourceFamily(projectPath))).toEqual({
+      value: current,
+      error: null,
+      pending: false,
+      stale: true,
+      updatedAt: 10,
     });
   });
 
