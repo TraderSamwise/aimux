@@ -10,7 +10,11 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
-import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
+import {
+  failLocalProjectLifecycleTransition,
+  localProjectLifecycleTransition,
+  recordProjectLifecycleTransitionAtom,
+} from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type LucideIcon = typeof Square;
@@ -41,12 +45,21 @@ export function ServiceActions({
 
   function runAction(
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
-    opts?: { isRemove?: boolean },
+    opts?: { isRemove?: boolean; localTransition?: () => ProjectLifecycleTransition },
   ) {
     return async () => {
       if (!endpoint) return;
       setBusy(true);
       setError(null);
+      const localTransition = opts?.localTransition?.();
+      if (localTransition) {
+        recordTransition({
+          projectPath,
+          transition: localTransition,
+          label: service.label || service.id,
+          worktreePath: service.worktreePath,
+        });
+      }
       try {
         const response = await fn();
         recordTransition({
@@ -59,6 +72,14 @@ export function ServiceActions({
         kickProjectViewRefresh(["services", "project-observability", "topology"]);
         if (opts?.isRemove) onRemoved?.();
       } catch (e) {
+        if (localTransition) {
+          recordTransition({
+            projectPath,
+            transition: failLocalProjectLifecycleTransition(localTransition),
+            label: service.label || service.id,
+            worktreePath: service.worktreePath,
+          });
+        }
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
@@ -82,7 +103,14 @@ export function ServiceActions({
             icon={Square}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() => stopService(endpoint, service.id, { token }))}
+            onPress={runAction(() => stopService(endpoint, service.id, { token }), {
+              localTransition: () =>
+                localProjectLifecycleTransition({
+                  operation: "service.stop",
+                  targetKind: "service",
+                  targetId: service.id,
+                }),
+            })}
             disabled={!canAct}
             label="Stop"
           />
@@ -91,7 +119,14 @@ export function ServiceActions({
             icon={Play}
             iconSize={iconSize}
             sizeClass={sizeClass}
-            onPress={runAction(() => resumeService(endpoint, service.id, { token }))}
+            onPress={runAction(() => resumeService(endpoint, service.id, { token }), {
+              localTransition: () =>
+                localProjectLifecycleTransition({
+                  operation: "service.resume",
+                  targetKind: "service",
+                  targetId: service.id,
+                }),
+            })}
             disabled={!canAct}
             label="Resume"
           />
@@ -104,6 +139,12 @@ export function ServiceActions({
               sizeClass={sizeClass}
               onPress={runAction(() => removeService(endpoint, service.id, { token }), {
                 isRemove: true,
+                localTransition: () =>
+                  localProjectLifecycleTransition({
+                    operation: "service.remove",
+                    targetKind: "service",
+                    targetId: service.id,
+                  }),
               })}
               disabled={!canAct}
               label="Remove"

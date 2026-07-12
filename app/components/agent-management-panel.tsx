@@ -12,7 +12,11 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
-import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
+import {
+  failLocalProjectLifecycleTransition,
+  localProjectLifecycleTransition,
+  recordProjectLifecycleTransitionAtom,
+} from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type AgentManagementAction = "rename" | "migrate" | "loop" | "overseer";
@@ -81,17 +85,39 @@ export function AgentManagementPanel({
   async function runLifecycleAction(
     action: AgentManagementAction,
     fn: () => Promise<{ transition?: ProjectLifecycleTransition }>,
-    next: { label?: string; worktreePath?: string },
+    next: { label?: string; worktreePath?: string; localTransition?: ProjectLifecycleTransition },
   ) {
     return runAction(action, async () => {
-      const response = await fn();
-      recordTransition({
-        projectPath,
-        transition: response.transition,
-        label: next.label ?? session.label ?? session.id,
-        tool: session.toolConfigKey,
-        worktreePath: next.worktreePath ?? session.worktreePath,
-      });
+      if (next.localTransition) {
+        recordTransition({
+          projectPath,
+          transition: next.localTransition,
+          label: next.label ?? session.label ?? session.id,
+          tool: session.toolConfigKey,
+          worktreePath: next.worktreePath ?? session.worktreePath,
+        });
+      }
+      try {
+        const response = await fn();
+        recordTransition({
+          projectPath,
+          transition: response.transition,
+          label: next.label ?? session.label ?? session.id,
+          tool: session.toolConfigKey,
+          worktreePath: next.worktreePath ?? session.worktreePath,
+        });
+      } catch (e) {
+        if (next.localTransition) {
+          recordTransition({
+            projectPath,
+            transition: failLocalProjectLifecycleTransition(next.localTransition),
+            label: next.label ?? session.label ?? session.id,
+            tool: session.toolConfigKey,
+            worktreePath: next.worktreePath ?? session.worktreePath,
+          });
+        }
+        throw e;
+      }
     });
   }
 
@@ -139,7 +165,14 @@ export function AgentManagementPanel({
                       { sessionId: session.id, label: trimmedLabel },
                       { token },
                     ),
-                  { label: trimmedLabel },
+                  {
+                    label: trimmedLabel,
+                    localTransition: localProjectLifecycleTransition({
+                      operation: "agent.rename",
+                      targetKind: "agent",
+                      targetId: session.id,
+                    }),
+                  },
                 )
               }
             >
@@ -180,7 +213,15 @@ export function AgentManagementPanel({
                           { sessionId: session.id, worktreePath: selectedWorktreePath },
                           { token },
                         ),
-                      { worktreePath: selectedWorktreePath },
+                      {
+                        worktreePath: selectedWorktreePath,
+                        localTransition: localProjectLifecycleTransition({
+                          operation: "agent.migrate",
+                          targetKind: "agent",
+                          targetId: session.id,
+                          targetPath: selectedWorktreePath,
+                        }),
+                      },
                     )
                   : undefined
               }

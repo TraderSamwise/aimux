@@ -12,7 +12,11 @@ import type { WorktreeBucket } from "@/lib/desktop-state";
 import { cn } from "@/lib/utils";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
-import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
+import {
+  failLocalProjectLifecycleTransition,
+  localProjectLifecycleTransition,
+  recordProjectLifecycleTransitionAtom,
+} from "@/stores/lifecycleTransitions";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type WorktreeAction = "create" | "remove";
@@ -165,11 +169,7 @@ export function WorktreeManagementPanel({
                       } catch (e) {
                         recordTransition({
                           projectPath,
-                          transition: {
-                            ...localTransition,
-                            phase: "failed",
-                            updatedAt: new Date().toISOString(),
-                          },
+                          transition: failLocalProjectLifecycleTransition(localTransition),
                           worktreePath: removePath,
                         });
                         throw e;
@@ -197,18 +197,13 @@ export function WorktreeManagementPanel({
 }
 
 function localWorktreeRemoveTransition(path: string): ProjectLifecycleTransition {
-  const now = new Date().toISOString();
   const name = path.split(/[\\/]/).pop() ?? path;
-  return {
-    operationId: `client:worktree.remove:${path}:${Date.now()}`,
+  return localProjectLifecycleTransition({
     operation: "worktree.remove",
     targetKind: "worktree",
     targetId: name,
     targetPath: path,
-    phase: "started",
-    startedAt: now,
-    updatedAt: now,
-  };
+  });
 }
 
 function WorktreeChip({
