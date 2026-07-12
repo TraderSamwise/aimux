@@ -110,6 +110,7 @@ export default function ChatScreen() {
   const session = sessionId
     ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null)
     : null;
+  const routeSessionMissing = Boolean(sessionId && desktopState && !session);
   const canManageTeammates =
     session !== null && session.status !== "offline" && session.status !== "exited";
 
@@ -266,15 +267,25 @@ export default function ChatScreen() {
     session.restoreState === "blocked"
       ? (session.restoreBlockedReason ?? "Resume is unavailable for this session.")
       : null;
+  const sessionTitle = routeSessionMissing
+    ? "Agent unavailable"
+    : session?.label || sessionId || "Unknown session";
+  const sessionSubtitle = routeSessionMissing
+    ? `${sessionId} · not found`
+    : `${session?.command ?? ""} · ${session?.status ?? "unknown"}`;
   const composerSendText = getComposerSendText({
     draft,
     hasServiceEndpoint: Boolean(serviceEndpoint),
-    hasSessionId: Boolean(sessionId),
+    hasSessionId: Boolean(sessionId && !routeSessionMissing),
     sendBusy,
   });
   const hasPendingAttachments = pendingAttachments.length > 0;
   const canSendMessage = Boolean(
-    serviceEndpoint && sessionId && !sendBusy && (composerSendText || hasPendingAttachments),
+    serviceEndpoint &&
+    sessionId &&
+    session &&
+    !sendBusy &&
+    (composerSendText || hasPendingAttachments),
   );
 
   function handleTerminalPaneLayout(event: LayoutChangeEvent) {
@@ -287,6 +298,7 @@ export default function ChatScreen() {
     if (
       !serviceEndpoint ||
       !sessionId ||
+      !session ||
       sendBusyRef.current ||
       (!text && attachments.length === 0)
     ) {
@@ -493,10 +505,10 @@ export default function ChatScreen() {
             </Pressable>
             <View className="flex-1">
               <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-                {session?.label || sessionId || "Unknown session"}
+                {sessionTitle}
               </Text>
               <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                {session?.command ?? ""} · {session?.status ?? "unknown"}
+                {sessionSubtitle}
               </Text>
             </View>
             <View className="flex-row items-center">
@@ -513,42 +525,44 @@ export default function ChatScreen() {
                   />
                 </View>
               ) : null}
-              <Pressable
-                onPress={() => setSharePanelOpen((open) => !open)}
-                accessibilityLabel="Invite collaborator"
-                className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
-              >
-                <UserPlus size={15} color="#a1a1aa" />
-              </Pressable>
-              <Pressable
-                onPress={() => setShowTerminalSplit((current) => !current)}
-                disabled={!canShowTerminal}
-                accessibilityLabel={terminalToggleLabel}
-                className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
-              >
-                {showSplit || showTerminalOnly ? (
-                  <MessageSquare size={15} color="#a1a1aa" />
-                ) : canUseSplitView ? (
-                  <Columns2 size={15} color="#a1a1aa" />
-                ) : (
-                  <SquareTerminal size={15} color="#a1a1aa" />
-                )}
-              </Pressable>
-              <Pressable
-                onPress={() =>
-                  sessionId
-                    ? router.push({
+              {session ? (
+                <>
+                  <Pressable
+                    onPress={() => setSharePanelOpen((open) => !open)}
+                    accessibilityLabel="Invite collaborator"
+                    className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
+                  >
+                    <UserPlus size={15} color="#a1a1aa" />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setShowTerminalSplit((current) => !current)}
+                    disabled={!canShowTerminal}
+                    accessibilityLabel={terminalToggleLabel}
+                    className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+                  >
+                    {showSplit || showTerminalOnly ? (
+                      <MessageSquare size={15} color="#a1a1aa" />
+                    ) : canUseSplitView ? (
+                      <Columns2 size={15} color="#a1a1aa" />
+                    ) : (
+                      <SquareTerminal size={15} color="#a1a1aa" />
+                    )}
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      router.push({
                         pathname: "/plans/[sessionId]",
                         params: {
-                          sessionId,
+                          sessionId: session.id,
                           ...(projectPath ? { project: projectPath } : {}),
                         },
                       })
-                    : undefined
-                }
-              >
-                <Text className="text-sm text-primary">Plan</Text>
-              </Pressable>
+                    }
+                  >
+                    <Text className="text-sm text-primary">Plan</Text>
+                  </Pressable>
+                </>
+              ) : null}
             </View>
           </View>
           {session ? (
@@ -683,7 +697,20 @@ export default function ChatScreen() {
             </View>
           ) : null}
 
-          {!serviceEndpoint ? (
+          {routeSessionMissing ? (
+            <View className="flex-1 p-4">
+              <View className="rounded-lg border border-border bg-card p-4">
+                <Text className="text-base font-semibold text-foreground">
+                  Agent no longer exists.
+                </Text>
+                <Text className="mt-2 text-sm text-muted-foreground">
+                  This agent was removed from the project. Return to the project dashboard to pick
+                  another agent.
+                </Text>
+                <Button className="mt-4 self-start" label="Back to project" onPress={goBack} />
+              </View>
+            </View>
+          ) : !serviceEndpoint ? (
             <View className="flex-1 p-4">
               <Text className="text-sm text-muted-foreground">
                 Project service not running. Start the project host to view this session.
