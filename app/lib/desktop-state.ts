@@ -24,6 +24,8 @@ export interface DesktopSession {
   unseenCount?: number;
   previewLine?: string;
   pendingAction?: string;
+  loop?: { active?: boolean; goal?: string; since?: string } | null;
+  overseer?: boolean;
   optimistic?: boolean;
 }
 

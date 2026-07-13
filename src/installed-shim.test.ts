@@ -975,6 +975,22 @@ describe("installed aimux shim", () => {
     );
   });
 
+  it("retries host agent-read daemon transport failures without launching Node", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);
+    writeFileSync(fixture.textRouteFile, "pane output\n");
+    writeFileSync(fixture.daemonInfoPath, `${JSON.stringify({ pid: 321, port: 45678 })}\n`);
+
+    const result = fixture.run(["host", "agent-read", "claude-1", "--project", "/repo"], {
+      CURL_FORCE_EXIT: "56",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(readFileSync(fixture.curlLog, "utf8").match(/\/core\/host-agent-read-text/g)?.length).toBe(3);
+    expect(existsSync(fixture.nodeLog)).toBe(false);
+  });
+
   it("serves host agent-stream from a matching daemon without launching Node", () => {
     const fixture = makeFixture();
     writeFileSync(fixture.healthFile, `${health("build-1", 321)}\n`);

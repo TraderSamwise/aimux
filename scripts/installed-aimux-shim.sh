@@ -475,9 +475,18 @@ aimux_try_host_agent_read() {
     shift
   done
   project_root="$(aimux_resolve_project_arg "$project_root")" || return 1
-  aimux_get_query_text_route "/core/host-agent-read-text" 10 \
-    --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
-    --data-urlencode "startLine=$start_line"
+  attempt=1
+  while [ "$attempt" -le 3 ]; do
+    aimux_get_query_text_route "/core/host-agent-read-text" 10 \
+      --data-urlencode "project=$project_root" --data-urlencode "sessionId=$session_id" \
+      --data-urlencode "startLine=$start_line"
+    status="$?"
+    [ "$status" -eq 0 ] && return 0
+    [ "$status" -eq 2 ] && return 2
+    attempt=$((attempt + 1))
+    sleep 0.05
+  done
+  return 1
 }
 
 aimux_try_host_agent_stream() {

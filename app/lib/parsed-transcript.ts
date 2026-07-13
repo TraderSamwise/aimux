@@ -14,6 +14,8 @@ const ATTACHED_IMAGE_LINE =
   /^\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
 const INLINE_ATTACHED_IMAGE =
   /^(.*?)\s*Attached image files:\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
+const FLATTENED_ATTACHED_IMAGE =
+  /\s*Attached image files:\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(\S*?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)/g;
 const VIEWED_IMAGE_PATH =
   /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
@@ -55,7 +57,42 @@ function flushTextPart(parts: HistoryPart[], lines: string[]) {
   lines.length = 0;
 }
 
+function partsFromFlattenedAttachmentText(
+  text: string,
+  imageLabels: ImageLabelState,
+): HistoryPart[] | null {
+  if (!text.includes("Attached image files:")) return null;
+
+  const flattened = text.replace(/\s+/g, " ").trim();
+  const parts: HistoryPart[] = [];
+  let cursor = 0;
+  let matched = false;
+  FLATTENED_ATTACHED_IMAGE.lastIndex = 0;
+
+  for (const match of flattened.matchAll(FLATTENED_ATTACHED_IMAGE)) {
+    if (!match[4] || match.index === undefined) continue;
+    const prefix = flattened.slice(cursor, match.index).trim();
+    if (prefix) parts.push({ type: "text", text: prefix });
+    parts.push(
+      imageReferenceFor(imageLabels, match[4], {
+        filename: match[1],
+        mimeType: match[2],
+      }),
+    );
+    cursor = match.index + match[0].length;
+    matched = true;
+  }
+
+  if (!matched) return null;
+  const suffix = flattened.slice(cursor).trim();
+  if (suffix) parts.push({ type: "text", text: suffix });
+  return parts;
+}
+
 function partsFromTranscriptText(text: string, imageLabels: ImageLabelState): HistoryPart[] {
+  const flattenedAttachmentParts = partsFromFlattenedAttachmentText(text, imageLabels);
+  if (flattenedAttachmentParts) return flattenedAttachmentParts;
+
   const lines = text.split("\n");
   const parts: HistoryPart[] = [];
   const textLines: string[] = [];

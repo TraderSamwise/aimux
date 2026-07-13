@@ -872,9 +872,10 @@ export function computeDashboardSessions(
   return sessions.map((session) => {
     const stats = threadStats.get(session.id);
     const workflow = workflowStats.get(session.id);
-    const metadata = metadataBySessionId.get(session.id);
-    const target = host.sessionTmuxTargets.get(session.id) ?? metadata?.target;
+    const tmuxMetadata = metadataBySessionId.get(session.id);
+    const target = host.sessionTmuxTargets.get(session.id) ?? tmuxMetadata?.target;
     const notifications = notificationsBySessionId.get(session.id);
+    const sessionMetadata = metadata[session.id];
     const runtimeInfo = includeRuntimeInfo && target ? readTmuxProcessInfo(host, target) : {};
     const semantic = deriveSessionSemantics({
       status: session.status,
@@ -896,11 +897,13 @@ export function computeDashboardSessions(
     return {
       ...session,
       tmuxWindowIndex: target?.windowIndex,
-      createdAt: session.createdAt ?? metadata?.createdAt,
+      createdAt: session.createdAt ?? tmuxMetadata?.createdAt,
       lastUsedAt: lastUsedState.items[session.id]?.lastUsedAt,
       foregroundCommand: runtimeInfo.command,
       pid: runtimeInfo.pid,
       previewLine: runtimeInfo.previewLine,
+      loop: sessionMetadata?.loop,
+      overseer: sessionMetadata?.overseer ?? false,
       threadUnreadCount: stats?.unread ?? 0,
       threadWaitingCount: stats?.waiting ?? 0,
       threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,

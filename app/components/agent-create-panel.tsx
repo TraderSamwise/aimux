@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { Plus } from "lucide-react-native";
@@ -8,6 +8,7 @@ import { Text } from "@/components/ui/text";
 import { spawnAgent } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
@@ -28,7 +29,9 @@ export function AgentCreatePanel({
   groups: WorktreeBucket[];
 }) {
   const [tool, setTool] = useState<ToolChoice>("claude");
+  const toolRef = useRef<ToolChoice>("claude");
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
+  const worktreePathRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
@@ -46,16 +49,30 @@ export function AgentCreatePanel({
     ? worktreePath
     : null;
 
+  function selectTool(choice: ToolChoice) {
+    toolRef.current = choice;
+    setTool(choice);
+  }
+
+  function selectWorktree(path: string | null) {
+    worktreePathRef.current = path;
+    setWorktreePath(path);
+  }
+
   async function createAgent() {
     if (!endpoint || busy) return;
+    const selectedTool = toolRef.current;
+    const selectedPath = worktreeChoices.some((choice) => choice.path === worktreePathRef.current)
+      ? worktreePathRef.current
+      : null;
     setBusy(true);
     setError(null);
     try {
       const response = await spawnAgent(
         endpoint,
         {
-          tool,
-          worktreePath: selectedWorktreePath ?? undefined,
+          tool: selectedTool,
+          worktreePath: selectedPath ?? undefined,
           open: false,
         },
         { token },
@@ -64,8 +81,8 @@ export function AgentCreatePanel({
         projectPath,
         transition: response.transition,
         label: response.sessionId,
-        tool,
-        worktreePath: selectedWorktreePath ?? undefined,
+        tool: selectedTool,
+        worktreePath: selectedPath ?? undefined,
       });
       kickDesktopRefresh();
       kickProjectViewRefresh([
@@ -77,7 +94,9 @@ export function AgentCreatePanel({
         "worktrees",
       ]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!isTransientRequestError(e)) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -99,7 +118,7 @@ export function AgentCreatePanel({
           {TOOL_CHOICES.map((choice) => (
             <Pressable
               key={choice}
-              onPress={() => setTool(choice)}
+              onPress={() => selectTool(choice)}
               accessibilityRole="button"
               accessibilityState={{ selected: tool === choice }}
               className={cn(
@@ -116,7 +135,7 @@ export function AgentCreatePanel({
           <WorktreeChip
             label="Main checkout"
             active={selectedWorktreePath === null}
-            onPress={() => setWorktreePath(null)}
+            onPress={() => selectWorktree(null)}
           />
           {worktreeChoices
             .filter((choice) => choice.path)
@@ -125,7 +144,7 @@ export function AgentCreatePanel({
                 key={choice.key}
                 label={choice.label}
                 active={selectedWorktreePath === choice.path}
-                onPress={() => setWorktreePath(choice.path)}
+                onPress={() => selectWorktree(choice.path)}
               />
             ))}
         </View>
@@ -144,7 +163,9 @@ export function AgentCreatePanel({
           </Text>
         </Button>
       </View>
-      {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
+      {error && !isTransientRequestError(error) ? (
+        <Text className="mt-2 text-xs text-destructive">{error}</Text>
+      ) : null}
     </Card>
   );
 }
