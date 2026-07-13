@@ -1125,15 +1125,20 @@ hostCmd
   .command("agent-read")
   .description("Read captured output from a running agent session over the project HTTP service")
   .argument("<sessionId>", "Agent session ID")
+  .option("--project <path>", "Project path")
   .option("--start-line <number>", "tmux capture-pane start line", "-120")
-  .action(async (sessionId: string, opts: { startLine?: string }) => {
+  .action(async (sessionId: string, opts: { project?: string; startLine?: string }) => {
     await initPaths();
+    const projectRoot = opts.project
+      ? resolveProjectRoot(pathResolve(opts.project))
+      : resolveProjectRoot(process.cwd());
     const startLine = Number.parseInt(opts.startLine ?? "-120", 10);
     if (Number.isNaN(startLine)) {
       throw new Error("--start-line must be an integer");
     }
     const result = await getProjectServiceJson(
       `/agents/output?sessionId=${encodeURIComponent(sessionId)}&startLine=${encodeURIComponent(String(startLine))}`,
+      { projectRoot },
     );
     process.stdout.write(result.output ?? "");
     if ((result.output ?? "").length > 0 && !String(result.output).endsWith("\n")) {
@@ -1145,10 +1150,14 @@ hostCmd
   .command("agent-stream")
   .description("Stream live captured output from a running agent session over SSE")
   .argument("<sessionId>", "Agent session ID")
+  .option("--project <path>", "Project path")
   .option("--start-line <number>", "tmux capture-pane start line", "-120")
   .option("--interval-ms <number>", "Polling interval in milliseconds", "500")
-  .action(async (sessionId: string, opts: { startLine?: string; intervalMs?: string }) => {
+  .action(async (sessionId: string, opts: { project?: string; startLine?: string; intervalMs?: string }) => {
     await initPaths();
+    const projectRoot = opts.project
+      ? resolveProjectRoot(pathResolve(opts.project))
+      : resolveProjectRoot(process.cwd());
     const startLine = Number.parseInt(opts.startLine ?? "-120", 10);
     const intervalMs = Number.parseInt(opts.intervalMs ?? "500", 10);
     if (Number.isNaN(startLine)) {
@@ -1158,7 +1167,7 @@ hostCmd
       throw new Error("--interval-ms must be an integer >= 100");
     }
 
-    const endpoint = await getProjectServiceEndpoint();
+    const endpoint = await getProjectServiceEndpoint(projectRoot);
     const controller = new AbortController();
     const shutdown = () => controller.abort();
     process.on("SIGINT", shutdown);

@@ -1,5 +1,5 @@
 import React from "react";
-import { View } from "react-native";
+import { Image, View } from "react-native";
 import { Text } from "@/components/ui/text";
 import type { ChatMessage, HistoryImagePart, HistoryImageReferencePart } from "@/lib/events";
 import { getRelayServiceUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
@@ -10,7 +10,10 @@ interface Props {
   serviceEndpoint: ServiceEndpoint;
 }
 
-export function resolveImageUrl(part: HistoryImagePart, endpoint: ServiceEndpoint): string | null {
+export function resolveImageUrl(
+  part: HistoryImagePart | HistoryImageReferencePart,
+  endpoint: ServiceEndpoint,
+): string | null {
   if (!part.contentUrl) return null;
   if (part.contentUrl.startsWith("http://") || part.contentUrl.startsWith("https://")) {
     return part.contentUrl;
@@ -30,13 +33,23 @@ function imagePartLabel(part: HistoryImagePart | HistoryImageReferencePart): str
   return "[image]";
 }
 
-function ImageReferenceToken({ label, isUser }: { label: string; isUser: boolean }) {
+function ImageReferenceToken({
+  part,
+  endpoint,
+  isUser,
+}: {
+  part: HistoryImagePart | HistoryImageReferencePart;
+  endpoint: ServiceEndpoint;
+  isUser: boolean;
+}) {
+  const label = imagePartLabel(part);
+  const imageUrl = resolveImageUrl(part, endpoint);
   return (
     <View
       className={
         isUser
-          ? "mt-1 self-start rounded border border-primary-foreground/35 bg-primary-foreground/15 px-2 py-1"
-          : "mt-1 self-start rounded border border-border bg-background px-2 py-1"
+          ? "mt-1 self-start rounded border border-primary-foreground/35 bg-primary-foreground/15 p-2"
+          : "mt-1 self-start rounded border border-border bg-background p-2"
       }
     >
       <Text
@@ -48,11 +61,24 @@ function ImageReferenceToken({ label, isUser }: { label: string; isUser: boolean
       >
         {label}
       </Text>
+      {imageUrl ? (
+        <Image
+          accessibilityLabel={part.filename || label}
+          source={{ uri: imageUrl }}
+          className="mt-2 rounded"
+          resizeMode="contain"
+          style={{
+            width: 180,
+            height: 120,
+            backgroundColor: "rgba(0, 0, 0, 0.18)",
+          }}
+        />
+      ) : null}
     </View>
   );
 }
 
-export function MessageBlock({ message }: Props) {
+export function MessageBlock({ message, serviceEndpoint }: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
@@ -88,7 +114,9 @@ export function MessageBlock({ message }: Props) {
               </Text>
             );
           }
-          return <ImageReferenceToken key={idx} label={imagePartLabel(part)} isUser={isUser} />;
+          return (
+            <ImageReferenceToken key={idx} part={part} endpoint={serviceEndpoint} isUser={isUser} />
+          );
         })
       ) : (
         <Text className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}>

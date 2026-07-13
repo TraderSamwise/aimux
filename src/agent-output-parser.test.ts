@@ -46,6 +46,39 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toContain("gpt-5.5 medium");
   });
 
+  it("keeps current Codex startup warnings and placeholder prompt out of chat", () => {
+    const raw = [
+      "⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this",
+      "  invocation.",
+      "",
+      "╭──────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.144.1)                   │",
+      "│                                              │",
+      "│ model:       gpt-5.5 high   /model to change │",
+      "│ directory:   ~/cs/tealstreet-mobile          │",
+      "│ permissions: YOLO mode                       │",
+      "╰──────────────────────────────────────────────╯",
+      "",
+      "  Tip: New Use /fast to enable our fastest inference with increased plan usage.",
+      "",
+      "• You have 3 usage limit resets available. Run /usage to use one.",
+      "",
+      "⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this",
+      "  invocation.",
+      "",
+      "› Implement {feature}",
+      "",
+      "  gpt-5.5 high · ~/cs/tealstreet-mobile",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["meta", "status"]);
+    expect(parsed.blocks.some((block) => block.type === "prompt" || block.type === "response")).toBe(false);
+    expect(parsed.blocks[1]?.text).toContain("You have 3 usage limit resets available");
+    expect(parsed.blocks[1]?.text).toContain("Implement {feature}");
+  });
+
   it("parses a real Codex prompt immediately after startup chrome without requiring a blank", () => {
     const raw = [
       "╭─────────────────────────────────────────╮",
@@ -261,6 +294,55 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toBe("Hi! What can I help you with?");
     expect(parsed.blocks[2]?.text).toContain("Baked for 3s");
     expect(parsed.blocks[2]?.text).toContain("bypass permissions on");
+  });
+
+  it("keeps Claude startup promo announcements out of assistant chat", () => {
+    const raw = [
+      "▘▘ ▝▝    ~/cs/tealstreet-mobile",
+      "",
+      "▎ weekly rate limits 50% higher, through July 19.",
+      "▎",
+      "▎ As before, you can use up to half of your weekly usage limit on Fable 5. After that, you can",
+      "▎ keep using Fable 5 with usage credits, or switch to another model to keep working within your",
+      "▎ remaining limits.",
+      "▎",
+      "▎ More details here:",
+      "▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access",
+      "",
+      "❯ AIMUX_GUI_CLAUDE_T1_1783935900: reply exactly CLAUDE_T1_OK_1783935900",
+      "",
+      "⏺ CLAUDE_T1_OK_1783935900",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["meta", "status", "prompt", "response"]);
+    expect(parsed.blocks[1]?.text).toContain("weekly rate limits 50% higher");
+    expect(parsed.blocks[2]?.text).toBe("AIMUX_GUI_CLAUDE_T1_1783935900: reply exactly CLAUDE_T1_OK_1783935900");
+    expect(parsed.blocks[3]?.text).toBe("CLAUDE_T1_OK_1783935900");
+  });
+
+  it("keeps Claude skill availability rows out of wrapped prompts", () => {
+    const raw = [
+      "❯ AIMUX_GUI_CLAUDE_POST_PROMO_FIX_1783952300: reply exactly CLAUDE_POST_PROMO_FIX_OK_1783952300",
+      "  and include one bullet named promo-filter.",
+      "  ⎿  1 skill available",
+      "",
+      "⏺ CLAUDE_POST_PROMO_FIX_OK_1783952300",
+      "",
+      "  - promo-filter",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "status", "response"]);
+    expect(parsed.blocks[0]?.text).toBe(
+      "AIMUX_GUI_CLAUDE_POST_PROMO_FIX_1783952300: reply exactly CLAUDE_POST_PROMO_FIX_OK_1783952300\n" +
+        "  and include one bullet named promo-filter.",
+    );
+    expect(parsed.blocks[1]?.text).toContain("1 skill available");
+    expect(parsed.blocks[2]?.text).toContain("CLAUDE_POST_PROMO_FIX_OK_1783952300");
+    expect(parsed.blocks[2]?.text).toContain("promo-filter");
   });
 
   it("preserves activity spinner wording as status text", () => {

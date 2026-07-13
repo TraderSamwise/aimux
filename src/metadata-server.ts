@@ -869,6 +869,14 @@ const PROJECT_SERVICE_SLOW_REQUEST_EXCLUDED_PATHS = new Set<string>([
   PROJECT_API_ROUTES.agents.interactionRequest,
   PROJECT_API_ROUTES.agents.interactionWait,
 ]);
+const CORS_ALLOWED_ORIGINS = new Set([
+  "http://localhost:8081",
+  "http://127.0.0.1:8081",
+  "http://localhost:8091",
+  "http://127.0.0.1:8091",
+  "http://localhost:43192",
+  "http://127.0.0.1:43192",
+]);
 const DESKTOP_STATE_CACHE_TTL_MS = 10_000;
 const DESKTOP_STATE_STALE_REFRESH_DELAY_MS = 1_000;
 
@@ -937,7 +945,9 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.setHeader("content-length", Buffer.byteLength(payload));
-  res.setHeader("access-control-allow-origin", "*");
+  if (!res.hasHeader("access-control-allow-origin")) {
+    res.setHeader("access-control-allow-origin", "*");
+  }
   res.setHeader("connection", "close");
   res.end(payload);
 }
@@ -947,9 +957,47 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.setHeader("content-type", mimeType);
   res.setHeader("content-length", body.byteLength);
   res.setHeader("cache-control", "private, max-age=31536000, immutable");
-  res.setHeader("access-control-allow-origin", "*");
+  if (!res.hasHeader("access-control-allow-origin")) {
+    res.setHeader("access-control-allow-origin", "*");
+  }
   res.setHeader("connection", "close");
   res.end(body);
+}
+
+function isAllowedCorsOrigin(origin: string): boolean {
+  if (CORS_ALLOWED_ORIGINS.has(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+  } catch {
+    return false;
+  }
+}
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): boolean {
+  const origin = req.headers.origin;
+  if (origin && !isAllowedCorsOrigin(origin)) return false;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (origin && req.headers["access-control-request-private-network"] === "true") {
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+  }
+  return true;
+}
+
+function rejectCors(res: ServerResponse): void {
+  const payload = JSON.stringify({ ok: false, error: "origin not allowed" });
+  res.statusCode = 403;
+  res.setHeader("content-type", "application/json");
+  res.setHeader("content-length", Buffer.byteLength(payload));
+  res.setHeader("connection", "close");
+  res.end(payload);
 }
 
 function countOpenFileDescriptors(): number | undefined {
@@ -2188,9 +2236,10 @@ export class MetadataServer {
   }
 
   private async handleRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (!setCorsHeaders(req, res)) {
+      rejectCors(res);
+      return;
+    }
 
     if (req.method === "OPTIONS") {
       res.statusCode = 204;

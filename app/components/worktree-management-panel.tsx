@@ -9,6 +9,7 @@ import { Text } from "@/components/ui/text";
 import { createWorktree, removeWorktree } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { WorktreeBucket } from "@/lib/desktop-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { cn } from "@/lib/utils";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
@@ -71,7 +72,9 @@ export function WorktreeManagementPanel({
         "graveyard",
       ]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!isTransientRequestError(e)) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusyAction(null);
     }
@@ -79,6 +82,7 @@ export function WorktreeManagementPanel({
 
   const trimmedName = name.trim();
   const canAct = Boolean(endpoint) && !busyAction;
+  const visibleError = error && !isTransientRequestError(error) ? error : null;
 
   if (!endpoint) {
     return null;
@@ -191,7 +195,7 @@ export function WorktreeManagementPanel({
           </View>
         </View>
       </View>
-      {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
+      {visibleError ? <Text className="mt-2 text-xs text-destructive">{visibleError}</Text> : null}
     </Card>
   );
 }

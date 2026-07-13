@@ -9,6 +9,7 @@ import type { ProjectLifecycleTransition } from "../../src/project-api-contract"
 import { canResumeSession } from "@/lib/agent-lifecycle";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
@@ -109,7 +110,9 @@ export function AgentActions({
             worktreePath: session.worktreePath,
           });
         }
-        setError(e instanceof Error ? e.message : String(e));
+        if (!isTransientRequestError(e)) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
         setBusy(false);
       }
@@ -122,6 +125,7 @@ export function AgentActions({
 
   const sizeClass = compact ? "h-7 w-7" : "h-9 w-9";
   const iconSize = compact ? 13 : 15;
+  const visibleError = error && !isTransientRequestError(error) ? error : null;
 
   return (
     <View>
@@ -206,7 +210,9 @@ export function AgentActions({
           label={`Kill ${session.label || session.id}`}
         />
       </View>
-      {error ? <Text className="mt-1 text-[11px] text-destructive">{error}</Text> : null}
+      {visibleError ? (
+        <Text className="mt-1 text-[11px] text-destructive">{visibleError}</Text>
+      ) : null}
     </View>
   );
 }

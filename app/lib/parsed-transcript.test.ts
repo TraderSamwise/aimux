@@ -131,6 +131,82 @@ describe("parsed transcript conversion", () => {
     ]);
   });
 
+  it("replaces multiple flattened user attachments with image references", () => {
+    const messages = messagesFromParsedAgentOutput({
+      blocks: [
+        {
+          type: "prompt",
+          text:
+            "Compare these Attached image files: " +
+            "- first.png (image/png, 68 bytes): /Users/sam/cs/app/.aimux/attachments/att_first123.png " +
+            "- second.jpeg (image/jpeg, 128 bytes): /Users/sam/cs/app/.aimux/attachments/att_second456.jpg",
+        },
+      ],
+    });
+
+    expect(messages).toEqual([
+      {
+        id: "parsed-0-prompt",
+        role: "user",
+        parts: [
+          { type: "text", text: "Compare these" },
+          {
+            type: "image_reference",
+            label: "[image #1]",
+            attachmentId: "att_first123",
+            filename: "first.png",
+            mimeType: "image/png",
+            contentUrl: "/attachments/att_first123/content",
+          },
+          {
+            type: "image_reference",
+            label: "[image #2]",
+            attachmentId: "att_second456",
+            filename: "second.jpeg",
+            mimeType: "image/jpeg",
+            contentUrl: "/attachments/att_second456/content",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("replaces terminal-wrapped flattened attachment metadata with numbered image references", () => {
+    const messages = messagesFromParsedAgentOutput({
+      blocks: [
+        {
+          type: "prompt",
+          text:
+            "AIMUX_IMAGE_SMOKE_FIXED_1783934800: confirm attached filename then reply\n" +
+            "  IMAGE_FIXED_OK_1783934800. Attached image files: - aimux-smoke-1x1-fixed.png (image/png, 68\n" +
+            "  bytes):\n" +
+            "  /Users/sam/cs/tealstreet-mobile/.aimux/attachments/att_e831342aad14415cb0a8856fb93879fa.png",
+        },
+      ],
+    });
+
+    expect(messages).toEqual([
+      {
+        id: "parsed-0-prompt",
+        role: "user",
+        parts: [
+          {
+            type: "text",
+            text: "AIMUX_IMAGE_SMOKE_FIXED_1783934800: confirm attached filename then reply IMAGE_FIXED_OK_1783934800.",
+          },
+          {
+            type: "image_reference",
+            label: "[image #1]",
+            attachmentId: "att_e831342aad14415cb0a8856fb93879fa",
+            filename: "aimux-smoke-1x1-fixed.png",
+            mimeType: "image/png",
+            contentUrl: "/attachments/att_e831342aad14415cb0a8856fb93879fa/content",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("uses stable image reference numbers across user and assistant transcript blocks", () => {
     const messages = messagesFromParsedAgentOutput({
       blocks: [
@@ -199,6 +275,88 @@ describe("parsed transcript conversion", () => {
     const messages = messagesFromFixture("codex-live-startup-suggestion-loop");
 
     expect(messages).toEqual([]);
+  });
+
+  it("does not render current Codex startup warnings as chat messages", () => {
+    const raw = [
+      "⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this",
+      "  invocation.",
+      "",
+      "╭──────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.144.1)                   │",
+      "│                                              │",
+      "│ model:       gpt-5.5 high   /model to change │",
+      "│ directory:   ~/cs/tealstreet-mobile          │",
+      "│ permissions: YOLO mode                       │",
+      "╰──────────────────────────────────────────────╯",
+      "",
+      "  Tip: New Use /fast to enable our fastest inference with increased plan usage.",
+      "",
+      "• You have 3 usage limit resets available. Run /usage to use one.",
+      "",
+      "⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this",
+      "  invocation.",
+      "",
+      "› Implement {feature}",
+      "",
+      "  gpt-5.5 high · ~/cs/tealstreet-mobile",
+    ].join("\n");
+
+    const messages = messagesFromParsedAgentOutput(
+      parseAgentOutput(raw, { tool: "codex" }) as unknown as ParsedAgentOutput,
+    );
+
+    expect(messages).toEqual([]);
+  });
+
+  it("does not render Claude startup promo announcements as chat messages", () => {
+    const raw = [
+      "▘▘ ▝▝    ~/cs/tealstreet-mobile",
+      "",
+      "▎ weekly rate limits 50% higher, through July 19.",
+      "▎",
+      "▎ As before, you can use up to half of your weekly usage limit on Fable 5. After that, you can",
+      "▎ keep using Fable 5 with usage credits, or switch to another model to keep working within your",
+      "▎ remaining limits.",
+      "▎",
+      "▎ More details here:",
+      "▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access",
+      "",
+      "❯ AIMUX_GUI_CLAUDE_T1_1783935900: reply exactly CLAUDE_T1_OK_1783935900",
+      "",
+      "⏺ CLAUDE_T1_OK_1783935900",
+    ].join("\n");
+
+    const messages = messagesFromParsedAgentOutput(
+      parseAgentOutput(raw, { tool: "claude" }) as unknown as ParsedAgentOutput,
+    );
+
+    expect(messages.map((message) => messageTextForTest(message))).toEqual([
+      "AIMUX_GUI_CLAUDE_T1_1783935900: reply exactly CLAUDE_T1_OK_1783935900",
+      "CLAUDE_T1_OK_1783935900",
+    ]);
+  });
+
+  it("does not render Claude skill availability rows in user messages", () => {
+    const raw = [
+      "❯ AIMUX_GUI_CLAUDE_POST_PROMO_FIX_1783952300: reply exactly CLAUDE_POST_PROMO_FIX_OK_1783952300",
+      "  and include one bullet named promo-filter.",
+      "  ⎿  1 skill available",
+      "",
+      "⏺ CLAUDE_POST_PROMO_FIX_OK_1783952300",
+      "",
+      "  - promo-filter",
+    ].join("\n");
+
+    const messages = messagesFromParsedAgentOutput(
+      parseAgentOutput(raw, { tool: "claude" }) as unknown as ParsedAgentOutput,
+    );
+
+    expect(messages.map((message) => messageTextForTest(message))).toEqual([
+      "AIMUX_GUI_CLAUDE_POST_PROMO_FIX_1783952300: reply exactly CLAUDE_POST_PROMO_FIX_OK_1783952300\n" +
+        "  and include one bullet named promo-filter.",
+      "CLAUDE_POST_PROMO_FIX_OK_1783952300\n\n  - promo-filter",
+    ]);
   });
 
   it("does not render mined Codex running-state suggestions as chat messages", () => {

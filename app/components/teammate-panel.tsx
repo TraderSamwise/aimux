@@ -18,6 +18,7 @@ import {
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
@@ -81,9 +82,16 @@ export function TeammatePanel({
     return listRequestSeqRef.current;
   }
 
-  function listErrorMessage(e: unknown) {
+  const listErrorMessage = useCallback((e: unknown) => {
     return e instanceof Error ? e.message : String(e);
-  }
+  }, []);
+
+  const setVisibleError = useCallback(
+    (e: unknown) => {
+      if (!isTransientRequestError(e)) setError(listErrorMessage(e));
+    },
+    [listErrorMessage],
+  );
 
   async function refreshTeammates(nextStatus?: string) {
     if (!endpoint || actionRef.current) return;
@@ -97,7 +105,7 @@ export function TeammatePanel({
       applyTeammates(result);
       if (nextStatus) setStatus(nextStatus);
     } catch (e) {
-      if (requestId === listRequestSeqRef.current) setError(listErrorMessage(e));
+      if (requestId === listRequestSeqRef.current) setVisibleError(e);
     } finally {
       actionRef.current = null;
       setBusyAction(null);
@@ -115,12 +123,12 @@ export function TeammatePanel({
         applyTeammates(result);
       })
       .catch((e) => {
-        if (!cancelled && requestId === listRequestSeqRef.current) setError(listErrorMessage(e));
+        if (!cancelled && requestId === listRequestSeqRef.current) setVisibleError(e);
       });
     return () => {
       cancelled = true;
     };
-  }, [applyTeammates, endpoint, refreshNonce, session.id, token]);
+  }, [applyTeammates, endpoint, refreshNonce, session.id, setVisibleError, token]);
 
   async function runMutation(
     action: TeammateAction,
@@ -150,12 +158,14 @@ export function TeammatePanel({
         if (requestId === listRequestSeqRef.current) applyTeammates(result);
       } catch (e) {
         if (requestId === listRequestSeqRef.current) {
-          setError(`Action completed, but teammate refresh failed: ${listErrorMessage(e)}`);
+          if (!isTransientRequestError(e)) {
+            setError(`Action completed, but teammate refresh failed: ${listErrorMessage(e)}`);
+          }
         }
       }
       return true;
     } catch (e) {
-      if (requestId === listRequestSeqRef.current) setError(listErrorMessage(e));
+      if (requestId === listRequestSeqRef.current) setVisibleError(e);
       return false;
     } finally {
       actionRef.current = null;
@@ -391,7 +401,9 @@ export function TeammatePanel({
           </View>
         </View>
       </View>
-      {error ? <Text className="mt-3 text-xs text-destructive">{error}</Text> : null}
+      {error && !isTransientRequestError(error) ? (
+        <Text className="mt-3 text-xs text-destructive">{error}</Text>
+      ) : null}
       {status ? <Text className="mt-3 text-xs text-muted-foreground">{status}</Text> : null}
     </Card>
   );

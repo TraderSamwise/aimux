@@ -1,5 +1,5 @@
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
-import type { SessionServiceMetadata } from "../metadata-store.js";
+import type { SessionLoopMetadata, SessionServiceMetadata } from "../metadata-store.js";
 import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "../pending-actions.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
 import type { SessionTeamMetadata } from "../team.js";
@@ -49,6 +49,8 @@ export interface DashboardSession {
   becameIdleAt?: string;
   lastEvent?: AgentEvent;
   services?: SessionServiceMetadata[];
+  loop?: SessionLoopMetadata;
+  overseer?: boolean;
   foregroundCommand?: string;
   pid?: number;
   previewLine?: string;
