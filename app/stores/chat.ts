@@ -13,6 +13,19 @@ export const streamingFamily = atomFamily((_sessionId: string) => atom<boolean>(
 export const streamTokenFamily = atomFamily((_sessionId: string) => atom<number>(0));
 export const lastErrorFamily = atomFamily((_sessionId: string) => atom<string | null>(null));
 
+export const applyOutputSnapshotAtom = atom(
+  null,
+  (
+    _get,
+    set,
+    snapshot: { sessionId: string; output: string; parsed?: ParsedAgentOutput | null },
+  ) => {
+    set(outputBufferFamily(snapshot.sessionId), snapshot.output);
+    set(parsedOutputFamily(snapshot.sessionId), snapshot.parsed ?? null);
+    set(lastErrorFamily(snapshot.sessionId), null);
+  },
+);
+
 // Route a single SSE event into the right per-session family slots.
 // Equivalent to the Zustand `ingestEvent` reducer.
 export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
