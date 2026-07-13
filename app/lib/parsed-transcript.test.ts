@@ -131,6 +131,46 @@ describe("parsed transcript conversion", () => {
     ]);
   });
 
+  it("replaces multiple flattened user attachments with image references", () => {
+    const messages = messagesFromParsedAgentOutput({
+      blocks: [
+        {
+          type: "prompt",
+          text:
+            "Compare these Attached image files: " +
+            "- first.png (image/png, 68 bytes): /Users/sam/cs/app/.aimux/attachments/att_first123.png " +
+            "- second.jpeg (image/jpeg, 128 bytes): /Users/sam/cs/app/.aimux/attachments/att_second456.jpg",
+        },
+      ],
+    });
+
+    expect(messages).toEqual([
+      {
+        id: "parsed-0-prompt",
+        role: "user",
+        parts: [
+          { type: "text", text: "Compare these" },
+          {
+            type: "image_reference",
+            label: "[image #1]",
+            attachmentId: "att_first123",
+            filename: "first.png",
+            mimeType: "image/png",
+            contentUrl: "/attachments/att_first123/content",
+          },
+          {
+            type: "image_reference",
+            label: "[image #2]",
+            attachmentId: "att_second456",
+            filename: "second.jpeg",
+            mimeType: "image/jpeg",
+            contentUrl: "/attachments/att_second456/content",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("replaces terminal-wrapped flattened attachment metadata with numbered image references", () => {
     const messages = messagesFromParsedAgentOutput({
       blocks: [
