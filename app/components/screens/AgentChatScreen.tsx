@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
-import { startHeartbeat } from "@/lib/heartbeat";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
@@ -41,9 +40,9 @@ import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useKeyboardInset } from "@/lib/use-keyboard-visible";
 import { parentViewHrefForPath } from "@/lib/view-location";
+import { isTransientRequestError } from "@/lib/request-errors";
 import {
   applyOutputSnapshotAtom,
-  ingestEventAtom,
   lastErrorFamily,
   outputBufferFamily,
   parsedOutputFamily,
@@ -62,7 +61,6 @@ const TERMINAL_HORIZONTAL_PADDING = 32;
 const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
-const CHAT_HEARTBEAT_RECONNECT_MS = 3000;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 
 type PendingImageAttachment = PickedImageAttachment & {
@@ -79,7 +77,6 @@ export default function ChatScreen() {
   const desktopState = useAtomValue(desktopStateFamily(stateProjectPath));
   const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const selectSession = useSetAtom(selectedSessionIdAtom);
-  const ingestEvent = useSetAtom(ingestEventAtom);
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
@@ -140,7 +137,6 @@ export default function ChatScreen() {
     };
   }, [getToken]);
 
-  const endpointKey = serviceEndpoint ? `${serviceEndpoint.host}:${serviceEndpoint.port}` : null;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
@@ -205,52 +201,8 @@ export default function ChatScreen() {
     sessionId,
   ]);
 
-  useEffect(() => {
-    if (!serviceEndpoint || !sessionId || !heartbeatReady) return;
-    if (!session || session.status === "offline" || session.status === "exited") return;
-    const endpoint = serviceEndpoint;
-    const activeSessionId = sessionId;
-    let cancelled = false;
-    let handle: { stop: () => void } | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function scheduleReconnect() {
-      if (cancelled || reconnectTimer) return;
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        handle?.stop();
-        handle = null;
-        connect();
-      }, CHAT_HEARTBEAT_RECONNECT_MS);
-    }
-
-    function connect() {
-      handle = startHeartbeat({
-        serviceEndpoint: endpoint,
-        sessionId: activeSessionId,
-        token,
-        onEvent: (event) => {
-          ingestEvent(event);
-        },
-        onError: (err) => {
-          if (cancelled) return;
-          console.warn("heartbeat error:", getErrorMessage(err));
-          scheduleReconnect();
-        },
-      });
-    }
-
-    connect();
-    return () => {
-      cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      handle?.stop();
-    };
-    // serviceEndpoint object identity changes during project-list reconciles.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpointKey, sessionId, token, ingestEvent, heartbeatReady, session?.status]);
-
   const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
+  const visibleLastError = lastError && !isTransientRequestError(lastError) ? lastError : null;
 
   const allMessages = useMemo<ChatMessage[]>(() => {
     return parsedMessages;
@@ -823,16 +775,8 @@ export default function ChatScreen() {
                           </Text>
                         </View>
                       ) : null}
-                      {output && parsedMessages.length === 0 && !showSplit ? (
-                        <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
-                          <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
-                          <Text className="text-secondary-foreground text-xs font-mono">
-                            {output}
-                          </Text>
-                        </View>
-                      ) : null}
-                      {lastError ? (
-                        <Text className="text-xs text-destructive my-2">{lastError}</Text>
+                      {visibleLastError ? (
+                        <Text className="text-xs text-destructive my-2">{visibleLastError}</Text>
                       ) : null}
                       {sendError ? (
                         <Text className="text-xs text-destructive my-2">{sendError}</Text>
@@ -911,8 +855,4 @@ export default function ChatScreen() {
       </View>
     </View>
   );
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

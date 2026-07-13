@@ -336,6 +336,9 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): boolean {
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.headers["access-control-request-private-network"] === "true") {
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+  }
   return true;
 }
 

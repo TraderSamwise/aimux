@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { GitBranch, Pencil, Radar, Repeat2 } from "lucide-react-native";
@@ -10,6 +10,7 @@ import { migrateAgent, renameAgent, setAgentLoop, setAgentOverseer } from "@/lib
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import {
@@ -35,7 +36,9 @@ export function AgentManagementPanel({
   groups: WorktreeBucket[];
 }) {
   const [label, setLabel] = useState(session.label || "");
-  const [loopGoal, setLoopGoal] = useState("");
+  const sessionLoopGoal = getLoopGoal(session.loop) ?? "";
+  const [loopGoal, setLoopGoal] = useState(sessionLoopGoal);
+  const lastSyncedLoopGoalRef = useRef(sessionLoopGoal);
   const [targetWorktreePath, setTargetWorktreePath] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<AgentManagementAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +46,12 @@ export function AgentManagementPanel({
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
+
+  useEffect(() => {
+    const previousSyncedGoal = lastSyncedLoopGoalRef.current;
+    lastSyncedLoopGoalRef.current = sessionLoopGoal;
+    setLoopGoal((current) => (current === previousSyncedGoal ? sessionLoopGoal : current));
+  }, [session.id, sessionLoopGoal]);
 
   const worktreeChoices = useMemo(
     () =>
@@ -76,7 +85,9 @@ export function AgentManagementPanel({
       ]);
       setStatus(actionStatus(action));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!isTransientRequestError(e)) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusyAction(null);
     }
@@ -124,6 +135,9 @@ export function AgentManagementPanel({
   const canAct = Boolean(endpoint) && !busyAction;
   const trimmedLabel = label.trim();
   const trimmedGoal = loopGoal.trim();
+  const currentLoopGoal = sessionLoopGoal.trim();
+  const loopActive = session.loop?.active === true;
+  const overseerActive = session.overseer === true;
   const selectedWorktreePath = worktreeChoices.some((choice) => choice.path === targetWorktreePath)
     ? targetWorktreePath
     : null;
@@ -132,7 +146,10 @@ export function AgentManagementPanel({
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
+  const canSaveLoop =
+    canAct && Boolean(trimmedGoal) && (!loopActive || trimmedGoal !== currentLoopGoal);
   const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+  const visibleError = error && !isTransientRequestError(error) ? error : null;
 
   if (!endpoint) {
     return null;
@@ -247,7 +264,7 @@ export function AgentManagementPanel({
             <Button
               variant="outline"
               size="sm"
-              disabled={!canAct || !trimmedGoal}
+              disabled={!canSaveLoop}
               onPress={() =>
                 runAction("loop", () =>
                   setAgentLoop(
@@ -259,20 +276,27 @@ export function AgentManagementPanel({
               }
             >
               <Text className="text-sm text-foreground">
-                {busyAction === "loop" ? "Saving" : "Start"}
+                {busyAction === "loop" ? "Saving" : loopActive ? "Save" : "Start"}
               </Text>
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              disabled={!canAct}
+              disabled={!canAct || !loopActive}
               onPress={() =>
                 runAction("loop", () =>
                   setAgentLoop(endpoint, { sessionId: session.id, active: false }, { token }),
                 )
               }
             >
-              <Text className="text-sm text-muted-foreground">Stop</Text>
+              <Text
+                className={cn(
+                  "text-sm",
+                  loopActive ? "text-muted-foreground" : "text-muted-foreground/60",
+                )}
+              >
+                Stop
+              </Text>
             </Button>
           </View>
         </View>
@@ -283,7 +307,7 @@ export function AgentManagementPanel({
             <Button
               variant="outline"
               size="sm"
-              disabled={!canAct}
+              disabled={!canAct || overseerActive}
               onPress={() =>
                 runAction("overseer", () =>
                   setAgentOverseer(endpoint, { sessionId: session.id, active: true }, { token }),
@@ -295,19 +319,26 @@ export function AgentManagementPanel({
             <Button
               variant="ghost"
               size="sm"
-              disabled={!canAct}
+              disabled={!canAct || !overseerActive}
               onPress={() =>
                 runAction("overseer", () =>
                   setAgentOverseer(endpoint, { sessionId: session.id, active: false }, { token }),
                 )
               }
             >
-              <Text className="text-sm text-muted-foreground">Off</Text>
+              <Text
+                className={cn(
+                  "text-sm",
+                  overseerActive ? "text-muted-foreground" : "text-muted-foreground/60",
+                )}
+              >
+                Off
+              </Text>
             </Button>
           </View>
         </View>
       </View>
-      {error ? <Text className="mt-3 text-xs text-destructive">{error}</Text> : null}
+      {visibleError ? <Text className="mt-3 text-xs text-destructive">{visibleError}</Text> : null}
       {status ? <Text className="mt-3 text-xs text-muted-foreground">{status}</Text> : null}
     </Card>
   );
@@ -359,4 +390,8 @@ function actionStatus(action: AgentManagementAction): string {
   if (action === "migrate") return "Agent moved";
   if (action === "loop") return "Loop updated";
   return "Overseer updated";
+}
+
+function getLoopGoal(loop: DesktopSession["loop"]): string | undefined {
+  return loop && typeof loop.goal === "string" ? loop.goal : undefined;
 }

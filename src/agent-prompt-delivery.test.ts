@@ -19,15 +19,12 @@ describe("agent prompt delivery", () => {
     vi.useRealTimers();
   });
 
-  it("normalizes submitted Codex prompts to the reliable single-line shape", () => {
+  it("normalizes submitted prompts to the reliable single-line shape", () => {
     expect(normalizeSubmittedPrompt("codex", "Aimux task\n\nRun:\n  aimux task show t1\n", true)).toBe(
       "Aimux task Run: aimux task show t1",
     );
-  });
-
-  it("preserves multiline submitted prompts for non-Codex tools", () => {
     expect(normalizeSubmittedPrompt("claude", "Aimux task\n\nRun:\n  aimux task show t1\n", true)).toBe(
-      "Aimux task\n\nRun:\n  aimux task show t1",
+      "Aimux task Run: aimux task show t1",
     );
   });
 

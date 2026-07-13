@@ -9,10 +9,7 @@ interface PromptTmuxRuntime {
 export function normalizeSubmittedPrompt(tool: string | undefined, data: string, submit: boolean): string {
   if (!submit) return data;
   const trimmed = data.replace(/(?:\r\n|\r|\n)+$/g, "");
-  if (tool === "codex") {
-    return trimmed.replace(/\s*(?:\r\n|\r|\n)+\s*/g, " ");
-  }
-  return trimmed;
+  return trimmed.replace(/\s*(?:\r\n|\r|\n)+\s*/g, " ");
 }
 
 export function paneStillContainsPromptDraft(
