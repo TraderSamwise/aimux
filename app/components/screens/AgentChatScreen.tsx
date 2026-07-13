@@ -24,6 +24,7 @@ import { startHeartbeat } from "@/lib/heartbeat";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
+  getLivePaneOutput,
   getShare,
   leaveShare,
   listShares,
@@ -41,6 +42,7 @@ import { useRouteProject } from "@/lib/use-route-project";
 import { useKeyboardInset } from "@/lib/use-keyboard-visible";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import {
+  applyOutputSnapshotAtom,
   ingestEventAtom,
   lastErrorFamily,
   outputBufferFamily,
@@ -61,6 +63,7 @@ const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
 const CHAT_HEARTBEAT_RECONNECT_MS = 3000;
+const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
@@ -77,6 +80,7 @@ export default function ChatScreen() {
   const worktreeGroups = useAtomValue(worktreeGroupsFamily(stateProjectPath));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
+  const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
@@ -138,6 +142,68 @@ export default function ChatScreen() {
 
   const endpointKey = serviceEndpoint ? `${serviceEndpoint.host}:${serviceEndpoint.port}` : null;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
+  const endpointHost = serviceEndpoint?.host ?? null;
+  const endpointPort = serviceEndpoint?.port ?? null;
+
+  const refreshOutputSnapshot = useCallback(async () => {
+    if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
+      return;
+    }
+    const result = await getLivePaneOutput(
+      { host: endpointHost, port: endpointPort },
+      sessionId,
+      -120,
+      { token },
+    );
+    applyOutputSnapshot({
+      sessionId: result.sessionId,
+      output: result.output,
+      parsed: result.parsed ?? null,
+    });
+  }, [
+    applyOutputSnapshot,
+    endpointHost,
+    endpointPort,
+    heartbeatReady,
+    routeSessionMissing,
+    sessionId,
+    token,
+  ]);
+
+  useEffect(() => {
+    if (!endpointHost || !endpointPort || !sessionId || !heartbeatReady || routeSessionMissing) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        await refreshOutputSnapshot();
+      } catch {
+        // Relay/SSE connection state is surfaced elsewhere; snapshot polling is best-effort.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void tick();
+    const timer = setInterval(() => {
+      void tick();
+    }, CHAT_OUTPUT_SNAPSHOT_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [
+    endpointHost,
+    endpointPort,
+    heartbeatReady,
+    refreshOutputSnapshot,
+    routeSessionMissing,
+    sessionId,
+  ]);
 
   useEffect(() => {
     if (!serviceEndpoint || !sessionId || !heartbeatReady) return;
@@ -334,6 +400,7 @@ export default function ChatScreen() {
           .map((attachment) => attachment.uploadedAttachmentId)
           .filter((id): id is string => Boolean(id)),
       });
+      void refreshOutputSnapshot().catch(() => {});
     } catch (err) {
       setDraft(text);
       setPendingAttachments(attachments);
