@@ -180,6 +180,11 @@ exit "\${TMUX_EXIT:-0}"
   };
 }
 
+function writeExecWrapper(path: string, target: string): void {
+  writeFileSync(path, `#!/bin/sh\nexec "${target}" "$@"\n`);
+  chmodSync(path, 0o755);
+}
+
 function health(buildStamp: string, pid = 123, port = 45678): string {
   return JSON.stringify({
     kind: "aimux-daemon",
@@ -679,16 +684,16 @@ describe("installed aimux shim", () => {
 
     const noTmuxBin = join(fixture.root, "bin-no-tmux");
     mkdirSync(noTmuxBin, { recursive: true });
-    writeFileSync(join(noTmuxBin, "curl"), `#!/usr/bin/env sh\nexec "${fixture.curlPath}" "$@"\n`);
-    writeFileSync(join(noTmuxBin, "node"), `#!/usr/bin/env sh\nexec "${fixture.nodePath}" "$@"\n`);
-    chmodSync(join(noTmuxBin, "curl"), 0o755);
-    chmodSync(join(noTmuxBin, "node"), 0o755);
+    writeExecWrapper(join(noTmuxBin, "curl"), fixture.curlPath);
+    writeExecWrapper(join(noTmuxBin, "node"), fixture.nodePath);
+    writeExecWrapper(join(noTmuxBin, "sh"), "/bin/sh");
+    writeExecWrapper(join(noTmuxBin, "sed"), "/usr/bin/sed");
+    writeExecWrapper(join(noTmuxBin, "grep"), "/usr/bin/grep");
+    writeExecWrapper(join(noTmuxBin, "mktemp"), "/usr/bin/mktemp");
+    writeExecWrapper(join(noTmuxBin, "cat"), "/bin/cat");
+    writeExecWrapper(join(noTmuxBin, "rm"), "/bin/rm");
 
-    const result = fixture.run(
-      ["host", "restart", "--open"],
-      { PATH: `${noTmuxBin}:/usr/bin:/bin` },
-      { cwd: projectDir },
-    );
+    const result = fixture.run(["host", "restart", "--open"], { PATH: noTmuxBin }, { cwd: projectDir });
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("Restarted project service for aimux-repo\n");
