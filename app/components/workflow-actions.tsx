@@ -27,6 +27,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { kickProjectApiViewRefreshAtom } from "@/stores/projectViews";
 
 type WorkflowAction = "accept" | "block" | "complete" | "reopen" | "approve" | "changes";
@@ -58,7 +59,9 @@ export function TaskWorkflowActions({
       await fn(token);
       kickProjectRefresh(["tasks", "threads", "project-observability", "coordination-worklist"]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!isTransientRequestError(e)) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       actionLockRef.current = false;
       setBusyAction(null);
@@ -66,6 +69,7 @@ export function TaskWorkflowActions({
   }
 
   if (!endpoint) return null;
+  const visibleError = error && !isTransientRequestError(error) ? error : null;
 
   return (
     <View className="mt-3">
@@ -159,7 +163,7 @@ export function TaskWorkflowActions({
           </>
         )}
       </View>
-      {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
+      {visibleError ? <Text className="mt-2 text-xs text-destructive">{visibleError}</Text> : null}
     </View>
   );
 }
@@ -197,7 +201,9 @@ export function ThreadWorkflowActions({
       if (action === "reply") setDraft("");
       kickProjectRefresh(["threads", "coordination-worklist"]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!isTransientRequestError(e)) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       actionLockRef.current = false;
       setBusyAction(null);
@@ -205,6 +211,7 @@ export function ThreadWorkflowActions({
   }
 
   if (!endpoint) return null;
+  const visibleError = error && !isTransientRequestError(error) ? error : null;
 
   return (
     <View className="mt-3 border-t border-border pt-3">
@@ -279,7 +286,7 @@ export function ThreadWorkflowActions({
           </Text>
         </Button>
       </View>
-      {error ? <Text className="mt-2 text-xs text-destructive">{error}</Text> : null}
+      {visibleError ? <Text className="mt-2 text-xs text-destructive">{visibleError}</Text> : null}
     </View>
   );
 }

@@ -32,7 +32,8 @@ describe("auditAgentOutputParserCorpus", () => {
       join(dir, "claude-test.jsonl"),
       `${JSON.stringify({
         type: "response",
-        content: "• Leaked runtime row:\n  Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
+        content:
+          "• Leaked runtime row:\n  Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
       })}\n`,
     );
 
@@ -246,8 +247,14 @@ describe("auditAgentOutputParserCorpus", () => {
     writeFileSync(
       join(dir, "claude-test.jsonl"),
       [
-        JSON.stringify({ type: "response", content: "• Leak one:\n  Bash(terminal-notifier -title ClaudeCode) leak one" }),
-        JSON.stringify({ type: "response", content: "• Leak two:\n  Bash(terminal-notifier -title ClaudeCode) leak two" }),
+        JSON.stringify({
+          type: "response",
+          content: "• Leak one:\n  Bash(terminal-notifier -title ClaudeCode) leak one",
+        }),
+        JSON.stringify({
+          type: "response",
+          content: "• Leak two:\n  Bash(terminal-notifier -title ClaudeCode) leak two",
+        }),
         "",
       ].join("\n"),
     );
@@ -329,9 +336,7 @@ describe("auditAgentOutputParserCorpus", () => {
       join(dir, "codex-test.jsonl"),
       `${JSON.stringify({
         type: "response",
-        content:
-          "• Ran ls -la ~/.aimux/native\n\n" +
-          "drwxr-xr-x@ 11 sam staff 352 May 30 12:00 0.1.16-local.fff4f4d",
+        content: "• Ran ls -la ~/.aimux/native\n\n" + "drwxr-xr-x@ 11 sam staff 352 May 30 12:00 0.1.16-local.fff4f4d",
       })}\n`,
     );
 
@@ -356,7 +361,8 @@ describe("auditAgentOutputParserCorpus", () => {
         }),
         JSON.stringify({
           type: "response",
-          content: "• Leaked runtime row:\n  Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
+          content:
+            "• Leaked runtime row:\n  Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
         }),
         "",
       ].join("\n"),
@@ -409,7 +415,7 @@ describe("auditAgentOutputParserCorpus", () => {
       join(dir, "codex-test.jsonl"),
       `${JSON.stringify({
         type: "response",
-        content: ["› Explain this codebase", "", "  gpt-5.5 high · ~/workspace/project"].join("\n"),
+        content: ["› Please explain this codebase", "", "  gpt-5.5 high · ~/workspace/project"].join("\n"),
       })}\n`,
     );
 

@@ -125,8 +125,23 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       trimmed.includes("Claude Max") ||
       trimmed.includes("Sonnet") ||
       trimmed.includes("Opus") ||
+      (/^[▘▝\s]+(~\/|\/)/.test(trimmed) && !sawPrompt) ||
       (isPathLike(trimmed) && !sawPrompt) ||
       (/context\)/.test(trimmed) && !sawPrompt)
+    );
+  };
+  const isClaudeStartupStatusLine = (line: string) => {
+    const trimmed = line.trim();
+    return (
+      tool === "claude" &&
+      !sawPrompt &&
+      (/^▎\s?/.test(trimmed) ||
+        /^As before, you can use up to half of your weekly usage limit\b/i.test(trimmed) ||
+        /^keep using Fable 5 with usage credits\b/i.test(trimmed) ||
+        /^remaining limits\b/i.test(trimmed) ||
+        /^More details here:?$/i.test(trimmed) ||
+        /weekly rate limits\b/i.test(trimmed) ||
+        /support\.claude\.com\/en\/articles\/15424964-claude-fable-5-promotional-access/i.test(trimmed))
     );
   };
   const isFooterLine = (line: string) => {
@@ -156,14 +171,17 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const conversationBulletText = trimmed.replace(/^(?:•|⏺)\s?/, "");
     return (
       /^■\s?/.test(trimmed) ||
+      /^⚠\s+/.test(trimmed) ||
       /^⏺\s*$/.test(trimmed) ||
       /^⏺\s*[\u2500-\u257f\-_=\s]+Bash command\b/i.test(trimmed) ||
       /^⏺\s*Bash\([^)\n]*terminal-notifier/i.test(trimmed) ||
+      /^⎿\s+\d+\s+skills?\s+available\b/i.test(trimmed) ||
       /^└\s+/.test(trimmed) ||
       looksLikeActivityProgressText(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
       /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
+      /^You have \d+ usage limit resets available\b/i.test(dotBulletText) ||
       looksLikeRanCommandText(trimmed) ||
       looksLikeToolActionText(trimmed) ||
       (/^(?:•|⏺)\s?/.test(trimmed) && looksLikeToolActionText(conversationBulletText)) ||
@@ -195,6 +213,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     }
     return /^(?:now|\d+[smhd]\s+ago|\d+\.\s)/i.test(promptText.trim());
   };
+  const isCodexStartupSuggestionPrompt = (promptText: string) => {
+    if (tool !== "codex" || sawPrompt) return false;
+    return /^(?:Implement \{feature\}|Explain this codebase|Find and fix a bug in @filename)$/i.test(promptText.trim());
+  };
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
@@ -222,6 +244,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
         expectingResponse = false;
         continue;
       }
+      if (isCodexStartupSuggestionPrompt(promptText)) {
+        if (promptText.trim()) pushLine("status", promptText);
+        expectingResponse = false;
+        continue;
+      }
       if (!promptText.trim()) {
         flush();
         expectingResponse = false;
@@ -241,6 +268,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     }
     if (isStatusLine(trimmed)) {
       pushLine("status", stripStatusMarker(trimmed));
+      expectingResponse = false;
+      continue;
+    }
+    if (isClaudeStartupStatusLine(trimmed)) {
+      pushLine("status", trimmed.replace(/^▎\s?/, ""));
       expectingResponse = false;
       continue;
     }
@@ -359,16 +391,13 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
       .filter(Boolean);
     const joined = lines.join("\n");
     const runtimeLineCount = lines.filter((line) => {
-      return (
-        /^[✢✳✶✻✽·]/.test(line) ||
-        /^\(thinking\)$/i.test(line) ||
-        /^Bash\([^)]*terminal-notifier/i.test(line)
-      );
+      return /^[✢✳✶✻✽·]/.test(line) || /^\(thinking\)$/i.test(line) || /^Bash\([^)]*terminal-notifier/i.test(line);
     }).length;
     return (
       runtimeLineCount >= 2 ||
       /terminal-notifier.*Running/i.test(joined) ||
-      (/terminal-notifier/i.test(joined) && /(?:Bash command|Thiscommandrequiresapproval|Doyouwanttoproceed)/i.test(joined))
+      (/terminal-notifier/i.test(joined) &&
+        /(?:Bash command|Thiscommandrequiresapproval|Doyouwanttoproceed)/i.test(joined))
     );
   };
 
@@ -463,6 +492,26 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
     ) {
       current.type = "status";
     }
+  }
+
+  if (
+    !next.some((block) => block.type === "prompt" || block.type === "response") &&
+    next.every((block) => block.type === "meta" || block.type === "status")
+  ) {
+    const metaText = next
+      .filter((block) => block.type === "meta")
+      .map((block) => block.text)
+      .join("\n\n")
+      .trim();
+    const statusText = next
+      .filter((block) => block.type === "status")
+      .map((block) => block.text)
+      .join("\n\n")
+      .trim();
+    const collapsed: AgentOutputBlock[] = [];
+    if (metaText) collapsed.push({ type: "meta", text: metaText });
+    if (statusText) collapsed.push({ type: "status", text: statusText });
+    return collapsed;
   }
 
   const merged: AgentOutputBlock[] = [];

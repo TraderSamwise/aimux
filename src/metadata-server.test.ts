@@ -98,6 +98,25 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("allows private-network browser preflight requests", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+
+    const response = await fetch(`http://127.0.0.1:${endpoint!.port}/live-pane/input`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:8085",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Private-Network": "true",
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-private-network")).toBe("true");
+  });
+
   it("tolerates missing runtime context payloads", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

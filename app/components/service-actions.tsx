@@ -8,6 +8,7 @@ import { removeService, resumeService, stopService } from "@/lib/api";
 import type { ProjectLifecycleTransition } from "../../src/project-api-contract";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService } from "@/lib/desktop-state";
+import { isTransientRequestError } from "@/lib/request-errors";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import {
@@ -80,7 +81,9 @@ export function ServiceActions({
             worktreePath: service.worktreePath,
           });
         }
-        setError(e instanceof Error ? e.message : String(e));
+        if (!isTransientRequestError(e)) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
         setBusy(false);
       }
@@ -94,6 +97,7 @@ export function ServiceActions({
   const sizeClass = compact ? "h-7 w-7" : "h-9 w-9";
   const iconSize = compact ? 13 : 15;
   const gap = compact ? "ml-1" : "ml-1.5";
+  const visibleError = error && !isTransientRequestError(error) ? error : null;
 
   return (
     <View>
@@ -152,7 +156,9 @@ export function ServiceActions({
           </View>
         ) : null}
       </View>
-      {error ? <Text className="text-[11px] text-destructive mt-1">{error}</Text> : null}
+      {visibleError ? (
+        <Text className="text-[11px] text-destructive mt-1">{visibleError}</Text>
+      ) : null}
     </View>
   );
 }
