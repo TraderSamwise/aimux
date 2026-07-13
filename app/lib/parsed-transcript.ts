@@ -14,8 +14,9 @@ const ATTACHED_IMAGE_LINE =
   /^\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
 const INLINE_ATTACHED_IMAGE =
   /^(.*?)\s*Attached image files:\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
-const FLATTENED_ATTACHED_IMAGE =
-  /\s*Attached image files:\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(\S*?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)/g;
+const FLATTENED_ATTACHMENTS_HEADER = /\bAttached image files:\s*/;
+const FLATTENED_ATTACHMENT_ITEM =
+  /-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(\S*?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)/g;
 const VIEWED_IMAGE_PATH =
   /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
@@ -64,15 +65,21 @@ function partsFromFlattenedAttachmentText(
   if (!text.includes("Attached image files:")) return null;
 
   const flattened = text.replace(/\s+/g, " ").trim();
+  const headerMatch = flattened.match(FLATTENED_ATTACHMENTS_HEADER);
+  if (!headerMatch?.index && headerMatch?.index !== 0) return null;
+  const headerEnd = headerMatch.index + headerMatch[0].length;
+  const head = flattened.slice(0, headerMatch.index).trim();
+  const tail = flattened.slice(headerEnd);
   const parts: HistoryPart[] = [];
+  if (head) parts.push({ type: "text", text: head });
   let cursor = 0;
   let matched = false;
-  FLATTENED_ATTACHED_IMAGE.lastIndex = 0;
+  FLATTENED_ATTACHMENT_ITEM.lastIndex = 0;
 
-  for (const match of flattened.matchAll(FLATTENED_ATTACHED_IMAGE)) {
+  for (const match of tail.matchAll(FLATTENED_ATTACHMENT_ITEM)) {
     if (!match[4] || match.index === undefined) continue;
-    const prefix = flattened.slice(cursor, match.index).trim();
-    if (prefix) parts.push({ type: "text", text: prefix });
+    const between = tail.slice(cursor, match.index).trim();
+    if (between) parts.push({ type: "text", text: between });
     parts.push(
       imageReferenceFor(imageLabels, match[4], {
         filename: match[1],
@@ -84,7 +91,7 @@ function partsFromFlattenedAttachmentText(
   }
 
   if (!matched) return null;
-  const suffix = flattened.slice(cursor).trim();
+  const suffix = tail.slice(cursor).trim();
   if (suffix) parts.push({ type: "text", text: suffix });
   return parts;
 }

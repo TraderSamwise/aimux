@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { GitBranch, Pencil, Radar, Repeat2 } from "lucide-react-native";
@@ -36,7 +36,9 @@ export function AgentManagementPanel({
   groups: WorktreeBucket[];
 }) {
   const [label, setLabel] = useState(session.label || "");
-  const [loopGoal, setLoopGoal] = useState(() => getLoopGoal(session.loop) ?? "");
+  const sessionLoopGoal = getLoopGoal(session.loop) ?? "";
+  const [loopGoal, setLoopGoal] = useState(sessionLoopGoal);
+  const lastSyncedLoopGoalRef = useRef(sessionLoopGoal);
   const [targetWorktreePath, setTargetWorktreePath] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<AgentManagementAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +46,12 @@ export function AgentManagementPanel({
   const kickDesktopRefresh = useSetAtom(kickDesktopStateRefreshAtom);
   const kickProjectViewRefresh = useSetAtom(kickProjectApiViewRefreshAtom);
   const recordTransition = useSetAtom(recordProjectLifecycleTransitionAtom);
+
+  useEffect(() => {
+    const previousSyncedGoal = lastSyncedLoopGoalRef.current;
+    lastSyncedLoopGoalRef.current = sessionLoopGoal;
+    setLoopGoal((current) => (current === previousSyncedGoal ? sessionLoopGoal : current));
+  }, [session.id, sessionLoopGoal]);
 
   const worktreeChoices = useMemo(
     () =>
@@ -127,6 +135,7 @@ export function AgentManagementPanel({
   const canAct = Boolean(endpoint) && !busyAction;
   const trimmedLabel = label.trim();
   const trimmedGoal = loopGoal.trim();
+  const currentLoopGoal = sessionLoopGoal.trim();
   const loopActive = session.loop?.active === true;
   const overseerActive = session.overseer === true;
   const selectedWorktreePath = worktreeChoices.some((choice) => choice.path === targetWorktreePath)
@@ -137,6 +146,8 @@ export function AgentManagementPanel({
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
+  const canSaveLoop =
+    canAct && Boolean(trimmedGoal) && (!loopActive || trimmedGoal !== currentLoopGoal);
   const fieldIdPrefix = `agent-${session.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const visibleError = error && !isTransientRequestError(error) ? error : null;
 
@@ -253,7 +264,7 @@ export function AgentManagementPanel({
             <Button
               variant="outline"
               size="sm"
-              disabled={!canAct || !trimmedGoal || loopActive}
+              disabled={!canSaveLoop}
               onPress={() =>
                 runAction("loop", () =>
                   setAgentLoop(
@@ -265,7 +276,7 @@ export function AgentManagementPanel({
               }
             >
               <Text className="text-sm text-foreground">
-                {busyAction === "loop" ? "Saving" : "Start"}
+                {busyAction === "loop" ? "Saving" : loopActive ? "Save" : "Start"}
               </Text>
             </Button>
             <Button
