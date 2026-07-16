@@ -145,8 +145,23 @@ function switchClient() {
   const ttyIndex = args.indexOf("-c");
   const tty = ttyIndex >= 0 ? args[ttyIndex + 1] : "";
   const target = args[args.indexOf("-t") + 1];
-  const [sessionName, indexText] = target.split(":");
-  const window = (state.windows?.[sessionName] || []).find((entry) => String(entry.index) === indexText);
+  let sessionName = "";
+  let window = null;
+  if (target.startsWith("@")) {
+    for (const [candidateSession, windows] of Object.entries(state.windows || {})) {
+      const match = (windows || []).find((entry) => entry.id === target);
+      if (match) {
+        sessionName = candidateSession;
+        window = match;
+        break;
+      }
+    }
+  } else {
+    const parts = target.split(":");
+    sessionName = parts[0];
+    const indexText = parts[1];
+    window = (state.windows?.[sessionName] || []).find((entry) => String(entry.index) === indexText);
+  }
   if (!window) fail();
   const client = (state.clients || []).find((entry) => entry.tty === tty);
   if (!client) fail();
@@ -3006,12 +3021,10 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     const popupIndex = log.findIndex((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"));
+    const switchIndex = log.findIndex((entry) => entry.includes("switch-client -c /dev/live -t @codex"));
     expect(popupIndex).toBeGreaterThanOrEqual(0);
-    expect(curlLog).toHaveLength(1);
-    expect(curlLog[0]).toContain("http://127.0.0.1:43444/control/focus-window");
-    expect(curlLog[0]).toContain("@codex");
-    expect(curlLog[0]).toContain("aimux-proj-client-1234abcd");
-    expect(curlLog[0]).toContain("/dev/live");
+    expect(switchIndex).toBeGreaterThan(popupIndex);
+    expect(curlLog).toHaveLength(0);
   });
 
   it("falls back to the default expose socket when the socket path file is empty", () => {
