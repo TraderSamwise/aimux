@@ -42,6 +42,8 @@ export interface TmuxExposeOptions {
   columns?: number;
   rows?: number;
   exposeConfig?: ExposeConfig;
+  deferFocusUntilAfterExit?: boolean;
+  onDeferredFocusItem?: (item: ExposeScopeItem) => void;
 }
 
 const CAPTURE_LINES = 40;
@@ -572,6 +574,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const item = items[i];
       if (!item) return;
       opening = true;
+      if (options.deferFocusUntilAfterExit) {
+        options.onDeferredFocusItem?.(item);
+        finish(0);
+        return;
+      }
       void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir, exposeDeps)
         .then(async (ok) => {
           if (ok) {
