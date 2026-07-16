@@ -158,6 +158,7 @@ import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { runTmuxExpose } from "./tmux/expose.js";
+import type { ExposeScopeItem } from "./tmux/expose-model.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
   permissionRequestHookOutput,
@@ -1471,6 +1472,7 @@ export class MetadataServer {
     const input = new PassThrough();
     if (rest.length) input.write(rest);
     socket.pipe(input);
+    let deferredFocusItem: ExposeScopeItem | null = null;
     const code = await runTmuxExpose({
       projectRoot: header[0] || this.currentProjectRoot(),
       projectStateDir: header[1] || getProjectStateDirFor(this.currentProjectRoot()),
@@ -1488,10 +1490,21 @@ export class MetadataServer {
       manageTerminal: false,
       columns: parsePositiveHeaderInteger(header[11]),
       rows: parsePositiveHeaderInteger(header[12]),
+      deferFocusUntilAfterExit: true,
+      onDeferredFocusItem: (item) => {
+        deferredFocusItem = item;
+      },
     });
     if (header[10]) {
       try {
-        writeFileSync(header[10], `${code}\n`);
+        const selectedFocusItem = deferredFocusItem as ExposeScopeItem | null;
+        const windowId = selectedFocusItem?.target.windowId;
+        writeFileSync(
+          header[10],
+          windowId
+            ? `${JSON.stringify({ code, focus: { windowId, projectRoot: selectedFocusItem?.projectRoot ?? "" } })}\n`
+            : `${code}\n`,
+        );
       } catch {}
     }
     socket.end();
