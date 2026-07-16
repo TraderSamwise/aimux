@@ -498,6 +498,12 @@ focus_expose_selection() {
   focus_project_root="${2-}"
   [ -n "$focus_window_id" ] || return 1
 
+  if [ -z "$focus_project_root" ] || [ "$focus_project_root" = "$project_root" ]; then
+    switch_client_to_target "$focus_window_id" "${popup_client_tty-}" || return 1
+    refresh_navigation_client "${popup_client_tty-}"
+    return 0
+  fi
+
   if [ -n "$focus_project_root" ] && [ "$focus_project_root" != "$project_root" ]; then
     [ -n "$daemon_host" ] && [ -n "$daemon_port" ] || return 1
     focus_endpoint="http://$daemon_host:$daemon_port/core/expose/focus"
