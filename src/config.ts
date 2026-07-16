@@ -36,6 +36,13 @@ export interface TmuxRuntimeConfig {
   sessionPrefix: string;
 }
 
+export type ExposeInitialScope = "worktree" | "project" | "global";
+
+export interface ExposeConfig {
+  /** Initial Exposé rung when launched outside the meta dashboard. */
+  initialScope: ExposeInitialScope;
+}
+
 export interface StatuslineDefaultPluginConfig {
   enabled: boolean;
   line?: "top" | "bottom";
@@ -105,6 +112,7 @@ export interface AimuxConfig {
   inbox: InboxConfig;
   notifications: NotificationConfig;
   statusline: StatuslineConfig;
+  expose: ExposeConfig;
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   loop: LoopConfig;
@@ -186,6 +194,9 @@ const DEFAULT_CONFIG: AimuxConfig = {
       },
     },
   },
+  expose: {
+    initialScope: "worktree",
+  },
   runtime: {
     agentPreambleEnabled: true,
     tmux: {
@@ -250,6 +261,12 @@ function stringArrayEquals(a: string[] | undefined, b: string[]): boolean {
 }
 
 function normalizeConfig(config: AimuxConfig): AimuxConfig {
+  if (!config.expose || typeof config.expose !== "object") {
+    config.expose = cloneJson(DEFAULT_CONFIG.expose);
+  } else if (!["worktree", "project", "global"].includes(config.expose.initialScope)) {
+    config.expose.initialScope = DEFAULT_CONFIG.expose.initialScope;
+  }
+
   const codex = config.tools.codex;
   if (
     codex?.command === "codex" &&
