@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, unlinkSync } from "node:fs";
 import { basename, resolve as pathResolve } from "node:path";
+import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { formatRelativeRecency } from "../recency.js";
@@ -13,6 +14,7 @@ import {
   initialExposeScope,
   loadExposeScopeItems,
   nextExposeScope,
+  type ExposeConfig,
   type ExposeScope,
   type ExposeScopeItem,
   type ExposeScopeView,
@@ -39,6 +41,7 @@ export interface TmuxExposeOptions {
   manageTerminal?: boolean;
   columns?: number;
   rows?: number;
+  exposeConfig?: ExposeConfig;
 }
 
 const CAPTURE_LINES = 40;
@@ -350,7 +353,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     currentClientSession: options.currentClientSession,
   };
   const exposeDeps = { daemonEndpoint: options.daemonEndpoint };
-  let scope = initialExposeScope(crossProject, context);
+  const exposeConfig = options.exposeConfig ?? loadConfig({ projectRoot: options.projectRoot }).expose;
+  let scope = initialExposeScope(crossProject, context, exposeConfig);
   let view = defaultExposeScopeView(scope);
   let items = view.items;
   let scopeLabel = view.scopeLabel;
@@ -445,6 +449,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let staticSize = "";
   let staticVisibleCount = -1;
   let refreshTick = 0;
+  let opening = false;
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
@@ -563,14 +568,18 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     };
 
     const selectTile = (i: number) => {
+      if (opening) return;
       const item = items[i];
       if (!item) return;
+      opening = true;
       void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir, exposeDeps)
         .then(async (ok) => {
           if (ok) {
+            await new Promise((resolve) => setTimeout(resolve, 30));
             finish(0);
             return;
           }
+          opening = false;
           await reload();
           render();
         })
@@ -579,6 +588,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
     function onData(data: Buffer) {
       try {
+        if (opening) return;
         const event = parseKeys(data)[0];
         if (!event) return;
         const key = event.name || event.char || "";

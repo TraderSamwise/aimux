@@ -238,6 +238,32 @@ describe("config", () => {
     });
   });
 
+  it("defaults expose to the current worktree", () => {
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({
+      initialScope: "worktree",
+    });
+  });
+
+  it("allows project config to choose the initial expose scope", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { initialScope: "global" } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("global");
+  });
+
+  it("normalizes invalid expose scope config", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { initialScope: "somewhere" } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose.initialScope).toBe("worktree");
+  });
+
   it("reads an explicit projectRoot config without touching global path state", () => {
     const otherRepo = mkdtempSync(join(tmpdir(), "aimux-config-other-"));
     try {
