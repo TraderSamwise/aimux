@@ -311,8 +311,10 @@ async function waitForStableDashboardSessionAbsence(
   while (Date.now() < deadline) {
     const refreshed = await refreshDashboardModelForSettlement(host, modelLifecycle);
     if (!refreshed && hasDashboardModelServiceRefreshError(host)) return false;
-    const session = getRawDashboardSessionEntry(host, sessionId);
-    if (session) {
+    const rawSession = getRawDashboardSessionEntry(host, sessionId);
+    const renderedSession = getDashboardSessionEntry(host, sessionId);
+    const sessionStillPresent = Boolean(rawSession) && !(refreshed && !renderedSession);
+    if (sessionStillPresent) {
       missingSince = null;
     } else if (refreshed || missingSince !== null) {
       missingSince ??= Date.now();

@@ -87,6 +87,13 @@ function queryClientSize(clientTty?: string): string {
   return "";
 }
 
+function parseClientSize(size: string): { cols: number; rows: number } | null {
+  const [colsRaw, rowsRaw] = size.split("x");
+  const cols = Number.parseInt(colsRaw ?? "", 10);
+  const rows = Number.parseInt(rowsRaw ?? "", 10);
+  return Number.isFinite(cols) && cols > 0 && Number.isFinite(rows) && rows > 0 ? { cols, rows } : null;
+}
+
 function shortWorktree(item: FastControlItem, projectRoot: string): string {
   const wt = item.metadata.worktreePath;
   if (!wt || pathResolve(wt) === pathResolve(projectRoot)) return "main";
@@ -338,9 +345,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const manageTerminal = options.manageTerminal !== false;
+  let socketCols = options.columns;
+  let socketRows = options.rows;
   const terminalSize = () => ({
-    cols: output.columns ?? options.columns ?? 80,
-    rows: output.rows ?? options.rows ?? 24,
+    cols: output.columns ?? socketCols ?? 80,
+    rows: output.rows ?? socketRows ?? 24,
   });
 
   // On the meta-dashboard window Exposé starts cross-project (global); otherwise it
@@ -441,10 +450,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
   let index = currentIdx >= 0 ? currentIdx : 0;
-  // Baseline the controlling client size at launch; a later change means the terminal
-  // was resized and the popup must be relaunched to re-fit it.
-  const clientBaseline =
-    options.columns && options.rows ? `${options.columns}x${options.rows}` : queryClientSize(options.clientTty);
+  const clientBaseline = manageTerminal ? queryClientSize(options.clientTty) : "";
   let tileCols = 1;
   let visibleCount = items.length;
   let lastRenderSize = "";
@@ -593,77 +599,82 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         .catch(() => finish(1));
     };
 
+    function handleKeyEvent(event: ReturnType<typeof parseKeys>[number]) {
+      if (opening) return;
+      if (event.name === "focusin" || event.name === "focusout" || event.name === "mouse") return;
+      const key = event.name || event.char || "";
+
+      if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
+        finish(0);
+        return;
+      }
+      if (key === "g") {
+        if (loading) return;
+        const next = nextExposeScope(scope);
+        if (next !== scope) {
+          const previousScope = scope;
+          scope = next;
+          view = defaultExposeScopeView(scope);
+          items = view.items;
+          scopeLabel = view.scopeLabel;
+          sublabel = view.sublabel;
+          loading = true;
+          render();
+          void reload(false)
+            .then(() => {
+              render();
+              if (refreshCaptures()) render(false);
+            })
+            .catch(() => {
+              scope = previousScope;
+              view = defaultExposeScopeView(scope);
+              items = view.items;
+              scopeLabel = view.scopeLabel;
+              sublabel = view.sublabel;
+              loading = false;
+              render();
+            });
+        }
+        return;
+      }
+      if (key >= "1" && key <= "9") {
+        if (loading) return;
+        const target = Number.parseInt(key, 10) - 1;
+        if (target < visibleCount) selectTile(target);
+        return;
+      }
+      if (key === "enter" || key === "return") {
+        if (loading) return;
+        selectTile(index);
+        return;
+      }
+      if (visibleCount === 0) return;
+      if (key === "right" || key === "l" || key === "n" || key === "tab") {
+        index = (index + 1) % visibleCount;
+        render(false);
+        return;
+      }
+      if (key === "left" || key === "h" || key === "p") {
+        index = (index - 1 + visibleCount) % visibleCount;
+        render(false);
+        return;
+      }
+      if (key === "down" || key === "j") {
+        if (index + tileCols < visibleCount) index += tileCols;
+        render(false);
+        return;
+      }
+      if (key === "up" || key === "k") {
+        if (index - tileCols >= 0) index -= tileCols;
+        render(false);
+      }
+    }
+
     function onData(data: Buffer) {
       try {
-        if (opening) return;
-        const event = parseKeys(data)[0];
-        if (!event) return;
-        const key = event.name || event.char || "";
-
-        if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
-          finish(0);
-          return;
-        }
-        if (key === "g") {
-          if (loading) return;
-          const next = nextExposeScope(scope);
-          if (next !== scope) {
-            const previousScope = scope;
-            scope = next;
-            view = defaultExposeScopeView(scope);
-            items = view.items;
-            scopeLabel = view.scopeLabel;
-            sublabel = view.sublabel;
-            loading = true;
-            render();
-            void reload(false)
-              .then(() => {
-                render();
-                if (refreshCaptures()) render(false);
-              })
-              .catch(() => {
-                scope = previousScope;
-                view = defaultExposeScopeView(scope);
-                items = view.items;
-                scopeLabel = view.scopeLabel;
-                sublabel = view.sublabel;
-                loading = false;
-                render();
-              });
-          }
-          return;
-        }
-        if (key >= "1" && key <= "9") {
-          if (loading) return;
-          const target = Number.parseInt(key, 10) - 1;
-          if (target < visibleCount) selectTile(target);
-          return;
-        }
-        if (key === "enter" || key === "return") {
-          if (loading) return;
-          selectTile(index);
-          return;
-        }
-        if (visibleCount === 0) return;
-        if (key === "right" || key === "l" || key === "n" || key === "tab") {
-          index = (index + 1) % visibleCount;
-          render(false);
-          return;
-        }
-        if (key === "left" || key === "h" || key === "p") {
-          index = (index - 1 + visibleCount) % visibleCount;
-          render(false);
-          return;
-        }
-        if (key === "down" || key === "j") {
-          if (index + tileCols < visibleCount) index += tileCols;
-          render(false);
-          return;
-        }
-        if (key === "up" || key === "k") {
-          if (index - tileCols >= 0) index -= tileCols;
-          render(false);
-          return;
+        for (const event of parseKeys(data)) {
+          if (finished) break;
+          handleKeyEvent(event);
         }
       } catch {
         finish(1);
@@ -682,6 +693,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
             if (clientNow && clientNow !== clientBaseline) {
               finish(RELAUNCH_ON_RESIZE_EXIT);
               return;
+            }
+          } else if (options.clientTty) {
+            const nextSize = parseClientSize(queryClientSize(options.clientTty));
+            if (nextSize && (nextSize.cols !== socketCols || nextSize.rows !== socketRows)) {
+              socketCols = nextSize.cols;
+              socketRows = nextSize.rows;
+              render(true);
             }
           }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an

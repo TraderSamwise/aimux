@@ -1863,6 +1863,42 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("settles graveyard when the fresh rendered model drops a stale raw row", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    let refreshCount = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardRawSessionsCache: [session],
+      offlineSessions: [] as any[],
+      sessions: [session],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      getSessionLabel: vi.fn(() => "claude"),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => (refreshCount > 0 ? [] : [session])),
+      adjustAfterRemove: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+
+    await graveyardSessionWithFeedback(host, "sess-1", true);
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
+    expect(host.footerFlash).toBe("Sent claude to graveyard");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("keeps graveyard settlement active across later input", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     const request = deferred();
