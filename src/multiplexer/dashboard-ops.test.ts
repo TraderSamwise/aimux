@@ -664,6 +664,44 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("coalesces duplicate service removes while removal is already pending", async () => {
+    const request = deferred();
+    let removed = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardRawServicesCache: [{ id: "svc-1", status: "offline" }],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        await request.promise;
+        removed = true;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        if (removed) host.dashboardRawServicesCache = [];
+        return true;
+      }),
+      getDashboardServices: vi.fn(() =>
+        removed ? [] : [{ id: "svc-1", status: "offline", pendingAction: "removing" }],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    const first = removeDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    await removeDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+    request.resolve();
+    await first;
+
+    expect(host.postToProjectService).toHaveBeenCalledOnce();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("stops an agent through the project service after the session row settles offline", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     const sessions = [[{ ...session, status: "running" }], [{ ...session, status: "offline" }]];
@@ -741,6 +779,49 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Stopped claude");
     expect(host.renderDashboard).toHaveBeenCalledTimes(2);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("coalesces duplicate stop requests while the same agent is already stopping", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    const request = deferred();
+    let stopped = false;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      postToProjectService: vi.fn(async () => {
+        await request.promise;
+        stopped = true;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawSessionsCache = [{ ...session, status: stopped ? "offline" : "running" }];
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => [
+        { ...session, status: stopped ? "offline" : "running", pendingAction: "stopping" },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    const first = stopSessionToOfflineWithFeedback(host, session);
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    await stopSessionToOfflineWithFeedback(host, session);
+    request.resolve();
+    await first;
+
+    expect(host.postToProjectService).toHaveBeenCalledOnce();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
