@@ -94,6 +94,22 @@ describe("runTmuxExpose", () => {
                 worktreePath: "/repo",
               },
             },
+            {
+              id: "session-2",
+              label: "claude",
+              urgency: 0,
+              activity: 0,
+              recentRank: 1,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-2",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: "/repo",
+              },
+            },
           ],
         });
         return;
@@ -120,8 +136,8 @@ describe("runTmuxExpose", () => {
       const result = runTmuxExpose({
         projectRoot: "/repo",
         projectStateDir,
-        currentWindow: "codex",
-        currentWindowId: "@1",
+        currentWindow: "claude",
+        currentWindowId: "@2",
         currentPath: "/repo",
         input,
         output,
@@ -136,7 +152,7 @@ describe("runTmuxExpose", () => {
       allowSwitchableResponse.resolve();
 
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
-      await expect(focusRequest.promise).resolves.toMatchObject({ windowId: "@1", focus: true });
+      await expect(focusRequest.promise).resolves.toMatchObject({ windowId: "@2", focus: true });
     } finally {
       server.close();
       input.destroy();
