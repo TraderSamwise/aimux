@@ -1,6 +1,6 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -41,12 +41,6 @@ function sendJson(res: ServerResponse, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-async function readBody(req: IncomingMessage): Promise<string> {
-  let body = "";
-  for await (const chunk of req) body += chunk.toString();
-  return body;
-}
-
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -59,6 +53,23 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function waitForOutput(output: PassThrough, pattern: string, ms = 1000): Promise<void> {
+  return withTimeout(
+    new Promise<void>((resolve) => {
+      let seen = "";
+      const onData = (chunk: Buffer) => {
+        seen += chunk.toString("utf8");
+        if (seen.includes(pattern)) {
+          output.off("data", onData);
+          resolve();
+        }
+      };
+      output.on("data", onData);
+    }),
+    ms,
+  );
 }
 
 describe("runTmuxExpose", () => {
@@ -152,7 +163,6 @@ exit 0
 
     const switchableRequested = deferred();
     const allowSwitchableResponse = deferred();
-    const focusRequest = deferred<unknown>();
     const server = createServer(async (req, res) => {
       if (req.url?.startsWith("/control/switchable-agents")) {
         switchableRequested.resolve();
@@ -196,9 +206,98 @@ exit 0
         });
         return;
       }
-      if (req.url === "/control/focus-window") {
-        focusRequest.resolve(JSON.parse(await readBody(req)));
-        sendJson(res, { ok: true });
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const selectionFile = join(root, "selected-window");
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "claude",
+        currentWindowId: "@2",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        selectionFile,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await switchableRequested.promise;
+      input.write("\x1b[I\r");
+      allowSwitchableResponse.resolve();
+
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(readFileSync(selectionFile, "utf8")).toBe("@2\n");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("replays queued movement and Enter after the API-backed item list resolves", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-pending-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const switchableRequested = deferred();
+    const allowSwitchableResponse = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        switchableRequested.resolve();
+        await allowSwitchableResponse.promise;
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+            {
+              id: "session-2",
+              label: "claude",
+              urgency: 0,
+              activity: 0,
+              recentRank: 1,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-2",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
         return;
       }
       res.writeHead(404);
@@ -213,28 +312,217 @@ exit 0
     output.columns = 80;
     output.rows = 24;
     output.on("data", () => {});
+    const selectionFile = join(root, "selected-window");
 
     try {
       const result = runTmuxExpose({
         projectRoot: "/repo",
         projectStateDir,
-        currentWindow: "claude",
-        currentWindowId: "@2",
+        currentWindow: "codex",
+        currentWindowId: "@1",
         currentPath: "/repo",
         input,
         output,
         manageTerminal: false,
         columns: 80,
         rows: 24,
+        selectionFile,
         exposeConfig: { initialScope: "project" },
       });
 
       await switchableRequested.promise;
-      input.write("\x1b[I\r");
+      input.write("l\r");
       allowSwitchableResponse.resolve();
 
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
-      await expect(focusRequest.promise).resolves.toMatchObject({ windowId: "@2", focus: true });
+      expect(readFileSync(selectionFile, "utf8")).toBe("@2\n");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("preserves the moved selection across API-backed refreshes before Enter", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-selection-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const initialRequested = deferred();
+    const refreshed = deferred();
+    let requestCount = 0;
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        requestCount += 1;
+        if (requestCount === 1) initialRequested.resolve();
+        if (requestCount >= 2) refreshed.resolve();
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+            {
+              id: "session-2",
+              label: "claude",
+              urgency: 0,
+              activity: 0,
+              recentRank: 1,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-2",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const selectionFile = join(root, "selected-window");
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        selectionFile,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await initialRequested.promise;
+      await waitForOutput(output, "claude");
+      input.write("l");
+      await withTimeout(refreshed.promise, 2500);
+      input.write("\r");
+
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(readFileSync(selectionFile, "utf8")).toBe("@2\n");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("handles move and Enter when the terminal delivers them in one chunk", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-coalesced-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+            {
+              id: "session-2",
+              label: "claude",
+              urgency: 0,
+              activity: 0,
+              recentRank: 1,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-2",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const selectionFile = join(root, "selected-window");
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        selectionFile,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "claude");
+      input.write("l\r");
+
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(readFileSync(selectionFile, "utf8")).toBe("@2\n");
     } finally {
       server.close();
       input.destroy();

@@ -350,7 +350,7 @@ function metadataProjectRoot(): string | undefined {
   }
 }
 
-const EXPOSE_SOCKET_HEADER_LINES = 14;
+const EXPOSE_SOCKET_HEADER_LINES = 15;
 const EXPOSE_SOCKET_HEADER_MAX_BYTES = 8192;
 const EXPOSE_SOCKET_HEADER_TIMEOUT_MS = 2000;
 
@@ -1483,6 +1483,7 @@ export class MetadataServer {
       aimuxHome: header[8] || undefined,
       backdropFile: header[9] || undefined,
       daemonEndpoint: header[13] || undefined,
+      selectionFile: header[14] || undefined,
       input,
       output: socket,
       manageTerminal: false,
@@ -1494,7 +1495,10 @@ export class MetadataServer {
         writeFileSync(header[10], `${code}\n`);
       } catch {}
     }
+    socket.unpipe(input);
+    input.destroy();
     socket.end();
+    socket.destroy();
   }
 
   getAddress(): { host: string; port: number } | null {

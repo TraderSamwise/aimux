@@ -210,10 +210,14 @@ exit "\${TMUX_FAKE_CURL_EXIT:-0}"
     `#!/usr/bin/env node
 const fs = require("node:fs");
 const chunks = [];
-process.stdin.on("data", (chunk) => chunks.push(chunk));
-process.stdin.on("end", () => {
+let done = false;
+function maybeFinish() {
+  if (done) return;
   const header = Buffer.concat(chunks).toString("utf8").split("\\n");
+  if (header.length < 16) return;
+  done = true;
   const statusPath = header[10] || "";
+  const selectionPath = header[14] || "";
   const sequencePath = process.env.TMUX_FAKE_NC_STATUS_SEQUENCE_FILE || "";
   let status = process.env.TMUX_FAKE_NC_STATUS || "0";
   if (sequencePath) {
@@ -222,8 +226,16 @@ process.stdin.on("end", () => {
     fs.writeFileSync(sequencePath, values.join(","));
   }
   if (statusPath) fs.writeFileSync(statusPath, status + "\\n");
+  if (selectionPath && process.env.TMUX_FAKE_NC_SELECTION) {
+    fs.writeFileSync(selectionPath, process.env.TMUX_FAKE_NC_SELECTION + "\\n");
+  }
   process.exit(Number(process.env.TMUX_FAKE_NC_EXIT || "0"));
+}
+process.stdin.on("data", (chunk) => {
+  chunks.push(chunk);
+  maybeFinish();
 });
+process.stdin.on("end", maybeFinish);
 process.stdin.resume();
 `,
   );
@@ -2927,7 +2939,15 @@ describe("tmux-control.sh", () => {
       sessionOptions: {
         "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
       },
-      panes: {},
+      panes: {
+        "%42": {
+          sessionName: "aimux-proj-client-stale",
+          windowId: "@stale",
+          windowName: "stale",
+          clientTty: "/dev/stale",
+          currentPath: "/repo/project/stale",
+        },
+      },
     });
     tempRoots.push(envRoot.root);
     writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
@@ -2950,6 +2970,8 @@ describe("tmux-control.sh", () => {
         "@claude",
         "--current-path",
         "/repo/project/worktree",
+        "--pane-id",
+        "%42",
         "--aimux-home",
         "/home/user/.aimux-custom",
         "--daemon-host",
@@ -2958,6 +2980,8 @@ describe("tmux-control.sh", () => {
         "44191",
       ],
       {
+        TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND: "1",
+        TMUX_FAKE_NC_SELECTION: "@codex",
         TMUX_FAKE_SWITCHABLE_RESPONSE: switchableResponse([
           {
             label: "codex",
@@ -2971,10 +2995,19 @@ describe("tmux-control.sh", () => {
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
     expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
+    expect(log.some((entry) => entry.includes("display-popup -c /dev/stale"))).toBe(false);
     expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
     expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
     expect(log.some((entry) => entry.includes("aimux expose"))).toBe(false);
     expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
+    expect(log.some((entry) => entry.includes("mkfifo"))).toBe(true);
+    expect(log.some((entry) => entry.includes("cat /dev/tty"))).toBe(true);
+    expect(log.some((entry) => entry.includes("feeder=$!"))).toBe(true);
+    expect(log.some((entry) => entry.includes('kill "$feeder"'))).toBe(true);
+    expect(log.some((entry) => entry.includes("link-window -d -s @codex -t aimux-proj-client-1234abcd"))).toBe(true);
+    expect(log.some((entry) => entry.includes("switch-client -c /dev/live -t aimux-proj-client-1234abcd:2"))).toBe(
+      true,
+    );
     expect(curlLog).toHaveLength(0);
   });
 
