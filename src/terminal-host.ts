@@ -9,7 +9,6 @@ export class TerminalHost {
       process.stdin.setRawMode(true);
       process.stdin.resume();
     }
-    process.stdout.write("\x1b[?1004h");
   }
 
   enterAlternateScreen(clear = false): void {

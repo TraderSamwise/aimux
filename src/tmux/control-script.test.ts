@@ -145,7 +145,9 @@ function switchClient() {
   const ttyIndex = args.indexOf("-c");
   const tty = ttyIndex >= 0 ? args[ttyIndex + 1] : "";
   const target = args[args.indexOf("-t") + 1];
-  const [sessionName, indexText] = target.split(":");
+  const parts = target.split(":");
+  const sessionName = parts[0];
+  const indexText = parts[1];
   const window = (state.windows?.[sessionName] || []).find((entry) => String(entry.index) === indexText);
   if (!window) fail();
   const client = (state.clients || []).find((entry) => entry.tty === tty);
