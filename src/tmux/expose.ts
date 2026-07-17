@@ -450,6 +450,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let staticVisibleCount = -1;
   let refreshTick = 0;
   let opening = false;
+  let refreshStarted = false;
+  let pendingAction: { kind: "select"; index: number } | { kind: "open-selected" } | { kind: "zoom" } | null = null;
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
@@ -551,19 +553,80 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
     const onEnd = () => finish(0);
 
+    const startRefreshLoop = () => {
+      if (finished || refreshStarted) return;
+      refreshStarted = true;
+      scheduleRefresh();
+    };
+
+    const applyPendingAction = (): boolean => {
+      if (finished || loading || opening || !pendingAction) return false;
+      const action = pendingAction;
+      pendingAction = null;
+      if (action.kind === "select") {
+        if (action.index < visibleCount) selectTile(action.index);
+        return opening;
+      }
+      if (action.kind === "open-selected") {
+        selectTile(index);
+        return opening;
+      }
+      return zoomOut();
+    };
+
+    const zoomOut = (): boolean => {
+      if (loading) {
+        pendingAction = { kind: "zoom" };
+        return true;
+      }
+      const next = nextExposeScope(scope);
+      if (next === scope) return false;
+      const previousScope = scope;
+      const previousView = view;
+      scope = next;
+      view = defaultExposeScopeView(scope);
+      items = view.items;
+      scopeLabel = view.scopeLabel;
+      sublabel = view.sublabel;
+      loading = true;
+      render();
+      void reload(false)
+        .then(() => {
+          if (finished) return;
+          render();
+          if (applyPendingAction()) return;
+          if (refreshCaptures()) render(false);
+          startRefreshLoop();
+        })
+        .catch(() => {
+          if (finished) return;
+          scope = previousScope;
+          view = previousView;
+          items = view.items;
+          scopeLabel = view.scopeLabel;
+          sublabel = view.sublabel;
+          loading = false;
+          pendingAction = null;
+          render();
+          startRefreshLoop();
+        });
+      return true;
+    };
+
     const loadInitialItems = () => {
       void reload(false)
         .then(() => {
           if (finished) return;
           render();
+          if (applyPendingAction()) return;
           if (refreshCaptures()) render(false);
-          scheduleRefresh();
+          startRefreshLoop();
         })
         .catch(() => {
           if (finished) return;
           loading = false;
           render();
-          scheduleRefresh();
+          startRefreshLoop();
         });
     };
 
@@ -582,6 +645,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           opening = false;
           await reload();
           render();
+          startRefreshLoop();
         })
         .catch(() => finish(1));
     };
@@ -589,7 +653,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     function onData(data: Buffer) {
       try {
         if (opening) return;
-        const event = parseKeys(data)[0];
+        const event = parseKeys(data).find(
+          (entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse",
+        );
         if (!event) return;
         const key = event.name || event.char || "";
 
@@ -598,42 +664,23 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           return;
         }
         if (key === "g") {
-          if (loading) return;
-          const next = nextExposeScope(scope);
-          if (next !== scope) {
-            const previousScope = scope;
-            scope = next;
-            view = defaultExposeScopeView(scope);
-            items = view.items;
-            scopeLabel = view.scopeLabel;
-            sublabel = view.sublabel;
-            loading = true;
-            render();
-            void reload(false)
-              .then(() => {
-                render();
-                if (refreshCaptures()) render(false);
-              })
-              .catch(() => {
-                scope = previousScope;
-                view = defaultExposeScopeView(scope);
-                items = view.items;
-                scopeLabel = view.scopeLabel;
-                sublabel = view.sublabel;
-                loading = false;
-                render();
-              });
-          }
+          zoomOut();
           return;
         }
         if (key >= "1" && key <= "9") {
-          if (loading) return;
           const target = Number.parseInt(key, 10) - 1;
+          if (loading) {
+            pendingAction = { kind: "select", index: target };
+            return;
+          }
           if (target < visibleCount) selectTile(target);
           return;
         }
         if (key === "enter" || key === "return") {
-          if (loading) return;
+          if (loading) {
+            pendingAction = { kind: "open-selected" };
+            return;
+          }
           selectTile(index);
           return;
         }

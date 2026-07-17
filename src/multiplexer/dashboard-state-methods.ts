@@ -149,7 +149,7 @@ export const dashboardStateMethods = {
       if (!force && this.lastRenderedFrameKey === renderKey && this.lastRenderedFrame === finalOutput) return;
       // Hide the cursor so it doesn't park as a block after the last footer key.
       // Input overlays draw their own `_` caret; the cursor is restored on exit.
-      process.stdout.write(`\x1b[?25l\x1b[H\x1b[J${finalOutput}`);
+      process.stdout.write(`\x1b[?25l\x1b[2J\x1b[H${finalOutput}`);
       this.lastRenderedFrame = finalOutput;
       this.lastRenderedFrameKey = renderKey;
       return;

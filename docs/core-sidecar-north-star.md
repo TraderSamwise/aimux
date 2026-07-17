@@ -200,6 +200,21 @@ project service, global scope reads them from daemon `/core/expose/items`, and
 focus/open goes through project-service or daemon focus routes before tmux does
 the local window switch.
 
+Exposé layer ownership:
+
+- `scripts/tmux-control.sh` owns prefix binding, popup launch, backdrop capture,
+  and resize relaunch.
+- `src/metadata-server.ts` owns the long-lived project-service Unix socket that
+  keeps Exposé off the Node-spawn hot path.
+- `src/tmux/expose.ts` owns renderer input, loading-state key queuing,
+  preview refresh, resize detection, and open/focus timing.
+- `src/tmux/expose-model.ts` owns API-backed tile and focus contracts.
+
+Do not patch live Exposé input bugs in dashboard hotkeys or post-popup
+tmux-control focus handoffs. Runtime fixes must be proven against an installed
+local build, and renderer timing bugs need direct renderer tests that send keys
+while API requests are in flight.
+
 ## Maintenance Path
 
 Future work should preserve the completed architecture instead of reopening
