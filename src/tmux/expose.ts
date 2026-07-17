@@ -451,7 +451,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let refreshTick = 0;
   let opening = false;
   let refreshStarted = false;
-  let pendingAction: { kind: "select"; index: number } | { kind: "zoom" } | null = null;
+  let pendingAction: { kind: "select"; index: number } | { kind: "open-selected" } | { kind: "zoom" } | null = null;
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
@@ -567,6 +567,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         if (action.index < visibleCount) selectTile(action.index);
         return opening;
       }
+      if (action.kind === "open-selected") {
+        selectTile(index);
+        return opening;
+      }
       return zoomOut();
     };
 
@@ -603,6 +607,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           loading = false;
           pendingAction = null;
           render();
+          startRefreshLoop();
         });
       return true;
     };
@@ -671,7 +676,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         }
         if (key === "enter" || key === "return") {
           if (loading) {
-            pendingAction = { kind: "select", index };
+            pendingAction = { kind: "open-selected" };
             return;
           }
           selectTile(index);
