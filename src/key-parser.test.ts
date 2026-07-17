@@ -15,4 +15,8 @@ describe("parseKeys", () => {
       { char: "", name: "enter", shift: false, ctrl: false, alt: true, raw: "\x1b\n" },
     ]);
   });
+
+  it("keeps focus reports and following keys as separate events", () => {
+    expect(parseKeys("\x1b[I\r").map((event) => event.name || event.char)).toEqual(["focusin", "enter"]);
+  });
 });
