@@ -621,6 +621,16 @@ async function runDashboardSessionMutation(
 ): Promise<DashboardMutationResult> {
   const lifecycle = opts.lifecycle ?? captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
+  const coalescesDuplicateSessionAction = opts.pendingAction === "stopping" || opts.pendingAction === "graveyarding";
+  if (
+    coalescesDuplicateSessionAction &&
+    host.dashboardPendingActions?.getSessionAction?.(opts.sessionId) === opts.pendingAction
+  ) {
+    host.footerFlash = `${opts.pendingAction} is already settling`;
+    host.footerFlashTicks = 2;
+    renderDashboardMutationFrame(host, lifecycle);
+    return "pending";
+  }
   if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
   const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
     sessionSeed: opts.sessionSeed,
@@ -686,6 +696,16 @@ async function runDashboardServiceMutation(
 ): Promise<DashboardMutationResult> {
   const lifecycle = captureDashboardLifecycle(host);
   const modelLifecycle = captureDashboardLifecycle(host);
+  const coalescesDuplicateServiceAction = opts.pendingAction === "stopping" || opts.pendingAction === "removing";
+  if (
+    coalescesDuplicateServiceAction &&
+    host.dashboardPendingActions?.getServiceAction?.(opts.serviceId) === opts.pendingAction
+  ) {
+    host.footerFlash = `${opts.pendingAction} is already settling`;
+    host.footerFlashTicks = 2;
+    renderDashboardMutationFrame(host, lifecycle);
+    return "pending";
+  }
   if (isDashboardLifecycleCurrent(host, lifecycle)) opts.onBeforeRequest?.();
   const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
     serviceSeed: opts.serviceSeed,
