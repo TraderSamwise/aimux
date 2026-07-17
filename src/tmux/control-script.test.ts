@@ -30,6 +30,7 @@ function createFakeEnvironment(state: Record<string, unknown>) {
     join(binDir, "tmux"),
     `#!/usr/bin/env node
 const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
 const statePath = process.env.TMUX_FAKE_STATE;
 const logPath = process.env.TMUX_FAKE_LOG;
 const args = process.argv.slice(2);
@@ -166,6 +167,11 @@ switch (args[0]) {
     break;
   case "display-popup":
     if (process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT) process.exit(Number(process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT));
+    if (process.env.TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND === "1") {
+      const command = args.at(-1) || "";
+      const result = spawnSync("sh", ["-c", command], { env: process.env, stdio: "inherit" });
+      process.exit(result.status ?? 1);
+    }
     break;
   case "new-window": break;
   case "show-options": showOptions(); break;
@@ -196,6 +202,29 @@ for arg in "$@"; do
   esac
 done
 exit "\${TMUX_FAKE_CURL_EXIT:-0}"
+`,
+  );
+
+  writeExecutable(
+    join(binDir, "nc"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const chunks = [];
+process.stdin.on("data", (chunk) => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const header = Buffer.concat(chunks).toString("utf8").split("\\n");
+  const statusPath = header[10] || "";
+  const sequencePath = process.env.TMUX_FAKE_NC_STATUS_SEQUENCE_FILE || "";
+  let status = process.env.TMUX_FAKE_NC_STATUS || "0";
+  if (sequencePath) {
+    const values = fs.readFileSync(sequencePath, "utf8").trim().split(/\\s*,\\s*/).filter(Boolean);
+    status = values.shift() || status;
+    fs.writeFileSync(sequencePath, values.join(","));
+  }
+  if (statusPath) fs.writeFileSync(statusPath, status + "\\n");
+  process.exit(Number(process.env.TMUX_FAKE_NC_EXIT || "0"));
+});
+process.stdin.resume();
 `,
   );
 
@@ -2947,6 +2976,61 @@ describe("tmux-control.sh", () => {
     expect(log.some((entry) => entry.includes("aimux expose"))).toBe(false);
     expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
     expect(curlLog).toHaveLength(0);
+  });
+
+  it("relaunches expose when the sidecar reports a resize exit", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [{ id: "@claude", index: 1, name: "claude" }],
+        "aimux-proj-client-1234abcd": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", command: "claude", worktreePath: "/repo/project" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    const sequencePath = join(envRoot.root, "nc-status-sequence.txt");
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
+    writeFileSync(sequencePath, "75,0");
+
+    runControl(
+      envRoot,
+      [
+        "expose",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-deadbeef",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project",
+        "--pane-id",
+        "%1",
+      ],
+      {
+        TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND: "1",
+        TMUX_FAKE_NC_STATUS_SEQUENCE_FILE: sequencePath,
+      },
+    );
+
+    const log = readLog(envRoot);
+    const popupLaunches = log.filter((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"));
+    expect(popupLaunches).toHaveLength(2);
   });
 
   it("falls back to the default expose socket when the socket path file is empty", () => {
