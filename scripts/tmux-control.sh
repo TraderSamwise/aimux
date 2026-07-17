@@ -493,44 +493,6 @@ show_local_message() {
   fi
 }
 
-focus_expose_selection() {
-  focus_window_id="$1"
-  focus_project_root="${2-}"
-  [ -n "$focus_window_id" ] || return 1
-
-  if [ -z "$focus_project_root" ] || [ "$focus_project_root" = "$project_root" ]; then
-    switch_client_to_target "$focus_window_id" "${popup_client_tty-}" || return 1
-    refresh_navigation_client "${popup_client_tty-}"
-    return 0
-  fi
-
-  if [ -n "$focus_project_root" ] && [ "$focus_project_root" != "$project_root" ]; then
-    [ -n "$daemon_host" ] && [ -n "$daemon_port" ] || return 1
-    focus_endpoint="http://$daemon_host:$daemon_port/core/expose/focus"
-  else
-    focus_metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
-    [ -n "$focus_metadata_api" ] || return 1
-    focus_endpoint="${focus_metadata_api%/}/control/focus-window"
-  fi
-
-  focus_body=$(python3 - "$focus_window_id" "$focus_project_root" "${popup_session-}" "${popup_client_tty-}" <<'PY'
-import json
-import sys
-
-window_id, project_root, current_client_session, client_tty = sys.argv[1:5]
-body = {"windowId": window_id, "focus": True}
-if project_root:
-    body["projectRoot"] = project_root
-if current_client_session:
-    body["currentClientSession"] = current_client_session
-if client_tty:
-    body["clientTty"] = client_tty
-print(json.dumps(body))
-PY
-)
-  curl -fsS --max-time 4 -H "content-type: application/json" --data-binary "$focus_body" "$focus_endpoint" >/dev/null 2>&1
-}
-
 report_control_failure() {
   failure_reason="$1"
   case "$action" in
@@ -573,8 +535,6 @@ show_local_expose() {
     expose_daemon_endpoint="http://$daemon_host:$daemon_port"
   fi
   popup_retry_count=0
-  expose_focus_window_id=""
-  expose_focus_project_root=""
   while :; do
     expose_status=$(mktemp 2>/dev/null || true)
     expose_context=$(mktemp 2>/dev/null || true)
@@ -611,32 +571,7 @@ show_local_expose() {
       popup_status=$?
     fi
     if [ -s "$expose_status" ]; then
-      expose_status_value=$(cat "$expose_status" 2>/dev/null || printf '%s' "$popup_status")
-      case "$expose_status_value" in
-        \{*)
-          expose_status_parsed=$(python3 - "$expose_status" <<'PY'
-import json
-import sys
-
-try:
-    with open(sys.argv[1], "r", encoding="utf-8") as fh:
-        payload = json.load(fh)
-except Exception:
-    payload = {}
-focus = payload.get("focus") if isinstance(payload, dict) else None
-print(payload.get("code", 1) if isinstance(payload, dict) else 1)
-print((focus or {}).get("windowId", "") if isinstance(focus, dict) else "")
-print((focus or {}).get("projectRoot", "") if isinstance(focus, dict) else "")
-PY
-)
-          popup_status=$(printf '%s\n' "$expose_status_parsed" | sed -n '1p')
-          expose_focus_window_id=$(printf '%s\n' "$expose_status_parsed" | sed -n '2p')
-          expose_focus_project_root=$(printf '%s\n' "$expose_status_parsed" | sed -n '3p')
-          ;;
-        *)
-          popup_status="$expose_status_value"
-          ;;
-      esac
+      popup_status=$(cat "$expose_status" 2>/dev/null || printf '%s' "$popup_status")
     fi
     rm -f "$expose_context" "$expose_status"
     if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 3 ]; then
@@ -646,9 +581,6 @@ PY
     break
   done
   [ "$popup_status" = 0 ] || return 1
-  if [ -n "$expose_focus_window_id" ]; then
-    focus_expose_selection "$expose_focus_window_id" "$expose_focus_project_root" || return 1
-  fi
   exit 0
 }
 

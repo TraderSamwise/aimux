@@ -42,8 +42,6 @@ export interface TmuxExposeOptions {
   columns?: number;
   rows?: number;
   exposeConfig?: ExposeConfig;
-  deferFocusUntilAfterExit?: boolean;
-  onDeferredFocusItem?: (item: ExposeScopeItem) => void;
 }
 
 const CAPTURE_LINES = 40;
@@ -85,13 +83,6 @@ function queryClientSize(clientTty?: string): string {
     if (result.status === 0) return (result.stdout ?? "").trim();
   } catch {}
   return "";
-}
-
-function parseClientSize(size: string): { cols: number; rows: number } | null {
-  const [colsRaw, rowsRaw] = size.split("x");
-  const cols = Number.parseInt(colsRaw ?? "", 10);
-  const rows = Number.parseInt(rowsRaw ?? "", 10);
-  return Number.isFinite(cols) && cols > 0 && Number.isFinite(rows) && rows > 0 ? { cols, rows } : null;
 }
 
 function shortWorktree(item: FastControlItem, projectRoot: string): string {
@@ -345,11 +336,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const manageTerminal = options.manageTerminal !== false;
-  let socketCols = options.columns;
-  let socketRows = options.rows;
   const terminalSize = () => ({
-    cols: output.columns ?? socketCols ?? 80,
-    rows: output.rows ?? socketRows ?? 24,
+    cols: output.columns ?? options.columns ?? 80,
+    rows: output.rows ?? options.rows ?? 24,
   });
 
   // On the meta-dashboard window Exposé starts cross-project (global); otherwise it
@@ -450,7 +439,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
   let index = currentIdx >= 0 ? currentIdx : 0;
-  const clientBaseline = manageTerminal ? queryClientSize(options.clientTty) : "";
+  // Baseline the controlling client size at launch; a later change means the terminal
+  // was resized and the popup must be relaunched to re-fit it.
+  const clientBaseline =
+    options.columns && options.rows ? `${options.columns}x${options.rows}` : queryClientSize(options.clientTty);
   let tileCols = 1;
   let visibleCount = items.length;
   let lastRenderSize = "";
@@ -458,6 +450,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let staticVisibleCount = -1;
   let refreshTick = 0;
   let opening = false;
+  let refreshStarted = false;
+  let pendingAction: { kind: "select"; index: number } | { kind: "zoom" } | null = null;
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
@@ -559,19 +553,74 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
     const onEnd = () => finish(0);
 
+    const startRefreshLoop = () => {
+      if (finished || refreshStarted) return;
+      refreshStarted = true;
+      scheduleRefresh();
+    };
+
+    const applyPendingAction = (): boolean => {
+      if (finished || loading || opening || !pendingAction) return false;
+      const action = pendingAction;
+      pendingAction = null;
+      if (action.kind === "select") {
+        if (action.index < visibleCount) selectTile(action.index);
+        return opening;
+      }
+      return zoomOut();
+    };
+
+    const zoomOut = (): boolean => {
+      if (loading) {
+        pendingAction = { kind: "zoom" };
+        return true;
+      }
+      const next = nextExposeScope(scope);
+      if (next === scope) return false;
+      const previousScope = scope;
+      scope = next;
+      view = defaultExposeScopeView(scope);
+      items = view.items;
+      scopeLabel = view.scopeLabel;
+      sublabel = view.sublabel;
+      loading = true;
+      render();
+      void reload(false)
+        .then(() => {
+          if (finished) return;
+          render();
+          if (applyPendingAction()) return;
+          if (refreshCaptures()) render(false);
+          startRefreshLoop();
+        })
+        .catch(() => {
+          if (finished) return;
+          scope = previousScope;
+          view = defaultExposeScopeView(scope);
+          items = view.items;
+          scopeLabel = view.scopeLabel;
+          sublabel = view.sublabel;
+          loading = false;
+          pendingAction = null;
+          render();
+        });
+      return true;
+    };
+
     const loadInitialItems = () => {
       void reload(false)
         .then(() => {
           if (finished) return;
           render();
+          if (applyPendingAction()) return;
           if (refreshCaptures()) render(false);
-          scheduleRefresh();
+          startRefreshLoop();
         })
         .catch(() => {
           if (finished) return;
           loading = false;
           render();
-          scheduleRefresh();
+          startRefreshLoop();
         });
     };
 
@@ -580,11 +629,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const item = items[i];
       if (!item) return;
       opening = true;
-      if (options.deferFocusUntilAfterExit) {
-        options.onDeferredFocusItem?.(item);
-        finish(0);
-        return;
-      }
       void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir, exposeDeps)
         .then(async (ok) => {
           if (ok) {
@@ -599,82 +643,60 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         .catch(() => finish(1));
     };
 
-    function handleKeyEvent(event: ReturnType<typeof parseKeys>[number]) {
-      if (opening) return;
-      if (event.name === "focusin" || event.name === "focusout" || event.name === "mouse") return;
-      const key = event.name || event.char || "";
-
-      if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
-        finish(0);
-        return;
-      }
-      if (key === "g") {
-        if (loading) return;
-        const next = nextExposeScope(scope);
-        if (next !== scope) {
-          const previousScope = scope;
-          scope = next;
-          view = defaultExposeScopeView(scope);
-          items = view.items;
-          scopeLabel = view.scopeLabel;
-          sublabel = view.sublabel;
-          loading = true;
-          render();
-          void reload(false)
-            .then(() => {
-              render();
-              if (refreshCaptures()) render(false);
-            })
-            .catch(() => {
-              scope = previousScope;
-              view = defaultExposeScopeView(scope);
-              items = view.items;
-              scopeLabel = view.scopeLabel;
-              sublabel = view.sublabel;
-              loading = false;
-              render();
-            });
-        }
-        return;
-      }
-      if (key >= "1" && key <= "9") {
-        if (loading) return;
-        const target = Number.parseInt(key, 10) - 1;
-        if (target < visibleCount) selectTile(target);
-        return;
-      }
-      if (key === "enter" || key === "return") {
-        if (loading) return;
-        selectTile(index);
-        return;
-      }
-      if (visibleCount === 0) return;
-      if (key === "right" || key === "l" || key === "n" || key === "tab") {
-        index = (index + 1) % visibleCount;
-        render(false);
-        return;
-      }
-      if (key === "left" || key === "h" || key === "p") {
-        index = (index - 1 + visibleCount) % visibleCount;
-        render(false);
-        return;
-      }
-      if (key === "down" || key === "j") {
-        if (index + tileCols < visibleCount) index += tileCols;
-        render(false);
-        return;
-      }
-      if (key === "up" || key === "k") {
-        if (index - tileCols >= 0) index -= tileCols;
-        render(false);
-      }
-    }
-
     function onData(data: Buffer) {
       try {
-        for (const event of parseKeys(data)) {
-          if (finished) break;
-          handleKeyEvent(event);
+        if (opening) return;
+        const event = parseKeys(data).find(
+          (entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse",
+        );
+        if (!event) return;
+        const key = event.name || event.char || "";
+
+        if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
+          finish(0);
+          return;
+        }
+        if (key === "g") {
+          zoomOut();
+          return;
+        }
+        if (key >= "1" && key <= "9") {
+          const target = Number.parseInt(key, 10) - 1;
+          if (loading) {
+            pendingAction = { kind: "select", index: target };
+            return;
+          }
+          if (target < visibleCount) selectTile(target);
+          return;
+        }
+        if (key === "enter" || key === "return") {
+          if (loading) {
+            pendingAction = { kind: "select", index };
+            return;
+          }
+          selectTile(index);
+          return;
+        }
+        if (visibleCount === 0) return;
+        if (key === "right" || key === "l" || key === "n" || key === "tab") {
+          index = (index + 1) % visibleCount;
+          render(false);
+          return;
+        }
+        if (key === "left" || key === "h" || key === "p") {
+          index = (index - 1 + visibleCount) % visibleCount;
+          render(false);
+          return;
+        }
+        if (key === "down" || key === "j") {
+          if (index + tileCols < visibleCount) index += tileCols;
+          render(false);
+          return;
+        }
+        if (key === "up" || key === "k") {
+          if (index - tileCols >= 0) index -= tileCols;
+          render(false);
+          return;
         }
       } catch {
         finish(1);
@@ -693,13 +715,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
             if (clientNow && clientNow !== clientBaseline) {
               finish(RELAUNCH_ON_RESIZE_EXIT);
               return;
-            }
-          } else if (options.clientTty) {
-            const nextSize = parseClientSize(queryClientSize(options.clientTty));
-            if (nextSize && (nextSize.cols !== socketCols || nextSize.rows !== socketRows)) {
-              socketCols = nextSize.cols;
-              socketRows = nextSize.rows;
-              render(true);
             }
           }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
