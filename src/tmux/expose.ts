@@ -582,6 +582,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const next = nextExposeScope(scope);
       if (next === scope) return false;
       const previousScope = scope;
+      const previousView = view;
       scope = next;
       view = defaultExposeScopeView(scope);
       items = view.items;
@@ -600,7 +601,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         .catch(() => {
           if (finished) return;
           scope = previousScope;
-          view = defaultExposeScopeView(scope);
+          view = previousView;
           items = view.items;
           scopeLabel = view.scopeLabel;
           sublabel = view.sublabel;
@@ -644,6 +645,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           opening = false;
           await reload();
           render();
+          startRefreshLoop();
         })
         .catch(() => finish(1));
     };
