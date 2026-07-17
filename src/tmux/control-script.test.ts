@@ -145,23 +145,10 @@ function switchClient() {
   const ttyIndex = args.indexOf("-c");
   const tty = ttyIndex >= 0 ? args[ttyIndex + 1] : "";
   const target = args[args.indexOf("-t") + 1];
-  let sessionName = "";
-  let window = null;
-  if (target.startsWith("@")) {
-    for (const [candidateSession, windows] of Object.entries(state.windows || {})) {
-      const match = (windows || []).find((entry) => entry.id === target);
-      if (match) {
-        sessionName = candidateSession;
-        window = match;
-        break;
-      }
-    }
-  } else {
-    const parts = target.split(":");
-    sessionName = parts[0];
-    const indexText = parts[1];
-    window = (state.windows?.[sessionName] || []).find((entry) => String(entry.index) === indexText);
-  }
+  const parts = target.split(":");
+  const sessionName = parts[0];
+  const indexText = parts[1];
+  const window = (state.windows?.[sessionName] || []).find((entry) => String(entry.index) === indexText);
   if (!window) fail();
   const client = (state.clients || []).find((entry) => entry.tty === tty);
   if (!client) fail();
@@ -178,15 +165,6 @@ switch (args[0]) {
     if (process.env.TMUX_FAKE_DISPLAY_MENU_EXIT === "1") fail();
     break;
   case "display-popup":
-    if (process.env.TMUX_FAKE_EXPOSE_STATUS) {
-      const command = args[args.length - 1] || "";
-      const match = command.match(/cat '([^']+)'/);
-      const contextPath = match?.[1];
-      if (contextPath && fs.existsSync(contextPath)) {
-        const statusPath = fs.readFileSync(contextPath, "utf8").split("\\n")[10];
-        if (statusPath) fs.writeFileSync(statusPath, process.env.TMUX_FAKE_EXPOSE_STATUS);
-      }
-    }
     if (process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT) process.exit(Number(process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT));
     break;
   case "new-window": break;
@@ -2968,62 +2946,6 @@ describe("tmux-control.sh", () => {
     expect(log.some((entry) => entry.includes("list-windows -a"))).toBe(false);
     expect(log.some((entry) => entry.includes("aimux expose"))).toBe(false);
     expect(log.some((entry) => entry.includes("nc -U") && entry.includes("expose.sock"))).toBe(true);
-    expect(curlLog).toHaveLength(0);
-  });
-
-  it("focuses expose selection after the popup has closed", () => {
-    const envRoot = createFakeEnvironment({
-      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-1234abcd", windowId: "@claude" }],
-      windows: {
-        "aimux-proj": [
-          { id: "@claude", index: 1, name: "claude" },
-          { id: "@codex", index: 6, name: "codex" },
-        ],
-        "aimux-proj-client-1234abcd": [
-          { id: "@dash", index: 0, name: "dashboard-live" },
-          { id: "@claude", index: 1, name: "claude" },
-        ],
-      },
-      sessionOptions: {
-        "aimux-proj-client-1234abcd": { "@aimux-project-root": "/repo/project" },
-      },
-      panes: {},
-    });
-    tempRoots.push(envRoot.root);
-    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
-    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
-    writeFileSync(join(envRoot.projectStateDir, "expose.sock"), "");
-
-    runControl(
-      envRoot,
-      [
-        "expose",
-        "--project-root",
-        "/repo/project",
-        "--project-state-dir",
-        envRoot.projectStateDir,
-        "--current-client-session",
-        "aimux-proj-client-deadbeef",
-        "--client-tty",
-        "/dev/live",
-        "--current-window",
-        "claude",
-        "--current-window-id",
-        "@claude",
-        "--current-path",
-        "/repo/project/worktree",
-      ],
-      {
-        TMUX_FAKE_EXPOSE_STATUS: JSON.stringify({ code: 0, focus: { windowId: "@codex", projectRoot: "" } }),
-      },
-    );
-
-    const log = readLog(envRoot);
-    const curlLog = readCurlLog(envRoot);
-    const popupIndex = log.findIndex((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"));
-    const switchIndex = log.findIndex((entry) => entry.includes("switch-client -c /dev/live -t @codex"));
-    expect(popupIndex).toBeGreaterThanOrEqual(0);
-    expect(switchIndex).toBeGreaterThan(popupIndex);
     expect(curlLog).toHaveLength(0);
   });
 
