@@ -364,6 +364,7 @@ export class AimuxDaemon {
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
   private readonly authFlows = new Map<string, DaemonAuthFlow>();
   private state: DaemonState = loadDaemonState();
+  private stoppingPromise: Promise<void> | null = null;
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -443,16 +444,26 @@ export class AimuxDaemon {
     return { status: "off" };
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stoppingPromise) return this.stoppingPromise;
+    this.stoppingPromise = this.stopUnlocked().finally(() => {
+      this.stoppingPromise = null;
+    });
+    return this.stoppingPromise;
+  }
+
+  private async stopUnlocked(): Promise<void> {
     log.info("daemon stopping project actors", "daemon", { projectCount: Object.keys(this.state.projects).length });
     this.relayClient?.disconnect();
     this.relayClient = null;
-    for (const actor of this.projectActors.values()) {
-      void actor.stop().catch((error: unknown) => {
+    const actors = Array.from(this.projectActors.values());
+    const results = await Promise.allSettled(actors.map((actor) => actor.stop()));
+    for (const result of results) {
+      if (result.status === "rejected") {
         log.warn("project actor stop failed during daemon shutdown", "daemon", {
-          error: error instanceof Error ? error.message : String(error),
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });
-      });
+      }
     }
     this.projectActors.clear();
     this.state = {
@@ -462,8 +473,23 @@ export class AimuxDaemon {
     };
     saveDaemonState(this.state);
     clearDaemonInfo();
-    this.server?.close();
+    await this.closeServer();
+  }
+
+  private async closeServer(): Promise<void> {
+    const server = this.server;
     this.server = null;
+    if (!server) return;
+    await new Promise<void>((resolve) => {
+      server.close((error) => {
+        if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+          log.warn("daemon server close failed during shutdown", "daemon", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        resolve();
+      });
+    });
   }
 
   private refreshState(): void {

@@ -1232,12 +1232,14 @@ daemonCmd
   .action(async () => {
     const daemon = new AimuxDaemon();
     await daemon.start();
-    const shutdown = () => {
-      daemon.stop();
-      process.exit(0);
+    let shuttingDown = false;
+    const shutdown = (exitCode: number) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      void daemon.stop().finally(() => process.exit(exitCode));
     };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", () => shutdown(130));
+    process.on("SIGTERM", () => shutdown(143));
     await new Promise(() => {});
   });
 
