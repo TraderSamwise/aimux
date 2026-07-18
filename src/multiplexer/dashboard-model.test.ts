@@ -1690,20 +1690,22 @@ describe("computeDashboardSessions thread stats", () => {
       expect(snapshot.sessions).toEqual([
         expect.objectContaining({
           id: "codex-stopping",
+          status: "offline",
           pendingAction: "stopping",
           pending: true,
           optimistic: true,
           semantic: expect.objectContaining({
-            runtime: expect.objectContaining({ lifecycle: "stopping" }),
+            runtime: expect.objectContaining({ lifecycle: "stopping", isAlive: false }),
           }),
         }),
         expect.objectContaining({
           id: "codex-graveyarding",
+          status: "offline",
           pendingAction: "graveyarding",
           pending: true,
           optimistic: true,
           semantic: expect.objectContaining({
-            runtime: expect.objectContaining({ lifecycle: "graveyarding" }),
+            runtime: expect.objectContaining({ lifecycle: "graveyarding", isAlive: false }),
           }),
         }),
       ]);

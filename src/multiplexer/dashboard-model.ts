@@ -137,6 +137,18 @@ function servicePendingSettled(
   return !rawService;
 }
 
+function statusForPendingSessionAction(
+  status: DashboardSession["status"],
+  pendingAction?: DashboardSession["pendingAction"],
+): DashboardSession["status"] {
+  if (pendingAction === "creating" || pendingAction === "forking" || pendingAction === "migrating") {
+    return "waiting";
+  }
+  if (pendingAction === "starting") return "waiting";
+  if (pendingAction === "stopping" || pendingAction === "graveyarding") return "offline";
+  return status;
+}
+
 export function reconcileDashboardPendingActionsFromRawModel(
   host: DashboardModelHost,
   rawSessions: DashboardSession[],
@@ -912,6 +924,7 @@ export function computeDashboardSessions(
     metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
   }
   return sessions.map((session) => {
+    const status = statusForPendingSessionAction(session.status, session.pendingAction);
     const stats = threadStats.get(session.id);
     const workflow = workflowStats.get(session.id);
     const tmuxMetadata = metadataBySessionId.get(session.id);
@@ -920,7 +933,7 @@ export function computeDashboardSessions(
     const sessionMetadata = metadata[session.id];
     const runtimeInfo = includeRuntimeInfo && target ? readTmuxProcessInfo(host, target) : {};
     const semantic = deriveSessionSemantics({
-      status: session.status,
+      status,
       pendingAction: session.pendingAction,
       activity: session.activity,
       attention: session.attention,
@@ -938,6 +951,7 @@ export function computeDashboardSessions(
     });
     return {
       ...session,
+      status,
       tmuxWindowIndex: target?.windowIndex,
       createdAt: session.createdAt ?? tmuxMetadata?.createdAt,
       lastUsedAt: lastUsedState.items[session.id]?.lastUsedAt,
