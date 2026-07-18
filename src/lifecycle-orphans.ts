@@ -1,9 +1,18 @@
-import { listProcessArgs, isPidAlive as defaultIsPidAlive, type ProcessArgsEntry } from "./process-inspector.js";
+import {
+  listProcessArgs,
+  readProcessArgs as defaultReadProcessArgs,
+  isPidAlive as defaultIsPidAlive,
+  type ProcessArgsEntry,
+} from "./process-inspector.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 
 export interface LifecycleOrphanCleanupResult {
+  attemptedProcessPids: number[];
   processPids: number[];
+  failedProcessPids: number[];
+  attemptedTmuxSessions: string[];
   tmuxSessions: string[];
+  failedTmuxSessions: string[];
   errors: string[];
 }
 
@@ -16,6 +25,7 @@ export interface LifecycleOrphanTmux {
 
 export interface CleanupLifecycleOrphansOptions {
   listProcesses?: () => ProcessArgsEntry[];
+  readProcessArgs?: (pid: number) => string | null;
   isPidAlive?: (pid: number) => boolean;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
   sleep?: (ms: number) => Promise<void>;
@@ -25,11 +35,13 @@ export interface CleanupLifecycleOrphansOptions {
   currentPid?: number;
 }
 
-const VALIDATION_NATIVE_LABEL = /\/\.aimux\/native\/[^/\s]*lifecycle-(?:validate|visible)[^/\s]*/;
+const VALIDATION_NATIVE_NODE_ENTRY =
+  /(?:^|\s)(?:\S*\/)?node(?:\s+--\S+)*\s+\/\S*\/\.aimux\/native\/local-[0-9a-f]+-lifecycle-(?:validate|visible)[^/\s]*\/dist\/(?:launcher-bin|main)\.js(?:\s|$)/;
 const VALIDATION_HOME = /(?:^|\s)(?:AIMUX_HOME=)?\/tmp\/aimux-home-(?:validate|lifecycle)[^\s]*/;
 const AIMUX_NATIVE_ENTRY = /\/\.aimux\/native\/[^/\s]+\/dist\/(?:launcher-bin|main)\.js/;
-const VALIDATION_SESSION_NAME = /^aimux-.*lifecycle-(?:validate|visible)/;
-const VALIDATION_OPTION = /\/tmp\/aimux-(?:home-)?(?:validate|lifecycle)|lifecycle-(?:validate|visible)/;
+const VALIDATION_SESSION_NAME =
+  /^aimux-(?:aimux-)?lifecycle-(?:validate|visible)[A-Za-z0-9._-]*$|^aimux-smoke-lifecycle-(?:validate|visible)[A-Za-z0-9._-]*$/;
+const VALIDATION_OPTION = /\/tmp\/aimux-(?:home-)?(?:validate|lifecycle)[A-Za-z0-9._/-]*/;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,7 +56,7 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 export function isLifecycleValidationProcessArgs(args: string): boolean {
-  return AIMUX_NATIVE_ENTRY.test(args) && (VALIDATION_HOME.test(args) || VALIDATION_NATIVE_LABEL.test(args));
+  return VALIDATION_NATIVE_NODE_ENTRY.test(args) || (AIMUX_NATIVE_ENTRY.test(args) && VALIDATION_HOME.test(args));
 }
 
 export function isLifecycleValidationTmuxSession(sessionName: string, tmux?: LifecycleOrphanTmux): boolean {
@@ -72,6 +84,7 @@ export async function cleanupLifecycleValidationOrphans(
   options: CleanupLifecycleOrphansOptions = {},
 ): Promise<LifecycleOrphanCleanupResult> {
   const listProcesses = options.listProcesses ?? listProcessArgs;
+  const readProcessArgs = options.readProcessArgs ?? defaultReadProcessArgs;
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const killPid = options.killPid ?? ((pid, signal) => process.kill(pid, signal));
   const sleepFn = options.sleep ?? sleep;
@@ -80,39 +93,80 @@ export async function cleanupLifecycleValidationOrphans(
   const processKillGraceMs = options.processKillGraceMs ?? 2_000;
   const currentPid = options.currentPid ?? process.pid;
   const errors: string[] = [];
+  const attemptedTmuxSessions: string[] = [];
   const tmuxSessions: string[] = [];
+  const failedTmuxSessions: string[] = [];
 
   if (tmux.isAvailable() && tmux.listSessionNames && tmux.killSession) {
     for (const sessionName of uniqueStrings(tmux.listSessionNames())) {
       if (!isLifecycleValidationTmuxSession(sessionName, tmux)) continue;
+      attemptedTmuxSessions.push(sessionName);
       try {
         tmux.killSession(sessionName);
         tmuxSessions.push(sessionName);
       } catch (error) {
+        failedTmuxSessions.push(sessionName);
         errors.push(`${sessionName}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
-  const processPids = uniqueNumbers(
+  const candidatePids = uniqueNumbers(
     listProcesses()
       .filter((entry) => entry.pid !== currentPid && isLifecycleValidationProcessArgs(entry.args))
       .map((entry) => entry.pid),
   );
-  for (const pid of processPids) {
+  const attemptedProcessPids: number[] = [];
+  const processPids: number[] = [];
+  const failedProcessPids: number[] = [];
+  for (const pid of candidatePids) {
+    const latestArgs = readProcessArgs(pid);
+    if (!latestArgs || !isLifecycleValidationProcessArgs(latestArgs)) continue;
+    attemptedProcessPids.push(pid);
     try {
       killPid(pid, "SIGTERM");
-    } catch {}
-  }
-  for (const pid of processPids) {
+    } catch (error) {
+      if (isPidAlive(pid)) {
+        failedProcessPids.push(pid);
+        errors.push(`pid ${pid}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+    }
     if (await waitForPidExit({ pid, timeoutMs: processExitTimeoutMs, isPidAlive, sleep: sleepFn })) continue;
+    const argsBeforeKill = readProcessArgs(pid);
+    if (!argsBeforeKill || !isLifecycleValidationProcessArgs(argsBeforeKill)) {
+      failedProcessPids.push(pid);
+      errors.push(`pid ${pid}: command changed before SIGKILL`);
+      continue;
+    }
     try {
       killPid(pid, "SIGKILL");
-    } catch {}
-    if (!(await waitForPidExit({ pid, timeoutMs: processKillGraceMs, isPidAlive, sleep: sleepFn }))) {
+    } catch (error) {
+      if (isPidAlive(pid)) {
+        failedProcessPids.push(pid);
+        errors.push(`pid ${pid}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+    }
+    if (await waitForPidExit({ pid, timeoutMs: processKillGraceMs, isPidAlive, sleep: sleepFn })) {
+      processPids.push(pid);
+    } else {
+      failedProcessPids.push(pid);
       errors.push(`pid ${pid}: still alive after SIGKILL`);
     }
   }
 
-  return { processPids, tmuxSessions, errors };
+  for (const pid of attemptedProcessPids) {
+    if (!failedProcessPids.includes(pid) && !isPidAlive(pid) && !processPids.includes(pid)) processPids.push(pid);
+  }
+
+  return {
+    attemptedProcessPids: uniqueNumbers(attemptedProcessPids),
+    processPids: uniqueNumbers(processPids),
+    failedProcessPids: uniqueNumbers(failedProcessPids),
+    attemptedTmuxSessions: uniqueStrings(attemptedTmuxSessions),
+    tmuxSessions: uniqueStrings(tmuxSessions),
+    failedTmuxSessions: uniqueStrings(failedTmuxSessions),
+    errors,
+  };
 }
