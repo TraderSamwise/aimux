@@ -1,5 +1,5 @@
 import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
-import { buildDashboardSessions } from "../dashboard/session-registry.js";
+import { buildDashboardSessions, type DashboardLocalSession } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
@@ -47,6 +47,7 @@ export interface DashboardModelRefreshOptions {
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
 interface DashboardStateSnapshotOptions {
   includeRuntimeInfo?: boolean;
+  hydrateLiveAgentWindows?: boolean;
   managedWindows?: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>;
 }
 
@@ -183,6 +184,46 @@ function listOfflineSessionsForDashboard(host: DashboardModelHost): any[] {
   return [...sessionsById.values()];
 }
 
+function listTopologyLiveSessionsForDashboard(
+  host: DashboardModelHost,
+  existingSessions: DashboardLocalSession[],
+): DashboardLocalSession[] {
+  const existingIds = new Set(existingSessions.map((session) => session.id).filter(Boolean));
+  const existingBackendIds = new Set(existingSessions.map((session) => session.backendSessionId).filter(Boolean));
+  return listTopologySessionStates({ statuses: ["starting", "running", "idle"], projectRoot: projectRootFor(host) })
+    .filter((session) => {
+      if (!session?.id || existingIds.has(session.id)) return false;
+      return !session.backendSessionId || !existingBackendIds.has(session.backendSessionId);
+    })
+    .map((session) => {
+      const isStarting = session.status === "starting";
+      return {
+        id: session.id,
+        command: session.command,
+        toolConfigKey: session.toolConfigKey,
+        tmuxWindowId: session.tmuxTarget?.windowId,
+        backendSessionId: session.backendSessionId,
+        team: session.team as SessionTeamMetadata | undefined,
+        createdAt: session.createdAt,
+        status: isStarting ? "waiting" : session.status === "idle" ? "idle" : "running",
+        worktreePath: session.worktreePath,
+        pendingAction: isStarting ? "starting" : undefined,
+        pendingStartedAt: isStarting ? (session.updatedAt ?? session.createdAt) : undefined,
+        pending: isStarting ? true : undefined,
+        optimistic: isStarting ? true : undefined,
+      };
+    });
+}
+
+function pendingSessionActionForHost(
+  host: DashboardModelHost,
+  sessionId: string,
+): DashboardSession["pendingAction"] | undefined {
+  if (host.graveyardAfterStopSessionIds?.has?.(sessionId)) return "graveyarding";
+  if (host.stoppingSessionIds?.has?.(sessionId)) return "stopping";
+  return undefined;
+}
+
 function reconcileSessionsForLifecycleAction(host: DashboardModelHost): void {
   host.syncSessionsFromTopology?.();
   host.saveState?.();
@@ -313,15 +354,6 @@ function metadataSessionCanReceiveInput(host: DashboardModelHost, sessionId: str
     if (runtime && runtime.isAlive === false) return false;
   }
   return isMetadataSessionRunning(host, sessionId);
-}
-
-async function waitForMetadataSessionRunning(host: DashboardModelHost, sessionId: string): Promise<boolean> {
-  if (typeof host.waitForSessionStart === "function") {
-    try {
-      if (await host.waitForSessionStart(sessionId, METADATA_PENDING_SETTLE_TIMEOUT_MS)) return true;
-    } catch {}
-  }
-  return waitForMetadataCondition(host, () => isMetadataSessionRunning(host, sessionId));
 }
 
 async function waitForMetadataSessionReadyForInput(host: DashboardModelHost, sessionId: string): Promise<boolean> {
@@ -835,8 +867,9 @@ export function computeDashboardSessions(
   try {
     mainRepoPath = findMainRepo(projectRoot);
   } catch {}
-  const sessions = buildDashboardSessions({
-    sessions: host.sessions.map((session: any) => ({
+  const localSessions: DashboardLocalSession[] = host.sessions.map((session: any) => {
+    const pendingAction = pendingSessionActionForHost(host, session.id) ?? session.pendingAction;
+    return {
       id: session.id,
       command: session.command,
       toolConfigKey: host.sessionToolKeys?.get?.(session.id),
@@ -846,7 +879,16 @@ export function computeDashboardSessions(
       status: session.status,
       worktreePath: host.sessionWorktreePaths.get(session.id),
       tmuxWindowId: host.sessionTmuxTargets.get(session.id)?.windowId,
-    })),
+      pendingAction,
+      pendingStartedAt: session.pendingStartedAt,
+      pending: Boolean(pendingAction) || session.pending,
+      optimistic: Boolean(pendingAction) || session.optimistic,
+    };
+  });
+  const sessions = buildDashboardSessions({
+    sessions: includeRuntimeInfo
+      ? localSessions
+      : [...localSessions, ...listTopologyLiveSessionsForDashboard(host, localSessions)],
     activeIndex: host.activeIndex,
     offlineSessions: listOfflineSessionsForDashboard(host),
     hiddenWorktreePaths: listWorktreeGraveyardPaths(),
@@ -1036,7 +1078,7 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost, options: Das
   const worktrees = host.listDesktopWorktrees();
   let managedWindows =
     options.managedWindows ?? host.tmuxRuntimeManager.listProjectManagedWindows(projectRootFor(host));
-  if (!options.managedWindows) {
+  if (!options.managedWindows && options.hydrateLiveAgentWindows !== false) {
     managedWindows = hydrateLiveAgentWindowsForSnapshot(host, managedWindows);
   }
   const realizedWorktreePaths = new Set(
@@ -1144,8 +1186,16 @@ function isContradictoryDesktopState(
 ): boolean {
   const liveIds = listLiveTmuxAgentIds(host);
   if (liveIds.length === 0) return false;
+  const pendingNewSessionIds = new Set(
+    (host.dashboardPendingActions?.listSessionActions?.() ?? [])
+      .filter((action: { kind?: unknown }) => {
+        return action.kind === "creating" || action.kind === "forking" || action.kind === "starting";
+      })
+      .map((action: { id?: unknown }) => (typeof action.id === "string" ? action.id : ""))
+      .filter(Boolean),
+  );
   const payloadIds = new Set([...json.sessions, ...json.teammates].map((entry) => entry.id).filter(Boolean));
-  return liveIds.some((id) => !payloadIds.has(id));
+  return liveIds.some((id) => !payloadIds.has(id) && !pendingNewSessionIds.has(id));
 }
 
 function failDashboardServiceRefresh(host: DashboardModelHost, force: boolean, error?: unknown): false {
@@ -1256,7 +1306,12 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       pluginStatuses: () => host.pluginRuntime?.getPluginStatuses() ?? [],
     },
     desktop: {
-      getState: () => host.buildDesktopState({ includeStatusline: false, includeRuntimeInfo: false }),
+      getState: () =>
+        host.buildDesktopState({
+          includeStatusline: false,
+          includeRuntimeInfo: false,
+          hydrateLiveAgentWindows: false,
+        }),
       listWorktrees: () => host.listProjectedDesktopWorktrees(),
       getSessionDisplayContext: (sessionId: string) => {
         const session =
@@ -1330,7 +1385,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 pendingAction: "creating",
               })
             : undefined,
-          (result) => waitForMetadataSessionRunning(host, result.sessionId),
         ),
       createTeammateAgent: (input: any) =>
         withMetadataSessionPending(
@@ -1364,10 +1418,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 },
               })
             : undefined,
-          (result) =>
-            result?.reused && result.sessionId !== input.sessionId
-              ? true
-              : waitForMetadataSessionRunning(host, result.sessionId),
         ),
       forkAgent: (input: any) =>
         withMetadataSessionPending(
@@ -1392,7 +1442,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 pendingAction: "forking",
               })
             : undefined,
-          (result) => waitForMetadataSessionRunning(host, result.sessionId),
         ),
       stopAgent: (input: any) =>
         withMetadataSessionPending(
