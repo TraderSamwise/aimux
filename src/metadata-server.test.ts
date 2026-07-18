@@ -559,15 +559,17 @@ describe("MetadataServer threads API", () => {
     sessions: Array<{
       id: string;
       command?: string;
-      status?: "running" | "idle" | "offline";
+      status?: "starting" | "running" | "idle" | "offline";
       team?: Record<string, unknown>;
       createdAt?: string;
       label?: string;
       backendSessionId?: string;
     }>,
   ): void {
+    const starting = sessions.filter((session) => session.status === "starting");
+    const stable = sessions.filter((session) => session.status !== "starting");
     saveRuntimeTopologySessions({
-      sessions: sessions.map((session) => ({
+      sessions: stable.map((session) => ({
         id: session.id,
         tool: session.command ?? "codex",
         toolConfigKey: session.command ?? "codex",
@@ -580,6 +582,23 @@ describe("MetadataServer threads API", () => {
         label: session.label,
       })),
     });
+    for (const session of starting) {
+      upsertTopologySession(
+        {
+          id: session.id,
+          tool: session.command ?? "codex",
+          toolConfigKey: session.command ?? "codex",
+          command: session.command ?? "codex",
+          args: [],
+          lifecycle: "live",
+          createdAt: session.createdAt,
+          backendSessionId: session.backendSessionId,
+          team: session.team,
+          label: session.label,
+        },
+        "starting",
+      );
+    }
   }
 
   it("opens, sends, and reads threads over HTTP", async () => {
@@ -703,6 +722,26 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ sessionId: "codex-1" }),
     });
     expect(noActiveRes.status).toBe(400);
+  });
+
+  it("lists starting agents over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    seedAgentTopology([{ id: "codex-starting", status: "starting", team: { role: "coder" } }]);
+
+    const res = await fetch(`${base}/agents`);
+    const body = (await res.json()) as {
+      agents: Array<{ id: string; status?: string; role?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.agents.find((agent) => agent.id === "codex-starting")).toMatchObject({
+      id: "codex-starting",
+      status: "starting",
+      role: "coder",
+    });
   });
 
   it("marks offline agents without exact backend ids as blocked in the agents API", async () => {
