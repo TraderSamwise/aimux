@@ -741,6 +741,8 @@ export const dashboardTailMethods: DashboardTailMethods = {
       if (tmuxTarget) {
         (this as any).stoppingSessionIds?.add?.(sessionId);
         scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
+      } else if (!canceled && existing.status === "starting") {
+        (this as any).stoppingSessionIds?.add?.(sessionId);
       }
       notifyLifecycleChange(this);
       (this as any).debug?.(
@@ -777,6 +779,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
         (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
         (this as any).stoppingSessionIds?.add?.(sessionId);
         scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
+      } else if (!canceled && existing.status === "starting") {
+        (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
+        (this as any).stoppingSessionIds?.add?.(sessionId);
       }
       notifyLifecycleChange(this);
       (this as any).debug?.(

@@ -31,6 +31,16 @@ const createSessionAsyncMock = vi.hoisted(() =>
   vi.fn(async (...args: any[]) => ({ id: typeof args[9] === "string" ? args[9] : "planned" })),
 );
 
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 vi.mock("./session-launch.js", () => ({
   createSessionAsync: createSessionAsyncMock,
 }));
@@ -264,6 +274,128 @@ describe("dashboard lifecycle adapter", () => {
     });
     expect(host.stoppingSessionIds.has("codex-planned")).toBe(false);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
+  });
+
+  it("keeps stop intent when a starting agent is already dequeued", async () => {
+    vi.useFakeTimers();
+    const started = deferred();
+    const release = deferred<TmuxSessionTransport>();
+    const target = { sessionName: "aimux-test", windowId: "@13", windowIndex: 13, windowName: "codex" };
+    let transport: TmuxSessionTransport | undefined;
+    const tmuxRuntimeManager = {
+      killWindowAsync: vi.fn(async () => undefined),
+      killWindow: vi.fn(),
+      isWindowAlive: vi.fn(() => true),
+      getTargetByWindowId: vi.fn(() => target),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager,
+      generateDashboardSessionId: vi.fn(() => "codex-starting"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+    createSessionAsyncMock.mockImplementation(async (...args: any[]) => {
+      started.resolve();
+      transport = new TmuxSessionTransport(args[9], "codex", target, tmuxRuntimeManager as any, 80, 24);
+      return release.promise;
+    });
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-starting" });
+    await vi.advanceTimersByTimeAsync(60);
+    await started.promise;
+
+    await expect(dashboardTailMethods.stopAgent.call(host, "codex-starting")).resolves.toEqual({
+      sessionId: "codex-starting",
+      status: "offline",
+    });
+
+    expect(host.stoppingSessionIds.has("codex-starting")).toBe(true);
+    release.resolve(transport!);
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(host.stoppingSessionIds.has("codex-starting")).toBe(false);
+    expect(listTopologySessionStates({ statuses: ["offline"] }).map((session) => session.id)).toEqual([
+      "codex-starting",
+    ]);
+    transport?.destroy();
+  });
+
+  it("keeps graveyard intent when a starting agent is already dequeued", async () => {
+    vi.useFakeTimers();
+    const started = deferred();
+    const release = deferred<TmuxSessionTransport>();
+    const target = { sessionName: "aimux-test", windowId: "@14", windowIndex: 14, windowName: "codex" };
+    let transport: TmuxSessionTransport | undefined;
+    const tmuxRuntimeManager = {
+      killWindowAsync: vi.fn(async () => undefined),
+      killWindow: vi.fn(),
+      isWindowAlive: vi.fn(() => true),
+      getTargetByWindowId: vi.fn(() => target),
+    };
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager,
+      generateDashboardSessionId: vi.fn(() => "codex-graveyarding"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+    createSessionAsyncMock.mockImplementation(async (...args: any[]) => {
+      started.resolve();
+      transport = new TmuxSessionTransport(args[9], "codex", target, tmuxRuntimeManager as any, 80, 24);
+      return release.promise;
+    });
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-graveyarding" });
+    await vi.advanceTimersByTimeAsync(60);
+    await started.promise;
+
+    await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-graveyarding")).resolves.toEqual({
+      sessionId: "codex-graveyarding",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+
+    expect(host.stoppingSessionIds.has("codex-graveyarding")).toBe(true);
+    expect(host.graveyardAfterStopSessionIds.has("codex-graveyarding")).toBe(true);
+    release.resolve(transport!);
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(host.stoppingSessionIds.has("codex-graveyarding")).toBe(false);
+    expect(host.graveyardAfterStopSessionIds.has("codex-graveyarding")).toBe(false);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-graveyarding",
+    ]);
+    transport?.destroy();
   });
 
   it("rejects duplicate explicit queued session ids before creating conflicting topology", async () => {
