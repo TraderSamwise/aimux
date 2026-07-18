@@ -825,15 +825,16 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("coalesces graveyard while the same agent is already stopping", async () => {
+  it("lets graveyard supersede a pending stop for the same agent", async () => {
     const session = { id: "sess-1", command: "codex", label: "codex", status: "running" };
     const pendingActions = makePendingActionsFake();
     pendingActions.setSessionAction("sess-1", "stopping");
+    let removed = false;
     const host = {
       mode: "dashboard",
       dashboardInputEpoch: 0,
       dashboardPendingActions: pendingActions,
-      dashboardRawSessionsCache: [session],
+      dashboardRawSessionsCache: [session] as any[],
       offlineSessions: [] as any[],
       sessions: [session],
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -842,9 +843,14 @@ describe("dashboard-ops", () => {
       },
       getSessionLabel: vi.fn(() => "codex"),
       renderDashboard: vi.fn(),
-      postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => true),
-      getDashboardSessions: vi.fn(() => [{ ...session, pendingAction: "stopping" }]),
+      postToProjectService: vi.fn(async () => {
+        removed = true;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardRawSessionsCache = removed ? [] : [session];
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => (removed ? [] : [{ ...session, pendingAction: "graveyarding" }])),
       adjustAfterRemove: vi.fn(),
       footerFlash: "",
       footerFlashTicks: 0,
@@ -853,10 +859,14 @@ describe("dashboard-ops", () => {
 
     await graveyardSessionWithFeedback(host, "sess-1", true);
 
-    expect(host.postToProjectService).not.toHaveBeenCalled();
-    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBe("stopping");
-    expect(host.footerFlash).toBe("stopping is already settling");
-    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/kill",
+      { sessionId: "sess-1" },
+      { timeoutMs: 10_000 },
+    );
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Sent codex to graveyard");
+    expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 

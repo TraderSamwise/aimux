@@ -162,17 +162,16 @@ function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, session
   const timer = setTimeout(() => {
     void (async () => {
       try {
-        const manager = (host as any).tmuxRuntimeManager;
-        if (runtime.transport instanceof TmuxSessionTransport && typeof manager?.killWindowAsync === "function") {
-          await manager.killWindowAsync(runtime.transport.tmuxTarget);
-          return;
+        if (runtime.transport instanceof TmuxSessionTransport) {
+          await runtime.transport.killAsync();
+        } else {
+          runtime.kill();
         }
-        runtime.kill();
+        clearTerminatingSessionTracking(host, sessionId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
-      } finally {
-        clearTerminatingSessionTracking(host, sessionId);
+        notifyLifecycleChange(host);
       }
     })();
   }, 0);
@@ -189,11 +188,11 @@ function scheduleTmuxTargetKill(host: Multiplexer, target: any, sessionId: strin
         } else {
           manager?.killWindow?.(target);
         }
+        clearTerminatingSessionTracking(host, sessionId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
-      } finally {
-        clearTerminatingSessionTracking(host, sessionId);
+        notifyLifecycleChange(host);
       }
     })();
   }, 0);
@@ -739,10 +738,10 @@ export const dashboardTailMethods: DashboardTailMethods = {
       const canceled = cancelQueuedSessionCreate(this, sessionId);
       const tmuxTarget = canceled ? undefined : resolveLiveTmuxTargetForSession(this, sessionId);
       markTopologySessionOffline(this, existing);
-      if (!canceled) {
+      if (tmuxTarget) {
         (this as any).stoppingSessionIds?.add?.(sessionId);
+        scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       }
-      if (tmuxTarget) scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       notifyLifecycleChange(this);
       (this as any).debug?.(
         canceled
@@ -774,11 +773,11 @@ export const dashboardTailMethods: DashboardTailMethods = {
         throw new Error(`Unable to graveyard session "${sessionId}"`);
       }
       removeOfflineSessionCache(this, sessionId);
-      if (!canceled) {
+      if (tmuxTarget) {
         (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
         (this as any).stoppingSessionIds?.add?.(sessionId);
+        scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       }
-      if (tmuxTarget) scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       notifyLifecycleChange(this);
       (this as any).debug?.(
         canceled

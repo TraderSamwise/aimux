@@ -548,27 +548,44 @@ export class TmuxRuntimeManager {
 
   async ensureProjectSessionAsync(projectRoot: string): Promise<TmuxSessionRef> {
     const session = this.getProjectSession(projectRoot);
-    const exists = await this.hasSessionAsync(session.sessionName);
-    if (!exists) {
-      await this.execAsync(
-        [
-          "new-session",
-          "-d",
-          "-s",
-          session.sessionName,
-          "-c",
-          projectRoot,
-          "-n",
-          "dashboard",
-          "sh",
-          "-lc",
-          "tail -f /dev/null",
-        ],
-        { cwd: projectRoot },
-      );
-      this.setCurrentRuntimeContract(session.sessionName);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let exists = await this.hasSessionAsync(session.sessionName);
+      if (!exists) {
+        const before = this.listSessionNames();
+        this.repairLegacyProjectSessionNames(projectRoot, before);
+        exists = await this.hasSessionAsync(session.sessionName);
+      }
+      const currentRuntimeContract = exists
+        ? this.getSessionOption(session.sessionName, TMUX_RUNTIME_CONTRACT_OPTION)
+        : null;
+      if (!exists) {
+        await this.execAsync(
+          [
+            "new-session",
+            "-d",
+            "-s",
+            session.sessionName,
+            "-c",
+            projectRoot,
+            "-n",
+            "dashboard",
+            "sh",
+            "-lc",
+            "tail -f /dev/null",
+          ],
+          { cwd: projectRoot },
+        );
+      }
+      try {
+        if (!exists) this.setCurrentRuntimeContract(session.sessionName);
+        this.configureSession(session.sessionName, projectRoot);
+      } catch (error) {
+        if (attempt === 0 && isNoSuchSessionError(error)) continue;
+        throw error;
+      }
+      if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);
+      return session;
     }
-    this.configureSession(session.sessionName, projectRoot);
     return session;
   }
 

@@ -946,26 +946,41 @@ export async function createSessionAsync(
       ...existingMetadata,
       createdAt: existingMetadata?.createdAt ?? new Date(sessionStartTime).toISOString(),
     };
-    const syncMetadata = async () => {
-      try {
-        if (typeof host.tmuxRuntimeManager.setWindowMetadataAsync === "function") {
-          await host.tmuxRuntimeManager.setWindowMetadataAsync(target, metadata);
-        } else {
-          host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
-        }
-        if (typeof host.tmuxRuntimeManager.applyManagedAgentWindowPolicyAsync === "function") {
-          await host.tmuxRuntimeManager.applyManagedAgentWindowPolicyAsync(target, metadata.toolConfigKey);
-        } else {
-          host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
-        }
-      } catch (error) {
-        debug(
-          `tmux metadata sync failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
-          "session",
-        );
+    try {
+      if (typeof host.tmuxRuntimeManager.setWindowMetadataAsync === "function") {
+        await host.tmuxRuntimeManager.setWindowMetadataAsync(target, metadata);
+      } else {
+        host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
       }
-    };
-    void syncMetadata();
+    } catch (error) {
+      host.sessions = host.sessions.filter((runtime: any) => runtime.id !== sessionId);
+      host.sessionTmuxTargets.delete(sessionId);
+      host.sessionToolKeys.delete(sessionId);
+      host.sessionOriginalArgs.delete(sessionId);
+      host.sessionWorktreePaths.delete(sessionId);
+      host.sessionStartTimes.delete(sessionId);
+      host.updateContextWatcherSessions?.();
+      try {
+        if (typeof host.tmuxRuntimeManager.killWindowAsync === "function") {
+          await host.tmuxRuntimeManager.killWindowAsync(target);
+        } else {
+          host.tmuxRuntimeManager.killWindow(target);
+        }
+      } catch {}
+      throw error;
+    }
+    try {
+      if (typeof host.tmuxRuntimeManager.applyManagedAgentWindowPolicyAsync === "function") {
+        await host.tmuxRuntimeManager.applyManagedAgentWindowPolicyAsync(target, metadata.toolConfigKey);
+      } else {
+        host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
+      }
+    } catch (error) {
+      debug(
+        `tmux window policy failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+    }
   }
   if (isConfiguredCodexCommand && !backendSessionId) {
     scheduleCodexBackendSessionIdCapture(host, sessionId, launchCwd, sessionStartTime);

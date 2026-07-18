@@ -98,6 +98,16 @@ export class TmuxSessionTransport {
     this.markExited(0);
   }
 
+  async killAsync(): Promise<void> {
+    if (this._exited) return;
+    if (typeof this.manager.killWindowAsync === "function") {
+      await this.manager.killWindowAsync(this.target);
+    } else {
+      this.manager.killWindow(this.target);
+    }
+    this.markExited(0);
+  }
+
   destroy(): void {
     clearInterval(this.pollInterval);
   }

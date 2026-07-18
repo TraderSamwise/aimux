@@ -56,7 +56,7 @@ export const dashboardViewMethods = {
   settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
     const settleLifecycle = captureDashboardLifecycle(this);
-    const renderLifecycle = captureDashboardLifecycle(this);
+    const renderLifecycle = captureDashboardLifecycle(this, { screen: "dashboard" });
     const pendingTarget =
       target ??
       (itemId.startsWith("worktree:")

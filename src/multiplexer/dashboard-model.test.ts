@@ -1664,13 +1664,14 @@ describe("computeDashboardSessions thread stats", () => {
       mkdirSync(join(repoRoot, ".git"), { recursive: true });
       await initPaths(repoRoot);
       const host = {
-        ...minimalDashboardHost([
-          { id: "codex-stopping", command: "codex", status: "running" },
-          { id: "codex-graveyarding", command: "codex", status: "running" },
-        ]),
+        ...minimalDashboardHost([]),
         projectRoot: repoRoot,
         stoppingSessionIds: new Set(["codex-stopping", "codex-graveyarding"]),
         graveyardAfterStopSessionIds: new Set(["codex-graveyarding"]),
+        offlineSessions: [
+          { id: "codex-stopping", command: "codex", status: "offline", worktreePath: repoRoot },
+          { id: "codex-graveyarding", command: "codex", status: "offline", worktreePath: repoRoot },
+        ],
         offlineServices: [],
         listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
         tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },

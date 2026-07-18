@@ -1,6 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -334,6 +334,101 @@ exit 0
       await focusRequested.promise;
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
       expect(focusedWindow).toBe("@1");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("uses the daemon focus route for cross-project selection files", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-cross-project-selection-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    let focusedWindow = "";
+    let focusedProjectRoot = "";
+    const focusRequested = deferred();
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/core/expose/items")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-remote",
+              label: "codex",
+              projectRoot: "/other-repo",
+              projectName: "Other",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-other", windowId: "@9", windowIndex: 9, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-remote",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/other-repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/core/expose/focus")) {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk.toString("utf8");
+        });
+        req.on("end", () => {
+          const parsed = JSON.parse(body) as { windowId?: string; projectRoot?: string };
+          focusedWindow = parsed.windowId ?? "";
+          focusedProjectRoot = parsed.projectRoot ?? "";
+          focusRequested.resolve();
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const selectionFile = join(root, "selected-window");
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        daemonEndpoint: endpoint,
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        selectionFile,
+        exposeConfig: { initialScope: "global" },
+      });
+
+      await waitForOutput(output, "codex");
+      input.write("\r");
+
+      await focusRequested.promise;
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(existsSync(selectionFile)).toBe(false);
+      expect(focusedWindow).toBe("@9");
+      expect(focusedProjectRoot).toBe("/other-repo");
     } finally {
       server.close();
       input.destroy();
