@@ -315,6 +315,23 @@ function cancelQueuedSessionCreate(host: Multiplexer, sessionId: string): Schedu
   return sessionCreateQueue.splice(index, 1)[0]?.input;
 }
 
+function hasQueuedSessionCreate(host: Multiplexer, sessionId: string): boolean {
+  const projectRoot = projectRootFor(host);
+  return sessionCreateQueue.some(
+    (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
+  );
+}
+
+function assertSessionIdCanBeQueued(host: Multiplexer, sessionId: string): void {
+  if (hasQueuedSessionCreate(host, sessionId) || findRuntime(host, sessionId)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
+  const existing = findTopologySession(host, sessionId);
+  if (isLiveTopologyStatus(existing?.status)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
+}
+
 function markTopologySessionOffline(host: Multiplexer, existing: RuntimeTopologySessionState): void {
   const offlineEntry: RuntimeTopologySessionState = {
     ...existing,
@@ -642,6 +659,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       open: opts.open,
       overseer: opts.overseer,
     };
+    assertSessionIdCanBeQueued(this, sessionId);
     recordStartingSession(this, createInput);
     notifyLifecycleChange(this);
     scheduleSessionCreate(this, createInput);
@@ -675,6 +693,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       label: opts.label,
       open: opts.open,
     };
+    assertSessionIdCanBeQueued(this, sessionId);
     recordStartingSession(this, createInput);
     notifyLifecycleChange(this);
     scheduleSessionCreate(this, createInput);
@@ -720,7 +739,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
       const canceled = cancelQueuedSessionCreate(this, sessionId);
       const tmuxTarget = canceled ? undefined : resolveLiveTmuxTargetForSession(this, sessionId);
       markTopologySessionOffline(this, existing);
-      (this as any).stoppingSessionIds?.add?.(sessionId);
+      if (!canceled) {
+        (this as any).stoppingSessionIds?.add?.(sessionId);
+      }
       if (tmuxTarget) scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       notifyLifecycleChange(this);
       (this as any).debug?.(
@@ -753,8 +774,10 @@ export const dashboardTailMethods: DashboardTailMethods = {
         throw new Error(`Unable to graveyard session "${sessionId}"`);
       }
       removeOfflineSessionCache(this, sessionId);
-      (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
-      (this as any).stoppingSessionIds?.add?.(sessionId);
+      if (!canceled) {
+        (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
+        (this as any).stoppingSessionIds?.add?.(sessionId);
+      }
       if (tmuxTarget) scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
       notifyLifecycleChange(this);
       (this as any).debug?.(
