@@ -262,7 +262,44 @@ describe("dashboard lifecycle adapter", () => {
       id: "codex-planned",
       status: "offline",
     });
+    expect(host.stoppingSessionIds.has("codex-planned")).toBe(false);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
+  });
+
+  it("rejects duplicate explicit queued session ids before creating conflicting topology", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      generateDashboardSessionId: vi.fn(() => "unused"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetSessionId: "codex-planned",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-planned" });
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetSessionId: "codex-planned",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).rejects.toThrow('Session "codex-planned" already exists');
+
+    expect(listTopologySessionStates({ statuses: ["starting"] }).map((session) => session.id)).toEqual([
+      "codex-planned",
+    ]);
+    await vi.runOnlyPendingTimersAsync();
+    expect(createSessionAsyncMock).toHaveBeenCalledTimes(1);
+    expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
   });
 
   it("does not run dashboard render hooks when project-service lifecycle records starting agents", async () => {
@@ -639,6 +676,46 @@ describe("dashboard lifecycle adapter", () => {
     expect(runtime.kill).toHaveBeenCalledOnce();
     expect(host.stoppingSessionIds.has("codex-live")).toBe(false);
     expect(host.graveyardAfterStopSessionIds.has("codex-live")).toBe(false);
+  });
+
+  it("graveyards queued agent creation without leaving terminating tracking behind", async () => {
+    vi.useFakeTimers();
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      generateDashboardSessionId: vi.fn(() => "codex-planned"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-planned" });
+    await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-planned")).resolves.toEqual({
+      sessionId: "codex-planned",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+    expect(listTopologySessionStates({ statuses: ["starting", "offline"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual([
+      "codex-planned",
+    ]);
+    expect(host.stoppingSessionIds.has("codex-planned")).toBe(false);
+    expect(host.graveyardAfterStopSessionIds.has("codex-planned")).toBe(false);
   });
 
   it("marks stale live topology agents offline when no runtime owns them", async () => {
