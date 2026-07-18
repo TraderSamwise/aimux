@@ -284,7 +284,7 @@ describe("dashboard-ops", () => {
       expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBe("creating");
       expect(host.showDashboardError).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(75_000);
+      await vi.advanceTimersByTimeAsync(95_000);
       await vi.waitFor(() => expect(host.dashboardPendingActions.getServiceAction(createdServiceId)).toBeNull());
     } finally {
       vi.useRealTimers();
@@ -825,6 +825,51 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("lets graveyard supersede a pending stop for the same agent", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", status: "running" };
+    const pendingActions = makePendingActionsFake();
+    pendingActions.setSessionAction("sess-1", "stopping");
+    let removed = false;
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: pendingActions,
+      dashboardRawSessionsCache: [session] as any[],
+      offlineSessions: [] as any[],
+      sessions: [session],
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      getSessionLabel: vi.fn(() => "codex"),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        removed = true;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardRawSessionsCache = removed ? [] : [session];
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => (removed ? [] : [{ ...session, pendingAction: "graveyarding" }])),
+      adjustAfterRemove: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+
+    await graveyardSessionWithFeedback(host, "sess-1", true);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/kill",
+      { sessionId: "sess-1" },
+      { timeoutMs: 10_000 },
+    );
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Sent codex to graveyard");
+    expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("keeps reconciling a stop after the project service request times out", async () => {
     vi.useFakeTimers();
     const session = { id: "sess-1", command: "codex", label: "codex" };
@@ -877,6 +922,244 @@ describe("dashboard-ops", () => {
     }
 
     expect(host.footerFlash).toBe("Stopped codex");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("renders when stop pending is cleared by external model reconciliation", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    const host = {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(() => {
+        host.dashboardSessionsCache = host.dashboardRawSessionsCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getSessionAction(entry.id),
+        }));
+      }),
+      getSessionLabel: vi.fn(() => "codex"),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawSessionsCache = [{ ...session, status: "offline" }];
+        if (host.dashboardPendingActions.getSessionAction("sess-1") === "stopping") {
+          host.dashboardPendingActions.clearSessionAction("sess-1");
+        }
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => host.dashboardSessionsCache),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopSessionToOfflineWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+      const rendersBeforeReconcileExit = host.renderDashboard.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(11_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+      await vi.waitFor(() =>
+        expect(host.renderDashboard.mock.calls.length).toBeGreaterThan(rendersBeforeReconcileExit),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.reapplyDashboardPendingActions).toHaveBeenCalled();
+    expect(host.dashboardSessionsCache[0]).toEqual(expect.objectContaining({ id: "sess-1", status: "offline" }));
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction", "stopping");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("does not show a stale stop error after final refresh clears pending", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    let refreshCount = 0;
+    const host = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: { windowName: "codex" },
+            metadata: { kind: "agent", sessionId: "sess-1" },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => true),
+      },
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        host.dashboardModelServiceRefreshedAt += 1;
+        if (refreshCount > 12) {
+          host.dashboardRawSessionsCache = [{ ...session, status: "offline" }];
+          host.dashboardPendingActions.clearSessionAction("sess-1");
+          host.reapplyDashboardPendingActions();
+        }
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getSessionAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopSessionToOfflineWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      await vi.advanceTimersByTimeAsync(140_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("does not show a stale stop error when final refresh settles before local pending clears", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    let refreshCount = 0;
+    const host = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        host.dashboardModelServiceRefreshedAt += 1;
+        if (refreshCount > 12) {
+          host.dashboardRawSessionsCache = [{ ...session, status: "offline" }];
+        }
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getSessionAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const action = stopSessionToOfflineWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      await vi.advanceTimersByTimeAsync(75_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+    expect(host.renderDashboard).toHaveBeenCalled();
+  });
+
+  it("clears a stale stop error after the API later reaches terminal state", async () => {
+    vi.useFakeTimers();
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    let refreshCount = 0;
+    const host = {
+      mode: "dashboard",
+      projectRoot: "/repo",
+      dashboardInputEpoch: 0,
+      dashboardModelServiceRefreshedAt: 0,
+      dashboardErrorState: null as { title: string; lines: string[] } | null,
+      dashboardRawSessionsCache: [{ ...session, status: "running" }] as any[],
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        refreshCount += 1;
+        host.dashboardModelServiceRefreshedAt += 1;
+        host.dashboardRawSessionsCache = [{ ...session, status: refreshCount > 125 ? "offline" : "running" }];
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() =>
+        host.dashboardRawSessionsCache.map((entry) => ({
+          ...entry,
+          pendingAction: host.dashboardPendingActions.getSessionAction(entry.id),
+        })),
+      ),
+      showDashboardError: vi.fn((title: string, lines: string[]) => {
+        host.dashboardErrorState = { title, lines };
+      }),
+    };
+
+    try {
+      const action = stopSessionToOfflineWithFeedback(host, session);
+      await vi.advanceTimersByTimeAsync(1);
+      await action;
+
+      await vi.advanceTimersByTimeAsync(140_000);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.dashboardErrorState).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -1648,7 +1931,7 @@ describe("dashboard-ops", () => {
       expect(host.footerFlash).toBe("starting is still settling");
       expect(host.showDashboardError).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(75_000);
+      await vi.advanceTimersByTimeAsync(95_000);
       await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull());
     } finally {
       vi.useRealTimers();
@@ -2171,6 +2454,56 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("redraws after clearing create pending from a superseded dashboard input", async () => {
+    const request = deferred();
+    let renderCountAtPending = 0;
+    let live = false;
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      postToProjectService: vi.fn(async () => request.promise),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() =>
+        live
+          ? [{ id: "codex-race12", command: "codex", status: "running", tmuxWindowId: "@12" }]
+          : [
+              {
+                id: "codex-race12",
+                command: "codex",
+                status: "waiting",
+                pendingAction: host.dashboardPendingActions.getSessionAction("codex-race12"),
+                optimistic: true,
+              },
+            ],
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    const spawn = spawnDashboardAgentWithFeedback(host, {
+      sessionId: "codex-race12",
+      tool: "codex",
+      worktreePath: "/repo",
+    });
+    await vi.waitFor(() => expect(host.postToProjectService).toHaveBeenCalledOnce());
+    renderCountAtPending = host.renderDashboard.mock.calls.length;
+
+    host.dashboardInputEpoch = 1;
+    live = true;
+    request.resolve();
+    await spawn;
+
+    expect(host.dashboardPendingActions.getSessionAction("codex-race12")).toBeNull();
+    expect(host.renderDashboard.mock.calls.length).toBeGreaterThan(renderCountAtPending);
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("keeps reconciling agent create after the project service request times out", async () => {
     vi.useFakeTimers();
     let live = false;
@@ -2219,6 +2552,52 @@ describe("dashboard-ops", () => {
       live = true;
       await vi.advanceTimersByTimeAsync(500);
       await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("codex-timeout")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("clears create pending from a live row during reconcile", async () => {
+    vi.useFakeTimers();
+    const host = {
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      reapplyDashboardPendingActions: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw requestTimeoutError();
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => [
+        {
+          id: "codex-live-pending",
+          status: "running",
+          tmuxWindowId: "@44",
+          pendingAction: host.dashboardPendingActions.getSessionAction("codex-live-pending"),
+        },
+      ]),
+      showDashboardError: vi.fn(),
+    };
+
+    try {
+      const spawn = spawnDashboardAgentWithFeedback(host, {
+        sessionId: "codex-live-pending",
+        tool: "codex",
+        worktreePath: "/repo",
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      await spawn;
+
+      expect(host.dashboardPendingActions.getSessionAction("codex-live-pending")).toBe("creating");
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(host.dashboardPendingActions.getSessionAction("codex-live-pending")).toBeNull());
     } finally {
       vi.useRealTimers();
     }

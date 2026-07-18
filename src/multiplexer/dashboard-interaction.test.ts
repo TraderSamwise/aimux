@@ -555,6 +555,46 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("does not stop or remove entries pending in the central action store", () => {
+    const entry = {
+      id: "codex-1",
+      kind: "session",
+      status: "running",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        worktreeSessions: [entry],
+        sessionIndex: 0,
+      },
+      dashboardPendingActions: {
+        getSessionAction: vi.fn(() => "stopping"),
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => null),
+      getDashboardSessions: vi.fn(() => [entry]),
+      sessions: [{ id: "codex-1" }],
+      dashboardWorktreeGroupsCache: [],
+      stopSessionToOfflineWithFeedback: vi.fn(),
+      graveyardSessionWithFeedback: vi.fn(),
+      isSessionRuntimeLive: vi.fn(() => true),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopSessionToOfflineWithFeedback).not.toHaveBeenCalled();
+    expect(host.graveyardSessionWithFeedback).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Agent codex-1 is stopping");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("queues stop instead of deleting an offline service that is still starting", () => {
     const service = {
       id: "service-1",

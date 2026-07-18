@@ -506,6 +506,41 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
   });
 
+  it("applies the full managed session contract after async session creation", async () => {
+    const exec = createExecMock();
+    const asyncCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const execAsync = vi.fn(async (args: string[], options?: { cwd?: string }) => {
+      asyncCalls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined.startsWith("has-session -t ")) throw new Error("missing");
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec, () => {}, execAsync);
+
+    const session = await manager.ensureProjectSessionAsync("/repo/mobile");
+
+    expect(session.sessionName).toMatch(/^aimux-mobile-/);
+    expect(asyncCalls.some((call) => call.args[0] === "new-session" && call.cwd === "/repo/mobile")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[2] === "prefix" &&
+          call.args[3] === "g" &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' expose"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === TMUX_RUNTIME_CONTRACT_OPTION &&
+          call.args[4] === AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      ),
+    ).toBe(true);
+  });
+
   it("stamps missing runtime contract on an existing project session", () => {
     const sessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
     const calls: Array<{ args: string[]; cwd?: string }> = [];

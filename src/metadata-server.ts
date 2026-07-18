@@ -148,6 +148,7 @@ import { resolveDashboardTarget } from "./dashboard/targets.js";
 import { isUsableDashboardTarget } from "./dashboard/targets.js";
 import { clearDashboardOperationFailures } from "./dashboard/operation-failures.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
+import type { RuntimeTopologySessionStatus } from "./runtime-core/topology-store.js";
 import {
   resolveExchangeMessageAlertRecipients,
   resolveExchangeReviewOutcomeRecipient,
@@ -350,7 +351,7 @@ function metadataProjectRoot(): string | undefined {
   }
 }
 
-const EXPOSE_SOCKET_HEADER_LINES = 14;
+const EXPOSE_SOCKET_HEADER_LINES = 15;
 const EXPOSE_SOCKET_HEADER_MAX_BYTES = 8192;
 const EXPOSE_SOCKET_HEADER_TIMEOUT_MS = 2000;
 
@@ -1248,9 +1249,7 @@ interface TeammateTaskBody {
   worktreePath?: string;
 }
 
-function topologyDesktopSessionList(
-  statuses: Array<"running" | "idle" | "offline" | "graveyard">,
-): DesktopSessionRecord[] {
+function topologyDesktopSessionList(statuses: RuntimeTopologySessionStatus[]): DesktopSessionRecord[] {
   const tools = loadConfig().tools;
   return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => {
     const status = session.status ?? "offline";
@@ -1483,6 +1482,7 @@ export class MetadataServer {
       aimuxHome: header[8] || undefined,
       backdropFile: header[9] || undefined,
       daemonEndpoint: header[13] || undefined,
+      selectionFile: header[14] || undefined,
       input,
       output: socket,
       manageTerminal: false,
@@ -1494,7 +1494,10 @@ export class MetadataServer {
         writeFileSync(header[10], `${code}\n`);
       } catch {}
     }
+    socket.unpipe(input);
+    input.destroy();
     socket.end();
+    socket.destroy();
   }
 
   getAddress(): { host: string; port: number } | null {
@@ -1699,8 +1702,8 @@ export class MetadataServer {
   }
 
   private getDesktopStateSnapshot(force = false): Record<string, unknown> {
-    if (force) return this.refreshDesktopStateCache();
     const now = Date.now();
+    if (force) return this.refreshDesktopStateCache();
     if (this.desktopStateCache && this.desktopStateCacheDirty) {
       this.scheduleDesktopStateRefresh(DESKTOP_STATE_STALE_REFRESH_DELAY_MS);
       return this.desktopStateCache.state;
@@ -1756,7 +1759,7 @@ export class MetadataServer {
     if (!parentSessionId.trim()) {
       return { ok: false, status: 400, error: "parentSessionId is required" };
     }
-    const topologySessions = topologyDesktopSessionList(["running", "idle", "offline"]);
+    const topologySessions = topologyDesktopSessionList(["starting", "running", "idle", "offline"]);
     const sessions = topologySessions.filter((session) => !isTeammateSession(session));
     const teammates = topologySessions.filter(isTeammateSession);
     const parent = [...sessions, ...teammates].find((session) => session.id === parentSessionId);
@@ -2550,7 +2553,7 @@ export class MetadataServer {
       const tasks = readAllTasks();
       const activeTaskFor = (sessionId: string) =>
         tasks.find((task) => task.assignedTo === sessionId && task.status !== "done" && task.status !== "failed");
-      const agents = topologyDesktopSessionList(["running", "idle", "offline"]).map((session) => {
+      const agents = topologyDesktopSessionList(["starting", "running", "idle", "offline"]).map((session) => {
         const meta = metadataState.sessions[session.id];
         const task = activeTaskFor(session.id);
         return {
