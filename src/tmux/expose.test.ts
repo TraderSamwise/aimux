@@ -349,7 +349,8 @@ exit 0
 
     const firstSwitchableRequested = deferred();
     const allowFirstSwitchableResponse = deferred();
-    const reloaded = deferred();
+    const secondSwitchableRequested = deferred();
+    const allowSecondSwitchableResponse = deferred();
     let switchableRequestCount = 0;
     const focusRequested = deferred();
     const server = createServer(async (req, res) => {
@@ -359,7 +360,10 @@ exit 0
           firstSwitchableRequested.resolve();
           await allowFirstSwitchableResponse.promise;
         }
-        if (switchableRequestCount >= 2) reloaded.resolve();
+        if (switchableRequestCount >= 2) {
+          secondSwitchableRequested.resolve();
+          await allowSecondSwitchableResponse.promise;
+        }
         sendJson(res, {
           ok: true,
           items: [
@@ -426,10 +430,17 @@ exit 0
       allowFirstSwitchableResponse.resolve();
 
       await focusRequested.promise;
-      await reloaded.promise;
+      await secondSwitchableRequested.promise;
+      let settled = false;
+      const observedResult = result.finally(() => {
+        settled = true;
+      });
       input.write("q");
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      allowSecondSwitchableResponse.resolve();
 
-      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      await expect(withTimeout(observedResult, 1000)).resolves.toBe(0);
       expect(switchableRequestCount).toBeGreaterThanOrEqual(2);
     } finally {
       server.close();
