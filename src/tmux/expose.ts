@@ -658,12 +658,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
             return;
           }
           opening = false;
-          render(false);
+          loadInitialItems();
         })
         .catch(() => {
           if (finished) return;
           opening = false;
-          render(false);
+          loadInitialItems();
         });
     };
 

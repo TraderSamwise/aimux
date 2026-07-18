@@ -341,6 +341,103 @@ exit 0
     }
   });
 
+  it("recovers when queued Enter resolves to a failed project-service focus", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-focus-reload-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const firstSwitchableRequested = deferred();
+    const allowFirstSwitchableResponse = deferred();
+    const reloaded = deferred();
+    let switchableRequestCount = 0;
+    const focusRequested = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        switchableRequestCount += 1;
+        if (switchableRequestCount === 1) {
+          firstSwitchableRequested.resolve();
+          await allowFirstSwitchableResponse.promise;
+        }
+        if (switchableRequestCount >= 2) reloaded.resolve();
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        req.on("data", () => {});
+        req.on("end", () => {
+          focusRequested.resolve();
+          sendJson(res, { ok: false });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        currentClientSession: "aimux-test-client-12345678",
+        clientTty: "/dev/ttys001",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await firstSwitchableRequested.promise;
+      input.write("\r");
+      allowFirstSwitchableResponse.resolve();
+
+      await focusRequested.promise;
+      await reloaded.promise;
+      input.write("q");
+
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(switchableRequestCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("uses the daemon focus route for cross-project selection files", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-cross-project-selection-test-"));
     tempRoots.push(root);
