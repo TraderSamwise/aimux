@@ -710,6 +710,8 @@ describe("restartAimuxControlPlane", () => {
       runtimeRepairs: 0,
       dashboardsReloaded: 1,
       runtimeRebuildRequired: 0,
+      orphanProcessesCleaned: 0,
+      orphanTmuxSessionsCleaned: 0,
       failures: 0,
     });
     expect(ensureDaemonRunning).toHaveBeenCalledWith();
@@ -1055,6 +1057,67 @@ describe("restartAimuxControlPlane", () => {
       expect.objectContaining({
         projectRoot: "/repo/alpha",
         action: "dashboard-reload",
+        status: "repaired",
+      }),
+    );
+    expect(repairNotifier.notify).toHaveBeenCalledWith(
+      "Aimux repaired itself",
+      expect.stringContaining("repair steps"),
+    );
+  });
+
+  it("cleans validation orphans before building the restart plan", async () => {
+    const calls: string[] = [];
+    const cleanupLifecycleValidationOrphans = vi.fn(async () => {
+      calls.push("cleanup");
+      return {
+        processPids: [101, 202],
+        tmuxSessions: ["aimux-aimux-lifecycle-validate21"],
+        errors: [],
+      };
+    });
+    const buildRuntimeCoherenceReport = vi.fn(async () => {
+      calls.push("coherence");
+      return okCoherenceReport();
+    });
+    const repairNotifier = {
+      record: vi.fn(),
+      notify: vi.fn(),
+    };
+
+    const result = await restartAimuxControlPlane({
+      now: () => new Date("2026-06-20T00:00:01.000Z"),
+      buildRuntimeCoherenceReport,
+      cleanupLifecycleValidationOrphans,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      isPidAlive: () => false,
+      reloadDashboards: false,
+      verifyAfterRestart: false,
+      repairNotifier,
+    });
+
+    expect(calls).toEqual(["cleanup", "coherence"]);
+    expect(cleanupLifecycleValidationOrphans).toHaveBeenCalledWith({
+      tmux: expect.objectContaining({ isAvailable: expect.any(Function) }),
+    });
+    expect(result.summary).toMatchObject({
+      orphanProcessesCleaned: 2,
+      orphanTmuxSessionsCleaned: 1,
+      failures: 0,
+    });
+    expect(renderRuntimeRestartResult(result)).toContain("validation orphans: 2 processes, 1 tmux sessions");
+    expect(repairNotifier.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "validation-orphan-cleanup",
         status: "repaired",
       }),
     );
