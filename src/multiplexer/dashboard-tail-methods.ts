@@ -167,11 +167,11 @@ function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, session
         } else {
           runtime.kill();
         }
-        clearTerminatingSessionTracking(host, sessionId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
-        notifyLifecycleChange(host);
+      } finally {
+        clearTerminatingSessionTracking(host, sessionId);
       }
     })();
   }, 0);
@@ -188,11 +188,11 @@ function scheduleTmuxTargetKill(host: Multiplexer, target: any, sessionId: strin
         } else {
           manager?.killWindow?.(target);
         }
-        clearTerminatingSessionTracking(host, sessionId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
-        notifyLifecycleChange(host);
+      } finally {
+        clearTerminatingSessionTracking(host, sessionId);
       }
     })();
   }, 0);

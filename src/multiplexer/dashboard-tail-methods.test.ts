@@ -693,7 +693,7 @@ describe("dashboard lifecycle adapter", () => {
     transport.destroy();
   });
 
-  it("keeps tmux-backed stop tracking when async tmux kill fails", async () => {
+  it("settles tmux-backed stop tracking when async tmux kill fails", async () => {
     vi.useFakeTimers();
     const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
     const tmuxRuntimeManager = {
@@ -736,9 +736,8 @@ describe("dashboard lifecycle adapter", () => {
     await vi.runOnlyPendingTimersAsync();
     await Promise.resolve();
     expect(tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
-    expect(host.stoppingSessionIds.has("codex-1")).toBe(true);
-    expect(transport.exited).toBe(false);
-    expect(host.debug).toHaveBeenCalledWith("failed to kill tmux window for codex-1: tmux unavailable", "session");
+    expect(host.stoppingSessionIds.has("codex-1")).toBe(false);
+    expect(transport.exited).toBe(true);
     transport.destroy();
   });
 
@@ -1014,10 +1013,61 @@ describe("dashboard lifecycle adapter", () => {
     });
     await vi.runOnlyPendingTimersAsync();
     await Promise.resolve();
+    await Promise.resolve();
 
     expect(host.tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
     expect(host.stoppingSessionIds.has("codex-live")).toBe(false);
     expect(listTopologySessionStates({ statuses: ["offline"] }).map((session) => session.id)).toEqual(["codex-live"]);
+  });
+
+  it("settles target-only graveyard tracking when async tmux kill fails", async () => {
+    vi.useFakeTimers();
+    const target = { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "codex" };
+    upsertTopologySession(
+      {
+        id: "codex-live",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        tmuxTarget: target,
+        worktreePath: repoRoot,
+      },
+      "running",
+    );
+    const host: any = {
+      projectRoot: repoRoot,
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [{ target, metadata: { kind: "agent", sessionId: "codex-live" } }]),
+        isWindowAlive: vi.fn(() => true),
+        killWindowAsync: vi.fn(async () => {
+          throw new Error("no such window: @8");
+        }),
+      },
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-live")).resolves.toEqual({
+      sessionId: "codex-live",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(host.tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(host.stoppingSessionIds.has("codex-live")).toBe(false);
+    expect(host.graveyardAfterStopSessionIds.has("codex-live")).toBe(false);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual(["codex-live"]);
   });
 
   it("does not report offline while a live runtime is already being sent to graveyard", async () => {

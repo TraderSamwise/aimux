@@ -100,11 +100,13 @@ export class TmuxSessionTransport {
 
   async killAsync(): Promise<void> {
     if (this._exited) return;
-    if (typeof this.manager.killWindowAsync === "function") {
-      await this.manager.killWindowAsync(this.target);
-    } else {
-      this.manager.killWindow(this.target);
-    }
+    try {
+      if (typeof this.manager.killWindowAsync === "function") {
+        await this.manager.killWindowAsync(this.target);
+      } else {
+        this.manager.killWindow(this.target);
+      }
+    } catch {}
     this.markExited(0);
   }
 
