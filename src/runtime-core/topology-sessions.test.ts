@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { initPaths } from "../paths.js";
 import { createRuntimeTopologyStore, emptyRuntimeTopology } from "./topology-store.js";
 import {
+  listTopologySessionStates,
   moveTopologySessionToGraveyard,
   removeTopologySession,
   removeTopologySessionsForWorktree,
@@ -18,10 +19,15 @@ import {
 import { upsertTopologyService } from "./topology-services.js";
 
 describe("topology session lifecycle", () => {
+  let previousAimuxHome: string | undefined;
+  let aimuxHome = "";
   let repoRoot = "";
   let topologyPath = "";
 
   beforeEach(async () => {
+    previousAimuxHome = process.env.AIMUX_HOME;
+    aimuxHome = mkdtempSync(join(tmpdir(), "aimux-topology-home-"));
+    process.env.AIMUX_HOME = aimuxHome;
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-topology-sessions-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     await initPaths(repoRoot);
@@ -30,6 +36,9 @@ describe("topology session lifecycle", () => {
 
   afterEach(() => {
     rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(aimuxHome, { recursive: true, force: true });
+    if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+    else process.env.AIMUX_HOME = previousAimuxHome;
   });
 
   it("drops tmux bindings when sessions move to graveyard or offline", () => {
@@ -74,6 +83,36 @@ describe("topology session lifecycle", () => {
     expect(restored?.status).toBe("offline");
     expect(restored?.graveyardReason).toBeUndefined();
     expect(store.read().sessions[0]!.graveyardReason).toBeUndefined();
+  });
+
+  it("moves sessions to graveyard in the requested project store", () => {
+    const otherRoot = mkdtempSync(join(tmpdir(), "aimux-topology-other-project-"));
+    mkdirSync(join(otherRoot, ".git"), { recursive: true });
+    try {
+      upsertTopologySession(
+        { id: "codex-other", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] },
+        "offline",
+        { projectRoot: otherRoot, now: "2026-05-25T00:00:00.000Z" },
+      );
+
+      expect(
+        listTopologySessionStates({ projectRoot: otherRoot, statuses: ["offline"] }).map((entry) => entry.id),
+      ).toEqual(["codex-other"]);
+      expect(listTopologySessionStates().map((entry) => entry.id)).not.toContain("codex-other");
+
+      const moved = moveTopologySessionToGraveyard("codex-other", {
+        projectRoot: otherRoot,
+        now: "2026-05-26T00:00:00.000Z",
+      });
+
+      expect(moved).toMatchObject({ id: "codex-other", status: "graveyard" });
+      expect(listTopologySessionStates({ projectRoot: otherRoot, statuses: ["offline"] })).toEqual([]);
+      expect(
+        listTopologySessionStates({ projectRoot: otherRoot, statuses: ["graveyard"] }).map((entry) => entry.id),
+      ).toEqual(["codex-other"]);
+    } finally {
+      rmSync(otherRoot, { recursive: true, force: true });
+    }
   });
 
   it("removes tmux bindings when an explicit status makes a session non-live", () => {

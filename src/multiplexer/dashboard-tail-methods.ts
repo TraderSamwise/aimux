@@ -147,6 +147,12 @@ function notifyLifecycleChange(host: Multiplexer): void {
   (host as any).metadataServer?.notifyChange?.();
 }
 
+function clearTerminatingSessionTracking(host: Multiplexer, sessionId: string): void {
+  (host as any).stoppingSessionIds?.delete?.(sessionId);
+  (host as any).graveyardAfterStopSessionIds?.delete?.(sessionId);
+  notifyLifecycleChange(host);
+}
+
 function lifecycleFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.trim().replace(/\s+/g, " ").slice(0, 500) || "unknown error";
@@ -165,6 +171,8 @@ function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, session
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
+      } finally {
+        clearTerminatingSessionTracking(host, sessionId);
       }
     })();
   }, 0);
@@ -184,6 +192,8 @@ function scheduleTmuxTargetKill(host: Multiplexer, target: any, sessionId: strin
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
+      } finally {
+        clearTerminatingSessionTracking(host, sessionId);
       }
     })();
   }, 0);
@@ -393,7 +403,7 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
     await verifyCreatedTmuxWindow(host, input, transport);
     const runtime = findRuntime(host, input.sessionId);
     if ((host as any).graveyardAfterStopSessionIds?.has?.(input.sessionId)) {
-      const moved = moveTopologySessionToGraveyard(input.sessionId);
+      const moved = moveTopologySessionToGraveyard(input.sessionId, { projectRoot: projectRootFor(host) });
       removeOfflineSessionCache(host, input.sessionId);
       if (runtime) {
         forgetRuntimeSession(host, input.sessionId);
@@ -738,7 +748,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     if (!runtime && existing && isLiveTopologyStatus(existing.status)) {
       const canceled = cancelQueuedSessionCreate(this, sessionId);
       const tmuxTarget = canceled ? undefined : resolveLiveTmuxTargetForSession(this, sessionId);
-      const moved = moveTopologySessionToGraveyard(sessionId);
+      const moved = moveTopologySessionToGraveyard(sessionId, { projectRoot });
       if (!moved) {
         throw new Error(`Unable to graveyard session "${sessionId}"`);
       }
@@ -760,7 +770,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
     } else if (!runtime && !existing) {
       throw new Error(`Unknown session "${sessionId}"`);
     }
-    const moved = moveTopologySessionToGraveyard(sessionId);
+    const moved = moveTopologySessionToGraveyard(sessionId, { projectRoot });
     if (!moved) {
       throw new Error(`Unable to graveyard session "${sessionId}"`);
     }

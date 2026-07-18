@@ -562,6 +562,7 @@ describe("dashboard lifecycle adapter", () => {
     });
     await vi.runOnlyPendingTimersAsync();
     expect(runtime.kill).toHaveBeenCalledOnce();
+    expect(host.stoppingSessionIds.has("codex-fresh")).toBe(false);
   });
 
   it("moves offline agents to graveyard through topology without requiring offline cache authority", async () => {
@@ -636,6 +637,8 @@ describe("dashboard lifecycle adapter", () => {
     expect(runtime.kill).not.toHaveBeenCalled();
     await vi.runOnlyPendingTimersAsync();
     expect(runtime.kill).toHaveBeenCalledOnce();
+    expect(host.stoppingSessionIds.has("codex-live")).toBe(false);
+    expect(host.graveyardAfterStopSessionIds.has("codex-live")).toBe(false);
   });
 
   it("marks stale live topology agents offline when no runtime owns them", async () => {
@@ -751,6 +754,7 @@ describe("dashboard lifecycle adapter", () => {
     await Promise.resolve();
 
     expect(host.tmuxRuntimeManager.killWindowAsync).toHaveBeenCalledWith(target);
+    expect(host.stoppingSessionIds.has("codex-live")).toBe(false);
     expect(listTopologySessionStates({ statuses: ["offline"] }).map((session) => session.id)).toEqual(["codex-live"]);
   });
 

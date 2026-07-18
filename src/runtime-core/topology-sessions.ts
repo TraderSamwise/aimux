@@ -384,26 +384,28 @@ export function upsertTopologySession(
 
 export function moveTopologySessionToGraveyard(
   sessionId: string,
-  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string },
+  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string; projectRoot?: string },
 ): RuntimeTopologySessionState | undefined {
-  const store = input?.store ?? createRuntimeTopologyStore();
-  const now = input?.now ?? new Date().toISOString();
-  let moved: RuntimeTopologySessionState | undefined;
-  store.update((topology) => {
-    const existing = topology.sessions.find((entry) => entry.id === sessionId);
-    if (existing) {
-      existing.status = "graveyard";
-      existing.updatedAt = now;
-      existing.graveyardedAt ??= now;
-      delete existing.restoreBlockedReason;
-      if (input?.reason) existing.graveyardReason = input.reason;
-      topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
-      moved = topologySessionToSessionState(existing, topology);
+  return withProjectStore(input?.projectRoot, input?.store, () => {
+    const store = input?.store ?? createRuntimeTopologyStore();
+    const now = input?.now ?? new Date().toISOString();
+    let moved: RuntimeTopologySessionState | undefined;
+    store.update((topology) => {
+      const existing = topology.sessions.find((entry) => entry.id === sessionId);
+      if (existing) {
+        existing.status = "graveyard";
+        existing.updatedAt = now;
+        existing.graveyardedAt ??= now;
+        delete existing.restoreBlockedReason;
+        if (input?.reason) existing.graveyardReason = input.reason;
+        topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
+        moved = topologySessionToSessionState(existing, topology);
+        return topology;
+      }
       return topology;
-    }
-    return topology;
+    });
+    return moved;
   });
-  return moved;
 }
 
 export function removeTopologySessionsForWorktree(
