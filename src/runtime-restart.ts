@@ -23,6 +23,10 @@ import {
   isPidAlive as defaultIsPidAlive,
   type ProjectServiceProcessIdentity,
 } from "./process-inspector.js";
+import {
+  cleanupLifecycleValidationOrphans as defaultCleanupLifecycleValidationOrphans,
+  type LifecycleOrphanCleanupResult,
+} from "./lifecycle-orphans.js";
 
 export { isExitedProcessState } from "./process-inspector.js";
 
@@ -63,6 +67,7 @@ export interface RuntimeRestartResult {
     current: AimuxDaemonInfo;
     retained?: boolean;
   };
+  orphanCleanup: LifecycleOrphanCleanupResult;
   projects: RuntimeRestartProjectResult[];
   summary: {
     projects: number;
@@ -70,6 +75,8 @@ export interface RuntimeRestartResult {
     runtimeRepairs: number;
     dashboardsReloaded: number;
     runtimeRebuildRequired: number;
+    orphanProcessesCleaned: number;
+    orphanTmuxSessionsCleaned: number;
     failures: number;
   };
 }
@@ -83,6 +90,7 @@ type RuntimeRestartTmux = Pick<TmuxRuntimeManager, "isAvailable"> &
       | "listSessionNames"
       | "listWindows"
       | "linkWindowToSession"
+      | "killSession"
       | "killWindow"
       | "selectWindow"
       | "setSessionOption"
@@ -125,6 +133,7 @@ export interface RestartAimuxControlPlaneOptions {
   verificationTimeoutMs?: number;
   verificationIntervalMs?: number;
   repairNotifier?: RepairNotifier | null;
+  cleanupLifecycleValidationOrphans?: CleanupLifecycleValidationOrphansFn;
   reloadDashboards?: boolean;
   verifyDashboards?: boolean;
   retainDaemon?: boolean;
@@ -135,6 +144,9 @@ type StopDaemonFn = () => Promise<StoppedDaemonInfo | null>;
 type EnsureDaemonRunningFn = () => Promise<AimuxDaemonInfo>;
 type EnsureProjectServiceFn = (projectRoot: string) => Promise<ProjectServiceState>;
 type StopProjectServiceFn = (projectRoot: string) => Promise<ProjectServiceState | null>;
+type CleanupLifecycleValidationOrphansFn = (options: {
+  tmux: RuntimeRestartTmux;
+}) => Promise<LifecycleOrphanCleanupResult>;
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -698,6 +710,11 @@ async function restartAimuxControlPlaneUnlocked(
   options: RestartAimuxControlPlaneOptions = {},
 ): Promise<RuntimeRestartResult> {
   const now = options.now ?? (() => new Date());
+  const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
+  const orphanCleanup = await (options.cleanupLifecycleValidationOrphans ?? defaultCleanupLifecycleValidationOrphans)({
+    tmux,
+  });
+  throwIfRestartAborted(options.abortSignal);
   const before = await (options.buildRuntimeCoherenceReport ?? buildRuntimeCoherenceReport)(options.coherence);
   throwIfRestartAborted(options.abortSignal);
   const projectRoots = selectProjectRoots(before, options.projectRoot);
@@ -719,7 +736,6 @@ async function restartAimuxControlPlaneUnlocked(
       },
     ];
   });
-  const tmux = (options.createTmux ?? (() => new TmuxRuntimeManager()))();
   if (reloadDashboards) {
     stopPreRestartDashboardRepairWindows(before, dashboardProjectRoots, tmux);
   }
@@ -864,7 +880,8 @@ async function restartAimuxControlPlaneUnlocked(
       project.service.status === "failed" ||
       project.dashboard.status === "failed",
   ).length;
-  const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
+  const orphanCleanupFailures = orphanCleanup.errors.length > 0 ? 1 : 0;
+  const failures = projectFailures + (verification.status === "failed" ? 1 : 0) + orphanCleanupFailures;
   const result: RuntimeRestartResult = {
     startedAt: before.generatedAt,
     finishedAt: now().toISOString(),
@@ -875,6 +892,7 @@ async function restartAimuxControlPlaneUnlocked(
       current: currentDaemon,
       retained: options.retainDaemon === true,
     },
+    orphanCleanup,
     projects,
     summary: {
       projects: projects.length,
@@ -882,6 +900,8 @@ async function restartAimuxControlPlaneUnlocked(
       runtimeRepairs: projects.filter((project) => project.runtime.status === "repaired").length,
       dashboardsReloaded: projects.filter((project) => project.dashboard.status === "reloaded").length,
       runtimeRebuildRequired: projects.filter((project) => project.runtimeRebuildRequired).length,
+      orphanProcessesCleaned: orphanCleanup.processPids.length,
+      orphanTmuxSessionsCleaned: orphanCleanup.tmuxSessions.length,
       failures,
     },
   };
@@ -910,6 +930,28 @@ function emitRepairDiagnostics(result: RuntimeRestartResult, notifier: RepairNot
 function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
   const events: RepairEvent[] = [];
   const controlStatus = result.summary.failures > 0 ? "failed" : "repaired";
+  if (
+    result.orphanCleanup.attemptedProcessPids.length > 0 ||
+    result.orphanCleanup.attemptedTmuxSessions.length > 0 ||
+    result.orphanCleanup.errors.length > 0
+  ) {
+    events.push({
+      ts: result.finishedAt,
+      projectRoot: result.projects[0]?.projectRoot ?? getGlobalAimuxDir(),
+      action: "validation-orphan-cleanup",
+      reason: "stale lifecycle validation runtime",
+      status: result.orphanCleanup.errors.length > 0 ? "failed" : "repaired",
+      details: {
+        attemptedProcessPids: result.orphanCleanup.attemptedProcessPids,
+        processPids: result.orphanCleanup.processPids,
+        failedProcessPids: result.orphanCleanup.failedProcessPids,
+        attemptedTmuxSessions: result.orphanCleanup.attemptedTmuxSessions,
+        tmuxSessions: result.orphanCleanup.tmuxSessions,
+        failedTmuxSessions: result.orphanCleanup.failedTmuxSessions,
+        errors: result.orphanCleanup.errors,
+      },
+    });
+  }
   for (const project of result.projects) {
     events.push({
       ts: result.finishedAt,
@@ -982,6 +1024,7 @@ export function renderRuntimeRestartResult(result: RuntimeRestartResult): string
     `  services ensured: ${result.summary.servicesEnsured}`,
     `  runtime repaired: ${result.summary.runtimeRepairs}`,
     `  dashboards reloaded: ${result.summary.dashboardsReloaded}`,
+    `  validation orphans: ${result.summary.orphanProcessesCleaned} processes, ${result.summary.orphanTmuxSessionsCleaned} tmux sessions`,
     `  failures: ${result.summary.failures}`,
   ];
 

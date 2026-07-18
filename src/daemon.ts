@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import type { Socket } from "node:net";
 import { resolve as pathResolve } from "node:path";
 import { ensureProjectPaths, getProjectIdFor, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
@@ -176,6 +177,7 @@ const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
 const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
+const DAEMON_SERVER_CLOSE_GRACE_MS = 500;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
 const LOCAL_AUTH_ROUTES = new Set<string>([
@@ -359,14 +361,18 @@ function rejectCors(res: ServerResponse): void {
 export class AimuxDaemon {
   private server: Server | null = null;
   private relayClient: RelayClient | null = null;
+  private readonly serverSockets = new Set<Socket>();
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly projectActors = new Map<string, CoreProjectActor>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
   private readonly authFlows = new Map<string, DaemonAuthFlow>();
   private state: DaemonState = loadDaemonState();
+  private stopping = false;
+  private stoppingPromise: Promise<void> | null = null;
 
   async start(): Promise<void> {
     if (this.server) return;
+    this.stopping = false;
     saveDaemonInfo({
       pid: process.pid,
       port: getDaemonPort(),
@@ -374,12 +380,20 @@ export class AimuxDaemon {
       updatedAt: new Date().toISOString(),
     } satisfies AimuxDaemonInfo);
     this.server = createServer((req, res) => {
+      if (this.stopping) {
+        send(res, 503, { ok: false, error: "aimux daemon is stopping" });
+        return;
+      }
       void this.handle(req, res).catch((error) => {
         send(res, 500, {
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
       });
+    });
+    this.server.on("connection", (socket: Socket) => {
+      this.serverSockets.add(socket);
+      socket.once("close", () => this.serverSockets.delete(socket));
     });
     const host = getDaemonHost();
     const port = getDaemonPort();
@@ -443,16 +457,36 @@ export class AimuxDaemon {
     return { status: "off" };
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stoppingPromise) return this.stoppingPromise;
+    this.stoppingPromise = this.stopUnlocked().finally(() => {
+      this.stoppingPromise = null;
+    });
+    return this.stoppingPromise;
+  }
+
+  private async stopUnlocked(): Promise<void> {
+    this.stopping = true;
     log.info("daemon stopping project actors", "daemon", { projectCount: Object.keys(this.state.projects).length });
     this.relayClient?.disconnect();
     this.relayClient = null;
-    for (const actor of this.projectActors.values()) {
-      void actor.stop().catch((error: unknown) => {
-        log.warn("project actor stop failed during daemon shutdown", "daemon", {
-          error: error instanceof Error ? error.message : String(error),
+    const serverClose = this.closeServer();
+    const ensureResults = await Promise.allSettled(Array.from(this.projectEnsurePromises.values()));
+    for (const result of ensureResults) {
+      if (result.status === "rejected") {
+        log.warn("project ensure failed during daemon shutdown", "daemon", {
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });
-      });
+      }
+    }
+    const actors = Array.from(this.projectActors.values());
+    const results = await Promise.allSettled(actors.map((actor) => actor.stop()));
+    for (const result of results) {
+      if (result.status === "rejected") {
+        log.warn("project actor stop failed during daemon shutdown", "daemon", {
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
     }
     this.projectActors.clear();
     this.state = {
@@ -462,8 +496,38 @@ export class AimuxDaemon {
     };
     saveDaemonState(this.state);
     clearDaemonInfo();
-    this.server?.close();
+    await serverClose;
+  }
+
+  private async closeServer(): Promise<void> {
+    const server = this.server;
     this.server = null;
+    if (!server) return;
+    await new Promise<void>((resolve) => {
+      let resolved = false;
+      const finish = (error?: Error | null) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+          log.warn("daemon server close failed during shutdown", "daemon", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const closer = (server as Server & { closeAllConnections?: () => void }).closeAllConnections;
+        if (typeof closer === "function") closer.call(server);
+        for (const socket of this.serverSockets) socket.destroy();
+        finish();
+      }, DAEMON_SERVER_CLOSE_GRACE_MS);
+      timer.unref?.();
+      server.close((error) => {
+        finish(error);
+      });
+    });
+    this.serverSockets.clear();
   }
 
   private refreshState(): void {
@@ -2299,6 +2363,7 @@ export class AimuxDaemon {
   }
 
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
+    if (this.stopping) throw new Error("aimux daemon is stopping");
     const resolvedRoot = pathResolve(projectRoot);
     const projectId = getProjectIdFor(resolvedRoot);
     const existingEnsure = this.projectEnsurePromises.get(projectId);
