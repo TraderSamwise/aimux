@@ -1071,8 +1071,12 @@ describe("restartAimuxControlPlane", () => {
     const cleanupLifecycleValidationOrphans = vi.fn(async () => {
       calls.push("cleanup");
       return {
+        attemptedProcessPids: [101, 202],
         processPids: [101, 202],
+        failedProcessPids: [],
+        attemptedTmuxSessions: ["aimux-aimux-lifecycle-validate21"],
         tmuxSessions: ["aimux-aimux-lifecycle-validate21"],
+        failedTmuxSessions: [],
         errors: [],
       };
     });
@@ -1124,6 +1128,58 @@ describe("restartAimuxControlPlane", () => {
     expect(repairNotifier.notify).toHaveBeenCalledWith(
       "Aimux repaired itself",
       expect.stringContaining("repair steps"),
+    );
+  });
+
+  it("reports validation orphan cleanup failures in restart diagnostics", async () => {
+    const cleanupLifecycleValidationOrphans = vi.fn(async () => ({
+      attemptedProcessPids: [101],
+      processPids: [],
+      failedProcessPids: [101],
+      attemptedTmuxSessions: [],
+      tmuxSessions: [],
+      failedTmuxSessions: [],
+      errors: ["pid 101: still alive after SIGKILL"],
+    }));
+    const repairNotifier = {
+      record: vi.fn(),
+      notify: vi.fn(),
+    };
+
+    const result = await restartAimuxControlPlane({
+      buildRuntimeCoherenceReport: vi.fn(async () => okCoherenceReport()),
+      cleanupLifecycleValidationOrphans,
+      stopDaemon: vi.fn(async () => stoppedDaemon()),
+      ensureDaemonRunning: vi.fn(async () => ({ pid: 9002, port: 43190, startedAt: "after", updatedAt: "after" })),
+      ensureProjectService: vi.fn(async (projectRoot: string) => ({
+        projectId: projectRoot.endsWith("alpha") ? "alpha" : "beta",
+        projectRoot,
+        pid: projectRoot.endsWith("alpha") ? 1003 : 1004,
+        startedAt: "after",
+        updatedAt: "after",
+      })),
+      createTmux: () => ({ isAvailable: () => true }),
+      isPidAlive: () => false,
+      reloadDashboards: false,
+      verifyAfterRestart: false,
+      repairNotifier,
+    });
+
+    expect(result.summary.failures).toBe(1);
+    expect(repairNotifier.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "validation-orphan-cleanup",
+        status: "failed",
+        details: expect.objectContaining({
+          attemptedProcessPids: [101],
+          failedProcessPids: [101],
+          errors: ["pid 101: still alive after SIGKILL"],
+        }),
+      }),
+    );
+    expect(repairNotifier.notify).toHaveBeenCalledWith(
+      "Aimux repair needs attention",
+      expect.stringContaining("failed"),
     );
   });
 

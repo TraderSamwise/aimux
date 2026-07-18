@@ -880,7 +880,8 @@ async function restartAimuxControlPlaneUnlocked(
       project.service.status === "failed" ||
       project.dashboard.status === "failed",
   ).length;
-  const failures = projectFailures + (verification.status === "failed" ? 1 : 0);
+  const orphanCleanupFailures = orphanCleanup.errors.length > 0 ? 1 : 0;
+  const failures = projectFailures + (verification.status === "failed" ? 1 : 0) + orphanCleanupFailures;
   const result: RuntimeRestartResult = {
     startedAt: before.generatedAt,
     finishedAt: now().toISOString(),
@@ -929,7 +930,11 @@ function emitRepairDiagnostics(result: RuntimeRestartResult, notifier: RepairNot
 function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
   const events: RepairEvent[] = [];
   const controlStatus = result.summary.failures > 0 ? "failed" : "repaired";
-  if (result.summary.orphanProcessesCleaned > 0 || result.summary.orphanTmuxSessionsCleaned > 0) {
+  if (
+    result.orphanCleanup.attemptedProcessPids.length > 0 ||
+    result.orphanCleanup.attemptedTmuxSessions.length > 0 ||
+    result.orphanCleanup.errors.length > 0
+  ) {
     events.push({
       ts: result.finishedAt,
       projectRoot: result.projects[0]?.projectRoot ?? getGlobalAimuxDir(),
@@ -937,8 +942,12 @@ function buildRepairEvents(result: RuntimeRestartResult): RepairEvent[] {
       reason: "stale lifecycle validation runtime",
       status: result.orphanCleanup.errors.length > 0 ? "failed" : "repaired",
       details: {
+        attemptedProcessPids: result.orphanCleanup.attemptedProcessPids,
         processPids: result.orphanCleanup.processPids,
+        failedProcessPids: result.orphanCleanup.failedProcessPids,
+        attemptedTmuxSessions: result.orphanCleanup.attemptedTmuxSessions,
         tmuxSessions: result.orphanCleanup.tmuxSessions,
+        failedTmuxSessions: result.orphanCleanup.failedTmuxSessions,
         errors: result.orphanCleanup.errors,
       },
     });

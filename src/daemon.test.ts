@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createServer, type Server } from "node:http";
+import { connect, type Socket } from "node:net";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -331,6 +332,13 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+async function waitForSocketConnect(socket: Socket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+}
+
 function mockProjectServiceHealth(
   responseForPid: (pid: number) => { status: number; json: unknown } | Promise<{ status: number; json: unknown }>,
 ) {
@@ -489,6 +497,63 @@ describe("daemon supervision", () => {
     expect(body.result.project.pid).toBe(process.pid);
     expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects new project ensures once daemon shutdown begins", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await (daemon as any).ensureProject(projectRoot);
+    let releaseStop = () => {};
+    coreActorMock.stopBlockers.push(
+      new Promise<void>((resolve) => {
+        releaseStop = resolve;
+      }),
+    );
+
+    const stopPromise = daemon.stop();
+    await Promise.resolve();
+
+    await expect((daemon as any).ensureProject(projectRoot)).rejects.toThrow("aimux daemon is stopping");
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+
+    releaseStop();
+    await stopPromise;
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("does not let idle daemon sockets hang shutdown forever", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    const daemonPort = "49204";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    let socket: Socket | null = null;
+
+    try {
+      await daemon.start();
+      socket = connect({ host: "127.0.0.1", port: Number(daemonPort) });
+      await waitForSocketConnect(socket);
+      const socketClosed = new Promise<void>((resolve) => socket?.once("close", () => resolve()));
+      const startedAt = Date.now();
+
+      await daemon.stop();
+      await Promise.race([
+        socketClosed,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("idle socket stayed open")), 500)),
+      ]);
+
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(socket.destroyed).toBe(true);
+    } finally {
+      socket?.destroy();
+      await daemon.stop();
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
   });
 
   it("rejects malformed expose focus payloads before touching tmux", async () => {
