@@ -924,7 +924,8 @@ export function computeDashboardSessions(
     metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
   }
   return sessions.map((session) => {
-    const status = statusForPendingSessionAction(session.status, session.pendingAction);
+    const pendingAction = pendingSessionActionForHost(host, session.id) ?? session.pendingAction;
+    const status = statusForPendingSessionAction(session.status, pendingAction);
     const stats = threadStats.get(session.id);
     const workflow = workflowStats.get(session.id);
     const tmuxMetadata = metadataBySessionId.get(session.id);
@@ -934,7 +935,7 @@ export function computeDashboardSessions(
     const runtimeInfo = includeRuntimeInfo && target ? readTmuxProcessInfo(host, target) : {};
     const semantic = deriveSessionSemantics({
       status,
-      pendingAction: session.pendingAction,
+      pendingAction,
       activity: session.activity,
       attention: session.attention,
       unseenCount: session.unseenCount,
@@ -952,6 +953,9 @@ export function computeDashboardSessions(
     return {
       ...session,
       status,
+      pendingAction,
+      pending: Boolean(pendingAction) || session.pending,
+      optimistic: Boolean(pendingAction) || session.optimistic,
       tmuxWindowIndex: target?.windowIndex,
       createdAt: session.createdAt ?? tmuxMetadata?.createdAt,
       lastUsedAt: lastUsedState.items[session.id]?.lastUsedAt,

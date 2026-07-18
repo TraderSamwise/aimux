@@ -88,6 +88,7 @@ function queryClientSize(clientTty?: string): string {
 
 function writeSelectedWindow(options: TmuxExposeOptions, item: ExposeScopeItem): boolean {
   if (!options.selectionFile) return false;
+  if (item.projectRoot && pathResolve(item.projectRoot) !== pathResolve(options.projectRoot)) return false;
   try {
     writeFileSync(options.selectionFile, `${item.target.windowId}\n`);
     return true;
@@ -581,7 +582,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         needsRender = handleKey(event.key, event.ctrl, true) || needsRender;
       }
       if (needsRender && !finished && !loading && !opening) render(false);
-      return loading || opening;
+      return loading || opening || finished;
     };
 
     const zoomOut = (): boolean => {
@@ -722,9 +723,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     function onData(data: Buffer) {
       try {
         if (opening) return;
-        const events = parseKeys(data).filter(
-          (entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse",
-        );
+        const events = parseKeys(data)
+          .filter((entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse")
+          .flatMap((entry) =>
+            !entry.name && entry.char.length > 1 ? [...entry.char].map((char) => ({ ...entry, char })) : [entry],
+          );
         let needsRender = false;
         const deferRender = events.length > 1;
         for (const event of events) {

@@ -548,7 +548,12 @@ show_local_expose() {
     expose_status=$(mktemp 2>/dev/null || true)
     expose_context=$(mktemp 2>/dev/null || true)
     expose_selection=$(mktemp 2>/dev/null || true)
-    [ -n "$expose_status" ] && [ -n "$expose_context" ] && [ -n "$expose_selection" ] || return 1
+    if [ -z "$expose_status" ] || [ -z "$expose_context" ] || [ -z "$expose_selection" ]; then
+      for temp_path in "$expose_status" "$expose_context" "$expose_selection"; do
+        [ -n "$temp_path" ] && rm -f "$temp_path"
+      done
+      return 1
+    fi
     client_cols=""
     client_rows=""
     if [ -n "$popup_client_tty" ]; then

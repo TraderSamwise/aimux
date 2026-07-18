@@ -225,7 +225,7 @@ function applyDashboardMutationSuccess(host: DashboardOpsHost, opts: DashboardMu
     host.footerFlash = opts.successFlash.message;
     host.footerFlashTicks = opts.successFlash.ticks ?? 3;
   }
-  renderDashboardMutationFrame(host, renderLifecycle);
+  if (renderLifecycle) renderDashboardMutationFrame(host, renderLifecycle);
   return true;
 }
 
@@ -246,7 +246,7 @@ function hasDashboardMutationTerminalState(host: DashboardOpsHost, opts: Dashboa
     if (opts.pendingAction === "creating" || opts.pendingAction === "forking" || opts.pendingAction === "starting") {
       return isLiveDashboardSessionEntry(entry);
     }
-    if (opts.pendingAction === "stopping") return !entry || entry.status !== "running";
+    if (opts.pendingAction === "stopping") return !entry || !isLiveDashboardSessionEntry(entry);
     if (opts.pendingAction === "graveyarding") return !entry;
     return false;
   }
@@ -268,7 +268,7 @@ function finishDashboardMutationIfTerminal(host: DashboardOpsHost, opts: Dashboa
     host.footerFlash = opts.successFlash.message;
     host.footerFlashTicks = opts.successFlash.ticks ?? 3;
   }
-  renderDashboardMutationFrame(host, renderLifecycle);
+  if (renderLifecycle) renderDashboardMutationFrame(host, renderLifecycle);
   return true;
 }
 
@@ -499,7 +499,7 @@ function isDashboardSessionResumeSettled(host: DashboardOpsHost, sessionId: stri
 function isDashboardSessionStopSettled(host: DashboardOpsHost, sessionId: string): boolean {
   const { known, session: entry } = getDashboardSessionSettlementEntry(host, sessionId);
   if (!known) return false;
-  if (entry) return entry.status !== "running";
+  if (entry) return !isLiveDashboardSessionEntry(entry);
   return !hasLiveManagedAgentWindow(host, sessionId);
 }
 
@@ -718,10 +718,7 @@ async function runDashboardSessionMutation(
   const modelLifecycle = captureDashboardLifecycle(host);
   const coalescesDuplicateSessionAction = opts.pendingAction === "stopping" || opts.pendingAction === "graveyarding";
   const existingSessionAction = host.dashboardPendingActions?.getSessionAction?.(opts.sessionId);
-  if (
-    coalescesDuplicateSessionAction &&
-    (existingSessionAction === "stopping" || existingSessionAction === "graveyarding")
-  ) {
+  if (coalescesDuplicateSessionAction && existingSessionAction === opts.pendingAction) {
     host.footerFlash = `${existingSessionAction} is already settling`;
     host.footerFlashTicks = 2;
     renderDashboardMutationFrame(host, lifecycle);
@@ -766,7 +763,6 @@ async function runDashboardSessionMutation(
     if (requestState === "settled") return "settled";
     if (requestState === "inactive" || !isDashboardLifecycleCurrent(host, lifecycle)) {
       clearPending();
-      renderDashboardMutationFrame(host);
       return "failed";
     }
     if (await opts.settle(modelLifecycle, lifecycle)) {
@@ -782,7 +778,6 @@ async function runDashboardSessionMutation(
     if (!clearPending()) return "pending";
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) {
-      renderDashboardMutationFrame(host);
       return "failed";
     }
     host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));
@@ -845,7 +840,6 @@ async function runDashboardServiceMutation(
     if (requestState === "settled") return "settled";
     if (requestState === "inactive" || !isDashboardLifecycleCurrent(host, lifecycle)) {
       clearPending();
-      renderDashboardMutationFrame(host);
       return "failed";
     }
     if (await opts.settle(modelLifecycle, lifecycle)) {
@@ -861,7 +855,6 @@ async function runDashboardServiceMutation(
     if (!clearPending()) return "pending";
     await opts.onError?.(modelLifecycle);
     if (!isDashboardLifecycleCurrent(host, lifecycle)) {
-      renderDashboardMutationFrame(host);
       return "failed";
     }
     host.showDashboardError(opts.errorTitle, userFacingErrorLines(error));

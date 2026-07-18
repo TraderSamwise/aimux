@@ -327,6 +327,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       refreshDashboardModelFromService: vi.fn(async () => true),
       getDashboardServices: vi.fn(() => []),
       getDashboardSessions: vi.fn(() => [{ id: "codex-1", status: "running", tmuxWindowId: "@12" }]),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
       renderDashboard: vi.fn(),
     };
 
