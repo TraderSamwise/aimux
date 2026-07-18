@@ -7,7 +7,8 @@ export type RepairEventAction =
   | "control-plane-restart"
   | "project-service-ensure"
   | "tmux-runtime-repair"
-  | "dashboard-reload";
+  | "dashboard-reload"
+  | "validation-orphan-cleanup";
 
 export interface RepairEvent {
   ts: string;

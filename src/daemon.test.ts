@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createServer, type Server } from "node:http";
+import { connect, type Socket } from "node:net";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,6 +25,7 @@ const coreActorMock = vi.hoisted(() => ({
   stops: vi.fn(),
   kills: vi.fn(),
   failStartFor: new Set<string>(),
+  stopBlockers: [] as Array<Promise<void>>,
   instances: [] as Array<{ projectRoot: string; running: boolean }>,
 }));
 const runtimeRestartMock = vi.hoisted(() => ({
@@ -155,6 +157,8 @@ vi.mock("./core-project-actor.js", () => ({
     }
 
     async stop() {
+      const blocker = coreActorMock.stopBlockers.shift();
+      if (blocker) await blocker;
       this.running = false;
       coreActorMock.stops(this.projectRoot);
     }
@@ -328,6 +332,13 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+async function waitForSocketConnect(socket: Socket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+}
+
 function mockProjectServiceHealth(
   responseForPid: (pid: number) => { status: number; json: unknown } | Promise<{ status: number; json: unknown }>,
 ) {
@@ -364,6 +375,7 @@ describe("daemon supervision", () => {
     coreActorMock.stops.mockReset();
     coreActorMock.kills.mockReset();
     coreActorMock.failStartFor.clear();
+    coreActorMock.stopBlockers.length = 0;
     coreActorMock.instances.length = 0;
     runtimeRestartMock.restartAimuxControlPlane.mockReset();
     runtimeRestartMock.renderRuntimeRestartResult.mockReset();
@@ -487,6 +499,63 @@ describe("daemon supervision", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
+  it("rejects new project ensures once daemon shutdown begins", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    await (daemon as any).ensureProject(projectRoot);
+    let releaseStop = () => {};
+    coreActorMock.stopBlockers.push(
+      new Promise<void>((resolve) => {
+        releaseStop = resolve;
+      }),
+    );
+
+    const stopPromise = daemon.stop();
+    await Promise.resolve();
+
+    await expect((daemon as any).ensureProject(projectRoot)).rejects.toThrow("aimux daemon is stopping");
+    expect(coreActorMock.starts).toHaveBeenCalledTimes(1);
+
+    releaseStop();
+    await stopPromise;
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
+  });
+
+  it("does not let idle daemon sockets hang shutdown forever", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    const daemonPort = "49204";
+    process.env.AIMUX_DAEMON_PORT = daemonPort;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    let socket: Socket | null = null;
+
+    try {
+      await daemon.start();
+      socket = connect({ host: "127.0.0.1", port: Number(daemonPort) });
+      await waitForSocketConnect(socket);
+      const socketClosed = new Promise<void>((resolve) => socket?.once("close", () => resolve()));
+      const startedAt = Date.now();
+
+      await daemon.stop();
+      await Promise.race([
+        socketClosed,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("idle socket stayed open")), 500)),
+      ]);
+
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(socket.destroyed).toBe(true);
+    } finally {
+      socket?.destroy();
+      await daemon.stop();
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
   it("rejects malformed expose focus payloads before touching tmux", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
@@ -533,6 +602,37 @@ describe("daemon supervision", () => {
     expect(body.result.project?.projectRoot).toBe(projectRoot);
     expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
     expect(coreActorMock.kills).not.toHaveBeenCalled();
+  });
+
+  it("waits for project actors to stop before daemon shutdown completes", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    let releaseStop: (() => void) | null = null;
+    coreActorMock.stopBlockers.push(
+      new Promise<void>((resolve) => {
+        releaseStop = resolve;
+      }),
+    );
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+
+    let stopped = false;
+    const stopPromise = daemon.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+
+    expect(stopped).toBe(false);
+    expect(coreActorMock.stops).not.toHaveBeenCalled();
+
+    releaseStop?.();
+    await stopPromise;
+
+    expect(stopped).toBe(true);
+    expect(coreActorMock.stops).toHaveBeenCalledWith(projectRoot);
   });
 
   it("kills project actors through the core command bus", async () => {
@@ -1211,7 +1311,7 @@ describe("daemon supervision", () => {
       expect(await response.text()).toBe("one\n\ntwo\n");
       expect(coreActorMock.starts).toHaveBeenCalledWith(projectRoot);
     } finally {
-      daemon.stop();
+      await daemon.stop();
       await closeServer(streamServer);
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
@@ -1257,7 +1357,7 @@ describe("daemon supervision", () => {
         new Promise((_, reject) => setTimeout(() => reject(new Error("upstream stream stayed open")), 2_000)),
       ]);
     } finally {
-      daemon.stop();
+      await daemon.stop();
       await closeServer(streamServer);
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
@@ -1290,7 +1390,7 @@ describe("daemon supervision", () => {
       expect(response.headers.get("content-type")).toContain("text/plain");
       expect(await response.text()).toContain("fetch failed");
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -1319,7 +1419,7 @@ describe("daemon supervision", () => {
       expect(await response.text()).toBe("Error: --start-line must be an integer\n");
       expect(coreActorMock.starts).not.toHaveBeenCalled();
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -1348,7 +1448,7 @@ describe("daemon supervision", () => {
       expect(await response.text()).toBe("Error: --interval-ms must be an integer >= 100\n");
       expect(coreActorMock.starts).not.toHaveBeenCalled();
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -3200,7 +3300,7 @@ describe("daemon supervision", () => {
     );
     livePids.add(40001);
 
-    daemon.stop();
+    await daemon.stop();
 
     expect(livePids.has(project.pid)).toBe(false);
     expect(readFileSync(daemonInfoPath, "utf-8")).toBe("");
@@ -3220,7 +3320,7 @@ describe("daemon supervision", () => {
       updatedAt: STALE_SERVICE_TIMESTAMP,
     };
 
-    daemon.stop();
+    await daemon.stop();
 
     expect(process.kill).not.toHaveBeenCalledWith(stalePid, "SIGTERM");
   });
@@ -4094,7 +4194,7 @@ describe("daemon routing (relay + proxy)", () => {
       expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
       expect(res.headers.get("access-control-allow-methods")).toContain("GET");
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -4126,7 +4226,7 @@ describe("daemon routing (relay + proxy)", () => {
       expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8085");
       expect(res.headers.get("access-control-allow-private-network")).toBe("true");
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -4157,7 +4257,7 @@ describe("daemon routing (relay + proxy)", () => {
       expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8091");
       expect(res.headers.get("access-control-allow-methods")).toContain("GET");
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -4213,7 +4313,7 @@ describe("daemon routing (relay + proxy)", () => {
       expect(await getRes.text()).toBe("core text routes are cli-only\n");
       expect(coreActorMock.starts).not.toHaveBeenCalled();
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
@@ -4248,7 +4348,7 @@ describe("daemon routing (relay + proxy)", () => {
       expect(actual.status).toBe(403);
       expect(actual.headers.get("access-control-allow-origin")).toBeNull();
     } finally {
-      daemon.stop();
+      await daemon.stop();
       if (originalPort === undefined) {
         delete process.env.AIMUX_DAEMON_PORT;
       } else {
