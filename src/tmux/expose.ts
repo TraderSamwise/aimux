@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
@@ -34,6 +34,7 @@ export interface TmuxExposeOptions {
   /** Legacy standalone CLI value; the sidecar path passes daemonEndpoint instead. */
   aimuxHome?: string;
   daemonEndpoint?: string;
+  selectionFile?: string;
   /** Host snapshot captured by the launcher before the popup opened (read once, then deleted). */
   backdropFile?: string;
   input?: NodeJS.ReadableStream;
@@ -83,6 +84,17 @@ function queryClientSize(clientTty?: string): string {
     if (result.status === 0) return (result.stdout ?? "").trim();
   } catch {}
   return "";
+}
+
+function writeSelectedWindow(options: TmuxExposeOptions, item: ExposeScopeItem): boolean {
+  if (!options.selectionFile) return false;
+  if (item.projectRoot && pathResolve(item.projectRoot) !== pathResolve(options.projectRoot)) return false;
+  try {
+    writeFileSync(options.selectionFile, `${item.target.windowId}\n`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function shortWorktree(item: FastControlItem, projectRoot: string): string {
@@ -345,12 +357,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   // starts scoped to the launch context. Pressing `g` zooms out along the ladder
   // worktree → project → global; the rung is ephemeral (never persisted).
   const crossProject = isMetaDashboardWindowName(options.currentWindow ?? "");
-  const context: FastControlContext = {
+  const context: FastControlContext & { clientTty?: string } = {
     projectRoot: options.projectRoot,
     currentPath: options.currentPath,
     currentWindow: options.currentWindow,
     currentWindowId: options.currentWindowId,
     currentClientSession: options.currentClientSession,
+    clientTty: options.clientTty,
   };
   const exposeDeps = { daemonEndpoint: options.daemonEndpoint };
   const exposeConfig = options.exposeConfig ?? loadConfig({ projectRoot: options.projectRoot }).expose;
@@ -451,7 +464,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let refreshTick = 0;
   let opening = false;
   let refreshStarted = false;
-  let pendingAction: { kind: "select"; index: number } | { kind: "open-selected" } | { kind: "zoom" } | null = null;
+  let pendingKeys: Array<{ key: string; ctrl?: boolean }> = [];
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
@@ -522,16 +535,18 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   };
 
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
-  // captures, re-seek the selection to the current window, and re-capture.
+  // captures, keep the user's selected tile when possible, and re-capture.
   const reload = async (capture = true) => {
+    const selectedWindowId = items[index]?.target.windowId;
     view = await loadExposeScopeItems(scope, context, options.projectStateDir, exposeDeps);
     items = view.items;
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
     loading = false;
     captures.clear();
-    const idx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
-    index = idx >= 0 ? idx : 0;
+    const selectedIdx = selectedWindowId ? items.findIndex((item) => item.target.windowId === selectedWindowId) : -1;
+    const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
+    index = selectedIdx >= 0 ? selectedIdx : currentIdx >= 0 ? currentIdx : 0;
     if (capture) refreshCaptures();
   };
 
@@ -559,24 +574,20 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       scheduleRefresh();
     };
 
-    const applyPendingAction = (): boolean => {
-      if (finished || loading || opening || !pendingAction) return false;
-      const action = pendingAction;
-      pendingAction = null;
-      if (action.kind === "select") {
-        if (action.index < visibleCount) selectTile(action.index);
-        return opening;
+    const applyPendingKeys = (): boolean => {
+      if (finished || loading || opening || pendingKeys.length === 0) return false;
+      let needsRender = false;
+      while (!finished && !loading && !opening && pendingKeys.length > 0) {
+        const event = pendingKeys.shift()!;
+        needsRender = handleKey(event.key, event.ctrl, true) || needsRender;
       }
-      if (action.kind === "open-selected") {
-        selectTile(index);
-        return opening;
-      }
-      return zoomOut();
+      if (needsRender && !finished && !loading && !opening) render(false);
+      return loading || opening || finished;
     };
 
     const zoomOut = (): boolean => {
       if (loading) {
-        pendingAction = { kind: "zoom" };
+        pendingKeys.push({ key: "g" });
         return true;
       }
       const next = nextExposeScope(scope);
@@ -594,7 +605,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         .then(() => {
           if (finished) return;
           render();
-          if (applyPendingAction()) return;
+          if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);
           startRefreshLoop();
         })
@@ -606,7 +617,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           scopeLabel = view.scopeLabel;
           sublabel = view.sublabel;
           loading = false;
-          pendingAction = null;
+          pendingKeys = [];
           render();
           startRefreshLoop();
         });
@@ -614,11 +625,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     };
 
     const loadInitialItems = () => {
+      loading = true;
       void reload(false)
         .then(() => {
           if (finished) return;
           render();
-          if (applyPendingAction()) return;
+          if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);
           startRefreshLoop();
         })
@@ -635,76 +647,96 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const item = items[i];
       if (!item) return;
       opening = true;
-      void focusExposeItem(item, { ...context, clientTty: options.clientTty }, options.projectStateDir, exposeDeps)
-        .then(async (ok) => {
+      if (writeSelectedWindow(options, item)) {
+        finish(0);
+        return;
+      }
+      void focusExposeItem(item, context, options.projectStateDir, exposeDeps)
+        .then((ok) => {
+          if (finished) return;
           if (ok) {
-            await new Promise((resolve) => setTimeout(resolve, 30));
             finish(0);
             return;
           }
           opening = false;
-          await reload();
-          render();
-          startRefreshLoop();
+          loadInitialItems();
         })
-        .catch(() => finish(1));
+        .catch(() => {
+          if (finished) return;
+          opening = false;
+          loadInitialItems();
+        });
     };
+
+    function handleKey(key: string, ctrl = false, deferRender = false): boolean {
+      if (key === "q" || key === "escape" || (ctrl && key === "c")) {
+        finish(0);
+        return false;
+      }
+      if (loading) {
+        pendingKeys.push({ key, ctrl });
+        return false;
+      }
+      if (key === "g") {
+        zoomOut();
+        return false;
+      }
+      if (key >= "1" && key <= "9") {
+        const target = Number.parseInt(key, 10) - 1;
+        if (target < visibleCount) {
+          index = target;
+          if (deferRender) return true;
+          render(false);
+        }
+        return false;
+      }
+      if (key === "enter" || key === "return") {
+        selectTile(index);
+        return false;
+      }
+      if (visibleCount === 0) return false;
+      if (key === "right" || key === "l" || key === "n" || key === "tab") {
+        index = (index + 1) % visibleCount;
+        if (deferRender) return true;
+        render(false);
+        return false;
+      }
+      if (key === "left" || key === "h" || key === "p") {
+        index = (index - 1 + visibleCount) % visibleCount;
+        if (deferRender) return true;
+        render(false);
+        return false;
+      }
+      if (key === "down" || key === "j") {
+        if (index + tileCols < visibleCount) index += tileCols;
+        if (deferRender) return true;
+        render(false);
+        return false;
+      }
+      if (key === "up" || key === "k") {
+        if (index - tileCols >= 0) index -= tileCols;
+        if (deferRender) return true;
+        render(false);
+      }
+      return false;
+    }
 
     function onData(data: Buffer) {
       try {
         if (opening) return;
-        const event = parseKeys(data).find(
-          (entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse",
-        );
-        if (!event) return;
-        const key = event.name || event.char || "";
-
-        if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
-          finish(0);
-          return;
+        const events = parseKeys(data)
+          .filter((entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse")
+          .flatMap((entry) =>
+            !entry.name && entry.char.length > 1 ? [...entry.char].map((char) => ({ ...entry, char })) : [entry],
+          );
+        let needsRender = false;
+        const deferRender = events.length > 1;
+        for (const event of events) {
+          if (finished || opening) return;
+          const key = event.name || event.char || "";
+          needsRender = handleKey(key, event.ctrl, deferRender) || needsRender;
         }
-        if (key === "g") {
-          zoomOut();
-          return;
-        }
-        if (key >= "1" && key <= "9") {
-          const target = Number.parseInt(key, 10) - 1;
-          if (loading) {
-            pendingAction = { kind: "select", index: target };
-            return;
-          }
-          if (target < visibleCount) selectTile(target);
-          return;
-        }
-        if (key === "enter" || key === "return") {
-          if (loading) {
-            pendingAction = { kind: "open-selected" };
-            return;
-          }
-          selectTile(index);
-          return;
-        }
-        if (visibleCount === 0) return;
-        if (key === "right" || key === "l" || key === "n" || key === "tab") {
-          index = (index + 1) % visibleCount;
-          render(false);
-          return;
-        }
-        if (key === "left" || key === "h" || key === "p") {
-          index = (index - 1 + visibleCount) % visibleCount;
-          render(false);
-          return;
-        }
-        if (key === "down" || key === "j") {
-          if (index + tileCols < visibleCount) index += tileCols;
-          render(false);
-          return;
-        }
-        if (key === "up" || key === "k") {
-          if (index - tileCols >= 0) index -= tileCols;
-          render(false);
-          return;
-        }
+        if (needsRender && !finished && !loading && !opening) render(false);
       } catch {
         finish(1);
       }

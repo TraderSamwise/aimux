@@ -744,6 +744,261 @@ export function createSession(
   return session;
 }
 
+export async function createSessionAsync(
+  host: SessionLaunchHost,
+  command: string,
+  args: string[],
+  preambleFlag?: string[],
+  toolConfigKey?: string,
+  extraPreamble?: string,
+  sessionIdFlag?: string[],
+  worktreePath?: string,
+  backendSessionIdOverride?: string,
+  sessionIdOverride?: string,
+  detachedInTmux = false,
+  suppressStartupPreamble = false,
+  team?: SessionTeamMetadata,
+  launchEnv?: Record<string, string>,
+): Promise<any> {
+  const cols = process.stdout.columns ?? 80;
+  const commandExecutable = basename(command) || command;
+  const sessionId = sessionIdOverride ?? `${commandExecutable}-${Math.random().toString(36).slice(2, 8)}`;
+  if (host.sessions.some((session: any) => session.id === sessionId)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
+  const config = loadConfig();
+  const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
+  const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
+  const configuredToolExecutable = toolCfg ? basename(toolCfg.command) || toolCfg.command : undefined;
+  const isConfiguredClaudeCommand = isConfiguredToolCommand && configuredToolExecutable === "claude";
+  const isConfiguredCodexCommand = isConfiguredToolCommand && configuredToolExecutable === "codex";
+  const isClaudeResumeStyleLaunch = isConfiguredClaudeCommand && shouldSkipClaudeSessionIdInjection(args);
+  const explicitClaudeBackendSessionId = isConfiguredClaudeCommand
+    ? extractClaudeBackendSessionIdFromArgs(args)
+    : undefined;
+  const explicitCodexBackendSessionId = isConfiguredCodexCommand
+    ? extractCodexBackendSessionIdFromArgs(args)
+    : undefined;
+  const effectiveSuppressStartupPreamble = suppressStartupPreamble;
+  const effectiveSessionIdFlag = isConfiguredToolCommand && !isClaudeResumeStyleLaunch ? sessionIdFlag : undefined;
+  const backendSessionId =
+    backendSessionIdOverride ??
+    explicitClaudeBackendSessionId ??
+    explicitCodexBackendSessionId ??
+    (effectiveSessionIdFlag ? randomUUID() : undefined);
+  const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
+
+  const preamble = effectiveSuppressStartupPreamble
+    ? ""
+    : host.sessionBootstrap.buildSessionPreamble({
+        sessionId,
+        command,
+        worktreePath,
+        extraPreamble,
+        includeAimuxPreamble: automaticPreambleEnabled,
+        team,
+      });
+  const shouldInjectLaunchPreamble = Boolean(
+    isConfiguredToolCommand && !effectiveSuppressStartupPreamble && preambleFlag && preamble.trim(),
+  );
+  const shouldInjectCodexDeveloperInstructions = Boolean(
+    !effectiveSuppressStartupPreamble &&
+    isConfiguredCodexCommand &&
+    toolCfg?.developerInstructionsConfigKey &&
+    preamble.trim(),
+  );
+
+  host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
+
+  let finalArgs = shouldInjectLaunchPreamble ? [...args, ...preambleFlag!, preamble] : [...args];
+  if (shouldInjectCodexDeveloperInstructions) {
+    finalArgs = injectCodexDeveloperInstructions(finalArgs, toolCfg!.developerInstructionsConfigKey!, preamble);
+  }
+  let launchCommand = command;
+
+  if (effectiveSessionIdFlag && backendSessionId) {
+    const expandedFlag = effectiveSessionIdFlag.map((a) => a.replace("{sessionId}", backendSessionId));
+    finalArgs = [...finalArgs, ...expandedFlag];
+  }
+
+  const root = projectRootFor(host);
+  const launchCwd = worktreePath ?? root;
+  let projectRoot = root;
+  try {
+    projectRoot = findMainRepo(launchCwd);
+  } catch {
+    projectRoot = root;
+  }
+  clearSessionTranscriptPath(sessionId);
+  clearSessionTranscriptPath(sessionId, projectRoot);
+
+  if (toolCfg && isConfiguredClaudeCommand && toolCfg.wrapperEnabled !== false) {
+    finalArgs = injectClaudeHookArgs(finalArgs, {
+      sessionId,
+      projectRoot,
+      backendSessionId,
+    });
+    launchCommand = toolCfg.command;
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: {
+        ...(launchEnv ?? {}),
+        AIMUX_METADATA_ENDPOINT_FILE: `${getProjectStateDirFor(projectRoot)}/metadata-api.txt`,
+        AIMUX_SESSION_ID: sessionId,
+        AIMUX_TOOL: toolConfigKey ?? command,
+      },
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
+  } else if (toolCfg && isConfiguredCodexCommand && toolCfg.wrapperEnabled !== false) {
+    try {
+      installCodexHooks();
+    } catch (error) {
+      debug(`codex hook install failed: ${error instanceof Error ? error.message : String(error)}`, "session");
+    }
+    finalArgs = [...codexLaunchHookArgs(), ...finalArgs];
+    launchCommand = toolCfg.command;
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: {
+        ...(launchEnv ?? {}),
+        AIMUX_METADATA_ENDPOINT_FILE: `${getProjectStateDirFor(projectRoot)}/metadata-api.txt`,
+        AIMUX_SESSION_ID: sessionId,
+        AIMUX_PROJECT_ROOT: projectRoot,
+        AIMUX_TOOL: toolConfigKey ?? command,
+      },
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
+  } else if (isConfiguredToolCommand) {
+    const wrapped = wrapCommandWithShellIntegration({
+      projectRoot,
+      sessionId,
+      tool: toolConfigKey ?? command,
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: launchEnv,
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
+  } else if (launchEnv && Object.keys(launchEnv).length > 0) {
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: launchEnv,
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
+  }
+
+  if (shouldInjectLaunchPreamble) {
+    host.sessionBootstrap.finalizePreamble(command, preamble);
+  }
+  debug(
+    `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"}, cwd=${launchCwd}, args=${finalArgs.length})`,
+    "session",
+  );
+  debug(`spawn args: ${JSON.stringify(summarizeLaunchArgs(finalArgs))}`, "session");
+
+  const sessionStartTime = Date.now();
+  const tmuxSession =
+    typeof host.tmuxRuntimeManager.ensureProjectSessionAsync === "function"
+      ? await host.tmuxRuntimeManager.ensureProjectSessionAsync(projectRoot)
+      : host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
+  const target = await host.tmuxRuntimeManager.createWindowAsync(
+    tmuxSession.sessionName,
+    host.getSessionLabel(sessionId) ?? command,
+    launchCwd,
+    launchCommand,
+    finalArgs,
+    { detached: detachedInTmux },
+  );
+  const tmuxTransport = new TmuxSessionTransport(
+    sessionId,
+    command,
+    target,
+    host.tmuxRuntimeManager,
+    cols,
+    process.stdout.rows ?? 24,
+  );
+  host.sessionTmuxTargets.set(sessionId, target);
+  const session = tmuxTransport;
+  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
+
+  session.backendSessionId = backendSessionId;
+  if (session instanceof TmuxSessionTransport) {
+    const existingMetadata =
+      typeof host.buildTmuxWindowMetadata === "function"
+        ? host.buildTmuxWindowMetadata(sessionId, command)
+        : {
+            kind: "agent" as const,
+            sessionId,
+            command,
+            args,
+            toolConfigKey: toolConfigKey ?? command,
+            backendSessionId,
+            team,
+            worktreePath,
+          };
+    const metadata = {
+      ...existingMetadata,
+      createdAt: existingMetadata?.createdAt ?? new Date(sessionStartTime).toISOString(),
+    };
+    try {
+      if (typeof host.tmuxRuntimeManager.setWindowMetadataAsync === "function") {
+        await host.tmuxRuntimeManager.setWindowMetadataAsync(target, metadata);
+      } else {
+        host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
+      }
+    } catch (error) {
+      host.sessions = host.sessions.filter((runtime: any) => runtime.id !== sessionId);
+      host.sessionTmuxTargets.delete(sessionId);
+      host.sessionToolKeys.delete(sessionId);
+      host.sessionOriginalArgs.delete(sessionId);
+      host.sessionWorktreePaths.delete(sessionId);
+      host.sessionStartTimes.delete(sessionId);
+      host.updateContextWatcherSessions?.();
+      try {
+        if (typeof host.tmuxRuntimeManager.killWindowAsync === "function") {
+          await host.tmuxRuntimeManager.killWindowAsync(target);
+        } else {
+          host.tmuxRuntimeManager.killWindow(target);
+        }
+      } catch {}
+      throw error;
+    }
+    try {
+      if (typeof host.tmuxRuntimeManager.applyManagedAgentWindowPolicyAsync === "function") {
+        await host.tmuxRuntimeManager.applyManagedAgentWindowPolicyAsync(target, metadata.toolConfigKey);
+      } else {
+        host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
+      }
+    } catch (error) {
+      debug(
+        `tmux window policy failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+    }
+  }
+  if (isConfiguredCodexCommand && !backendSessionId) {
+    scheduleCodexBackendSessionIdCapture(host, sessionId, launchCwd, sessionStartTime);
+  }
+
+  host.activeIndex = host.sessions.length - 1;
+  if (host.startedInDashboard && host.mode === "dashboard") {
+    host.invalidateDesktopStateSnapshot();
+    host.refreshLocalDashboardModel();
+    host.updateWorktreeSessions();
+    host.preferDashboardEntrySelection("session", sessionId, worktreePath);
+    host.renderDashboard();
+  }
+
+  host.saveState();
+  return session;
+}
+
 export async function migrateAgent(
   host: SessionLaunchHost,
   sessionId: string,

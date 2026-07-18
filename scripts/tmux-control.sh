@@ -96,11 +96,19 @@ hydrate_from_tmux_pane() {
   pane_client_tty=$(printf '%s' "$pane_context" | cut -d '|' -f4)
   pane_current_path=$(printf '%s' "$pane_context" | cut -d '|' -f5-)
   [ -n "$pane_session" ] || return 1
-  current_client_session="$pane_session"
-  [ -n "$pane_window_id" ] && current_window_id="$pane_window_id"
-  [ -n "$pane_window_name" ] && current_window="$pane_window_name"
-  [ -n "$pane_client_tty" ] && client_tty="$pane_client_tty"
-  [ -n "$pane_current_path" ] && current_path="$pane_current_path"
+  if [ "$action" = "expose" ]; then
+    [ -n "$current_client_session" ] || current_client_session="$pane_session"
+    [ -n "$current_window_id" ] || current_window_id="$pane_window_id"
+    [ -n "$current_window" ] || current_window="$pane_window_name"
+    [ -n "$client_tty" ] || client_tty="$pane_client_tty"
+    [ -n "$current_path" ] || current_path="$pane_current_path"
+  else
+    current_client_session="$pane_session"
+    [ -n "$pane_window_id" ] && current_window_id="$pane_window_id"
+    [ -n "$pane_window_name" ] && current_window="$pane_window_name"
+    [ -n "$pane_client_tty" ] && client_tty="$pane_client_tty"
+    [ -n "$pane_current_path" ] && current_path="$pane_current_path"
+  fi
   return 0
 }
 
@@ -535,10 +543,17 @@ show_local_expose() {
     expose_daemon_endpoint="http://$daemon_host:$daemon_port"
   fi
   popup_retry_count=0
+  selected_expose_window=""
   while :; do
     expose_status=$(mktemp 2>/dev/null || true)
     expose_context=$(mktemp 2>/dev/null || true)
-    [ -n "$expose_status" ] && [ -n "$expose_context" ] || return 1
+    expose_selection=$(mktemp 2>/dev/null || true)
+    if [ -z "$expose_status" ] || [ -z "$expose_context" ] || [ -z "$expose_selection" ]; then
+      for temp_path in "$expose_status" "$expose_context" "$expose_selection"; do
+        [ -n "$temp_path" ] && rm -f "$temp_path"
+      done
+      return 1
+    fi
     client_cols=""
     client_rows=""
     if [ -n "$popup_client_tty" ]; then
@@ -561,8 +576,9 @@ show_local_expose() {
       printf '%s\n' "$client_cols"
       printf '%s\n' "$client_rows"
       printf '%s\n' "$expose_daemon_endpoint"
+      printf '%s\n' "$expose_selection"
     } > "$expose_context"
-    expose_cmd="old_stty=\$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; { cat $(shell_quote "$expose_context"); cat; } | nc -U $(shell_quote "$expose_socket"); nc_status=\$?; if [ -n \"\$old_stty\" ]; then stty \"\$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; exit \$nc_status"
+    expose_cmd="old_stty=\$(stty -g 2>/dev/null || true); stty raw -echo 2>/dev/null || true; pipe=\$(mktemp \"\${TMPDIR:-/tmp}/aimux-expose-stdin.XXXXXX\") || exit 1; rm -f \"\$pipe\"; mkfifo \"\$pipe\" || exit 1; feeder=; cleanup() { [ -n \"\$feeder\" ] && kill \"\$feeder\" 2>/dev/null || true; [ -n \"\$feeder\" ] && wait \"\$feeder\" 2>/dev/null || true; rm -f \"\$pipe\"; if [ -n \"\$old_stty\" ]; then stty \"\$old_stty\" 2>/dev/null || true; else stty sane 2>/dev/null || true; fi; }; trap cleanup EXIT HUP INT TERM; { cat $(shell_quote "$expose_context"); cat /dev/tty; } >\"\$pipe\" & feeder=\$!; nc -U $(shell_quote "$expose_socket") <\"\$pipe\"; nc_status=\$?; exit \$nc_status"
     if [ -n "$popup_client_tty" ]; then
       tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 100% -h 100% -B -E "$expose_cmd" >/dev/null 2>&1
       popup_status=$?
@@ -573,7 +589,11 @@ show_local_expose() {
     if [ -s "$expose_status" ]; then
       popup_status=$(cat "$expose_status" 2>/dev/null || printf '%s' "$popup_status")
     fi
-    rm -f "$expose_context" "$expose_status"
+    selected_expose_window=""
+    if [ "$popup_status" = 0 ] && [ -s "$expose_selection" ]; then
+      selected_expose_window=$(head -n 1 "$expose_selection" 2>/dev/null || true)
+    fi
+    rm -f "$expose_context" "$expose_status" "$expose_selection"
     if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 3 ]; then
       popup_retry_count=$((popup_retry_count + 1))
       continue
@@ -581,6 +601,9 @@ show_local_expose() {
     break
   done
   [ "$popup_status" = 0 ] || return 1
+  if [ -n "$selected_expose_window" ]; then
+    switch_local_window "$selected_expose_window"
+  fi
   exit 0
 }
 

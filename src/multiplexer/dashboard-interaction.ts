@@ -20,18 +20,38 @@ import {
 } from "./dashboard-lifecycle.js";
 import { mutateDashboardApi, refreshDashboardModelThroughApi } from "./dashboard-api-client.js";
 
-function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
-  return isBlockingPendingDashboardActionKind(entry?.pendingAction);
+function getDashboardEntryPendingAction(
+  host: any,
+  entry: { id?: string; pendingAction?: string } | null | undefined,
+  fallbackKind: "agent" | "service",
+): string | undefined {
+  if (!entry) return undefined;
+  const storeAction =
+    typeof entry.id === "string"
+      ? fallbackKind === "service"
+        ? host.dashboardPendingActions?.getServiceAction?.(entry.id)
+        : host.dashboardPendingActions?.getSessionAction?.(entry.id)
+      : undefined;
+  return storeAction ?? entry.pendingAction;
+}
+
+function hasBlockingPendingDashboardAction(
+  host: any,
+  entry: { id?: string; pendingAction?: string } | null | undefined,
+  fallbackKind: "agent" | "service",
+): boolean {
+  return isBlockingPendingDashboardActionKind(getDashboardEntryPendingAction(host, entry, fallbackKind));
 }
 
 function isStoppableStartingService(
   host: any,
   entry: { id?: string; pendingAction?: string } | null | undefined,
 ): boolean {
+  const pendingAction = getDashboardEntryPendingAction(host, entry, "service");
   return Boolean(
     entry &&
-    (entry.pendingAction === "creating" ||
-      entry.pendingAction === "starting" ||
+    (pendingAction === "creating" ||
+      pendingAction === "starting" ||
       (typeof entry.id === "string" && host.dashboardActivatingServiceIds?.has?.(entry.id))),
   );
 }
@@ -50,7 +70,10 @@ function flashPendingDashboardItem(
   entry: { pendingAction?: string; label?: string; command?: string; id?: string },
   fallbackKind: "agent" | "service",
 ): void {
-  host.footerFlash = pendingDashboardItemMessage(entry, fallbackKind);
+  host.footerFlash = pendingDashboardItemMessage(
+    { ...entry, pendingAction: getDashboardEntryPendingAction(host, entry, fallbackKind) },
+    fallbackKind,
+  );
   host.footerFlashTicks = 3;
   host.renderDashboard();
 }
@@ -699,7 +722,7 @@ export const dashboardInteractionMethods = {
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
           if (
-            hasBlockingPendingDashboardAction(selectedService) &&
+            hasBlockingPendingDashboardAction(this, selectedService, "service") &&
             !isStoppableStartingService(this, selectedService)
           ) {
             flashPendingDashboardItem(this, selectedService, "service");
@@ -728,7 +751,7 @@ export const dashboardInteractionMethods = {
             ? allDs[this.activeIndex]
             : undefined;
         if (!selEntry) return;
-        if (hasBlockingPendingDashboardAction(selEntry)) {
+        if (hasBlockingPendingDashboardAction(this, selEntry, "agent")) {
           flashPendingDashboardItem(this, selEntry, "agent");
           return;
         }
@@ -800,7 +823,7 @@ export const dashboardInteractionMethods = {
       this.renderDashboard();
       return "blocked";
     }
-    if (hasBlockingPendingDashboardAction(service)) {
+    if (hasBlockingPendingDashboardAction(this, service, "service")) {
       flashPendingDashboardItem(this, service, "service");
       return "blocked";
     }
@@ -860,7 +883,7 @@ export const dashboardInteractionMethods = {
       this.renderDashboard();
       return "blocked";
     }
-    if (hasBlockingPendingDashboardAction(entry)) {
+    if (hasBlockingPendingDashboardAction(this, entry, "agent")) {
       flashPendingDashboardItem(this, entry, "agent");
       return "blocked";
     }

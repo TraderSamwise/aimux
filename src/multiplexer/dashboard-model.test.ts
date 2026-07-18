@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { updateSessionMetadata } from "../metadata-store.js";
 import { initPaths, withProjectPaths } from "../paths.js";
-import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { saveRuntimeTopologySessions, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import { addNotification } from "../notifications.js";
 import {
   applyDashboardModel,
@@ -1531,6 +1531,192 @@ describe("computeDashboardSessions thread stats", () => {
     }
   });
 
+  it("skips live tmux hydration for service API desktop snapshots", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-api-no-hydrate-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const liveWindow = {
+        target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" },
+        metadata: {
+          kind: "agent",
+          sessionId: "claude-live",
+          command: "claude",
+          args: ["--resume", "backend-live"],
+          toolConfigKey: "claude",
+          backendSessionId: "backend-live",
+          worktreePath: repoRoot,
+          createdAt: "2026-04-21T00:00:00.000Z",
+        },
+      };
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        tmuxRuntimeManager: {
+          listProjectManagedWindows: vi.fn((projectRoot: string) => {
+            expect(projectRoot).toBe(repoRoot);
+            return [liveWindow];
+          }),
+          isWindowAlive: vi.fn(() => true),
+        },
+        restoreTmuxSessionsFromTopology: vi.fn(() => {
+          throw new Error("service snapshots must not restore live tmux sessions");
+        }),
+        syncSessionsFromTopology: vi.fn(),
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, {
+        includeRuntimeInfo: false,
+        hydrateLiveAgentWindows: false,
+      });
+
+      expect(snapshot.sessions).toEqual([]);
+      expect(host.restoreTmuxSessionsFromTopology).not.toHaveBeenCalled();
+      expect(host.syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("includes topology live sessions in service API desktop snapshots without runtime hydration", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-api-topology-live-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      upsertTopologySession(
+        {
+          id: "sh-starting",
+          tool: "sh",
+          toolConfigKey: "sh",
+          command: "/bin/sh",
+          args: ["-lc", "sleep 60"],
+          lifecycle: "live",
+          createdAt: "2026-05-09T12:00:00.000Z",
+          worktreePath: repoRoot,
+        },
+        "starting",
+        { projectRoot: repoRoot, now: "2026-05-09T12:00:01.000Z" },
+      );
+      upsertTopologySession(
+        {
+          id: "sh-running",
+          tool: "sh",
+          toolConfigKey: "sh",
+          command: "/bin/sh",
+          args: ["-lc", "sleep 60"],
+          lifecycle: "live",
+          createdAt: "2026-05-09T12:00:02.000Z",
+          worktreePath: repoRoot,
+        },
+        "running",
+        { projectRoot: repoRoot, now: "2026-05-09T12:00:03.000Z" },
+      );
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+        restoreTmuxSessionsFromTopology: vi.fn(() => {
+          throw new Error("service snapshots must not restore live tmux sessions");
+        }),
+        syncSessionsFromTopology: vi.fn(() => {
+          throw new Error("service snapshots must not sync live tmux sessions");
+        }),
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, {
+        includeRuntimeInfo: false,
+        hydrateLiveAgentWindows: false,
+      });
+
+      expect(snapshot.sessions).toEqual([
+        expect.objectContaining({
+          id: "sh-starting",
+          command: "/bin/sh",
+          status: "waiting",
+          pendingAction: "starting",
+          semantic: expect.objectContaining({
+            runtime: expect.objectContaining({ lifecycle: "starting" }),
+          }),
+        }),
+        expect.objectContaining({
+          id: "sh-running",
+          command: "/bin/sh",
+          status: "running",
+          semantic: expect.objectContaining({
+            runtime: expect.objectContaining({ lifecycle: "running" }),
+          }),
+        }),
+      ]);
+      expect(host.restoreTmuxSessionsFromTopology).not.toHaveBeenCalled();
+      expect(host.syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves stop and graveyard pending state in service API desktop snapshots", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-api-pending-stop-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      const host = {
+        ...minimalDashboardHost([]),
+        projectRoot: repoRoot,
+        stoppingSessionIds: new Set(["codex-stopping", "codex-graveyarding"]),
+        graveyardAfterStopSessionIds: new Set(["codex-graveyarding"]),
+        offlineSessions: [
+          { id: "codex-stopping", command: "codex", status: "offline", worktreePath: repoRoot },
+          { id: "codex-graveyarding", command: "codex", status: "offline", worktreePath: repoRoot },
+        ],
+        offlineServices: [],
+        listDesktopWorktrees: vi.fn(() => [{ name: "Main Checkout", path: repoRoot, branch: "master", isBare: false }]),
+        tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []), isWindowAlive: vi.fn(() => false) },
+        restoreTmuxSessionsFromTopology: vi.fn(() => {
+          throw new Error("service snapshots must not restore live tmux sessions");
+        }),
+        syncSessionsFromTopology: vi.fn(() => {
+          throw new Error("service snapshots must not sync live tmux sessions");
+        }),
+      };
+
+      const snapshot = buildDesktopStateSnapshot(host, {
+        includeRuntimeInfo: false,
+        hydrateLiveAgentWindows: false,
+      });
+
+      expect(snapshot.sessions).toEqual([
+        expect.objectContaining({
+          id: "codex-stopping",
+          status: "offline",
+          pendingAction: "stopping",
+          pending: true,
+          optimistic: true,
+          semantic: expect.objectContaining({
+            runtime: expect.objectContaining({ lifecycle: "stopping", isAlive: false }),
+          }),
+        }),
+        expect.objectContaining({
+          id: "codex-graveyarding",
+          status: "offline",
+          pendingAction: "graveyarding",
+          pending: true,
+          optimistic: true,
+          semantic: expect.objectContaining({
+            runtime: expect.objectContaining({ lifecycle: "graveyarding", isAlive: false }),
+          }),
+        }),
+      ]);
+      expect(host.restoreTmuxSessionsFromTopology).not.toHaveBeenCalled();
+      expect(host.syncSessionsFromTopology).not.toHaveBeenCalled();
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("hydrates existing session rows when tmux-backed maps are empty", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-partial-service-"));
     try {
@@ -1709,5 +1895,76 @@ describe("refreshDashboardModelFromService", () => {
 
     expect(host.dashboardSessionsCache).toEqual([{ id: "codex-1", command: "codex", status: "running" }]);
     expect(host.dashboardModelServiceRefreshError?.message).toContain("incomplete state");
+  });
+
+  it("keeps in-flight creates pending when tmux is ahead of the service snapshot", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("claude-1", "creating", {
+      sessionSeed: {
+        id: "claude-1",
+        command: "claude",
+        label: "claude",
+        status: "waiting",
+        active: false,
+      },
+    });
+    const host: any = {
+      mode: "dashboard",
+      dashboardModelRefreshedAt: 0,
+      dashboardSessionsCache: [{ id: "codex-1", command: "codex", status: "running" }],
+      dashboardTeammatesCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "main" },
+      dashboardMainCheckoutPathCache: "/repo",
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        reconcile: vi.fn(),
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: vi.fn(),
+      },
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined, level: "sessions", worktreeEntries: [] },
+      activeIndex: 0,
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshRuntimeGuard: vi.fn(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: { windowId: "@1", windowName: "codex", windowIndex: 1 },
+            metadata: { kind: "agent", sessionId: "codex-1" },
+          },
+          {
+            target: { windowId: "@2", windowName: "claude", windowIndex: 2 },
+            metadata: { kind: "agent", sessionId: "claude-1" },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => true),
+      },
+      getFromProjectService: vi.fn(async () => ({
+        ok: true,
+        sessions: [{ id: "codex-1", command: "codex", status: "running", index: 1, active: false }],
+        teammates: [],
+        services: [],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "main",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "main" },
+      })),
+    };
+
+    await expect(refreshDashboardModelFromService(host)).resolves.toBe(true);
+
+    expect(host.dashboardModelServiceRefreshError).toBeUndefined();
+    expect(host.dashboardSessionsCache).toEqual([
+      expect.objectContaining({ id: "codex-1", command: "codex", status: "running" }),
+      expect.objectContaining({ id: "claude-1", pendingAction: "creating", optimistic: true }),
+    ]);
   });
 });

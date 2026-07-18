@@ -17,6 +17,10 @@ export interface DashboardLocalSession {
   createdAt?: string;
   status: DashboardSession["status"];
   worktreePath?: string;
+  pendingAction?: DashboardSession["pendingAction"];
+  pendingStartedAt?: string;
+  pending?: boolean;
+  optimistic?: boolean;
 }
 
 export interface DashboardSessionRegistryOptions {
@@ -87,6 +91,10 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       status: session.status,
       active: index === options.activeIndex,
       worktreePath: normalizedWorktreePath,
+      pendingAction: session.pendingAction,
+      pendingStartedAt: session.pendingStartedAt,
+      pending: session.pending,
+      optimistic: session.optimistic,
       label: options.getSessionLabel(session.id),
       headline: options.getSessionHeadline(session.id),
       taskDescription: options.getSessionTaskDescription(session.id),

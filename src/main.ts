@@ -610,6 +610,20 @@ async function ensureCoreProjectServiceForCli(projectRoot: string): Promise<Core
   return project;
 }
 
+async function repairCoreProjectServiceForCli(projectRoot: string): Promise<CoreProjectServiceState> {
+  try {
+    const project = await restartCoreProjectServiceForReadiness(projectRoot);
+    await waitForVerifiedProjectService(projectRoot);
+    return project;
+  } catch (error) {
+    if (!isRepairableCoreProjectStartupError(error)) {
+      throw error;
+    }
+    await restartStaleControlPlane(projectRoot);
+    return await ensureCoreProjectServiceForCli(projectRoot);
+  }
+}
+
 async function ensureCoreProjectServiceForCliWithRepair(projectRoot: string): Promise<CoreProjectServiceState> {
   try {
     return await ensureCoreProjectServiceForCli(projectRoot);
@@ -617,8 +631,7 @@ async function ensureCoreProjectServiceForCliWithRepair(projectRoot: string): Pr
     if (!isRepairableCoreProjectStartupError(error)) {
       throw error;
     }
-    await restartStaleControlPlane(projectRoot);
-    return await ensureCoreProjectServiceForCli(projectRoot);
+    return await repairCoreProjectServiceForCli(projectRoot);
   }
 }
 

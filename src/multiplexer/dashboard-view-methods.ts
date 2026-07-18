@@ -56,7 +56,7 @@ export const dashboardViewMethods = {
   settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
     const settleLifecycle = captureDashboardLifecycle(this);
-    const uiLifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+    const renderLifecycle = captureDashboardLifecycle(this, { screen: "dashboard" });
     const pendingTarget =
       target ??
       (itemId.startsWith("worktree:")
@@ -70,7 +70,7 @@ export const dashboardViewMethods = {
       () => {
         void refreshDashboardModelThroughApi(this, { force: true, lifecycle: settleLifecycle })
           .then(() => {
-            if (isDashboardLifecycleCurrent(this, uiLifecycle)) this.renderDashboard();
+            if (isDashboardLifecycleCurrent(this, renderLifecycle)) this.renderDashboard();
           })
           .catch(() => undefined);
       },

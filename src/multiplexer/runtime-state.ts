@@ -268,7 +268,8 @@ export function reconcileOrphanedTopologySessions(
   host: RuntimeStateHost,
   liveAgentWindows = listLiveAgentWindows(host),
 ): boolean {
-  const candidates = listTopologySessionStates({ statuses: ["starting", "running", "idle", "offline"] });
+  const projectRoot = projectRootFor(host);
+  const candidates = listTopologySessionStates({ statuses: ["starting", "running", "idle", "offline"], projectRoot });
   if (candidates.length === 0) return false;
 
   const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
@@ -294,7 +295,7 @@ export function reconcileOrphanedTopologySessions(
 
     if (isOrphanWorktreeUnrecoverable(session.worktreePath, graveyardPaths)) {
       const reason = `worktree missing after restart: ${session.worktreePath}`;
-      moveTopologySessionToGraveyard(session.id, { reason });
+      moveTopologySessionToGraveyard(session.id, { reason, projectRoot });
       host.debug?.(`graveyarded unrecoverable orphaned session ${session.id}: ${reason}`, "session");
       changed = true;
       continue;
@@ -312,7 +313,7 @@ export function reconcileOrphanedTopologySessions(
             : session.restoreBlockedReason,
       },
       "offline",
-      { projectRoot: projectRootFor(host) },
+      { projectRoot },
     );
     host.debug?.(`reconciled orphaned session ${session.id} → offline (no live tmux window)`, "session");
     changed = true;
@@ -581,7 +582,8 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
 }
 
 export function graveyardSession(host: RuntimeStateHost, sessionId: string, _sessionSeed?: any): void {
-  const session = findTopologySession(sessionId, ["running", "idle", "offline"], projectRootFor(host));
+  const projectRoot = projectRootFor(host);
+  const session = findTopologySession(sessionId, ["running", "idle", "offline"], projectRoot);
   if (!session) {
     pruneOfflineSessionCache(host, sessionId);
     host.invalidateDesktopStateSnapshot?.();
@@ -595,7 +597,7 @@ export function graveyardSession(host: RuntimeStateHost, sessionId: string, _ses
 
   pruneOfflineSessionCache(host, sessionId);
 
-  moveTopologySessionToGraveyard(sessionId);
+  moveTopologySessionToGraveyard(sessionId, { projectRoot });
   host.invalidateDesktopStateSnapshot?.();
   host.writeStatuslineFile?.();
   if (host.mode === "dashboard") {

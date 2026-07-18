@@ -206,7 +206,7 @@ export class Multiplexer {
   private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
-      const lifecycle = captureDashboardLifecycle(this, { inputEpoch: true });
+      const lifecycle = captureDashboardLifecycle(this);
       void refreshDashboardModelThroughApi(this, { force: true, lifecycle })
         .then(() => {
           if (isDashboardLifecycleCurrent(this, lifecycle)) {

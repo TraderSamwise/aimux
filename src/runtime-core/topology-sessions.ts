@@ -148,7 +148,7 @@ function sessionToTopologySession(
   return {
     id: session.id,
     nodeId,
-    status: statusFromLifecycle(session.lifecycle),
+    status: session.status ?? statusFromLifecycle(session.lifecycle),
     tool: session.tool,
     command: session.command,
     args: session.args ?? [],
@@ -262,7 +262,13 @@ export function reconcileRuntimeTopologySessions(input: ReconcileRuntimeTopology
       const topology = current.version ? current : emptyRuntimeTopology(now);
       const removedSessionIds = new Set(input.removedSessionIds ?? []);
       const topologySessions = topology.sessions
-        .filter((session) => session.status === "running" || session.status === "idle" || session.status === "offline")
+        .filter(
+          (session) =>
+            session.status === "starting" ||
+            session.status === "running" ||
+            session.status === "idle" ||
+            session.status === "offline",
+        )
         .map((session) => topologySessionToSessionState(session, topology));
       const topologyByKey = new Map(topologySessions.map((session) => [sessionStateKey(session), session]));
       const topologyById = new Map(topologySessions.map((session) => [session.id, session]));
@@ -378,26 +384,28 @@ export function upsertTopologySession(
 
 export function moveTopologySessionToGraveyard(
   sessionId: string,
-  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string },
+  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string; projectRoot?: string },
 ): RuntimeTopologySessionState | undefined {
-  const store = input?.store ?? createRuntimeTopologyStore();
-  const now = input?.now ?? new Date().toISOString();
-  let moved: RuntimeTopologySessionState | undefined;
-  store.update((topology) => {
-    const existing = topology.sessions.find((entry) => entry.id === sessionId);
-    if (existing) {
-      existing.status = "graveyard";
-      existing.updatedAt = now;
-      existing.graveyardedAt ??= now;
-      delete existing.restoreBlockedReason;
-      if (input?.reason) existing.graveyardReason = input.reason;
-      topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
-      moved = topologySessionToSessionState(existing, topology);
+  return withProjectStore(input?.projectRoot, input?.store, () => {
+    const store = input?.store ?? createRuntimeTopologyStore();
+    const now = input?.now ?? new Date().toISOString();
+    let moved: RuntimeTopologySessionState | undefined;
+    store.update((topology) => {
+      const existing = topology.sessions.find((entry) => entry.id === sessionId);
+      if (existing) {
+        existing.status = "graveyard";
+        existing.updatedAt = now;
+        existing.graveyardedAt ??= now;
+        delete existing.restoreBlockedReason;
+        if (input?.reason) existing.graveyardReason = input.reason;
+        topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
+        moved = topologySessionToSessionState(existing, topology);
+        return topology;
+      }
       return topology;
-    }
-    return topology;
+    });
+    return moved;
   });
-  return moved;
 }
 
 export function removeTopologySessionsForWorktree(

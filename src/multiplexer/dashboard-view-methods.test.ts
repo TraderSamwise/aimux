@@ -311,6 +311,37 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 
+  it("renders create settlement callbacks after later dashboard input", async () => {
+    let onSettled: (() => void) | undefined;
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_target, _itemId, settled, opts) => {
+          onSettled = settled;
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => [{ id: "codex-1", status: "running", tmuxWindowId: "@12" }]),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      renderDashboard: vi.fn(),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1", "session");
+    host.dashboardInputEpoch = 1;
+
+    await expect(isSettled?.()).resolves.toBe(true);
+    onSettled?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
   it("does not treat later dashboard input as create settlement", async () => {
     let isSettled: (() => Promise<boolean> | boolean) | undefined;
     const host: any = {

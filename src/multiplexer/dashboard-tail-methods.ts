@@ -61,6 +61,9 @@ import { getRepoRoot } from "../paths.js";
 import type { LaunchOverride } from "../shell-args.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { setSessionOverseer } from "../metadata-store.js";
+import { createSessionAsync } from "./session-launch.js";
+import { TmuxSessionTransport } from "../tmux/session-transport.js";
+import { addDashboardOperationFailure, clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import {
   listTopologySessionStates,
   moveTopologySessionToGraveyard,
@@ -131,11 +134,355 @@ function findTopologySession(host: Multiplexer, sessionId: string): RuntimeTopol
 
 function refreshLifecycleViews(host: Multiplexer): void {
   (host as any).invalidateDesktopStateSnapshot?.();
+  if ((host as any).mode === "project-service") return;
   (host as any).writeStatuslineFile?.();
   if ((host as any).mode === "dashboard") {
     (host as any).renderCurrentDashboardView?.();
   }
   (host as any).updateContextWatcherSessions?.();
+}
+
+function notifyLifecycleChange(host: Multiplexer): void {
+  refreshLifecycleViews(host);
+  (host as any).metadataServer?.notifyChange?.();
+}
+
+function clearTerminatingSessionTracking(host: Multiplexer, sessionId: string): void {
+  (host as any).stoppingSessionIds?.delete?.(sessionId);
+  (host as any).graveyardAfterStopSessionIds?.delete?.(sessionId);
+  notifyLifecycleChange(host);
+}
+
+function lifecycleFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim().replace(/\s+/g, " ").slice(0, 500) || "unknown error";
+}
+
+function scheduleRuntimeKill(host: Multiplexer, runtime: SessionRuntime, sessionId: string): void {
+  const timer = setTimeout(() => {
+    void (async () => {
+      try {
+        if (runtime.transport instanceof TmuxSessionTransport) {
+          await runtime.transport.killAsync();
+        } else {
+          runtime.kill();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
+      } finally {
+        clearTerminatingSessionTracking(host, sessionId);
+      }
+    })();
+  }, 0);
+  timer.unref?.();
+}
+
+function scheduleTmuxTargetKill(host: Multiplexer, target: any, sessionId: string): void {
+  const timer = setTimeout(() => {
+    void (async () => {
+      try {
+        const manager = (host as any).tmuxRuntimeManager;
+        if (typeof manager?.killWindowAsync === "function") {
+          await manager.killWindowAsync(target);
+        } else {
+          manager?.killWindow?.(target);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        (host as any).debug?.(`failed to kill tmux window for ${sessionId}: ${message}`, "session");
+      } finally {
+        clearTerminatingSessionTracking(host, sessionId);
+      }
+    })();
+  }, 0);
+  timer.unref?.();
+}
+
+function tmuxTargetForTransport(transport: any): any {
+  return transport instanceof TmuxSessionTransport ? transport.tmuxTarget : transport?.tmuxTarget;
+}
+
+function forgetRuntimeSession(host: Multiplexer, sessionId: string): SessionRuntime | undefined {
+  let runtime: SessionRuntime | undefined;
+  const sessions = (host as any).sessions;
+  if (Array.isArray(sessions)) {
+    const index = sessions.findIndex((session: any) => session.id === sessionId);
+    if (index >= 0) {
+      [runtime] = sessions.splice(index, 1);
+    }
+  }
+  (host as any).sessionTmuxTargets?.delete?.(sessionId);
+  (host as any).sessionToolKeys?.delete?.(sessionId);
+  (host as any).sessionOriginalArgs?.delete?.(sessionId);
+  (host as any).sessionWorktreePaths?.delete?.(sessionId);
+  (host as any).sessionStartTimes?.delete?.(sessionId);
+  (host as any).sessionRoles?.delete?.(sessionId);
+  (host as any).sessionTeams?.delete?.(sessionId);
+  return runtime;
+}
+
+function tmuxWindowAlive(host: Multiplexer, target: any): boolean {
+  const manager = (host as any).tmuxRuntimeManager;
+  if (!target || typeof manager?.isWindowAlive !== "function") return true;
+  try {
+    const resolved = manager.getTargetByWindowId?.(target.sessionName, target.windowId) ?? target;
+    if (!resolved) return false;
+    return Boolean(manager.isWindowAlive(resolved));
+  } catch {
+    return false;
+  }
+}
+
+async function verifyCreatedTmuxWindow(
+  host: Multiplexer,
+  input: ScheduledSessionCreate,
+  transport: any,
+): Promise<void> {
+  const target = tmuxTargetForTransport(transport);
+  const manager = (host as any).tmuxRuntimeManager;
+  if (!target || typeof manager?.isWindowAlive !== "function") return;
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 150);
+    timer.unref?.();
+  });
+  if (tmuxWindowAlive(host, target)) return;
+  forgetRuntimeSession(host, input.sessionId);
+  scheduleTmuxTargetKill(host, target, input.sessionId);
+  throw new Error("agent exited during startup");
+}
+
+type ScheduledSessionCreate = {
+  command: string;
+  args: string[];
+  preambleFlag?: string[];
+  toolConfigKey: string;
+  sessionIdFlag?: string[];
+  targetWorktreePath?: string;
+  sessionId: string;
+  detached: boolean;
+  team?: SessionTeamMetadata;
+  env?: Record<string, string>;
+  label?: string;
+  open?: boolean;
+  overseer?: boolean;
+};
+
+const sessionCreateQueue: Array<{ host: Multiplexer; input: ScheduledSessionCreate }> = [];
+let sessionCreateQueueRunning = false;
+
+function findRuntime(host: Multiplexer, sessionId: string): SessionRuntime | undefined {
+  return (host as any).sessions?.find?.((session: any) => session.id === sessionId);
+}
+
+function resolveLifecycleRuntime(host: Multiplexer, sessionId: string): SessionRuntime | undefined {
+  let runtime = findRuntime(host, sessionId);
+  if (runtime) return runtime;
+  (host as any).restoreTmuxSessionsFromTopology?.();
+  runtime = findRuntime(host, sessionId);
+  if (runtime) return runtime;
+  (host as any).syncSessionsFromTopology?.();
+  return findRuntime(host, sessionId);
+}
+
+function resolveLiveTmuxTargetForSession(host: Multiplexer, sessionId: string): any {
+  const manager = (host as any).tmuxRuntimeManager;
+  const cached = (host as any).sessionTmuxTargets?.get?.(sessionId);
+  if (cached) {
+    try {
+      const resolved = manager?.getTargetByWindowId?.(cached.sessionName, cached.windowId) ?? cached;
+      if (!manager?.isWindowAlive || manager.isWindowAlive(resolved)) return resolved;
+    } catch {}
+  }
+  try {
+    for (const { target, metadata } of manager?.listProjectManagedWindows?.(projectRootFor(host)) ?? []) {
+      if (metadata?.kind !== "agent" || metadata.sessionId !== sessionId) continue;
+      if (manager?.isWindowAlive && !manager.isWindowAlive(target)) continue;
+      (host as any).sessionTmuxTargets?.set?.(sessionId, target);
+      return target;
+    }
+  } catch {}
+  return undefined;
+}
+
+function cancelQueuedSessionCreate(host: Multiplexer, sessionId: string): ScheduledSessionCreate | undefined {
+  const projectRoot = projectRootFor(host);
+  const index = sessionCreateQueue.findIndex(
+    (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
+  );
+  if (index === -1) return undefined;
+  return sessionCreateQueue.splice(index, 1)[0]?.input;
+}
+
+function hasQueuedSessionCreate(host: Multiplexer, sessionId: string): boolean {
+  const projectRoot = projectRootFor(host);
+  return sessionCreateQueue.some(
+    (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
+  );
+}
+
+function assertSessionIdCanBeQueued(host: Multiplexer, sessionId: string): void {
+  if (hasQueuedSessionCreate(host, sessionId) || findRuntime(host, sessionId)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
+  const existing = findTopologySession(host, sessionId);
+  if (isLiveTopologyStatus(existing?.status)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
+}
+
+function markTopologySessionOffline(host: Multiplexer, existing: RuntimeTopologySessionState): void {
+  const offlineEntry: RuntimeTopologySessionState = {
+    ...existing,
+    lifecycle: "offline",
+    status: "offline",
+  };
+  upsertTopologySession(offlineEntry, "offline", { projectRoot: projectRootFor(host) });
+  cacheOfflineSession(host, offlineEntry);
+}
+
+function recordStartingSession(host: Multiplexer, input: ScheduledSessionCreate): void {
+  clearDashboardOperationFailures({ targetKind: "agent", operation: "create", targetId: input.sessionId });
+  upsertTopologySession(
+    {
+      id: input.sessionId,
+      tool: input.toolConfigKey,
+      toolConfigKey: input.toolConfigKey,
+      command: input.command,
+      args: input.args,
+      lifecycle: "live",
+      status: "starting",
+      team: input.team,
+      worktreePath: input.targetWorktreePath,
+      label: input.label,
+    },
+    "starting",
+    { projectRoot: projectRootFor(host) },
+  );
+}
+
+function recordSessionCreateFailure(host: Multiplexer, input: ScheduledSessionCreate, error: unknown): void {
+  const message = lifecycleFailureMessage(error);
+  upsertTopologySession(
+    {
+      id: input.sessionId,
+      tool: input.toolConfigKey,
+      toolConfigKey: input.toolConfigKey,
+      command: input.command,
+      args: input.args,
+      lifecycle: "offline",
+      status: "offline",
+      team: input.team,
+      worktreePath: input.targetWorktreePath,
+      label: input.label,
+      restoreBlockedReason: `startup failed: ${message}`,
+    },
+    "offline",
+    { projectRoot: projectRootFor(host) },
+  );
+  addDashboardOperationFailure({
+    targetKind: "agent",
+    operation: "create",
+    title: `Failed to create ${input.toolConfigKey} agent`,
+    message,
+    targetId: input.sessionId,
+    worktreePath: input.targetWorktreePath,
+  });
+  (host as any).publishAlert?.({
+    kind: "task_failed",
+    title: `Failed to create ${input.toolConfigKey} agent`,
+    message,
+    worktreePath: input.targetWorktreePath,
+    dedupeKey: `agent-create-failed:${input.sessionId}:${message}`,
+  });
+  notifyLifecycleChange(host);
+}
+
+async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): Promise<void> {
+  try {
+    const transport = await createSessionAsync(
+      host,
+      input.command,
+      input.args,
+      input.preambleFlag,
+      input.toolConfigKey,
+      undefined,
+      input.sessionIdFlag,
+      input.targetWorktreePath,
+      undefined,
+      input.sessionId,
+      input.detached,
+      false,
+      input.team,
+      input.env,
+    );
+    await verifyCreatedTmuxWindow(host, input, transport);
+    const runtime = findRuntime(host, input.sessionId);
+    if ((host as any).graveyardAfterStopSessionIds?.has?.(input.sessionId)) {
+      const moved = moveTopologySessionToGraveyard(input.sessionId, { projectRoot: projectRootFor(host) });
+      removeOfflineSessionCache(host, input.sessionId);
+      if (runtime) {
+        forgetRuntimeSession(host, input.sessionId);
+        scheduleRuntimeKill(host, runtime, input.sessionId);
+      } else if (transport instanceof TmuxSessionTransport) {
+        scheduleTmuxTargetKill(host, transport.tmuxTarget, input.sessionId);
+      }
+      if (!moved) recordSessionCreateFailure(host, input, new Error("graveyard request lost during startup"));
+      else notifyLifecycleChange(host);
+      return;
+    }
+    if ((host as any).stoppingSessionIds?.has?.(input.sessionId)) {
+      const existing = findTopologySession(host, input.sessionId);
+      if (existing) markTopologySessionOffline(host, existing);
+      if (runtime) {
+        forgetRuntimeSession(host, input.sessionId);
+        scheduleRuntimeKill(host, runtime, input.sessionId);
+      } else if (transport instanceof TmuxSessionTransport) {
+        scheduleTmuxTargetKill(host, transport.tmuxTarget, input.sessionId);
+      }
+      notifyLifecycleChange(host);
+      return;
+    }
+    if (input.overseer) {
+      setSessionOverseer(transport.id, true);
+    }
+    if (input.label) {
+      host.applySessionLabel(transport.id, input.label);
+    }
+    if (input.open) {
+      host.openLiveTmuxWindowForEntry({ id: transport.id });
+    }
+    clearDashboardOperationFailures({ targetKind: "agent", operation: "create", targetId: input.sessionId });
+    notifyLifecycleChange(host);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    (host as any).debug?.(`failed to create tmux window for ${input.sessionId}: ${message}`, "session");
+    recordSessionCreateFailure(host, input, error);
+  }
+}
+
+function scheduleNextSessionCreate(): void {
+  const timer = setTimeout(async () => {
+    const next = sessionCreateQueue.shift();
+    if (!next) {
+      sessionCreateQueueRunning = false;
+      return;
+    }
+    await runScheduledSessionCreate(next.host, next.input);
+    if (sessionCreateQueue.length > 0) {
+      scheduleNextSessionCreate();
+    } else {
+      sessionCreateQueueRunning = false;
+    }
+  }, 50);
+  timer.unref?.();
+}
+
+function scheduleSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): void {
+  sessionCreateQueue.push({ host, input });
+  if (sessionCreateQueueRunning) return;
+  sessionCreateQueueRunning = true;
+  scheduleNextSessionCreate();
 }
 
 export type DashboardTailMethods = {
@@ -297,28 +644,25 @@ export const dashboardTailMethods: DashboardTailMethods = {
     const team: SessionTeamMetadata | undefined = opts.overseer
       ? { teamId: "overseer", parentSessionId: "", role: "overseer" }
       : undefined;
-    const transport = this.createSession(
-      opts.launchOverride?.command ?? tool.command,
-      opts.launchOverride?.args ?? tool.args,
-      tool.preambleFlag,
-      opts.toolConfigKey,
-      undefined,
-      tool.sessionIdFlag,
-      opts.targetWorktreePath,
-      undefined,
+    const createInput: ScheduledSessionCreate = {
+      command: opts.launchOverride?.command ?? tool.command,
+      args: opts.launchOverride?.args ?? tool.args,
+      preambleFlag: tool.preambleFlag,
+      toolConfigKey: opts.toolConfigKey,
+      sessionIdFlag: tool.sessionIdFlag,
+      targetWorktreePath: opts.targetWorktreePath,
       sessionId,
-      !opts.open,
-      false,
+      detached: !opts.open,
       team,
-      opts.launchOverride?.env,
-    );
-    if (opts.overseer) {
-      setSessionOverseer(transport.id, true);
-    }
-    if (opts.open) {
-      this.openLiveTmuxWindowForEntry({ id: transport.id });
-    }
-    return { sessionId: transport.id };
+      env: opts.launchOverride?.env,
+      open: opts.open,
+      overseer: opts.overseer,
+    };
+    assertSessionIdCanBeQueued(this, sessionId);
+    recordStartingSession(this, createInput);
+    notifyLifecycleChange(this);
+    scheduleSessionCreate(this, createInput);
+    return { sessionId };
   },
   async createTeammateAgent(opts) {
     const config = loadConfig();
@@ -335,28 +679,25 @@ export const dashboardTailMethods: DashboardTailMethods = {
       label: opts.label,
       order: typeof opts.order === "number" ? opts.order : undefined,
     };
-    const transport = this.createSession(
-      tool.command,
-      [...tool.args, ...(opts.extraArgs ?? [])],
-      tool.preambleFlag,
+    const createInput: ScheduledSessionCreate = {
+      command: tool.command,
+      args: [...tool.args, ...(opts.extraArgs ?? [])],
+      preambleFlag: tool.preambleFlag,
       toolConfigKey,
-      undefined,
-      tool.sessionIdFlag,
-      opts.targetWorktreePath,
-      undefined,
+      sessionIdFlag: tool.sessionIdFlag,
+      targetWorktreePath: opts.targetWorktreePath,
       sessionId,
-      !opts.open,
-      false,
+      detached: !opts.open,
       team,
-    );
-    if (opts.label) {
-      this.applySessionLabel(transport.id, opts.label);
-    }
-    if (opts.open) {
-      this.openLiveTmuxWindowForEntry({ id: transport.id });
-    }
+      label: opts.label,
+      open: opts.open,
+    };
+    assertSessionIdCanBeQueued(this, sessionId);
+    recordStartingSession(this, createInput);
+    notifyLifecycleChange(this);
+    scheduleSessionCreate(this, createInput);
     return {
-      sessionId: transport.id,
+      sessionId,
       parentSessionId: opts.parentSessionId,
       teamId: team.teamId,
       role: opts.role,
@@ -369,7 +710,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async stopAgent(sessionId) {
     const projectRoot = projectRootFor(this);
-    const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
+    const runtime = resolveLifecycleRuntime(this, sessionId);
     if (runtime) {
       if ((this as any).graveyardAfterStopSessionIds?.has?.(sessionId)) {
         throw new Error(`Session "${sessionId}" is being sent to graveyard`);
@@ -382,8 +723,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
       cacheOfflineSession(this, offlineEntry);
       (this as any).stoppingSessionIds?.add?.(sessionId);
       (this as any).startedInDashboard = true;
-      runtime.kill();
-      refreshLifecycleViews(this);
+      forgetRuntimeSession(this, sessionId);
+      scheduleRuntimeKill(this, runtime, sessionId);
+      notifyLifecycleChange(this);
       (this as any).debug?.(`stopped session ${sessionId} -> offline`, "session");
       return { sessionId, status: "offline" };
     }
@@ -393,7 +735,23 @@ export const dashboardTailMethods: DashboardTailMethods = {
       return { sessionId, status: "offline" };
     }
     if (existing && isLiveTopologyStatus(existing.status)) {
-      throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
+      const canceled = cancelQueuedSessionCreate(this, sessionId);
+      const tmuxTarget = canceled ? undefined : resolveLiveTmuxTargetForSession(this, sessionId);
+      markTopologySessionOffline(this, existing);
+      if (tmuxTarget) {
+        (this as any).stoppingSessionIds?.add?.(sessionId);
+        scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
+      } else if (!canceled && existing.status === "starting") {
+        (this as any).stoppingSessionIds?.add?.(sessionId);
+      }
+      notifyLifecycleChange(this);
+      (this as any).debug?.(
+        canceled
+          ? `canceled queued session create ${sessionId} -> offline`
+          : `reconciled unowned live session ${sessionId} -> offline`,
+        "session",
+      );
+      return { sessionId, status: "offline" };
     }
     if (existing?.status === "graveyard") {
       throw new Error(`Session "${sessionId}" is already in graveyard`);
@@ -402,7 +760,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async sendAgentToGraveyard(sessionId) {
     const projectRoot = projectRootFor(this);
-    const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
+    const runtime = resolveLifecycleRuntime(this, sessionId);
     const existing = findTopologySession(this, sessionId);
     const previousStatus: "running" | "offline" =
       runtime || isLiveTopologyStatus(existing?.status) ? "running" : "offline";
@@ -410,14 +768,36 @@ export const dashboardTailMethods: DashboardTailMethods = {
       return { sessionId, status: "graveyard", previousStatus };
     }
     if (!runtime && existing && isLiveTopologyStatus(existing.status)) {
-      throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
+      const canceled = cancelQueuedSessionCreate(this, sessionId);
+      const tmuxTarget = canceled ? undefined : resolveLiveTmuxTargetForSession(this, sessionId);
+      const moved = moveTopologySessionToGraveyard(sessionId, { projectRoot });
+      if (!moved) {
+        throw new Error(`Unable to graveyard session "${sessionId}"`);
+      }
+      removeOfflineSessionCache(this, sessionId);
+      if (tmuxTarget) {
+        (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
+        (this as any).stoppingSessionIds?.add?.(sessionId);
+        scheduleTmuxTargetKill(this, tmuxTarget, sessionId);
+      } else if (!canceled && existing.status === "starting") {
+        (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
+        (this as any).stoppingSessionIds?.add?.(sessionId);
+      }
+      notifyLifecycleChange(this);
+      (this as any).debug?.(
+        canceled
+          ? `canceled queued session create ${sessionId} -> graveyard`
+          : `reconciled unowned live session ${sessionId} -> graveyard`,
+        "session",
+      );
+      return { sessionId, status: "graveyard", previousStatus };
     }
     if (runtime && !existing) {
       upsertTopologySession(runtimeToTopologySessionState(this, runtime), "running", { projectRoot });
     } else if (!runtime && !existing) {
       throw new Error(`Unknown session "${sessionId}"`);
     }
-    const moved = moveTopologySessionToGraveyard(sessionId);
+    const moved = moveTopologySessionToGraveyard(sessionId, { projectRoot });
     if (!moved) {
       throw new Error(`Unable to graveyard session "${sessionId}"`);
     }
@@ -425,9 +805,10 @@ export const dashboardTailMethods: DashboardTailMethods = {
     if (runtime) {
       (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
       (this as any).stoppingSessionIds?.add?.(sessionId);
-      runtime.kill();
+      forgetRuntimeSession(this, sessionId);
+      scheduleRuntimeKill(this, runtime, sessionId);
     }
-    refreshLifecycleViews(this);
+    notifyLifecycleChange(this);
     (this as any).debug?.(`graveyarded session ${sessionId}`, "session");
     return { sessionId, status: "graveyard", previousStatus };
   },

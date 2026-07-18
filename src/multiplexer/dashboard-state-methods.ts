@@ -268,7 +268,10 @@ export const dashboardStateMethods = {
     invalidateDesktopStateSnapshotImpl(this);
   },
 
-  refreshDesktopStateSnapshot(this: any, options: { includeRuntimeInfo?: boolean } = {}): void {
+  refreshDesktopStateSnapshot(
+    this: any,
+    options: { includeRuntimeInfo?: boolean; hydrateLiveAgentWindows?: boolean } = {},
+  ): void {
     refreshDesktopStateSnapshotImpl(this, options);
   },
 
@@ -290,7 +293,7 @@ export const dashboardStateMethods = {
 
   buildDesktopStateSnapshot(
     this: any,
-    options: { includeRuntimeInfo?: boolean } = {},
+    options: { includeRuntimeInfo?: boolean; hydrateLiveAgentWindows?: boolean } = {},
   ): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
