@@ -625,6 +625,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     };
 
     const loadInitialItems = () => {
+      loading = true;
       void reload(false)
         .then(() => {
           if (finished) return;
