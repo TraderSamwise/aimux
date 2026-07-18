@@ -552,7 +552,7 @@ show_local_expose() {
     client_cols=""
     client_rows=""
     if [ -n "$popup_client_tty" ]; then
-      client_size=$(tmux display-message -t "$popup_client_tty" -p -F '#{client_width}|#{client_height}' 2>/dev/null || true)
+      client_size=$(tmux display-message -c "$popup_client_tty" -p -F '#{client_width}|#{client_height}' 2>/dev/null || true)
       client_cols="${client_size%%|*}"
       client_rows="${client_size#*|}"
     fi

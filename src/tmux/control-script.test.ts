@@ -2994,6 +2994,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
+    expect(log).toContain("display-message -c /dev/live -p -F #{client_width}|#{client_height}");
     expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
     expect(log.some((entry) => entry.includes("display-popup -c /dev/stale"))).toBe(false);
     expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
@@ -3062,6 +3063,7 @@ describe("tmux-control.sh", () => {
     );
 
     const log = readLog(envRoot);
+    expect(log).toContain("display-message -c /dev/live -p -F #{client_width}|#{client_height}");
     const popupLaunches = log.filter((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"));
     expect(popupLaunches).toHaveLength(2);
   });

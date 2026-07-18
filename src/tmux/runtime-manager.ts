@@ -548,33 +548,27 @@ export class TmuxRuntimeManager {
 
   async ensureProjectSessionAsync(projectRoot: string): Promise<TmuxSessionRef> {
     const session = this.getProjectSession(projectRoot);
-    if (await this.hasSessionAsync(session.sessionName)) return session;
-    await this.execAsync(
-      [
-        "new-session",
-        "-d",
-        "-s",
-        session.sessionName,
-        "-c",
-        projectRoot,
-        "-n",
-        "dashboard",
-        "sh",
-        "-lc",
-        "tail -f /dev/null",
-      ],
-      { cwd: projectRoot },
-    );
-    await Promise.all([
-      this.setSessionOptionAsync(session.sessionName, "@aimux-project-root", projectRoot),
-      this.setSessionOptionAsync(session.sessionName, "@aimux-project-state-dir", getProjectStateDirFor(projectRoot)),
-      this.setSessionOptionAsync(session.sessionName, TMUX_RUNTIME_OWNER_OPTION, getRuntimeOwnerId()),
-      this.setSessionOptionAsync(
-        session.sessionName,
-        TMUX_RUNTIME_CONTRACT_OPTION,
-        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
-      ),
-    ]);
+    const exists = await this.hasSessionAsync(session.sessionName);
+    if (!exists) {
+      await this.execAsync(
+        [
+          "new-session",
+          "-d",
+          "-s",
+          session.sessionName,
+          "-c",
+          projectRoot,
+          "-n",
+          "dashboard",
+          "sh",
+          "-lc",
+          "tail -f /dev/null",
+        ],
+        { cwd: projectRoot },
+      );
+      this.setCurrentRuntimeContract(session.sessionName);
+    }
+    this.configureSession(session.sessionName, projectRoot);
     return session;
   }
 

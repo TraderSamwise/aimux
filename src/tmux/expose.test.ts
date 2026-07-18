@@ -81,9 +81,11 @@ describe("runTmuxExpose", () => {
     mkdirSync(projectStateDir);
     mkdirSync(binDir);
     const tmuxPath = join(binDir, "tmux");
+    const tmuxLog = join(root, "tmux.log");
     writeFileSync(
       tmuxPath,
       `#!/bin/sh
+printf '%s\\n' "$*" >> "${tmuxLog}"
 if [ "$1" = "display-message" ]; then
   printf '100x30'
   exit 0
@@ -147,6 +149,9 @@ exit 0
           1500,
         ),
       ).resolves.toBe(75);
+      expect(readFileSync(tmuxLog, "utf8")).toContain(
+        "display-message -c /dev/ttys001 -p -F #{client_width}x#{client_height}",
+      );
     } finally {
       process.env.PATH = oldPath;
       server.close();
@@ -242,6 +247,93 @@ exit 0
 
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
       expect(readFileSync(selectionFile, "utf8")).toBe("@2\n");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("falls back to the project-service focus route when no selection file is provided", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-focus-fallback-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    let focusedWindow = "";
+    const focusRequested = deferred();
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk.toString("utf8");
+        });
+        req.on("end", () => {
+          focusedWindow = (JSON.parse(body) as { windowId?: string }).windowId ?? "";
+          focusRequested.resolve();
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        currentClientSession: "aimux-test-client-12345678",
+        clientTty: "/dev/ttys001",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "codex");
+      input.write("\r");
+
+      await focusRequested.promise;
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(focusedWindow).toBe("@1");
     } finally {
       server.close();
       input.destroy();

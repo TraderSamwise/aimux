@@ -10,6 +10,7 @@ import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
 import { recede, style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
 import {
+  focusExposeItem,
   initialExposeScope,
   loadExposeScopeItems,
   nextExposeScope,
@@ -75,7 +76,7 @@ function queryClientSize(clientTty?: string): string {
   try {
     const result = spawnSync(
       "tmux",
-      ["display-message", "-t", clientTty, "-p", "-F", "#{client_width}x#{client_height}"],
+      ["display-message", "-c", clientTty, "-p", "-F", "#{client_width}x#{client_height}"],
       // Bounded so a hung tmux server fails open (no resize check) instead of freezing
       // the popup's single-threaded refresh loop.
       { encoding: "utf8", timeout: 500 },
@@ -355,12 +356,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   // starts scoped to the launch context. Pressing `g` zooms out along the ladder
   // worktree → project → global; the rung is ephemeral (never persisted).
   const crossProject = isMetaDashboardWindowName(options.currentWindow ?? "");
-  const context: FastControlContext = {
+  const context: FastControlContext & { clientTty?: string } = {
     projectRoot: options.projectRoot,
     currentPath: options.currentPath,
     currentWindow: options.currentWindow,
     currentWindowId: options.currentWindowId,
     currentClientSession: options.currentClientSession,
+    clientTty: options.clientTty,
   };
   const exposeDeps = { daemonEndpoint: options.daemonEndpoint };
   const exposeConfig = options.exposeConfig ?? loadConfig({ projectRoot: options.projectRoot }).expose;
@@ -647,7 +649,21 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         finish(0);
         return;
       }
-      opening = false;
+      void focusExposeItem(item, context, options.projectStateDir, exposeDeps)
+        .then((ok) => {
+          if (finished) return;
+          if (ok) {
+            finish(0);
+            return;
+          }
+          opening = false;
+          render(false);
+        })
+        .catch(() => {
+          if (finished) return;
+          opening = false;
+          render(false);
+        });
     };
 
     function handleKey(key: string, ctrl = false, deferRender = false): boolean {
