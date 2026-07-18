@@ -465,7 +465,7 @@ describe("MetadataServer threads API", () => {
     expect(refreshed.seq).toBe(2);
   });
 
-  it("forces dirty desktop-state reads to bypass the stale cache", async () => {
+  it("refreshes force desktop-state reads synchronously after project changes", async () => {
     const getState = vi.fn(() => ({
       sessions: [],
       teammates: [],
@@ -492,6 +492,11 @@ describe("MetadataServer threads API", () => {
     );
     expect(forced.seq).toBe(2);
     expect(getState).toHaveBeenCalledTimes(2);
+
+    const refreshed = await fetch(`http://127.0.0.1:${endpoint!.port}/desktop-state`).then((response) =>
+      response.json(),
+    );
+    expect(refreshed.seq).toBe(2);
   });
 
   it("serves expired desktop-state cache immediately and refreshes off the request path", async () => {

@@ -1703,8 +1703,8 @@ export class MetadataServer {
   }
 
   private getDesktopStateSnapshot(force = false): Record<string, unknown> {
-    if (force) return this.refreshDesktopStateCache();
     const now = Date.now();
+    if (force) return this.refreshDesktopStateCache();
     if (this.desktopStateCache && this.desktopStateCacheDirty) {
       this.scheduleDesktopStateRefresh(DESKTOP_STATE_STALE_REFRESH_DELAY_MS);
       return this.desktopStateCache.state;

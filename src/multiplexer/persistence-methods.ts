@@ -500,7 +500,7 @@ export const persistenceMethods = {
 
   buildDesktopState(
     this: any,
-    input: { includeStatusline?: boolean; includeRuntimeInfo?: boolean } = {},
+    input: { includeStatusline?: boolean; includeRuntimeInfo?: boolean; hydrateLiveAgentWindows?: boolean } = {},
   ): {
     sessions: DashboardSession[];
     teammates: DashboardSession[];
@@ -514,7 +514,10 @@ export const persistenceMethods = {
   } {
     let desktopState;
     if (input.includeRuntimeInfo === false) {
-      desktopState = this.buildDesktopStateSnapshot({ includeRuntimeInfo: false });
+      desktopState = this.buildDesktopStateSnapshot({
+        includeRuntimeInfo: false,
+        hydrateLiveAgentWindows: input.hydrateLiveAgentWindows,
+      });
     } else {
       if (!this.desktopStateSnapshot) this.refreshDesktopStateSnapshot();
       desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();

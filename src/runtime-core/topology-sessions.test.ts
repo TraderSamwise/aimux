@@ -415,6 +415,41 @@ describe("topology session lifecycle", () => {
     });
   });
 
+  it("preserves queued starting sessions while reconciling runtime-owned sessions", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "queued-start",
+        tool: "sh",
+        toolConfigKey: "sh",
+        command: "sh",
+        args: ["-lc", "sleep 1"],
+        lifecycle: "live",
+      },
+      "starting",
+      { store, projectRoot: repoRoot, now: "2026-05-25T00:00:00.000Z" },
+    );
+
+    const topology = reconcileRuntimeTopologySessions({
+      store,
+      projectRoot: repoRoot,
+      now: "2026-05-25T00:00:01.000Z",
+      sessions: [
+        {
+          id: "already-live",
+          tool: "sh",
+          toolConfigKey: "sh",
+          command: "sh",
+          args: [],
+          lifecycle: "live",
+        },
+      ],
+    });
+
+    expect(topology.sessions.map((session) => session.id)).toEqual(["queued-start", "already-live"]);
+    expect(topology.sessions.find((session) => session.id === "queued-start")?.status).toBe("starting");
+  });
+
   it("drops explicitly removed sessions during runtime topology reconciliation", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     upsertTopologySession(

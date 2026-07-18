@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ export interface TmuxExecOptions {
 }
 
 export type TmuxExec = (args: string[], options?: TmuxExecOptions) => string;
+export type TmuxExecAsync = (args: string[], options?: TmuxExecOptions) => Promise<string>;
 export type TmuxInteractiveExec = (args: string[], options?: TmuxExecOptions) => void;
 
 export interface TmuxWindowInfo {
@@ -141,6 +142,17 @@ const DEFAULT_EXEC: TmuxExec = (args, options) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 
+const DEFAULT_EXEC_ASYNC: TmuxExecAsync = (args, options) =>
+  new Promise((resolve, reject) => {
+    execFile("tmux", args, { cwd: options?.cwd, encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        reject(Object.assign(error, { stderr }));
+        return;
+      }
+      resolve(stdout.trim());
+    });
+  });
+
 const DEFAULT_INTERACTIVE_EXEC: TmuxInteractiveExec = (args, options) => {
   const result = spawnSync("tmux", args, {
     cwd: options?.cwd,
@@ -190,6 +202,7 @@ export class TmuxRuntimeManager {
   constructor(
     private readonly exec: TmuxExec = DEFAULT_EXEC,
     private readonly interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
+    private readonly execAsync: TmuxExecAsync = DEFAULT_EXEC_ASYNC,
   ) {}
 
   isAvailable(): boolean {
@@ -469,6 +482,15 @@ export class TmuxRuntimeManager {
     }
   }
 
+  async hasSessionAsync(sessionName: string): Promise<boolean> {
+    try {
+      await this.execAsync(["has-session", "-t", sessionName]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -521,6 +543,38 @@ export class TmuxRuntimeManager {
       if (!exists || !currentRuntimeContract) this.setCurrentRuntimeContract(session.sessionName);
       return session;
     }
+    return session;
+  }
+
+  async ensureProjectSessionAsync(projectRoot: string): Promise<TmuxSessionRef> {
+    const session = this.getProjectSession(projectRoot);
+    if (await this.hasSessionAsync(session.sessionName)) return session;
+    await this.execAsync(
+      [
+        "new-session",
+        "-d",
+        "-s",
+        session.sessionName,
+        "-c",
+        projectRoot,
+        "-n",
+        "dashboard",
+        "sh",
+        "-lc",
+        "tail -f /dev/null",
+      ],
+      { cwd: projectRoot },
+    );
+    await Promise.all([
+      this.setSessionOptionAsync(session.sessionName, "@aimux-project-root", projectRoot),
+      this.setSessionOptionAsync(session.sessionName, "@aimux-project-state-dir", getProjectStateDirFor(projectRoot)),
+      this.setSessionOptionAsync(session.sessionName, TMUX_RUNTIME_OWNER_OPTION, getRuntimeOwnerId()),
+      this.setSessionOptionAsync(
+        session.sessionName,
+        TMUX_RUNTIME_CONTRACT_OPTION,
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+      ),
+    ]);
     return session;
   }
 
@@ -699,8 +753,56 @@ export class TmuxRuntimeManager {
     };
   }
 
+  async createWindowAsync(
+    sessionName: string,
+    name: string,
+    cwd: string,
+    command: string,
+    args: string[],
+    options: { detached?: boolean } = {},
+  ): Promise<TmuxTarget> {
+    const argv = [
+      "new-window",
+      ...(options.detached ? ["-d"] : []),
+      "-P",
+      "-t",
+      sessionName,
+      "-c",
+      cwd,
+      "-n",
+      name,
+      "-F",
+      "#{window_id}\t#{window_index}\t#{window_name}",
+      command,
+      ...args,
+    ];
+    let raw: string;
+    try {
+      raw = await this.execAsync(argv, { cwd });
+    } catch (error) {
+      log.warn("tmux new-window failed", "tmux", {
+        sessionName,
+        windowName: name,
+        cwd,
+        error,
+      });
+      throw new Error(`tmux failed to create window "${name}" in session ${sessionName}`, { cause: error });
+    }
+    const [windowId, index, windowName] = raw.split("\t");
+    return {
+      sessionName,
+      windowId,
+      windowIndex: Number(index),
+      windowName,
+    };
+  }
+
   killWindow(target: TmuxTarget): void {
     this.exec(["kill-window", "-t", target.windowId]);
+  }
+
+  async killWindowAsync(target: TmuxTarget): Promise<void> {
+    await this.execAsync(["kill-window", "-t", target.windowId]);
   }
 
   unlinkWindow(target: TmuxTarget): void {
@@ -881,13 +983,27 @@ export class TmuxRuntimeManager {
     this.exec(["set-window-option", "-q", "-t", windowTarget, "@aimux-meta", JSON.stringify(metadata)]);
   }
 
+  async setWindowMetadataAsync(target: TmuxTarget | string, metadata: TmuxWindowMetadata): Promise<void> {
+    const windowTarget = typeof target === "string" ? target : target.windowId;
+    await this.execAsync(["set-window-option", "-q", "-t", windowTarget, "@aimux-meta", JSON.stringify(metadata)]);
+  }
+
   setWindowOption(target: TmuxTarget | string, key: string, value: string): void {
     const windowTarget = typeof target === "string" ? target : target.windowId;
     this.exec(["set-window-option", "-q", "-t", windowTarget, key, value]);
   }
 
+  async setWindowOptionAsync(target: TmuxTarget | string, key: string, value: string): Promise<void> {
+    const windowTarget = typeof target === "string" ? target : target.windowId;
+    await this.execAsync(["set-window-option", "-q", "-t", windowTarget, key, value]);
+  }
+
   setSessionOption(sessionName: string, key: string, value: string): void {
     this.exec(["set-option", "-t", sessionName, key, value]);
+  }
+
+  async setSessionOptionAsync(sessionName: string, key: string, value: string): Promise<void> {
+    await this.execAsync(["set-option", "-t", sessionName, key, value]);
   }
 
   configureManagedSession(sessionName: string, projectRoot: string): void {
@@ -898,6 +1014,14 @@ export class TmuxRuntimeManager {
     this.setWindowOption(target, "@aimux-tool", toolConfigKey);
     this.setWindowOption(target, "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough);
     this.setWindowOption(target, "aggressive-resize", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize);
+  }
+
+  async applyManagedAgentWindowPolicyAsync(target: TmuxTarget | string, toolConfigKey: string): Promise<void> {
+    await Promise.all([
+      this.setWindowOptionAsync(target, "@aimux-tool", toolConfigKey),
+      this.setWindowOptionAsync(target, "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough),
+      this.setWindowOptionAsync(target, "aggressive-resize", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize),
+    ]);
   }
 
   getWindowOption(target: TmuxTarget | string, key: string): string | null {
