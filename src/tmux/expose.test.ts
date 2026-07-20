@@ -184,6 +184,102 @@ describe("runTmuxExpose", () => {
     }
   });
 
+  it("does not record first live capture timing for an empty item list", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-empty-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      sendJson(res, { ok: true, items: [] });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "No active agents");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(runtimeManagerMock.captureTarget).not.toHaveBeenCalled();
+      expect(timing.map((event) => event.name)).not.toContain("first-live-capture-start");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("records a terminal timing event when item loading fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-load-error-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "No active agents");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(timing.map((event) => event.name)).toEqual(
+        expect.arrayContaining(["items-load-start", "items-load-error"]),
+      );
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("returns the relaunch code when the controlling client size changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-resize-test-"));
     tempRoots.push(root);
@@ -1251,6 +1347,7 @@ exit 0
     output.columns = 100;
     output.rows = 30;
     output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
 
     try {
       const result = runTmuxExpose({
@@ -1266,6 +1363,7 @@ exit 0
         columns: 100,
         rows: 30,
         exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
       });
 
       await waitForOutput(output, "project-codex");
@@ -1279,6 +1377,7 @@ exit 0
       await focusRequested.promise;
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
       expect(focusRoute).toBe("global");
+      expect(timing.map((event) => event.name)).toContain("items-load-stale");
     } finally {
       server.close();
       input.destroy();
