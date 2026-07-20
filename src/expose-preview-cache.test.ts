@@ -121,9 +121,11 @@ describe("ExposePreviewCache", () => {
     try {
       cache.trackItems([item("a", "@1")]);
       await cache.refreshNow();
+      expect(cache.get("@1")?.output).toBe("output for @1\n");
       tmux.captureTargetAsync.mockClear();
 
       cache.trackItems([item("b", "@2")]);
+      expect(cache.get("@1")).toBeUndefined();
       await cache.refreshNow();
     } finally {
       cache.stop();
@@ -134,6 +136,39 @@ describe("ExposePreviewCache", () => {
       startLine: -EXPOSE_PREVIEW_CAPTURE_LINES,
       includeEscapes: true,
     });
+  });
+
+  it("ignores in-flight captures after demand changes", async () => {
+    let resolveCapture: ((output: string) => void) | undefined;
+    const tmux = {
+      captureTargetAsync: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveCapture = resolve;
+          }),
+      ),
+    };
+    const cache = new ExposePreviewCache({
+      projectRoot: "/repo",
+      tmux,
+      now: () => new Date("2026-07-20T13:00:00.000Z"),
+    });
+
+    cache.start();
+    try {
+      cache.trackItems([item("a", "@1")]);
+      const refresh = cache.refreshNow();
+      expect(tmux.captureTargetAsync).toHaveBeenCalledTimes(1);
+
+      cache.trackItems([item("b", "@2")]);
+      expect(cache.get("@1")).toBeUndefined();
+      resolveCapture?.("late output\n");
+      await refresh;
+
+      expect(cache.get("@1")).toBeUndefined();
+    } finally {
+      cache.stop();
+    }
   });
 
   it("evicts tracked targets after repeated capture failures", async () => {
