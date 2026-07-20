@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
+import { log } from "../debug.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { formatRelativeRecency } from "../recency.js";
@@ -43,6 +45,32 @@ export interface TmuxExposeOptions {
   columns?: number;
   rows?: number;
   exposeConfig?: ExposeConfig;
+  onTiming?: (event: TmuxExposeTimingEvent) => void;
+}
+
+export type TmuxExposeTimingEventName =
+  | "start"
+  | "terminal-ready"
+  | "items-load-start"
+  | "items-load-end"
+  | "items-load-stale"
+  | "items-load-error"
+  | "first-render"
+  | "first-items-render"
+  | "first-live-capture-start"
+  | "first-live-capture-end"
+  | "focus-start"
+  | "focus-end"
+  | "exit";
+
+export interface TmuxExposeTimingEvent {
+  name: TmuxExposeTimingEventName;
+  elapsedMs: number;
+  scope?: ExposeScope;
+  itemCount?: number;
+  previewSnapshotCount?: number;
+  captureChanged?: boolean;
+  exitCode?: number;
 }
 
 const CAPTURE_LINES = 40;
@@ -346,6 +374,25 @@ function defaultExposeScopeView(scope: ExposeScope): ExposeScopeView {
 }
 
 export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number> {
+  const timingStartedAt = performance.now();
+  const markTiming = (
+    name: TmuxExposeTimingEventName,
+    fields: Omit<TmuxExposeTimingEvent, "name" | "elapsedMs"> = {},
+  ) => {
+    const event: TmuxExposeTimingEvent = {
+      name,
+      elapsedMs: Math.round((performance.now() - timingStartedAt) * 100) / 100,
+      ...fields,
+    };
+    try {
+      options.onTiming?.(event);
+    } catch {
+      log.debug("expose timing sink failed", "tmux", {});
+    }
+    log.debug("expose timing", "tmux", { ...event });
+  };
+  markTiming("start");
+
   const tmux = new TmuxRuntimeManager();
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
@@ -407,9 +454,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     output.write("\x1b[2J\x1b[H");
   }
   output.write("\x1b[?25l");
+  markTiming("terminal-ready", { scope });
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const exit = (code: number): number => {
+    markTiming("exit", { scope, itemCount: items.length, exitCode: code });
     if (timer) clearTimeout(timer);
     output.write("\x1b[?25h");
     if (terminal) {
@@ -427,24 +476,29 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return code;
   };
 
-  // Restore the terminal if tmux (or anything) kills the popup with a signal.
-  const onFatalSignal = () => process.exit(exit(0));
-  if (manageTerminal) {
-    process.once("SIGINT", onFatalSignal);
-    process.once("SIGTERM", onFatalSignal);
-  }
-
   const captures = new Map<string, string>();
+  let previewSnapshotCount = 0;
+  let firstRenderMarked = false;
+  let firstItemsRenderMarked = false;
+  let firstLiveCaptureMarked = false;
   const seedPreviewSnapshots = (): void => {
+    previewSnapshotCount = 0;
     for (const item of items) {
       if (!item.previewSnapshot) continue;
       captures.set(item.target.windowId, item.previewSnapshot.output);
+      previewSnapshotCount += 1;
     }
   };
 
   // Returns whether any capture changed, so the refresh loop can skip a repaint when
   // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
   const refreshCaptures = (): boolean => {
+    if (items.length === 0) return false;
+    const markFirstLiveCapture = !firstLiveCaptureMarked;
+    if (markFirstLiveCapture) {
+      firstLiveCaptureMarked = true;
+      markTiming("first-live-capture-start", { scope, itemCount: items.length });
+    }
     let changed = false;
     for (const item of items) {
       let next: string;
@@ -455,6 +509,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (next !== captures.get(item.target.windowId)) changed = true;
       captures.set(item.target.windowId, next);
+    }
+    if (markFirstLiveCapture) {
+      markTiming("first-live-capture-end", { scope, itemCount: items.length, captureChanged: changed });
     }
     return changed;
   };
@@ -471,13 +528,41 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let staticSize = "";
   let staticVisibleCount = -1;
   let refreshTick = 0;
+  let finished = false;
   let opening = false;
+  let focusTimingOpen = false;
   let refreshStarted = false;
   let pendingKeys: Array<{ key: string; ctrl?: boolean }> = [];
   let lastInputAt = 0;
   let lastResizeCheckAt = 0;
   let selectionVersion = 0;
   let reloadGeneration = 0;
+
+  const closeFocusTiming = () => {
+    if (!focusTimingOpen) return;
+    focusTimingOpen = false;
+    markTiming("focus-end", { scope, itemCount: items.length });
+  };
+
+  const detachFatalSignals = () => {
+    if (!manageTerminal) return;
+    process.off("SIGINT", onFatalSignal);
+    process.off("SIGTERM", onFatalSignal);
+  };
+
+  // Restore the terminal if tmux (or anything) kills the popup with a signal.
+  const onFatalSignal = () => {
+    if (!finished) {
+      finished = true;
+      closeFocusTiming();
+    }
+    detachFatalSignals();
+    process.exit(exit(0));
+  };
+  if (manageTerminal) {
+    process.once("SIGINT", onFatalSignal);
+    process.once("SIGTERM", onFatalSignal);
+  }
 
   const renderTileAt = (tileIndex: number, layout: GridLayout, geo: PanelGeometry): string => {
     const r = Math.floor(tileIndex / layout.tileCols);
@@ -571,6 +656,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const msgCol = geo.left + 1 + Math.max(0, Math.floor((innerW - msg.length) / 2));
       const msgRow = geo.top + Math.floor(innerH / 2);
       output.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
+      if (!firstRenderMarked) {
+        firstRenderMarked = true;
+        markTiming("first-render", { scope, itemCount: items.length });
+      }
       return;
     }
 
@@ -580,23 +669,42 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
     out += `${helpAt}\x1b[?2026l`;
     output.write(out);
+    if (!firstRenderMarked) {
+      firstRenderMarked = true;
+      markTiming("first-render", { scope, itemCount: items.length, previewSnapshotCount });
+    }
+    if (!firstItemsRenderMarked) {
+      firstItemsRenderMarked = true;
+      markTiming("first-items-render", { scope, itemCount: items.length, previewSnapshotCount });
+    }
   };
 
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
   // captures, keep the user's selected tile when possible, and re-capture.
   const reload = async (capture = true): Promise<"committed" | "stale"> => {
+    if (finished) return "stale";
     const generation = (reloadGeneration += 1);
     const reloadScope = scope;
     const selectedWindowIdAtStart = items[index]?.target.windowId;
     const selectionVersionAtStart = selectionVersion;
     let nextView: ExposeScopeView;
+    markTiming("items-load-start", { scope: reloadScope });
     try {
       nextView = await loadExposeScopeItems(reloadScope, context, options.projectStateDir, exposeDeps);
     } catch (error) {
-      if (generation !== reloadGeneration || reloadScope !== scope) return "stale";
+      if (finished) return "stale";
+      if (generation !== reloadGeneration || reloadScope !== scope) {
+        markTiming("items-load-stale", { scope: reloadScope });
+        return "stale";
+      }
+      markTiming("items-load-error", { scope: reloadScope });
       throw error;
     }
-    if (generation !== reloadGeneration || reloadScope !== scope) return "stale";
+    if (finished) return "stale";
+    if (generation !== reloadGeneration || reloadScope !== scope) {
+      markTiming("items-load-stale", { scope: reloadScope });
+      return "stale";
+    }
     const selectedWindowId =
       selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
     view = nextView;
@@ -606,26 +714,28 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     loading = false;
     captures.clear();
     seedPreviewSnapshots();
+    markTiming("items-load-end", {
+      scope: reloadScope,
+      itemCount: items.length,
+      previewSnapshotCount,
+    });
     const selectedIdx = selectedWindowId ? items.findIndex((item) => item.target.windowId === selectedWindowId) : -1;
     const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
     index = selectedIdx >= 0 ? selectedIdx : currentIdx >= 0 ? currentIdx : 0;
-    if (capture) refreshCaptures();
+    if (capture && firstItemsRenderMarked) refreshCaptures();
     return "committed";
   };
 
   render();
 
   return await new Promise<number>((resolve) => {
-    let finished = false;
     const finish = (code: number) => {
       if (finished) return;
       finished = true;
+      closeFocusTiming();
       input.off("data", onData);
       input.off("end", onEnd);
-      if (manageTerminal) {
-        process.off("SIGINT", onFatalSignal);
-        process.off("SIGTERM", onFatalSignal);
-      }
+      detachFatalSignals();
       resolve(exit(code));
     };
 
@@ -710,13 +820,17 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const item = items[i];
       if (!item) return;
       opening = true;
+      markTiming("focus-start", { scope, itemCount: items.length });
+      focusTimingOpen = true;
       if (writeSelectedWindow(options, item)) {
+        closeFocusTiming();
         finish(0);
         return;
       }
       void focusExposeItem(item, context, options.projectStateDir, exposeDeps)
         .then((ok) => {
           if (finished) return;
+          closeFocusTiming();
           if (ok) {
             finish(0);
             return;
@@ -726,6 +840,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         })
         .catch(() => {
           if (finished) return;
+          closeFocusTiming();
           opening = false;
           loadInitialItems();
         });
@@ -819,8 +934,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     // Recursive timeout (not setInterval) so the cadence re-derives from the
     // current tile count after a zoom changes how many panes are captured.
     const scheduleRefresh = () => {
+      if (finished) return;
       timer = setTimeout(async () => {
         try {
+          if (finished) return;
           const now = Date.now();
           const inputQuiet = Boolean(lastInputAt && now - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS);
           if (inputQuiet && lastResizeCheckAt === 0) lastResizeCheckAt = now;
@@ -847,6 +964,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           if (reloadedItems) {
             refreshTick = 0;
             const reloadResult = await reload();
+            if (finished) return;
             if (reloadResult === "stale") {
               scheduleRefresh();
               return;

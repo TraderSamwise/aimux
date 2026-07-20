@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTmuxExpose } from "./expose.js";
+import type { TmuxExposeTimingEvent } from "./expose.js";
 
 const runtimeManagerMock = vi.hoisted(() => ({
   captureTarget: vi.fn(() => "agent output\n"),
@@ -87,9 +88,33 @@ function readNextOutput(output: PassThrough, ms = 1000): Promise<string> {
   );
 }
 
+async function waitForCondition(predicate: () => boolean, ms = 1000): Promise<void> {
+  let interval: ReturnType<typeof setInterval> | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      if (interval) clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
+    };
+    interval = setInterval(() => {
+      if (!predicate()) return;
+      cleanup();
+      resolve();
+    }, 10);
+    interval.unref?.();
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timed out after ${ms}ms`));
+    }, ms);
+    timeout.unref?.();
+  });
+}
+
 describe("runTmuxExpose", () => {
   it("renders preview snapshots from the item API before live capture succeeds", async () => {
+    const events: string[] = [];
     runtimeManagerMock.captureTarget.mockImplementation(() => {
+      events.push("capture");
       throw new Error("capture unavailable");
     });
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-preview-snapshot-test-"));
@@ -136,6 +161,362 @@ describe("runTmuxExpose", () => {
     output.columns = 80;
     output.rows = 24;
     output.on("data", () => {});
+    const originalWrite = output.write.bind(output) as typeof output.write;
+    output.write = ((chunk: unknown, ...args: unknown[]) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      if (text.includes("warm preview line") && !events.includes("preview-write")) events.push("preview-write");
+      return originalWrite(chunk as never, ...(args as []));
+    }) as typeof output.write;
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "warm preview line");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(events).toContain("preview-write");
+      expect(events).toContain("capture");
+      expect(events.indexOf("preview-write")).toBeLessThan(events.indexOf("capture"));
+      expect(runtimeManagerMock.captureTarget).toHaveBeenCalled();
+      const timingNames = timing.map((event) => event.name);
+      expect(timingNames).toContain("first-render");
+      expect(timingNames).toContain("items-load-end");
+      expect(timingNames).toContain("first-items-render");
+      expect(timingNames).toContain("first-live-capture-start");
+      expect(timingNames.indexOf("first-items-render")).toBeLessThan(timingNames.indexOf("first-live-capture-start"));
+      expect(timing.every((event) => event.elapsedMs >= 0)).toBe(true);
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("does not record first live capture timing for an empty item list", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-empty-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      sendJson(res, { ok: true, items: [] });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "No active agents");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(runtimeManagerMock.captureTarget).not.toHaveBeenCalled();
+      expect(timing.map((event) => event.name)).not.toContain("first-live-capture-start");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("renders preview snapshots before live capture when an empty scope later gains items", async () => {
+    const events: string[] = [];
+    runtimeManagerMock.captureTarget.mockImplementation(() => {
+      events.push("capture");
+      return "live output\n";
+    });
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-empty-to-preview-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    let requestCount = 0;
+    const server = createServer((_req, res) => {
+      requestCount += 1;
+      sendJson(res, {
+        ok: true,
+        items:
+          requestCount === 1
+            ? []
+            : [
+                {
+                  id: "session-1",
+                  label: "codex",
+                  urgency: 0,
+                  activity: 0,
+                  recentRank: 0,
+                  previewSnapshot: {
+                    output: "late preview line\n",
+                    capturedAt: "2026-07-20T13:00:00.000Z",
+                    source: "capture",
+                    windowId: "@1",
+                    startLine: -40,
+                    lineCount: 40,
+                  },
+                  target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+                  metadata: {
+                    kind: "agent",
+                    sessionId: "session-1",
+                    command: "codex",
+                    args: [],
+                    toolConfigKey: "codex",
+                    worktreePath: "/repo",
+                  },
+                },
+              ],
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const originalWrite = output.write.bind(output) as typeof output.write;
+    output.write = ((chunk: unknown, ...args: unknown[]) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      if (text.includes("late preview line") && !events.includes("preview-write")) events.push("preview-write");
+      return originalWrite(chunk as never, ...(args as []));
+    }) as typeof output.write;
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "No active agents");
+      await waitForOutput(output, "late preview line", 2500);
+      await waitForCondition(() => events.includes("capture"), 1000);
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      const timingNames = timing.map((event) => event.name);
+      expect(events.indexOf("preview-write")).toBeLessThan(events.indexOf("capture"));
+      expect(timingNames.indexOf("first-items-render")).toBeLessThan(timingNames.indexOf("first-live-capture-start"));
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("records a terminal timing event when item loading fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-load-error-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "No active agents");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(timing.map((event) => event.name)).toEqual(
+        expect.arrayContaining(["items-load-start", "items-load-error"]),
+      );
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("does not emit item load timing after exit when a load resolves late", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-late-load-exit-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const switchableRequested = deferred();
+    const allowSwitchableResponse = deferred();
+    const switchableResponded = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        switchableRequested.resolve();
+        await allowSwitchableResponse.promise;
+        sendJson(res, { ok: true, items: [] });
+        switchableResponded.resolve();
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await switchableRequested.promise;
+      input.end();
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      const exitIndex = timing.findIndex((event) => event.name === "exit");
+      allowSwitchableResponse.resolve();
+      await withTimeout(switchableResponded.promise, 1000);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(exitIndex).toBeGreaterThanOrEqual(0);
+      expect(timing.map((event) => event.name).slice(exitIndex + 1)).toEqual([]);
+      expect(timing.map((event) => event.name)).not.toEqual(
+        expect.arrayContaining(["items-load-end", "items-load-error", "items-load-stale"]),
+      );
+    } finally {
+      allowSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("does not continue the refresh loop when a refresh reload resolves after exit", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-refresh-exit-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const secondSwitchableRequested = deferred();
+    const allowSecondSwitchableResponse = deferred();
+    let requestCount = 0;
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        requestCount += 1;
+        if (requestCount === 2) {
+          secondSwitchableRequested.resolve();
+          await allowSecondSwitchableResponse.promise;
+        }
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    let wroteAfterExit = false;
+    let exited = false;
+    output.on("data", () => {
+      if (exited) wroteAfterExit = true;
+    });
 
     try {
       const result = runTmuxExpose({
@@ -152,10 +533,64 @@ describe("runTmuxExpose", () => {
         exposeConfig: { initialScope: "project" },
       });
 
-      await waitForOutput(output, "warm preview line");
+      await waitForOutput(output, "codex");
+      await withTimeout(secondSwitchableRequested.promise, 2500);
+      input.end();
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      exited = true;
+      const capturesAtExit = runtimeManagerMock.captureTarget.mock.calls.length;
+      allowSecondSwitchableResponse.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      expect(wroteAfterExit).toBe(false);
+      expect(runtimeManagerMock.captureTarget).toHaveBeenCalledTimes(capturesAtExit);
+    } finally {
+      allowSecondSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("treats timing callback errors as non-fatal", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-timing-callback-error-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      sendJson(res, { ok: true, items: [] });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: () => {
+          throw new Error("timing sink failed");
+        },
+      });
+
+      await waitForOutput(output, "No active agents");
       input.write("q");
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
-      expect(runtimeManagerMock.captureTarget).toHaveBeenCalled();
     } finally {
       server.close();
       input.destroy();
@@ -606,6 +1041,203 @@ exit 0
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
       expect(focusedWindow).toBe("@1");
     } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("closes focus timing when Exposé exits before project-service focus settles", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-focus-exit-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const focusRequested = deferred();
+    const allowFocusResponse = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        req.on("data", () => {});
+        req.on("end", async () => {
+          focusRequested.resolve();
+          await allowFocusResponse.promise;
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        currentClientSession: "aimux-test-client-12345678",
+        clientTty: "/dev/ttys001",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "codex");
+      input.write("\r");
+      await focusRequested.promise;
+      input.end();
+
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      const timingNames = timing.map((event) => event.name);
+      expect(timingNames.filter((name) => name === "focus-start")).toHaveLength(1);
+      expect(timingNames.filter((name) => name === "focus-end")).toHaveLength(1);
+      expect(timingNames.indexOf("focus-start")).toBeLessThan(timingNames.indexOf("focus-end"));
+    } finally {
+      allowFocusResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("closes focus timing when a fatal signal exits before project-service focus settles", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-focus-signal-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const focusRequested = deferred();
+    const allowFocusResponse = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        req.on("data", () => {});
+        req.on("end", async () => {
+          focusRequested.resolve();
+          await allowFocusResponse.promise;
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+    const sigintBefore = new Set(process.rawListeners("SIGINT"));
+    const sigtermBefore = new Set(process.rawListeners("SIGTERM"));
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    });
+
+    try {
+      void runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        currentClientSession: "aimux-test-client-12345678",
+        clientTty: "/dev/ttys001",
+        input,
+        output,
+        manageTerminal: true,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "codex");
+      input.write("\r");
+      await focusRequested.promise;
+      const signalListener = process.rawListeners("SIGTERM").find((listener) => !sigtermBefore.has(listener));
+      expect(signalListener).toBeTypeOf("function");
+      expect(() => signalListener?.call(process)).toThrow("process.exit:0");
+
+      const timingNames = timing.map((event) => event.name);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(timingNames.filter((name) => name === "focus-start")).toHaveLength(1);
+      expect(timingNames.filter((name) => name === "focus-end")).toHaveLength(1);
+      expect(timingNames.indexOf("focus-start")).toBeLessThan(timingNames.indexOf("focus-end"));
+      expect(timingNames.indexOf("focus-end")).toBeLessThan(timingNames.indexOf("exit"));
+    } finally {
+      allowFocusResponse.resolve();
+      for (const listener of process.rawListeners("SIGINT")) {
+        if (!sigintBefore.has(listener)) process.off("SIGINT", listener);
+      }
+      for (const listener of process.rawListeners("SIGTERM")) {
+        if (!sigtermBefore.has(listener)) process.off("SIGTERM", listener);
+      }
       server.close();
       input.destroy();
       output.destroy();
@@ -1230,6 +1862,7 @@ exit 0
     output.columns = 100;
     output.rows = 30;
     output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
 
     try {
       const result = runTmuxExpose({
@@ -1245,6 +1878,7 @@ exit 0
         columns: 100,
         rows: 30,
         exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
       });
 
       await waitForOutput(output, "project-codex");
@@ -1258,6 +1892,7 @@ exit 0
       await focusRequested.promise;
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
       expect(focusRoute).toBe("global");
+      expect(timing.map((event) => event.name)).toContain("items-load-stale");
     } finally {
       server.close();
       input.destroy();
