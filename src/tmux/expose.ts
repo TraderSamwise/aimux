@@ -48,6 +48,7 @@ export interface TmuxExposeOptions {
 const CAPTURE_LINES = 40;
 const ITEM_RELOAD_EVERY_TICKS = 5;
 const INPUT_QUIET_BEFORE_REFRESH_MS = 120;
+const RESIZE_CHECK_DURING_INPUT_MS = 1000;
 // Preview refresh cadence scales with tile count: snappy for a few tiles, easier
 // on CPU when many panes are captured per tick (each tile is one capture-pane).
 function refreshDelayMs(count: number): number {
@@ -467,6 +468,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let refreshStarted = false;
   let pendingKeys: Array<{ key: string; ctrl?: boolean }> = [];
   let lastInputAt = 0;
+  let lastResizeCheckAt = 0;
   let selectionVersion = 0;
 
   const renderTileIndexes = (tileIndexes: number[]): boolean => {
@@ -811,18 +813,24 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const scheduleRefresh = () => {
       timer = setTimeout(async () => {
         try {
-          if (lastInputAt && Date.now() - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS) {
-            scheduleRefresh();
-            return;
-          }
+          const now = Date.now();
+          const inputQuiet = Boolean(lastInputAt && now - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS);
+          if (inputQuiet && lastResizeCheckAt === 0) lastResizeCheckAt = now;
+          const shouldCheckResize =
+            !inputQuiet || (lastResizeCheckAt > 0 && now - lastResizeCheckAt >= RESIZE_CHECK_DURING_INPUT_MS);
           // A fixed-size popup can't grow with the terminal, so exit and let the launcher
           // relaunch us at the new bounds when the controlling client size changes.
-          if (clientBaseline) {
+          if (clientBaseline && shouldCheckResize) {
+            lastResizeCheckAt = now;
             const clientNow = queryClientSize(options.clientTty);
             if (clientNow && clientNow !== clientBaseline) {
               finish(RELAUNCH_ON_RESIZE_EXIT);
               return;
             }
+          }
+          if (inputQuiet) {
+            scheduleRefresh();
+            return;
           }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
           // idle exposé still reflows when the window size changes.
