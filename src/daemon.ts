@@ -664,9 +664,12 @@ export class AimuxDaemon {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
   }
 
-  private exposeItemsRoute(): DaemonRouteResponse {
+  private exposeItemsRoute(routeUrl: URL): DaemonRouteResponse {
+    const includePreview = routeUrl.searchParams.get("includePreview") === "1";
     const items = listAllProjectsExposeItems().map((item) => {
-      const previewSnapshot = getExposePreviewSnapshot(item.projectRoot, item.target.windowId);
+      const previewSnapshot = includePreview
+        ? getExposePreviewSnapshot(item.projectRoot, item.target.windowId)
+        : undefined;
       return {
         ...serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item),
         projectId: item.projectId,
@@ -3356,7 +3359,7 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
       if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
-      return this.exposeItemsRoute();
+      return this.exposeItemsRoute(routeUrl);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.exposeFocus) {

@@ -2631,6 +2631,7 @@ export class MetadataServer {
       const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
       const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
       const rawLabels = url.searchParams.get("labelFormat") === "raw";
+      const includePreview = url.searchParams.get("includePreview") === "1";
       const rawItems = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
@@ -2642,9 +2643,9 @@ export class MetadataServer {
         new TmuxRuntimeManager(),
         { scope },
       );
-      this.exposePreviewCache?.trackItems(rawItems);
+      if (includePreview) this.exposePreviewCache?.trackItems(rawItems);
       const items = rawItems.map((item) => {
-        const previewSnapshot = this.exposePreviewCache?.get(item.target.windowId);
+        const previewSnapshot = includePreview ? this.exposePreviewCache?.get(item.target.windowId) : undefined;
         const serialized = serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item);
         return {
           ...serialized,

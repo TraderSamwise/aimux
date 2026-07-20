@@ -2136,9 +2136,14 @@ describe("MetadataServer threads API", () => {
     try {
       const endpoint = server.getAddress();
       expect(endpoint).toBeTruthy();
-      const response = await fetch(
-        `http://${endpoint!.host}:${endpoint!.port}${PROJECT_API_ROUTES.controls.switchableAgents}?scope=all&labelFormat=raw`,
-      );
+      const base = `http://${endpoint!.host}:${endpoint!.port}${PROJECT_API_ROUTES.controls.switchableAgents}`;
+      const withoutPreview = await fetch(`${base}?scope=all&labelFormat=raw`);
+      const withoutPreviewBody = (await withoutPreview.json()) as { ok: boolean; items: Array<Record<string, any>> };
+      expect(withoutPreview.status).toBe(200);
+      expect(withoutPreviewBody.items[0]?.previewSnapshot).toBeUndefined();
+      expect(exposePreviewCache.trackItems).not.toHaveBeenCalled();
+
+      const response = await fetch(`${base}?scope=all&labelFormat=raw&includePreview=1`);
       const body = (await response.json()) as { ok: boolean; items: Array<Record<string, any>> };
 
       expect(response.status).toBe(200);
