@@ -752,6 +752,123 @@ exit 0
     }
   });
 
+  it("preserves selection changes made while a refresh reload is pending", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-reload-selection-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const secondSwitchableRequested = deferred();
+    const allowSecondSwitchableResponse = deferred();
+    const focusRequested = deferred();
+    let switchableRequestCount = 0;
+    let focusedWindow = "";
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        switchableRequestCount += 1;
+        if (switchableRequestCount === 2) {
+          secondSwitchableRequested.resolve();
+          await allowSecondSwitchableResponse.promise;
+        }
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+            {
+              id: "session-2",
+              label: "claude",
+              urgency: 0,
+              activity: 0,
+              recentRank: 1,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-2",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk.toString("utf8");
+        });
+        req.on("end", () => {
+          focusedWindow = (JSON.parse(body) as { windowId?: string }).windowId ?? "";
+          focusRequested.resolve();
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 100;
+    output.rows = 30;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 100,
+        rows: 30,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "claude");
+      await withTimeout(secondSwitchableRequested.promise, 2500);
+      const moveRedraw = readNextOutput(output);
+      input.write("\x1b[C");
+      await moveRedraw;
+      const reloadRedraw = readNextOutput(output);
+      allowSecondSwitchableResponse.resolve();
+      await reloadRedraw;
+      input.write("\r");
+
+      await focusRequested.promise;
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(focusedWindow).toBe("@2");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("replays queued movement and Enter after the API-backed item list resolves", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-pending-test-"));
     tempRoots.push(root);
