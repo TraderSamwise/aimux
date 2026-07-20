@@ -53,6 +53,8 @@ export type TmuxExposeTimingEventName =
   | "terminal-ready"
   | "items-load-start"
   | "items-load-end"
+  | "items-load-stale"
+  | "items-load-error"
   | "first-render"
   | "first-items-render"
   | "first-live-capture-start"
@@ -383,7 +385,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       ...fields,
     };
     options.onTiming?.(event);
-    log.debug("expose timing", "expose", { ...event });
+    log.debug("expose timing", "tmux", { ...event });
   };
   markTiming("start");
 
@@ -494,6 +496,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   // Returns whether any capture changed, so the refresh loop can skip a repaint when
   // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
   const refreshCaptures = (): boolean => {
+    if (items.length === 0) return false;
     const markFirstLiveCapture = !firstLiveCaptureMarked;
     if (markFirstLiveCapture) {
       firstLiveCaptureMarked = true;
@@ -663,10 +666,17 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     try {
       nextView = await loadExposeScopeItems(reloadScope, context, options.projectStateDir, exposeDeps);
     } catch (error) {
-      if (generation !== reloadGeneration || reloadScope !== scope) return "stale";
+      if (generation !== reloadGeneration || reloadScope !== scope) {
+        markTiming("items-load-stale", { scope: reloadScope });
+        return "stale";
+      }
+      markTiming("items-load-error", { scope: reloadScope });
       throw error;
     }
-    if (generation !== reloadGeneration || reloadScope !== scope) return "stale";
+    if (generation !== reloadGeneration || reloadScope !== scope) {
+      markTiming("items-load-stale", { scope: reloadScope });
+      return "stale";
+    }
     const selectedWindowId =
       selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
     view = nextView;
