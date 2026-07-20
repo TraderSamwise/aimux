@@ -8,6 +8,7 @@ import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metad
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems } from "./expose-control.js";
+import { getExposePreviewSnapshot } from "./expose-preview-cache.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -664,12 +665,15 @@ export class AimuxDaemon {
   }
 
   private exposeItemsRoute(): DaemonRouteResponse {
-    const items = listAllProjectsExposeItems().map((item) => ({
-      ...serializeFastControlItem(item),
-      projectId: item.projectId,
-      projectName: item.projectName,
-      projectRoot: item.projectRoot,
-    }));
+    const items = listAllProjectsExposeItems().map((item) => {
+      const previewSnapshot = getExposePreviewSnapshot(item.projectRoot, item.target.windowId);
+      return {
+        ...serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item),
+        projectId: item.projectId,
+        projectName: item.projectName,
+        projectRoot: item.projectRoot,
+      };
+    });
     return { status: 200, body: { ok: true, items } };
   }
 

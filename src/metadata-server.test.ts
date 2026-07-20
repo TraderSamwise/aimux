@@ -2090,6 +2090,71 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("attaches cached expose preview snapshots to switchable-agent responses", async () => {
+    server?.stop();
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const previewSnapshot = {
+      output: "warm preview\n",
+      capturedAt: "2026-07-20T13:00:00.000Z",
+      source: "capture" as const,
+      windowId: "@7",
+      startLine: -40,
+      lineCount: 40,
+    };
+    const exposePreviewCache = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      get: vi.fn((windowId: string) => (windowId === "@7" ? previewSnapshot : undefined)),
+    };
+
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.listManagedWindows = () =>
+      [
+        {
+          target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-1",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+            worktreePath: repoRoot,
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.listWindows = () => [
+      { id: "@7", index: 7, name: "codex", active: true, activity: 12 },
+    ];
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    server = new MetadataServer({ exposePreviewCache });
+    await server.start();
+
+    try {
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const response = await fetch(
+        `http://${endpoint!.host}:${endpoint!.port}${PROJECT_API_ROUTES.controls.switchableAgents}?scope=all&labelFormat=raw`,
+      );
+      const body = (await response.json()) as { ok: boolean; items: Array<Record<string, any>> };
+
+      expect(response.status).toBe(200);
+      expect(body.items[0]?.previewSnapshot).toEqual(previewSnapshot);
+      expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([
+        expect.objectContaining({ target: expect.objectContaining({ windowId: "@7" }) }),
+      ]);
+      expect(exposePreviewCache.start).toHaveBeenCalledTimes(1);
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+    }
+  });
+
   it("serves a reconciled coordination worklist from desktop state + notifications", async () => {
     server?.stop();
     server = new MetadataServer({
