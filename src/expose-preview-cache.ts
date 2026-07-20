@@ -21,7 +21,6 @@ export interface ExposePreviewCacheLike {
 export interface ExposePreviewCacheOptions {
   projectRoot: string;
   tmux?: Pick<TmuxRuntimeManager, "captureTargetAsync">;
-  listItems: () => ExposePreviewTarget[];
   intervalMs?: number;
   activeMs?: number;
   lineCount?: number;
@@ -84,6 +83,13 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
 
   trackItems(items: ExposePreviewTarget[]): void {
     this.activeUntil = this.now().getTime() + this.activeMs;
+    const requestedWindowIds = new Set(items.map((item) => item.target.windowId));
+    for (const windowId of this.trackedTargets.keys()) {
+      if (!requestedWindowIds.has(windowId)) {
+        this.trackedTargets.delete(windowId);
+        this.failureCounts.delete(windowId);
+      }
+    }
     for (const item of items) {
       this.trackedTargets.set(item.target.windowId, item);
     }
@@ -107,40 +113,13 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
     this.timer.unref?.();
   }
 
-  private listedTargets(): ExposePreviewTarget[] | null {
-    try {
-      return this.options.listItems();
-    } catch {
-      return null;
-    }
-  }
-
   private async refresh(): Promise<void> {
     if (!this.running || this.refreshing) return;
     const now = this.now().getTime();
     if (now > this.activeUntil) return;
     this.refreshing = true;
     try {
-      const targets = new Map<string, ExposePreviewTarget>();
-      const listedTargets = this.listedTargets();
-      if (listedTargets) {
-        const listedWindowIds = new Set(listedTargets.map((item) => item.target.windowId));
-        for (const windowId of this.trackedTargets.keys()) {
-          if (!listedWindowIds.has(windowId)) {
-            this.trackedTargets.delete(windowId);
-            this.failureCounts.delete(windowId);
-          }
-        }
-        for (const windowId of this.snapshots.keys()) {
-          if (!listedWindowIds.has(windowId)) {
-            this.snapshots.delete(windowId);
-            this.failureCounts.delete(windowId);
-          }
-        }
-        for (const item of listedTargets) targets.set(item.target.windowId, item);
-      }
-      for (const item of this.trackedTargets.values()) targets.set(item.target.windowId, item);
-      for (const item of targets.values()) await this.capture(item.target);
+      for (const item of this.trackedTargets.values()) await this.capture(item.target);
     } finally {
       this.refreshing = false;
       if (this.now().getTime() < this.activeUntil) this.schedule();
