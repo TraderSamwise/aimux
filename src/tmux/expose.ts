@@ -476,13 +476,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return code;
   };
 
-  // Restore the terminal if tmux (or anything) kills the popup with a signal.
-  const onFatalSignal = () => process.exit(exit(0));
-  if (manageTerminal) {
-    process.once("SIGINT", onFatalSignal);
-    process.once("SIGTERM", onFatalSignal);
-  }
-
   const captures = new Map<string, string>();
   let previewSnapshotCount = 0;
   let firstRenderMarked = false;
@@ -535,6 +528,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let staticSize = "";
   let staticVisibleCount = -1;
   let refreshTick = 0;
+  let finished = false;
   let opening = false;
   let focusTimingOpen = false;
   let refreshStarted = false;
@@ -543,6 +537,32 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let lastResizeCheckAt = 0;
   let selectionVersion = 0;
   let reloadGeneration = 0;
+
+  const closeFocusTiming = () => {
+    if (!focusTimingOpen) return;
+    focusTimingOpen = false;
+    markTiming("focus-end", { scope, itemCount: items.length });
+  };
+
+  const detachFatalSignals = () => {
+    if (!manageTerminal) return;
+    process.off("SIGINT", onFatalSignal);
+    process.off("SIGTERM", onFatalSignal);
+  };
+
+  // Restore the terminal if tmux (or anything) kills the popup with a signal.
+  const onFatalSignal = () => {
+    if (!finished) {
+      finished = true;
+      closeFocusTiming();
+    }
+    detachFatalSignals();
+    process.exit(exit(0));
+  };
+  if (manageTerminal) {
+    process.once("SIGINT", onFatalSignal);
+    process.once("SIGTERM", onFatalSignal);
+  }
 
   const renderTileAt = (tileIndex: number, layout: GridLayout, geo: PanelGeometry): string => {
     const r = Math.floor(tileIndex / layout.tileCols);
@@ -662,6 +682,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
   // captures, keep the user's selected tile when possible, and re-capture.
   const reload = async (capture = true): Promise<"committed" | "stale"> => {
+    if (finished) return "stale";
     const generation = (reloadGeneration += 1);
     const reloadScope = scope;
     const selectedWindowIdAtStart = items[index]?.target.windowId;
@@ -671,6 +692,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     try {
       nextView = await loadExposeScopeItems(reloadScope, context, options.projectStateDir, exposeDeps);
     } catch (error) {
+      if (finished) return "stale";
       if (generation !== reloadGeneration || reloadScope !== scope) {
         markTiming("items-load-stale", { scope: reloadScope });
         return "stale";
@@ -678,6 +700,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       markTiming("items-load-error", { scope: reloadScope });
       throw error;
     }
+    if (finished) return "stale";
     if (generation !== reloadGeneration || reloadScope !== scope) {
       markTiming("items-load-stale", { scope: reloadScope });
       return "stale";
@@ -706,22 +729,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   render();
 
   return await new Promise<number>((resolve) => {
-    let finished = false;
-    const closeFocusTiming = () => {
-      if (!focusTimingOpen) return;
-      focusTimingOpen = false;
-      markTiming("focus-end", { scope, itemCount: items.length });
-    };
     const finish = (code: number) => {
       if (finished) return;
       finished = true;
       closeFocusTiming();
       input.off("data", onData);
       input.off("end", onEnd);
-      if (manageTerminal) {
-        process.off("SIGINT", onFatalSignal);
-        process.off("SIGTERM", onFatalSignal);
-      }
+      detachFatalSignals();
       resolve(exit(code));
     };
 
