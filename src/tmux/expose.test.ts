@@ -7,12 +7,16 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTmuxExpose } from "./expose.js";
 
+const runtimeManagerMock = vi.hoisted(() => ({
+  captureTarget: vi.fn(() => "agent output\n"),
+}));
+
 vi.mock("./runtime-manager.js", () => ({
   isDashboardWindowName: (name: string) => name === "dashboard" || name.startsWith("dashboard-"),
   isMetaDashboardWindowName: (name: string) => name === "meta-dashboard" || name.startsWith("meta-dashboard-"),
   TmuxRuntimeManager: class {
     captureTarget(): string {
-      return "agent output\n";
+      return runtimeManagerMock.captureTarget();
     }
   },
 }));
@@ -21,6 +25,8 @@ const tempRoots: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
+  runtimeManagerMock.captureTarget.mockReset();
+  runtimeManagerMock.captureTarget.mockReturnValue("agent output\n");
   while (tempRoots.length) {
     rmSync(tempRoots.pop()!, { recursive: true, force: true });
   }
@@ -82,6 +88,81 @@ function readNextOutput(output: PassThrough, ms = 1000): Promise<string> {
 }
 
 describe("runTmuxExpose", () => {
+  it("renders preview snapshots from the item API before live capture succeeds", async () => {
+    runtimeManagerMock.captureTarget.mockImplementation(() => {
+      throw new Error("capture unavailable");
+    });
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-preview-snapshot-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      sendJson(res, {
+        ok: true,
+        items: [
+          {
+            id: "session-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            previewSnapshot: {
+              output: "warm preview line\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@1",
+              startLine: -40,
+              lineCount: 40,
+            },
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "session-1",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: "/repo",
+            },
+          },
+        ],
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "warm preview line");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(runtimeManagerMock.captureTarget).toHaveBeenCalled();
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("returns the relaunch code when the controlling client size changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-resize-test-"));
     tempRoots.push(root);
