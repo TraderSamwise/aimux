@@ -87,6 +87,7 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
     for (const windowId of this.trackedTargets.keys()) {
       if (!requestedWindowIds.has(windowId)) {
         this.trackedTargets.delete(windowId);
+        this.snapshots.delete(windowId);
         this.failureCounts.delete(windowId);
       }
     }
@@ -119,7 +120,8 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
     if (now > this.activeUntil) return;
     this.refreshing = true;
     try {
-      for (const item of this.trackedTargets.values()) await this.capture(item.target);
+      const targets = [...this.trackedTargets.values()];
+      for (const item of targets) await this.capture(item.target);
     } finally {
       this.refreshing = false;
       if (this.now().getTime() < this.activeUntil) this.schedule();
@@ -132,6 +134,7 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
         startLine: -this.lineCount,
         includeEscapes: true,
       });
+      if (!this.isCurrentTarget(target)) return;
       this.failureCounts.delete(target.windowId);
       this.snapshots.set(target.windowId, {
         output,
@@ -142,6 +145,7 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
         lineCount: this.lineCount,
       });
     } catch {
+      if (!this.isCurrentTarget(target)) return;
       const failures = (this.failureCounts.get(target.windowId) ?? 0) + 1;
       this.failureCounts.set(target.windowId, failures);
       if (failures >= EXPOSE_PREVIEW_MAX_CAPTURE_FAILURES) {
@@ -150,5 +154,9 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
         this.failureCounts.delete(target.windowId);
       }
     }
+  }
+
+  private isCurrentTarget(target: TmuxTarget): boolean {
+    return this.trackedTargets.get(target.windowId)?.target === target;
   }
 }
