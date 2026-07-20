@@ -1058,6 +1058,7 @@ exit 0
 
     const secondSwitchableRequested = deferred();
     const allowSecondSwitchableResponse = deferred();
+    const secondSwitchableResponded = deferred();
     const focusRequested = deferred();
     let switchableRequestCount = 0;
     let focusRoute = "";
@@ -1089,6 +1090,7 @@ exit 0
             },
           ],
         });
+        if (switchableRequestCount === 2) secondSwitchableResponded.resolve();
         return;
       }
       if (req.url?.startsWith("/core/expose/items")) {
@@ -1169,7 +1171,7 @@ exit 0
       input.write("g");
       await waitForOutput(output, "global-codex");
       allowSecondSwitchableResponse.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await withTimeout(secondSwitchableResponded.promise, 1000);
       input.write("\r");
 
       await focusRequested.promise;
