@@ -698,7 +698,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectedIdx = selectedWindowId ? items.findIndex((item) => item.target.windowId === selectedWindowId) : -1;
     const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
     index = selectedIdx >= 0 ? selectedIdx : currentIdx >= 0 ? currentIdx : 0;
-    if (capture) refreshCaptures();
+    if (capture && firstItemsRenderMarked) refreshCaptures();
     return "committed";
   };
 
