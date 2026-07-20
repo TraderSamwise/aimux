@@ -280,6 +280,52 @@ describe("runTmuxExpose", () => {
     }
   });
 
+  it("treats timing callback errors as non-fatal", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-timing-callback-error-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((_req, res) => {
+      sendJson(res, { ok: true, items: [] });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: () => {
+          throw new Error("timing sink failed");
+        },
+      });
+
+      await waitForOutput(output, "No active agents");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("returns the relaunch code when the controlling client size changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-resize-test-"));
     tempRoots.push(root);

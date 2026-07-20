@@ -384,7 +384,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       elapsedMs: Math.round((performance.now() - timingStartedAt) * 100) / 100,
       ...fields,
     };
-    options.onTiming?.(event);
+    try {
+      options.onTiming?.(event);
+    } catch {
+      log.debug("expose timing sink failed", "tmux", {});
+    }
     log.debug("expose timing", "tmux", { ...event });
   };
   markTiming("start");
