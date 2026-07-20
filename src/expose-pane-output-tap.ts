@@ -1,0 +1,210 @@
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { FastControlItem } from "./fast-control.js";
+import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import type { TmuxTarget } from "./tmux/runtime-manager.js";
+
+export const EXPOSE_PANE_TAP_ACTIVE_MS = 10_000;
+export const EXPOSE_PANE_TAP_MAX_BYTES = 128_000;
+
+type ExposePaneOutputTapTarget = Pick<FastControlItem, "id" | "target">;
+type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & { expiresAt: number; filePath: string };
+
+export interface ExposePaneOutputTapSnapshot {
+  output: string;
+  capturedAt: string;
+  source: "tap";
+  windowId: string;
+  byteCount: number;
+}
+
+export interface ExposePaneOutputTapLike {
+  start(): void;
+  stop(): void;
+  trackItems(items: ExposePaneOutputTapTarget[]): void;
+  read(windowId: string, maxBytes?: number): ExposePaneOutputTapSnapshot | undefined;
+}
+
+export interface ExposePaneOutputTapOptions {
+  projectStateDir: string;
+  tmux?: Pick<TmuxRuntimeManager, "isPanePiped" | "pipeTargetToFile" | "stopPanePipe">;
+  activeMs?: number;
+  maxBytes?: number;
+  now?: () => Date;
+}
+
+export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
+  private readonly tmux: Pick<TmuxRuntimeManager, "isPanePiped" | "pipeTargetToFile" | "stopPanePipe">;
+  private readonly activeMs: number;
+  private readonly maxBytes: number;
+  private readonly now: () => Date;
+  private readonly tapDir: string;
+  private readonly trackedTargets = new Map<string, TrackedExposePaneOutputTap>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+
+  constructor(private readonly options: ExposePaneOutputTapOptions) {
+    this.tmux = options.tmux ?? new TmuxRuntimeManager();
+    this.activeMs = options.activeMs ?? EXPOSE_PANE_TAP_ACTIVE_MS;
+    this.maxBytes = options.maxBytes ?? EXPOSE_PANE_TAP_MAX_BYTES;
+    this.now = options.now ?? (() => new Date());
+    this.tapDir = join(options.projectStateDir, "expose-pane-taps");
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    try {
+      mkdirSync(this.tapDir, { recursive: true });
+    } catch {}
+  }
+
+  stop(): void {
+    this.running = false;
+    this.clearTimer();
+    const tracked = [...this.trackedTargets.values()];
+    this.trackedTargets.clear();
+    for (const item of tracked) this.stopTracked(item);
+  }
+
+  trackItems(items: ExposePaneOutputTapTarget[]): void {
+    if (!this.running) return;
+    const now = this.now().getTime();
+    this.pruneExpired(now);
+    if (items.length === 0) return;
+
+    try {
+      mkdirSync(this.tapDir, { recursive: true });
+    } catch {
+      return;
+    }
+    const expiresAt = now + this.activeMs;
+    for (const item of items) {
+      const current = this.trackedTargets.get(item.target.windowId);
+      if (current && sameTarget(current.target, item.target) && existsSync(current.filePath)) {
+        current.id = item.id;
+        current.expiresAt = expiresAt;
+        this.compactFile(current.filePath);
+        continue;
+      }
+      if (current) {
+        this.trackedTargets.delete(item.target.windowId);
+        this.stopTracked(current);
+      }
+      this.startTracked(item, expiresAt);
+    }
+    this.schedulePrune();
+  }
+
+  read(windowId: string, maxBytes = this.maxBytes): ExposePaneOutputTapSnapshot | undefined {
+    this.pruneExpired(this.now().getTime());
+    const current = this.trackedTargets.get(windowId);
+    if (!current) return undefined;
+    const limit = Math.min(Math.max(0, maxBytes), this.maxBytes);
+    if (limit <= 0) return undefined;
+    const tail = readTail(current.filePath, limit);
+    if (!tail || tail.buffer.length === 0) return undefined;
+    if (tail.totalBytes > this.maxBytes) this.compactFile(current.filePath);
+    return {
+      output: tail.buffer.toString("utf8"),
+      capturedAt: this.now().toISOString(),
+      source: "tap",
+      windowId,
+      byteCount: tail.buffer.length,
+    };
+  }
+
+  private startTracked(item: ExposePaneOutputTapTarget, expiresAt: number): void {
+    let filePath: string | undefined;
+    try {
+      if (this.tmux.isPanePiped(item.target)) return;
+      filePath = this.tapFilePath(item.target.windowId);
+      rmSync(filePath, { force: true });
+      writeFileSync(filePath, "");
+      this.tmux.pipeTargetToFile(item.target, filePath, { onlyIfNotPiped: true });
+      this.trackedTargets.set(item.target.windowId, { ...item, expiresAt, filePath });
+    } catch {
+      if (filePath) {
+        try {
+          rmSync(filePath, { force: true });
+        } catch {}
+      }
+    }
+  }
+
+  private stopTracked(item: TrackedExposePaneOutputTap): void {
+    try {
+      this.tmux.stopPanePipe(item.target);
+    } catch {}
+    try {
+      rmSync(item.filePath, { force: true });
+    } catch {}
+  }
+
+  private schedulePrune(): void {
+    if (!this.running || this.timer || this.trackedTargets.size === 0) return;
+    const now = this.now().getTime();
+    const nextExpiry = Math.min(...[...this.trackedTargets.values()].map((item) => item.expiresAt));
+    this.timer = setTimeout(
+      () => {
+        this.timer = null;
+        this.pruneExpired(this.now().getTime());
+        this.schedulePrune();
+      },
+      Math.max(0, nextExpiry - now),
+    );
+    this.timer.unref?.();
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [windowId, item] of this.trackedTargets) {
+      if (now < item.expiresAt) continue;
+      this.trackedTargets.delete(windowId);
+      this.stopTracked(item);
+    }
+    if (this.trackedTargets.size === 0) this.clearTimer();
+  }
+
+  private clearTimer(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private compactFile(filePath: string): void {
+    const tail = readTail(filePath, this.maxBytes);
+    if (!tail || tail.totalBytes <= this.maxBytes) return;
+    try {
+      writeFileSync(filePath, tail.buffer);
+    } catch {}
+  }
+
+  private tapFilePath(windowId: string): string {
+    const hash = createHash("sha256").update(windowId).digest("hex").slice(0, 16);
+    return join(this.tapDir, `${hash}.log`);
+  }
+}
+
+function sameTarget(left: TmuxTarget, right: TmuxTarget): boolean {
+  return left.windowId === right.windowId;
+}
+
+function readTail(filePath: string, maxBytes: number): { buffer: Buffer; totalBytes: number } | null {
+  let fd: number | null = null;
+  try {
+    const totalBytes = statSync(filePath).size;
+    const byteCount = Math.min(totalBytes, maxBytes);
+    const buffer = Buffer.alloc(byteCount);
+    fd = openSync(filePath, "r");
+    const bytesRead = readSync(fd, buffer, 0, byteCount, totalBytes - byteCount);
+    return { buffer: bytesRead === byteCount ? buffer : buffer.subarray(0, bytesRead), totalBytes };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}

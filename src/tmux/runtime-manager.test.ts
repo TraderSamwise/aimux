@@ -1661,6 +1661,27 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("starts and stops pane pipes with a quoted file sink", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux-mobile-abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.startPanePipe(target, "cat >> /tmp/plain.log");
+    manager.pipeTargetToFile(target, "/tmp/aimux tap/it's.log", { onlyIfNotPiped: true });
+    manager.stopPanePipe(target);
+
+    expect(exec.calls.slice(-3).map((call) => call.args)).toEqual([
+      ["pipe-pane", "-t", "@3", "cat >> /tmp/plain.log"],
+      ["pipe-pane", "-t", "@3", "-o", `cat >> '/tmp/aimux tap/it'"'"'s.log'`],
+      ["pipe-pane", "-t", "@3"],
+    ]);
+  });
+
   it("does not leak raw tmux launch argv when window creation fails", () => {
     const manager = new TmuxRuntimeManager(
       vi.fn<TmuxExec>(() => {
