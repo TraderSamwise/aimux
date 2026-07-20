@@ -793,10 +793,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
             !entry.name && entry.char.length > 1 ? [...entry.char].map((char) => ({ ...entry, char })) : [entry],
           );
         if (events.length > 0) {
-          const now = Date.now();
-          const continuingInputBurst = Boolean(lastInputAt && now - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS);
-          lastInputAt = now;
-          if (!continuingInputBurst) lastResizeCheckAt = now;
+          lastInputAt = Date.now();
         }
         let needsRender = false;
         const deferRender = events.length > 1;
