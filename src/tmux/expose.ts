@@ -435,6 +435,13 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   }
 
   const captures = new Map<string, string>();
+  const seedPreviewSnapshots = (): void => {
+    for (const item of items) {
+      if (!item.previewSnapshot) continue;
+      captures.set(item.target.windowId, item.previewSnapshot.output);
+    }
+  };
+
   // Returns whether any capture changed, so the refresh loop can skip a repaint when
   // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
   const refreshCaptures = (): boolean => {
@@ -598,6 +605,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     sublabel = view.sublabel;
     loading = false;
     captures.clear();
+    seedPreviewSnapshots();
     const selectedIdx = selectedWindowId ? items.findIndex((item) => item.target.windowId === selectedWindowId) : -1;
     const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
     index = selectedIdx >= 0 ? selectedIdx : currentIdx >= 0 ? currentIdx : 0;
