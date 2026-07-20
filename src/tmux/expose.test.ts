@@ -396,6 +396,73 @@ describe("runTmuxExpose", () => {
     }
   });
 
+  it("does not emit item load timing after exit when a load resolves late", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-late-load-exit-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const switchableRequested = deferred();
+    const allowSwitchableResponse = deferred();
+    const switchableResponded = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        switchableRequested.resolve();
+        await allowSwitchableResponse.promise;
+        sendJson(res, { ok: true, items: [] });
+        switchableResponded.resolve();
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await switchableRequested.promise;
+      input.end();
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      const exitIndex = timing.findIndex((event) => event.name === "exit");
+      allowSwitchableResponse.resolve();
+      await withTimeout(switchableResponded.promise, 1000);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(exitIndex).toBeGreaterThanOrEqual(0);
+      expect(timing.map((event) => event.name).slice(exitIndex + 1)).toEqual([]);
+      expect(timing.map((event) => event.name)).not.toEqual(
+        expect.arrayContaining(["items-load-end", "items-load-error", "items-load-stale"]),
+      );
+    } finally {
+      allowSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("treats timing callback errors as non-fatal", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-timing-callback-error-test-"));
     tempRoots.push(root);
@@ -976,6 +1043,112 @@ exit 0
       expect(timingNames.indexOf("focus-start")).toBeLessThan(timingNames.indexOf("focus-end"));
     } finally {
       allowFocusResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("closes focus timing when a fatal signal exits before project-service focus settles", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-focus-signal-timing-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const focusRequested = deferred();
+    const allowFocusResponse = deferred();
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        req.on("data", () => {});
+        req.on("end", async () => {
+          focusRequested.resolve();
+          await allowFocusResponse.promise;
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const timing: TmuxExposeTimingEvent[] = [];
+    const sigintBefore = new Set(process.rawListeners("SIGINT"));
+    const sigtermBefore = new Set(process.rawListeners("SIGTERM"));
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    });
+
+    try {
+      void runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        currentClientSession: "aimux-test-client-12345678",
+        clientTty: "/dev/ttys001",
+        input,
+        output,
+        manageTerminal: true,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "codex");
+      input.write("\r");
+      await focusRequested.promise;
+      const signalListener = process.rawListeners("SIGTERM").find((listener) => !sigtermBefore.has(listener));
+      expect(signalListener).toBeTypeOf("function");
+      expect(() => signalListener?.call(process)).toThrow("process.exit:0");
+
+      const timingNames = timing.map((event) => event.name);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(timingNames.filter((name) => name === "focus-start")).toHaveLength(1);
+      expect(timingNames.filter((name) => name === "focus-end")).toHaveLength(1);
+      expect(timingNames.indexOf("focus-start")).toBeLessThan(timingNames.indexOf("focus-end"));
+      expect(timingNames.indexOf("focus-end")).toBeLessThan(timingNames.indexOf("exit"));
+    } finally {
+      allowFocusResponse.resolve();
+      for (const listener of process.rawListeners("SIGINT")) {
+        if (!sigintBefore.has(listener)) process.off("SIGINT", listener);
+      }
+      for (const listener of process.rawListeners("SIGTERM")) {
+        if (!sigtermBefore.has(listener)) process.off("SIGTERM", listener);
+      }
       server.close();
       input.destroy();
       output.destroy();
