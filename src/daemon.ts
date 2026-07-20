@@ -8,7 +8,7 @@ import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metad
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems } from "./expose-control.js";
-import { getExposePreviewSnapshot } from "./expose-preview-cache.js";
+import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -666,7 +666,19 @@ export class AimuxDaemon {
 
   private exposeItemsRoute(routeUrl: URL): DaemonRouteResponse {
     const includePreview = routeUrl.searchParams.get("includePreview") === "1";
-    const items = listAllProjectsExposeItems().map((item) => {
+    const rawItems = listAllProjectsExposeItems();
+    if (includePreview) {
+      const itemsByProjectRoot = new Map<string, typeof rawItems>();
+      for (const item of rawItems) {
+        const projectItems = itemsByProjectRoot.get(item.projectRoot) ?? [];
+        projectItems.push(item);
+        itemsByProjectRoot.set(item.projectRoot, projectItems);
+      }
+      for (const [projectRoot, projectItems] of itemsByProjectRoot) {
+        trackExposePreviewItems(projectRoot, projectItems);
+      }
+    }
+    const items = rawItems.map((item) => {
       const previewSnapshot = includePreview
         ? getExposePreviewSnapshot(item.projectRoot, item.target.windowId)
         : undefined;
