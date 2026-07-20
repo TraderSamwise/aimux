@@ -536,6 +536,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let staticVisibleCount = -1;
   let refreshTick = 0;
   let opening = false;
+  let focusTimingOpen = false;
   let refreshStarted = false;
   let pendingKeys: Array<{ key: string; ctrl?: boolean }> = [];
   let lastInputAt = 0;
@@ -706,9 +707,15 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   return await new Promise<number>((resolve) => {
     let finished = false;
+    const closeFocusTiming = () => {
+      if (!focusTimingOpen) return;
+      focusTimingOpen = false;
+      markTiming("focus-end", { scope, itemCount: items.length });
+    };
     const finish = (code: number) => {
       if (finished) return;
       finished = true;
+      closeFocusTiming();
       input.off("data", onData);
       input.off("end", onEnd);
       if (manageTerminal) {
@@ -800,15 +807,16 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (!item) return;
       opening = true;
       markTiming("focus-start", { scope, itemCount: items.length });
+      focusTimingOpen = true;
       if (writeSelectedWindow(options, item)) {
-        markTiming("focus-end", { scope, itemCount: items.length });
+        closeFocusTiming();
         finish(0);
         return;
       }
       void focusExposeItem(item, context, options.projectStateDir, exposeDeps)
         .then((ok) => {
           if (finished) return;
-          markTiming("focus-end", { scope, itemCount: items.length });
+          closeFocusTiming();
           if (ok) {
             finish(0);
             return;
@@ -818,7 +826,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         })
         .catch(() => {
           if (finished) return;
-          markTiming("focus-end", { scope, itemCount: items.length });
+          closeFocusTiming();
           opening = false;
           loadInitialItems();
         });
