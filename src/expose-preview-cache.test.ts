@@ -14,14 +14,13 @@ describe("ExposePreviewCache", () => {
     vi.useRealTimers();
   });
 
-  it("captures listed targets as preview snapshots", async () => {
+  it("captures tracked targets as preview snapshots", async () => {
     const tmux = {
       captureTargetAsync: vi.fn(async (target) => `output for ${target.windowId}\n`),
     };
     const cache = new ExposePreviewCache({
       projectRoot: "/repo",
       tmux,
-      listItems: () => [item("a", "@1"), item("b", "@2")],
       now: () => new Date("2026-07-20T13:00:00.000Z"),
     });
 
@@ -45,6 +44,10 @@ describe("ExposePreviewCache", () => {
       startLine: -EXPOSE_PREVIEW_CAPTURE_LINES,
       lineCount: EXPOSE_PREVIEW_CAPTURE_LINES,
     });
+    expect(tmux.captureTargetAsync).not.toHaveBeenCalledWith(expect.objectContaining({ windowId: "@2" }), {
+      startLine: -EXPOSE_PREVIEW_CAPTURE_LINES,
+      includeEscapes: true,
+    });
   });
 
   it("keeps the last good snapshot when capture fails", async () => {
@@ -54,7 +57,6 @@ describe("ExposePreviewCache", () => {
     const cache = new ExposePreviewCache({
       projectRoot: "/repo",
       tmux,
-      listItems: () => [item("a", "@1")],
       now: () => new Date("2026-07-20T13:00:00.000Z"),
     });
 
@@ -81,7 +83,6 @@ describe("ExposePreviewCache", () => {
     const cache = new ExposePreviewCache({
       projectRoot: "/repo",
       tmux,
-      listItems: () => [item("a", "@1")],
       intervalMs: 1000,
       activeMs: 1500,
       now: () => new Date(Date.now()),
@@ -106,12 +107,13 @@ describe("ExposePreviewCache", () => {
     }
   });
 
-  it("prunes tracked targets and snapshots that are no longer listed", async () => {
-    let liveItems = [item("a", "@1")];
+  it("captures only the current demanded targets", async () => {
+    const tmux = {
+      captureTargetAsync: vi.fn(async (target) => `output for ${target.windowId}\n`),
+    };
     const cache = new ExposePreviewCache({
       projectRoot: "/repo",
-      tmux: { captureTargetAsync: async () => "first output\n" },
-      listItems: () => liveItems,
+      tmux,
       now: () => new Date("2026-07-20T13:00:00.000Z"),
     });
 
@@ -119,14 +121,19 @@ describe("ExposePreviewCache", () => {
     try {
       cache.trackItems([item("a", "@1")]);
       await cache.refreshNow();
-      expect(cache.get("@1")?.output).toBe("first output\n");
+      tmux.captureTargetAsync.mockClear();
 
-      liveItems = [];
+      cache.trackItems([item("b", "@2")]);
       await cache.refreshNow();
-      expect(cache.get("@1")).toBeUndefined();
     } finally {
       cache.stop();
     }
+
+    expect(tmux.captureTargetAsync).toHaveBeenCalledTimes(1);
+    expect(tmux.captureTargetAsync).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@2" }), {
+      startLine: -EXPOSE_PREVIEW_CAPTURE_LINES,
+      includeEscapes: true,
+    });
   });
 
   it("evicts tracked targets after repeated capture failures", async () => {
@@ -138,9 +145,6 @@ describe("ExposePreviewCache", () => {
     const cache = new ExposePreviewCache({
       projectRoot: "/repo",
       tmux,
-      listItems: () => {
-        throw new Error("list unavailable");
-      },
       now: () => new Date("2026-07-20T13:00:00.000Z"),
     });
 
@@ -163,7 +167,6 @@ describe("ExposePreviewCache", () => {
     const cache = new ExposePreviewCache({
       projectRoot: "/repo",
       tmux: { captureTargetAsync: async () => "registered output\n" },
-      listItems: () => [item("a", "@1")],
       now: () => new Date("2026-07-20T13:00:00.000Z"),
     });
 

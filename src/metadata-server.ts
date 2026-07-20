@@ -1373,10 +1373,6 @@ export class MetadataServer {
     const defaultExposePreviewCache = options.lifecycle?.readAgentOutput
       ? new ExposePreviewCache({
           projectRoot: this.currentProjectRoot(),
-          listItems: () =>
-            listSwitchableAgentItems({ projectRoot: this.currentProjectRoot() }, new TmuxRuntimeManager(), {
-              scope: "all",
-            }),
         })
       : null;
     this.exposePreviewCache =
