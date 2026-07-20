@@ -72,6 +72,15 @@ function waitForOutput(output: PassThrough, pattern: string, ms = 1000): Promise
   );
 }
 
+function readNextOutput(output: PassThrough, ms = 1000): Promise<string> {
+  return withTimeout(
+    new Promise<string>((resolve) => {
+      output.once("data", (chunk: Buffer) => resolve(chunk.toString("utf8")));
+    }),
+    ms,
+  );
+}
+
 describe("runTmuxExpose", () => {
   it("returns the relaunch code when the controlling client size changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-resize-test-"));
@@ -537,6 +546,205 @@ exit 0
       expect(existsSync(selectionFile)).toBe(false);
       expect(focusedWindow).toBe("@9");
       expect(focusedProjectRoot).toBe("/other-repo");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("opens a global-scope tile with its number key", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-global-number-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    let focusedWindow = "";
+    let focusedProjectRoot = "";
+    const focusRequested = deferred();
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/core/expose/items")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-remote",
+              label: "codex",
+              projectRoot: "/other-repo",
+              projectName: "Other",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-other", windowId: "@9", windowIndex: 9, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-remote",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/other-repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/core/expose/focus")) {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk.toString("utf8");
+        });
+        req.on("end", () => {
+          const parsed = JSON.parse(body) as { windowId?: string; projectRoot?: string };
+          focusedWindow = parsed.windowId ?? "";
+          focusedProjectRoot = parsed.projectRoot ?? "";
+          focusRequested.resolve();
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "meta-dashboard",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        daemonEndpoint: endpoint,
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+      });
+
+      await waitForOutput(output, "codex");
+      input.write("1");
+
+      await focusRequested.promise;
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(focusedWindow).toBe("@9");
+      expect(focusedProjectRoot).toBe("/other-repo");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("redraws only the moved selection tiles for single-step navigation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-selection-redraw-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+            {
+              id: "session-2",
+              label: "claude",
+              urgency: 0,
+              activity: 0,
+              recentRank: 1,
+              target: { sessionName: "aimux-test", windowId: "@2", windowIndex: 2, windowName: "claude" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-2",
+                command: "claude",
+                args: [],
+                toolConfigKey: "claude",
+                worktreePath: "/repo",
+              },
+            },
+            {
+              id: "session-3",
+              label: "aider",
+              urgency: 0,
+              activity: 0,
+              recentRank: 2,
+              target: { sessionName: "aimux-test", windowId: "@3", windowIndex: 3, windowName: "aider" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-3",
+                command: "aider",
+                args: [],
+                toolConfigKey: "aider",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 100;
+    output.rows = 30;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 100,
+        rows: 30,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "aider");
+      const redraw = readNextOutput(output);
+      input.write("\x1b[C");
+      const chunk = await redraw;
+
+      expect(chunk).toContain("codex");
+      expect(chunk).toContain("claude");
+      expect(chunk).not.toContain("aider");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
     } finally {
       server.close();
       input.destroy();

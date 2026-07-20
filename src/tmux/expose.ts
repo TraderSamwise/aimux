@@ -47,6 +47,7 @@ export interface TmuxExposeOptions {
 
 const CAPTURE_LINES = 40;
 const ITEM_RELOAD_EVERY_TICKS = 5;
+const INPUT_QUIET_BEFORE_REFRESH_MS = 120;
 // Preview refresh cadence scales with tile count: snappy for a few tiles, easier
 // on CPU when many panes are captured per tick (each tile is one capture-pane).
 function refreshDelayMs(count: number): number {
@@ -465,6 +466,55 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let opening = false;
   let refreshStarted = false;
   let pendingKeys: Array<{ key: string; ctrl?: boolean }> = [];
+  let lastInputAt = 0;
+
+  const renderTileIndexes = (tileIndexes: number[]): boolean => {
+    if (loading || visibleCount === 0) return false;
+    const { cols, rows } = terminalSize();
+    const size = `${cols}x${rows}`;
+    const geo = panelGeometry(cols, rows);
+    const innerW = geo.width - 2;
+    const innerH = geo.height - 2;
+    const layout = computeLayout(items.length, innerW, innerH);
+    const nextVisibleCount = layout.visibleCount;
+    if (size !== staticSize || nextVisibleCount !== staticVisibleCount) return false;
+    tileCols = layout.tileCols;
+    visibleCount = nextVisibleCount;
+    if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
+
+    const seen = new Set<number>();
+    let out = "\x1b[?2026h";
+    for (const tileIndex of tileIndexes) {
+      if (tileIndex < 0 || tileIndex >= visibleCount || seen.has(tileIndex)) continue;
+      seen.add(tileIndex);
+      const r = Math.floor(tileIndex / layout.tileCols);
+      const c = tileIndex % layout.tileCols;
+      const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
+      const left = geo.left + 1 + c * (layout.tileWidth + GAP);
+      const item = items[tileIndex]!;
+      const preview = tilePreview(captures.get(item.target.windowId) ?? "", layout.bodyLines);
+      out += drawTile(
+        item,
+        preview,
+        tileIndex + 1,
+        tileIndex === index,
+        top,
+        left,
+        layout.tileWidth,
+        layout,
+        tileSublabel(item),
+        options,
+        false,
+      );
+    }
+    output.write(`${out}\x1b[?2026l`);
+    return true;
+  };
+
+  const renderSelectionMove = (previousIndex: number) => {
+    if (previousIndex === index) return;
+    if (!renderTileIndexes([previousIndex, index])) render(false);
+  };
 
   const render = (full = true) => {
     const { cols, rows } = terminalSize();
@@ -481,7 +531,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const zoom = scope === "global" ? "" : " · g zoom out";
     const title = truncateAnsi(`\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`, innerW - 2);
     const help = truncateAnsi(
-      `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`,
+      `\x1b[2m1-9 open · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`,
       innerW - 2,
     );
 
@@ -685,8 +735,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         const target = Number.parseInt(key, 10) - 1;
         if (target < visibleCount) {
           index = target;
-          if (deferRender) return true;
-          render(false);
+          selectTile(target);
         }
         return false;
       }
@@ -696,27 +745,31 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (visibleCount === 0) return false;
       if (key === "right" || key === "l" || key === "n" || key === "tab") {
+        const previousIndex = index;
         index = (index + 1) % visibleCount;
         if (deferRender) return true;
-        render(false);
+        renderSelectionMove(previousIndex);
         return false;
       }
       if (key === "left" || key === "h" || key === "p") {
+        const previousIndex = index;
         index = (index - 1 + visibleCount) % visibleCount;
         if (deferRender) return true;
-        render(false);
+        renderSelectionMove(previousIndex);
         return false;
       }
       if (key === "down" || key === "j") {
+        const previousIndex = index;
         if (index + tileCols < visibleCount) index += tileCols;
         if (deferRender) return true;
-        render(false);
+        renderSelectionMove(previousIndex);
         return false;
       }
       if (key === "up" || key === "k") {
+        const previousIndex = index;
         if (index - tileCols >= 0) index -= tileCols;
         if (deferRender) return true;
-        render(false);
+        renderSelectionMove(previousIndex);
       }
       return false;
     }
@@ -724,6 +777,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     function onData(data: Buffer) {
       try {
         if (opening) return;
+        lastInputAt = Date.now();
         const events = parseKeys(data)
           .filter((entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse")
           .flatMap((entry) =>
@@ -755,6 +809,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
               finish(RELAUNCH_ON_RESIZE_EXIT);
               return;
             }
+          }
+          if (lastInputAt && Date.now() - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS) {
+            scheduleRefresh();
+            return;
           }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
           // idle exposé still reflows when the window size changes.
