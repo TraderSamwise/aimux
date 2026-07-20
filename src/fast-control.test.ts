@@ -5,6 +5,7 @@ import {
   resolveAttentionAgent,
   resolveNextAgent,
   resolvePrevAgent,
+  serializeFastControlItem,
 } from "./fast-control.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
@@ -13,6 +14,35 @@ vi.mock("./worktree.js", () => ({
 }));
 
 describe("fast-control worktree scoping", () => {
+  it("serializes optional expose preview snapshots", () => {
+    const serialized = serializeFastControlItem({
+      id: "codex-1",
+      label: "codex",
+      target: { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" },
+      metadata: { sessionId: "codex-1" },
+      urgency: 0,
+      activity: 1,
+      recentRank: 0,
+      previewSnapshot: {
+        output: "warm pane output\n",
+        capturedAt: "2026-07-20T13:00:00.000Z",
+        source: "capture",
+        windowId: "@1",
+        startLine: -40,
+        lineCount: 40,
+      },
+    });
+
+    expect(serialized.previewSnapshot).toEqual({
+      output: "warm pane output\n",
+      capturedAt: "2026-07-20T13:00:00.000Z",
+      source: "capture",
+      windowId: "@1",
+      startLine: -40,
+      lineCount: 40,
+    });
+  });
+
   it("uses current window metadata worktree when cwd is outside the worktree", () => {
     const tmux = {
       getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
