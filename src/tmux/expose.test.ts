@@ -1050,6 +1050,138 @@ exit 0
     }
   });
 
+  it("ignores stale refresh reloads after a newer scope reload commits", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-overlap-reload-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const secondSwitchableRequested = deferred();
+    const allowSecondSwitchableResponse = deferred();
+    const focusRequested = deferred();
+    let switchableRequestCount = 0;
+    let focusRoute = "";
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        switchableRequestCount += 1;
+        if (switchableRequestCount === 2) {
+          secondSwitchableRequested.resolve();
+          await allowSecondSwitchableResponse.promise;
+        }
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-project",
+              label: "project-codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-project",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/core/expose/items")) {
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-global",
+              label: "global-codex",
+              projectRoot: "/other-repo",
+              projectName: "Other",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-other", windowId: "@9", windowIndex: 9, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-global",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/other-repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (req.url?.startsWith("/core/expose/focus")) {
+        req.on("data", () => {});
+        req.on("end", () => {
+          focusRoute = "global";
+          focusRequested.resolve();
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      if (req.url?.startsWith("/control/focus-window")) {
+        req.on("data", () => {});
+        req.on("end", () => {
+          focusRoute = "project";
+          focusRequested.resolve();
+          sendJson(res, { ok: true });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 100;
+    output.rows = 30;
+    output.on("data", () => {});
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        daemonEndpoint: endpoint,
+        input,
+        output,
+        manageTerminal: false,
+        columns: 100,
+        rows: 30,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "project-codex");
+      await withTimeout(secondSwitchableRequested.promise, 2500);
+      input.write("g");
+      await waitForOutput(output, "global-codex");
+      allowSecondSwitchableResponse.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      input.write("\r");
+
+      await focusRequested.promise;
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(focusRoute).toBe("global");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("replays queued movement and Enter after the API-backed item list resolves", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-pending-test-"));
     tempRoots.push(root);
