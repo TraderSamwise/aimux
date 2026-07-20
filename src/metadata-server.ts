@@ -158,6 +158,7 @@ import {
 import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
+import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
@@ -642,6 +643,7 @@ export interface MetadataServerOptions {
       | Promise<{ sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput }>
       | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
   };
+  exposePreviewCache?: ExposePreviewCacheLike | false;
 }
 
 type InteractionDisplay = {
@@ -1364,9 +1366,21 @@ export class MetadataServer {
   private shellStateFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeServer: NetServer | null = null;
   private exposeSocketPath: string | null = null;
+  private readonly exposePreviewCache: ExposePreviewCacheLike | null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
+    const defaultExposePreviewCache = options.lifecycle?.readAgentOutput
+      ? new ExposePreviewCache({
+          projectRoot: this.currentProjectRoot(),
+          listItems: () =>
+            listSwitchableAgentItems({ projectRoot: this.currentProjectRoot() }, new TmuxRuntimeManager(), {
+              scope: "all",
+            }),
+        })
+      : null;
+    this.exposePreviewCache =
+      options.exposePreviewCache === false ? null : (options.exposePreviewCache ?? defaultExposePreviewCache);
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
@@ -1393,6 +1407,7 @@ export class MetadataServer {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+    this.exposePreviewCache?.start();
   }
 
   private publishEndpoint(): void {
@@ -1418,6 +1433,7 @@ export class MetadataServer {
     this.server?.close();
     this.server = null;
     this.stopExposeSocket();
+    this.exposePreviewCache?.stop();
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
     if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
@@ -2615,7 +2631,7 @@ export class MetadataServer {
       const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
       const scope = url.searchParams.get("scope") === "all" ? "all" : "worktree";
       const rawLabels = url.searchParams.get("labelFormat") === "raw";
-      const items = listSwitchableAgentItems(
+      const rawItems = listSwitchableAgentItems(
         {
           projectRoot: this.currentProjectRoot(),
           currentClientSession,
@@ -2625,10 +2641,17 @@ export class MetadataServer {
         },
         new TmuxRuntimeManager(),
         { scope },
-      ).map((item) => ({
-        ...serializeFastControlItem(item),
-        label: rawLabels || !item.lastUsedAt ? item.label : `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}`,
-      }));
+      );
+      this.exposePreviewCache?.trackItems(rawItems);
+      const items = rawItems.map((item) => {
+        const previewSnapshot = this.exposePreviewCache?.get(item.target.windowId);
+        const serialized = serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item);
+        return {
+          ...serialized,
+          label:
+            rawLabels || !item.lastUsedAt ? item.label : `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}`,
+        };
+      });
       send(res, 200, { ok: true, items });
       return;
     }
