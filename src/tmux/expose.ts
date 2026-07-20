@@ -470,6 +470,29 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let lastInputAt = 0;
   let lastResizeCheckAt = 0;
   let selectionVersion = 0;
+  let reloadGeneration = 0;
+
+  const renderTileAt = (tileIndex: number, layout: GridLayout, geo: PanelGeometry): string => {
+    const r = Math.floor(tileIndex / layout.tileCols);
+    const c = tileIndex % layout.tileCols;
+    const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
+    const left = geo.left + 1 + c * (layout.tileWidth + GAP);
+    const item = items[tileIndex]!;
+    const preview = tilePreview(captures.get(item.target.windowId) ?? "", layout.bodyLines);
+    return drawTile(
+      item,
+      preview,
+      tileIndex + 1,
+      tileIndex === index,
+      top,
+      left,
+      layout.tileWidth,
+      layout,
+      tileSublabel(item),
+      options,
+      false,
+    );
+  };
 
   const renderTileIndexes = (tileIndexes: number[]): boolean => {
     if (loading || visibleCount === 0) return false;
@@ -490,25 +513,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     for (const tileIndex of tileIndexes) {
       if (tileIndex < 0 || tileIndex >= visibleCount || seen.has(tileIndex)) continue;
       seen.add(tileIndex);
-      const r = Math.floor(tileIndex / layout.tileCols);
-      const c = tileIndex % layout.tileCols;
-      const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
-      const left = geo.left + 1 + c * (layout.tileWidth + GAP);
-      const item = items[tileIndex]!;
-      const preview = tilePreview(captures.get(item.target.windowId) ?? "", layout.bodyLines);
-      out += drawTile(
-        item,
-        preview,
-        tileIndex + 1,
-        tileIndex === index,
-        top,
-        left,
-        layout.tileWidth,
-        layout,
-        tileSublabel(item),
-        options,
-        false,
-      );
+      out += renderTileAt(tileIndex, layout, geo);
     }
     output.write(`${out}\x1b[?2026l`);
     return true;
@@ -564,24 +569,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
     let out = `${base}${titleAt}`;
     for (let i = 0; i < visibleCount; i += 1) {
-      const r = Math.floor(i / layout.tileCols);
-      const c = i % layout.tileCols;
-      const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
-      const left = geo.left + 1 + c * (layout.tileWidth + GAP);
-      const preview = tilePreview(captures.get(items[i]!.target.windowId) ?? "", layout.bodyLines);
-      out += drawTile(
-        items[i]!,
-        preview,
-        i + 1,
-        i === index,
-        top,
-        left,
-        layout.tileWidth,
-        layout,
-        tileSublabel(items[i]!),
-        options,
-        false,
-      );
+      out += renderTileAt(i, layout, geo);
     }
     out += `${helpAt}\x1b[?2026l`;
     output.write(out);
@@ -589,10 +577,19 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
   // captures, keep the user's selected tile when possible, and re-capture.
-  const reload = async (capture = true) => {
+  const reload = async (capture = true): Promise<"committed" | "stale"> => {
+    const generation = (reloadGeneration += 1);
+    const reloadScope = scope;
     const selectedWindowIdAtStart = items[index]?.target.windowId;
     const selectionVersionAtStart = selectionVersion;
-    const nextView = await loadExposeScopeItems(scope, context, options.projectStateDir, exposeDeps);
+    let nextView: ExposeScopeView;
+    try {
+      nextView = await loadExposeScopeItems(reloadScope, context, options.projectStateDir, exposeDeps);
+    } catch (error) {
+      if (generation !== reloadGeneration || reloadScope !== scope) return "stale";
+      throw error;
+    }
+    if (generation !== reloadGeneration || reloadScope !== scope) return "stale";
     const selectedWindowId =
       selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
     view = nextView;
@@ -605,6 +602,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
     index = selectedIdx >= 0 ? selectedIdx : currentIdx >= 0 ? currentIdx : 0;
     if (capture) refreshCaptures();
+    return "committed";
   };
 
   render();
@@ -659,8 +657,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       loading = true;
       render();
       void reload(false)
-        .then(() => {
-          if (finished) return;
+        .then((result) => {
+          if (finished || result === "stale") return;
           render();
           if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);
@@ -684,8 +682,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const loadInitialItems = () => {
       loading = true;
       void reload(false)
-        .then(() => {
-          if (finished) return;
+        .then((result) => {
+          if (finished || result === "stale") return;
           render();
           if (applyPendingKeys()) return;
           if (refreshCaptures()) render(false);
@@ -789,12 +787,17 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     function onData(data: Buffer) {
       try {
         if (opening) return;
-        lastInputAt = Date.now();
         const events = parseKeys(data)
           .filter((entry) => entry.name !== "focusin" && entry.name !== "focusout" && entry.name !== "mouse")
           .flatMap((entry) =>
             !entry.name && entry.char.length > 1 ? [...entry.char].map((char) => ({ ...entry, char })) : [entry],
           );
+        if (events.length > 0) {
+          const now = Date.now();
+          const continuingInputBurst = Boolean(lastInputAt && now - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS);
+          lastInputAt = now;
+          if (!continuingInputBurst) lastResizeCheckAt = now;
+        }
         let needsRender = false;
         const deferRender = events.length > 1;
         for (const event of events) {
@@ -838,7 +841,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           const reloadedItems = refreshTick >= ITEM_RELOAD_EVERY_TICKS;
           if (reloadedItems) {
             refreshTick = 0;
-            await reload();
+            const reloadResult = await reload();
+            if (reloadResult === "stale") {
+              scheduleRefresh();
+              return;
+            }
           }
           const captureChanged = reloadedItems || refreshCaptures();
           const { cols, rows } = terminalSize();
