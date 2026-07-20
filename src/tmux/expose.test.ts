@@ -88,6 +88,28 @@ function readNextOutput(output: PassThrough, ms = 1000): Promise<string> {
   );
 }
 
+async function waitForCondition(predicate: () => boolean, ms = 1000): Promise<void> {
+  let interval: ReturnType<typeof setInterval> | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      if (interval) clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
+    };
+    interval = setInterval(() => {
+      if (!predicate()) return;
+      cleanup();
+      resolve();
+    }, 10);
+    interval.unref?.();
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timed out after ${ms}ms`));
+    }, ms);
+    timeout.unref?.();
+  });
+}
+
 describe("runTmuxExpose", () => {
   it("renders preview snapshots from the item API before live capture succeeds", async () => {
     const events: string[] = [];
@@ -224,6 +246,100 @@ describe("runTmuxExpose", () => {
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
       expect(runtimeManagerMock.captureTarget).not.toHaveBeenCalled();
       expect(timing.map((event) => event.name)).not.toContain("first-live-capture-start");
+    } finally {
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("renders preview snapshots before live capture when an empty scope later gains items", async () => {
+    const events: string[] = [];
+    runtimeManagerMock.captureTarget.mockImplementation(() => {
+      events.push("capture");
+      return "live output\n";
+    });
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-empty-to-preview-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    let requestCount = 0;
+    const server = createServer((_req, res) => {
+      requestCount += 1;
+      sendJson(res, {
+        ok: true,
+        items:
+          requestCount === 1
+            ? []
+            : [
+                {
+                  id: "session-1",
+                  label: "codex",
+                  urgency: 0,
+                  activity: 0,
+                  recentRank: 0,
+                  previewSnapshot: {
+                    output: "late preview line\n",
+                    capturedAt: "2026-07-20T13:00:00.000Z",
+                    source: "capture",
+                    windowId: "@1",
+                    startLine: -40,
+                    lineCount: 40,
+                  },
+                  target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+                  metadata: {
+                    kind: "agent",
+                    sessionId: "session-1",
+                    command: "codex",
+                    args: [],
+                    toolConfigKey: "codex",
+                    worktreePath: "/repo",
+                  },
+                },
+              ],
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const originalWrite = output.write.bind(output) as typeof output.write;
+    output.write = ((chunk: unknown, ...args: unknown[]) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      if (text.includes("late preview line") && !events.includes("preview-write")) events.push("preview-write");
+      return originalWrite(chunk as never, ...(args as []));
+    }) as typeof output.write;
+    const timing: TmuxExposeTimingEvent[] = [];
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
+      });
+
+      await waitForOutput(output, "No active agents");
+      await waitForOutput(output, "late preview line", 2500);
+      await waitForCondition(() => events.includes("capture"), 1000);
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      const timingNames = timing.map((event) => event.name);
+      expect(events.indexOf("preview-write")).toBeLessThan(events.indexOf("capture"));
+      expect(timingNames.indexOf("first-items-render")).toBeLessThan(timingNames.indexOf("first-live-capture-start"));
     } finally {
       server.close();
       input.destroy();
