@@ -159,6 +159,7 @@ import { loadConfig } from "./config.js";
 import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
+import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
@@ -644,6 +645,7 @@ export interface MetadataServerOptions {
       | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
   };
   exposePreviewCache?: ExposePreviewCacheLike | false;
+  exposePaneOutputTap?: ExposePaneOutputTapLike | false;
 }
 
 type InteractionDisplay = {
@@ -1367,6 +1369,7 @@ export class MetadataServer {
   private exposeServer: NetServer | null = null;
   private exposeSocketPath: string | null = null;
   private readonly exposePreviewCache: ExposePreviewCacheLike | null;
+  private readonly exposePaneOutputTap: ExposePaneOutputTapLike | null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1375,8 +1378,15 @@ export class MetadataServer {
           projectRoot: this.currentProjectRoot(),
         })
       : null;
+    const defaultExposePaneOutputTap = options.lifecycle?.readAgentOutput
+      ? new ExposePaneOutputTap({
+          projectStateDir: getProjectStateDirFor(this.currentProjectRoot()),
+        })
+      : null;
     this.exposePreviewCache =
       options.exposePreviewCache === false ? null : (options.exposePreviewCache ?? defaultExposePreviewCache);
+    this.exposePaneOutputTap =
+      options.exposePaneOutputTap === false ? null : (options.exposePaneOutputTap ?? defaultExposePaneOutputTap);
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
@@ -1404,6 +1414,7 @@ export class MetadataServer {
       });
     });
     this.exposePreviewCache?.start();
+    this.exposePaneOutputTap?.start();
   }
 
   private publishEndpoint(): void {
@@ -1430,6 +1441,7 @@ export class MetadataServer {
     this.server = null;
     this.stopExposeSocket();
     this.exposePreviewCache?.stop();
+    this.exposePaneOutputTap?.stop();
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
     if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
@@ -2639,7 +2651,10 @@ export class MetadataServer {
         new TmuxRuntimeManager(),
         { scope },
       );
-      if (includePreview) this.exposePreviewCache?.trackItems(rawItems);
+      if (includePreview) {
+        this.exposePreviewCache?.trackItems(rawItems);
+        this.exposePaneOutputTap?.trackItems(rawItems);
+      }
       const items = rawItems.map((item) => {
         const previewSnapshot = includePreview ? this.exposePreviewCache?.get(item.target.windowId) : undefined;
         const serialized = serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item);

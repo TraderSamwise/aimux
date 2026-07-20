@@ -75,6 +75,11 @@ export interface CaptureTargetOptions {
   includeEscapes?: boolean;
 }
 
+export interface PanePipeOptions {
+  /** Start only when tmux does not already have a pipe attached to the pane. */
+  onlyIfNotPiped?: boolean;
+}
+
 export interface TmuxCommandSpec {
   cwd: string;
   command: string;
@@ -919,6 +924,25 @@ export class TmuxRuntimeManager {
     const args = ["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)];
     if (options.includeEscapes) args.splice(3, 0, "-e");
     return await this.execAsync(args);
+  }
+
+  startPanePipe(target: TmuxTarget, command: string, options: PanePipeOptions = {}): void {
+    const args = ["pipe-pane", "-t", target.windowId];
+    if (options.onlyIfNotPiped) args.push("-o");
+    args.push(command);
+    this.exec(args);
+  }
+
+  stopPanePipe(target: TmuxTarget): void {
+    this.exec(["pipe-pane", "-t", target.windowId]);
+  }
+
+  pipeTargetToFile(target: TmuxTarget, filePath: string, options: PanePipeOptions = {}): void {
+    this.startPanePipe(target, `cat >> ${shellQuote(filePath)}`, options);
+  }
+
+  isPanePiped(target: TmuxTarget): boolean {
+    return this.displayMessage("#{pane_pipe}", target.windowId) === "1";
   }
 
   resizeTarget(target: TmuxTarget, cols: number, rows: number): void {
