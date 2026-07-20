@@ -914,6 +914,13 @@ export class TmuxRuntimeManager {
     return this.exec(args);
   }
 
+  async captureTargetAsync(target: TmuxTarget, options: CaptureTargetOptions = {}): Promise<string> {
+    const startLine = options.startLine ?? "-";
+    const args = ["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)];
+    if (options.includeEscapes) args.splice(3, 0, "-e");
+    return await this.execAsync(args);
+  }
+
   resizeTarget(target: TmuxTarget, cols: number, rows: number): void {
     this.exec(["resize-window", "-t", target.windowId, "-x", String(cols), "-y", String(rows)]);
   }
