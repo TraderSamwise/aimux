@@ -1184,6 +1184,7 @@ export interface SwitchableAgentsInput {
   currentWindowId?: string;
   currentPath?: string;
   scope?: "all" | "worktree";
+  includePreview?: "1";
 }
 
 export type ExposePreviewSnapshotSource = "capture" | "tap";

@@ -8,6 +8,7 @@ import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metad
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems } from "./expose-control.js";
+import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -663,13 +664,31 @@ export class AimuxDaemon {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
   }
 
-  private exposeItemsRoute(): DaemonRouteResponse {
-    const items = listAllProjectsExposeItems().map((item) => ({
-      ...serializeFastControlItem(item),
-      projectId: item.projectId,
-      projectName: item.projectName,
-      projectRoot: item.projectRoot,
-    }));
+  private exposeItemsRoute(routeUrl: URL): DaemonRouteResponse {
+    const includePreview = routeUrl.searchParams.get("includePreview") === "1";
+    const rawItems = listAllProjectsExposeItems();
+    if (includePreview) {
+      const itemsByProjectRoot = new Map<string, typeof rawItems>();
+      for (const item of rawItems) {
+        const projectItems = itemsByProjectRoot.get(item.projectRoot) ?? [];
+        projectItems.push(item);
+        itemsByProjectRoot.set(item.projectRoot, projectItems);
+      }
+      for (const [projectRoot, projectItems] of itemsByProjectRoot) {
+        trackExposePreviewItems(projectRoot, projectItems);
+      }
+    }
+    const items = rawItems.map((item) => {
+      const previewSnapshot = includePreview
+        ? getExposePreviewSnapshot(item.projectRoot, item.target.windowId)
+        : undefined;
+      return {
+        ...serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item),
+        projectId: item.projectId,
+        projectName: item.projectName,
+        projectRoot: item.projectRoot,
+      };
+    });
     return { status: 200, body: { ok: true, items } };
   }
 
@@ -3352,7 +3371,7 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
       if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
-      return this.exposeItemsRoute();
+      return this.exposeItemsRoute(routeUrl);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.exposeFocus) {
