@@ -467,6 +467,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let refreshStarted = false;
   let pendingKeys: Array<{ key: string; ctrl?: boolean }> = [];
   let lastInputAt = 0;
+  let selectionVersion = 0;
 
   const renderTileIndexes = (tileIndexes: number[]): boolean => {
     if (loading || visibleCount === 0) return false;
@@ -587,8 +588,12 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
   // captures, keep the user's selected tile when possible, and re-capture.
   const reload = async (capture = true) => {
-    const selectedWindowId = items[index]?.target.windowId;
-    view = await loadExposeScopeItems(scope, context, options.projectStateDir, exposeDeps);
+    const selectedWindowIdAtStart = items[index]?.target.windowId;
+    const selectionVersionAtStart = selectionVersion;
+    const nextView = await loadExposeScopeItems(scope, context, options.projectStateDir, exposeDeps);
+    const selectedWindowId =
+      selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
+    view = nextView;
     items = view.items;
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
@@ -734,6 +739,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (key >= "1" && key <= "9") {
         const target = Number.parseInt(key, 10) - 1;
         if (target < visibleCount) {
+          if (target !== index) selectionVersion += 1;
           index = target;
           selectTile(target);
         }
@@ -747,6 +753,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (key === "right" || key === "l" || key === "n" || key === "tab") {
         const previousIndex = index;
         index = (index + 1) % visibleCount;
+        if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
         return false;
@@ -754,6 +761,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (key === "left" || key === "h" || key === "p") {
         const previousIndex = index;
         index = (index - 1 + visibleCount) % visibleCount;
+        if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
         return false;
@@ -761,6 +769,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (key === "down" || key === "j") {
         const previousIndex = index;
         if (index + tileCols < visibleCount) index += tileCols;
+        if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
         return false;
@@ -768,6 +777,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (key === "up" || key === "k") {
         const previousIndex = index;
         if (index - tileCols >= 0) index -= tileCols;
+        if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
       }
@@ -801,6 +811,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const scheduleRefresh = () => {
       timer = setTimeout(async () => {
         try {
+          if (lastInputAt && Date.now() - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS) {
+            scheduleRefresh();
+            return;
+          }
           // A fixed-size popup can't grow with the terminal, so exit and let the launcher
           // relaunch us at the new bounds when the controlling client size changes.
           if (clientBaseline) {
@@ -809,10 +823,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
               finish(RELAUNCH_ON_RESIZE_EXIT);
               return;
             }
-          }
-          if (lastInputAt && Date.now() - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS) {
-            scheduleRefresh();
-            return;
           }
           // Repaint on changed captures or a terminal resize (no SIGWINCH handler), so an
           // idle exposé still reflows when the window size changes.
