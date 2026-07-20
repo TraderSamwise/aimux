@@ -94,6 +94,38 @@ describe("loadExposeScopeItems", () => {
     expect(view.items.map((i) => i.id)).toEqual(["wt-agent"]);
   });
 
+  it("preserves preview snapshots from the scope item API", async () => {
+    const requestJsonFn = vi.fn(async () => ({
+      status: 200,
+      json: {
+        ok: true,
+        items: [
+          {
+            id: "wt-agent",
+            previewSnapshot: {
+              output: "warm output\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@2",
+              startLine: -40,
+              lineCount: 40,
+            },
+          },
+        ],
+      },
+    }));
+    const view = await loadExposeScopeItems("worktree", context, createProjectStateDir(), { requestJsonFn });
+
+    expect(view.items[0]?.previewSnapshot).toEqual({
+      output: "warm output\n",
+      capturedAt: "2026-07-20T13:00:00.000Z",
+      source: "capture",
+      windowId: "@2",
+      startLine: -40,
+      lineCount: 40,
+    });
+  });
+
   it("loads project scope as all switchable project sessions", async () => {
     const requestJsonFn = vi.fn(async () => ({
       status: 200,
