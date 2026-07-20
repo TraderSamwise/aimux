@@ -463,6 +463,95 @@ describe("runTmuxExpose", () => {
     }
   });
 
+  it("does not continue the refresh loop when a refresh reload resolves after exit", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-refresh-exit-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+
+    const secondSwitchableRequested = deferred();
+    const allowSecondSwitchableResponse = deferred();
+    let requestCount = 0;
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        requestCount += 1;
+        if (requestCount === 2) {
+          secondSwitchableRequested.resolve();
+          await allowSecondSwitchableResponse.promise;
+        }
+        sendJson(res, {
+          ok: true,
+          items: [
+            {
+              id: "session-1",
+              label: "codex",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+              target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+              metadata: {
+                kind: "agent",
+                sessionId: "session-1",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: "/repo",
+              },
+            },
+          ],
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    let wroteAfterExit = false;
+    let exited = false;
+    output.on("data", () => {
+      if (exited) wroteAfterExit = true;
+    });
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "codex");
+      await withTimeout(secondSwitchableRequested.promise, 2500);
+      input.end();
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      exited = true;
+      const capturesAtExit = runtimeManagerMock.captureTarget.mock.calls.length;
+      allowSecondSwitchableResponse.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      expect(wroteAfterExit).toBe(false);
+      expect(runtimeManagerMock.captureTarget).toHaveBeenCalledTimes(capturesAtExit);
+    } finally {
+      allowSecondSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("treats timing callback errors as non-fatal", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-timing-callback-error-test-"));
     tempRoots.push(root);

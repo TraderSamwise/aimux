@@ -934,8 +934,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     // Recursive timeout (not setInterval) so the cadence re-derives from the
     // current tile count after a zoom changes how many panes are captured.
     const scheduleRefresh = () => {
+      if (finished) return;
       timer = setTimeout(async () => {
         try {
+          if (finished) return;
           const now = Date.now();
           const inputQuiet = Boolean(lastInputAt && now - lastInputAt < INPUT_QUIET_BEFORE_REFRESH_MS);
           if (inputQuiet && lastResizeCheckAt === 0) lastResizeCheckAt = now;
@@ -962,6 +964,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           if (reloadedItems) {
             refreshTick = 0;
             const reloadResult = await reload();
+            if (finished) return;
             if (reloadResult === "stale") {
               scheduleRefresh();
               return;
