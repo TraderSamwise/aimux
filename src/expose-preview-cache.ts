@@ -6,6 +6,8 @@ import type { TmuxTarget } from "./tmux/runtime-manager.js";
 
 export const EXPOSE_PREVIEW_CAPTURE_LINES = 40;
 const EXPOSE_PREVIEW_REFRESH_MS = 1000;
+const EXPOSE_PREVIEW_ACTIVE_MS = 10_000;
+const EXPOSE_PREVIEW_MAX_CAPTURE_FAILURES = 3;
 
 type ExposePreviewTarget = Pick<FastControlItem, "id" | "target">;
 
@@ -18,9 +20,10 @@ export interface ExposePreviewCacheLike {
 
 export interface ExposePreviewCacheOptions {
   projectRoot: string;
-  tmux?: Pick<TmuxRuntimeManager, "captureTarget">;
+  tmux?: Pick<TmuxRuntimeManager, "captureTargetAsync">;
   listItems: () => ExposePreviewTarget[];
   intervalMs?: number;
+  activeMs?: number;
   lineCount?: number;
   now?: () => Date;
 }
@@ -45,19 +48,23 @@ function unregisterExposePreviewCache(projectRoot: string, cache: ExposePreviewC
 }
 
 export class ExposePreviewCache implements ExposePreviewCacheLike {
-  private readonly tmux: Pick<TmuxRuntimeManager, "captureTarget">;
+  private readonly tmux: Pick<TmuxRuntimeManager, "captureTargetAsync">;
   private readonly intervalMs: number;
+  private readonly activeMs: number;
   private readonly lineCount: number;
   private readonly now: () => Date;
   private readonly snapshots = new Map<string, ExposePreviewSnapshot>();
   private readonly trackedTargets = new Map<string, ExposePreviewTarget>();
+  private readonly failureCounts = new Map<string, number>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private refreshing = false;
+  private activeUntil = 0;
 
   constructor(private readonly options: ExposePreviewCacheOptions) {
     this.tmux = options.tmux ?? new TmuxRuntimeManager();
     this.intervalMs = options.intervalMs ?? EXPOSE_PREVIEW_REFRESH_MS;
+    this.activeMs = options.activeMs ?? EXPOSE_PREVIEW_ACTIVE_MS;
     this.lineCount = options.lineCount ?? EXPOSE_PREVIEW_CAPTURE_LINES;
     this.now = options.now ?? (() => new Date());
   }
@@ -66,7 +73,6 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
     if (this.running) return;
     this.running = true;
     registerExposePreviewCache(this.options.projectRoot, this);
-    this.schedule(0);
   }
 
   stop(): void {
@@ -77,56 +83,77 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
   }
 
   trackItems(items: ExposePreviewTarget[]): void {
+    this.activeUntil = this.now().getTime() + this.activeMs;
     for (const item of items) {
       this.trackedTargets.set(item.target.windowId, item);
     }
+    if (items.length > 0) this.schedule(0);
   }
 
   get(windowId: string): ExposePreviewSnapshot | undefined {
     return this.snapshots.get(windowId);
   }
 
-  refreshNow(): void {
-    this.refresh();
+  async refreshNow(): Promise<void> {
+    await this.refresh();
   }
 
   private schedule(delayMs = this.intervalMs): void {
     if (!this.running || this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.refresh();
+      void this.refresh();
     }, delayMs);
     this.timer.unref?.();
   }
 
-  private listedTargets(): ExposePreviewTarget[] {
+  private listedTargets(): ExposePreviewTarget[] | null {
     try {
       return this.options.listItems();
     } catch {
-      return [];
+      return null;
     }
   }
 
-  private refresh(): void {
-    if (this.refreshing) return;
+  private async refresh(): Promise<void> {
+    if (!this.running || this.refreshing) return;
+    const now = this.now().getTime();
+    if (now > this.activeUntil) return;
     this.refreshing = true;
     try {
       const targets = new Map<string, ExposePreviewTarget>();
-      for (const item of this.listedTargets()) targets.set(item.target.windowId, item);
+      const listedTargets = this.listedTargets();
+      if (listedTargets) {
+        const listedWindowIds = new Set(listedTargets.map((item) => item.target.windowId));
+        for (const windowId of this.trackedTargets.keys()) {
+          if (!listedWindowIds.has(windowId)) {
+            this.trackedTargets.delete(windowId);
+            this.failureCounts.delete(windowId);
+          }
+        }
+        for (const windowId of this.snapshots.keys()) {
+          if (!listedWindowIds.has(windowId)) {
+            this.snapshots.delete(windowId);
+            this.failureCounts.delete(windowId);
+          }
+        }
+        for (const item of listedTargets) targets.set(item.target.windowId, item);
+      }
       for (const item of this.trackedTargets.values()) targets.set(item.target.windowId, item);
-      for (const item of targets.values()) this.capture(item.target);
+      for (const item of targets.values()) await this.capture(item.target);
     } finally {
       this.refreshing = false;
-      this.schedule();
+      if (this.now().getTime() < this.activeUntil) this.schedule();
     }
   }
 
-  private capture(target: TmuxTarget): void {
+  private async capture(target: TmuxTarget): Promise<void> {
     try {
-      const output = this.tmux.captureTarget(target, {
+      const output = await this.tmux.captureTargetAsync(target, {
         startLine: -this.lineCount,
         includeEscapes: true,
       });
+      this.failureCounts.delete(target.windowId);
       this.snapshots.set(target.windowId, {
         output,
         capturedAt: this.now().toISOString(),
@@ -136,7 +163,13 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
         lineCount: this.lineCount,
       });
     } catch {
-      return;
+      const failures = (this.failureCounts.get(target.windowId) ?? 0) + 1;
+      this.failureCounts.set(target.windowId, failures);
+      if (failures >= EXPOSE_PREVIEW_MAX_CAPTURE_FAILURES) {
+        this.trackedTargets.delete(target.windowId);
+        this.snapshots.delete(target.windowId);
+        this.failureCounts.delete(target.windowId);
+      }
     }
   }
 }
