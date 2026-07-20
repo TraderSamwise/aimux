@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTmuxExpose } from "./expose.js";
+import type { TmuxExposeTimingEvent } from "./expose.js";
 
 const runtimeManagerMock = vi.hoisted(() => ({
   captureTarget: vi.fn(() => "agent output\n"),
@@ -89,7 +90,9 @@ function readNextOutput(output: PassThrough, ms = 1000): Promise<string> {
 
 describe("runTmuxExpose", () => {
   it("renders preview snapshots from the item API before live capture succeeds", async () => {
+    const events: string[] = [];
     runtimeManagerMock.captureTarget.mockImplementation(() => {
+      events.push("capture");
       throw new Error("capture unavailable");
     });
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-preview-snapshot-test-"));
@@ -136,6 +139,13 @@ describe("runTmuxExpose", () => {
     output.columns = 80;
     output.rows = 24;
     output.on("data", () => {});
+    const originalWrite = output.write.bind(output) as typeof output.write;
+    output.write = ((chunk: unknown, ...args: unknown[]) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      if (text.includes("warm preview line") && !events.includes("preview-write")) events.push("preview-write");
+      return originalWrite(chunk as never, ...(args as []));
+    }) as typeof output.write;
+    const timing: TmuxExposeTimingEvent[] = [];
 
     try {
       const result = runTmuxExpose({
@@ -150,12 +160,23 @@ describe("runTmuxExpose", () => {
         columns: 80,
         rows: 24,
         exposeConfig: { initialScope: "project" },
+        onTiming: (event) => timing.push(event),
       });
 
       await waitForOutput(output, "warm preview line");
       input.write("q");
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(events).toContain("preview-write");
+      expect(events).toContain("capture");
+      expect(events.indexOf("preview-write")).toBeLessThan(events.indexOf("capture"));
       expect(runtimeManagerMock.captureTarget).toHaveBeenCalled();
+      const timingNames = timing.map((event) => event.name);
+      expect(timingNames).toContain("first-render");
+      expect(timingNames).toContain("items-load-end");
+      expect(timingNames).toContain("first-items-render");
+      expect(timingNames).toContain("first-live-capture-start");
+      expect(timingNames.indexOf("first-items-render")).toBeLessThan(timingNames.indexOf("first-live-capture-start"));
+      expect(timing.every((event) => event.elapsedMs >= 0)).toBe(true);
     } finally {
       server.close();
       input.destroy();

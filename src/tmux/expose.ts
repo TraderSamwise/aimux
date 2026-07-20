@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
+import { log } from "../debug.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { formatRelativeRecency } from "../recency.js";
@@ -43,6 +45,30 @@ export interface TmuxExposeOptions {
   columns?: number;
   rows?: number;
   exposeConfig?: ExposeConfig;
+  onTiming?: (event: TmuxExposeTimingEvent) => void;
+}
+
+export type TmuxExposeTimingEventName =
+  | "start"
+  | "terminal-ready"
+  | "items-load-start"
+  | "items-load-end"
+  | "first-render"
+  | "first-items-render"
+  | "first-live-capture-start"
+  | "first-live-capture-end"
+  | "focus-start"
+  | "focus-end"
+  | "exit";
+
+export interface TmuxExposeTimingEvent {
+  name: TmuxExposeTimingEventName;
+  elapsedMs: number;
+  scope?: ExposeScope;
+  itemCount?: number;
+  previewSnapshotCount?: number;
+  captureChanged?: boolean;
+  exitCode?: number;
 }
 
 const CAPTURE_LINES = 40;
@@ -346,6 +372,21 @@ function defaultExposeScopeView(scope: ExposeScope): ExposeScopeView {
 }
 
 export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number> {
+  const timingStartedAt = performance.now();
+  const markTiming = (
+    name: TmuxExposeTimingEventName,
+    fields: Omit<TmuxExposeTimingEvent, "name" | "elapsedMs"> = {},
+  ) => {
+    const event: TmuxExposeTimingEvent = {
+      name,
+      elapsedMs: Math.round((performance.now() - timingStartedAt) * 100) / 100,
+      ...fields,
+    };
+    options.onTiming?.(event);
+    log.debug("expose timing", "expose", { ...event });
+  };
+  markTiming("start");
+
   const tmux = new TmuxRuntimeManager();
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
@@ -407,9 +448,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     output.write("\x1b[2J\x1b[H");
   }
   output.write("\x1b[?25l");
+  markTiming("terminal-ready", { scope });
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const exit = (code: number): number => {
+    markTiming("exit", { scope, itemCount: items.length, exitCode: code });
     if (timer) clearTimeout(timer);
     output.write("\x1b[?25h");
     if (terminal) {
@@ -435,16 +478,27 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   }
 
   const captures = new Map<string, string>();
+  let previewSnapshotCount = 0;
+  let firstRenderMarked = false;
+  let firstItemsRenderMarked = false;
+  let firstLiveCaptureMarked = false;
   const seedPreviewSnapshots = (): void => {
+    previewSnapshotCount = 0;
     for (const item of items) {
       if (!item.previewSnapshot) continue;
       captures.set(item.target.windowId, item.previewSnapshot.output);
+      previewSnapshotCount += 1;
     }
   };
 
   // Returns whether any capture changed, so the refresh loop can skip a repaint when
   // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
   const refreshCaptures = (): boolean => {
+    const markFirstLiveCapture = !firstLiveCaptureMarked;
+    if (markFirstLiveCapture) {
+      firstLiveCaptureMarked = true;
+      markTiming("first-live-capture-start", { scope, itemCount: items.length });
+    }
     let changed = false;
     for (const item of items) {
       let next: string;
@@ -455,6 +509,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (next !== captures.get(item.target.windowId)) changed = true;
       captures.set(item.target.windowId, next);
+    }
+    if (markFirstLiveCapture) {
+      markTiming("first-live-capture-end", { scope, itemCount: items.length, captureChanged: changed });
     }
     return changed;
   };
@@ -571,6 +628,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const msgCol = geo.left + 1 + Math.max(0, Math.floor((innerW - msg.length) / 2));
       const msgRow = geo.top + Math.floor(innerH / 2);
       output.write(`${base}${titleAt}\x1b[${msgRow};${msgCol}H\x1b[2m${msg}${RESET}${helpAt}\x1b[?2026l`);
+      if (!firstRenderMarked) {
+        firstRenderMarked = true;
+        markTiming("first-render", { scope, itemCount: items.length });
+      }
       return;
     }
 
@@ -580,6 +641,14 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
     out += `${helpAt}\x1b[?2026l`;
     output.write(out);
+    if (!firstRenderMarked) {
+      firstRenderMarked = true;
+      markTiming("first-render", { scope, itemCount: items.length, previewSnapshotCount });
+    }
+    if (!firstItemsRenderMarked) {
+      firstItemsRenderMarked = true;
+      markTiming("first-items-render", { scope, itemCount: items.length, previewSnapshotCount });
+    }
   };
 
   // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
@@ -590,6 +659,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectedWindowIdAtStart = items[index]?.target.windowId;
     const selectionVersionAtStart = selectionVersion;
     let nextView: ExposeScopeView;
+    markTiming("items-load-start", { scope: reloadScope });
     try {
       nextView = await loadExposeScopeItems(reloadScope, context, options.projectStateDir, exposeDeps);
     } catch (error) {
@@ -606,6 +676,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     loading = false;
     captures.clear();
     seedPreviewSnapshots();
+    markTiming("items-load-end", {
+      scope: reloadScope,
+      itemCount: items.length,
+      previewSnapshotCount,
+    });
     const selectedIdx = selectedWindowId ? items.findIndex((item) => item.target.windowId === selectedWindowId) : -1;
     const currentIdx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
     index = selectedIdx >= 0 ? selectedIdx : currentIdx >= 0 ? currentIdx : 0;
@@ -710,13 +785,16 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const item = items[i];
       if (!item) return;
       opening = true;
+      markTiming("focus-start", { scope, itemCount: items.length });
       if (writeSelectedWindow(options, item)) {
+        markTiming("focus-end", { scope, itemCount: items.length });
         finish(0);
         return;
       }
       void focusExposeItem(item, context, options.projectStateDir, exposeDeps)
         .then((ok) => {
           if (finished) return;
+          markTiming("focus-end", { scope, itemCount: items.length });
           if (ok) {
             finish(0);
             return;
@@ -726,6 +804,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         })
         .catch(() => {
           if (finished) return;
+          markTiming("focus-end", { scope, itemCount: items.length });
           opening = false;
           loadInitialItems();
         });
