@@ -10,6 +10,7 @@ const EXPOSE_PREVIEW_ACTIVE_MS = 10_000;
 const EXPOSE_PREVIEW_MAX_CAPTURE_FAILURES = 3;
 
 type ExposePreviewTarget = Pick<FastControlItem, "id" | "target">;
+type TrackedExposePreviewTarget = ExposePreviewTarget & { expiresAt: number; generation: number };
 
 export interface ExposePreviewCacheLike {
   start(): void;
@@ -37,6 +38,10 @@ export function getExposePreviewSnapshot(projectRoot: string, windowId: string):
   return cachesByProjectRoot.get(normalizedProjectRoot(projectRoot))?.get(windowId);
 }
 
+export function trackExposePreviewItems(projectRoot: string, items: ExposePreviewTarget[]): void {
+  cachesByProjectRoot.get(normalizedProjectRoot(projectRoot))?.trackItems(items);
+}
+
 function registerExposePreviewCache(projectRoot: string, cache: ExposePreviewCacheLike): void {
   cachesByProjectRoot.set(normalizedProjectRoot(projectRoot), cache);
 }
@@ -53,12 +58,13 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
   private readonly lineCount: number;
   private readonly now: () => Date;
   private readonly snapshots = new Map<string, ExposePreviewSnapshot>();
-  private readonly trackedTargets = new Map<string, ExposePreviewTarget>();
+  private readonly trackedTargets = new Map<string, TrackedExposePreviewTarget>();
   private readonly failureCounts = new Map<string, number>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private refreshing = false;
-  private activeUntil = 0;
+  private refreshPending = false;
+  private generation = 0;
 
   constructor(private readonly options: ExposePreviewCacheOptions) {
     this.tmux = options.tmux ?? new TmuxRuntimeManager();
@@ -82,22 +88,31 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
   }
 
   trackItems(items: ExposePreviewTarget[]): void {
-    this.activeUntil = this.now().getTime() + this.activeMs;
-    const requestedWindowIds = new Set(items.map((item) => item.target.windowId));
-    for (const windowId of this.trackedTargets.keys()) {
-      if (!requestedWindowIds.has(windowId)) {
-        this.trackedTargets.delete(windowId);
-        this.snapshots.delete(windowId);
-        this.failureCounts.delete(windowId);
-      }
-    }
+    const now = this.now().getTime();
+    this.pruneExpired(now);
+    const expiresAt = now + this.activeMs;
+    let changed = false;
+    const nextGeneration = this.generation + 1;
     for (const item of items) {
-      this.trackedTargets.set(item.target.windowId, item);
+      const current = this.trackedTargets.get(item.target.windowId);
+      if (current && sameTarget(current.target, item.target)) {
+        current.id = item.id;
+        current.expiresAt = expiresAt;
+        continue;
+      }
+      if (current) {
+        this.snapshots.delete(item.target.windowId);
+        this.failureCounts.delete(item.target.windowId);
+      }
+      this.trackedTargets.set(item.target.windowId, { ...item, expiresAt, generation: nextGeneration });
+      changed = true;
     }
+    if (changed) this.generation += 1;
     if (items.length > 0) this.schedule(0);
   }
 
   get(windowId: string): ExposePreviewSnapshot | undefined {
+    this.pruneExpired(this.now().getTime());
     return this.snapshots.get(windowId);
   }
 
@@ -106,7 +121,16 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
   }
 
   private schedule(delayMs = this.intervalMs): void {
-    if (!this.running || this.timer) return;
+    if (!this.running) return;
+    if (this.refreshing) {
+      if (delayMs === 0) this.refreshPending = true;
+      return;
+    }
+    if (this.timer) {
+      if (delayMs !== 0) return;
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.refresh();
@@ -115,26 +139,43 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
   }
 
   private async refresh(): Promise<void> {
-    if (!this.running || this.refreshing) return;
     const now = this.now().getTime();
-    if (now > this.activeUntil) return;
+    if (!this.running) return;
+    if (this.refreshing) {
+      this.refreshPending = true;
+      return;
+    }
+    this.pruneExpired(now);
+    if (this.trackedTargets.size === 0) return;
     this.refreshing = true;
+    const refreshGeneration = this.generation;
     try {
       const targets = [...this.trackedTargets.values()];
-      for (const item of targets) await this.capture(item.target);
+      for (const item of targets) {
+        if (this.generation !== refreshGeneration) break;
+        if (this.now().getTime() >= item.expiresAt || this.trackedTargets.get(item.target.windowId) !== item) continue;
+        await this.capture(item);
+      }
     } finally {
       this.refreshing = false;
-      if (this.now().getTime() < this.activeUntil) this.schedule();
+      this.pruneExpired(this.now().getTime());
+      if (this.refreshPending) {
+        this.refreshPending = false;
+        this.schedule(0);
+      } else if (this.trackedTargets.size > 0) {
+        this.schedule();
+      }
     }
   }
 
-  private async capture(target: TmuxTarget): Promise<void> {
+  private async capture(item: TrackedExposePreviewTarget): Promise<void> {
+    const { target } = item;
     try {
       const output = await this.tmux.captureTargetAsync(target, {
         startLine: -this.lineCount,
         includeEscapes: true,
       });
-      if (!this.isCurrentTarget(target)) return;
+      if (!this.isCurrentTarget(item)) return;
       this.failureCounts.delete(target.windowId);
       this.snapshots.set(target.windowId, {
         output,
@@ -145,7 +186,7 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
         lineCount: this.lineCount,
       });
     } catch {
-      if (!this.isCurrentTarget(target)) return;
+      if (!this.isCurrentTarget(item)) return;
       const failures = (this.failureCounts.get(target.windowId) ?? 0) + 1;
       this.failureCounts.set(target.windowId, failures);
       if (failures >= EXPOSE_PREVIEW_MAX_CAPTURE_FAILURES) {
@@ -156,7 +197,29 @@ export class ExposePreviewCache implements ExposePreviewCacheLike {
     }
   }
 
-  private isCurrentTarget(target: TmuxTarget): boolean {
-    return this.trackedTargets.get(target.windowId)?.target === target;
+  private isCurrentTarget(item: TrackedExposePreviewTarget): boolean {
+    const current = this.trackedTargets.get(item.target.windowId);
+    return Boolean(
+      current &&
+      current.generation === item.generation &&
+      this.now().getTime() < current.expiresAt &&
+      sameTarget(current.target, item.target),
+    );
   }
+
+  private pruneExpired(now: number): void {
+    let changed = false;
+    for (const [windowId, item] of this.trackedTargets) {
+      if (now < item.expiresAt) continue;
+      this.trackedTargets.delete(windowId);
+      this.snapshots.delete(windowId);
+      this.failureCounts.delete(windowId);
+      changed = true;
+    }
+    if (changed) this.generation += 1;
+  }
+}
+
+function sameTarget(left: TmuxTarget, right: TmuxTarget): boolean {
+  return left.windowId === right.windowId;
 }
