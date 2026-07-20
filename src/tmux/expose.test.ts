@@ -259,6 +259,97 @@ exit 0
     }
   });
 
+  it("does not probe client size on every active-input refresh tick", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-active-input-resize-throttle-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    const binDir = join(root, "bin");
+    mkdirSync(projectStateDir);
+    mkdirSync(binDir);
+    const tmuxPath = join(binDir, "tmux");
+    const tmuxLog = join(root, "tmux.log");
+    writeFileSync(
+      tmuxPath,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${tmuxLog}"
+if [ "$1" = "display-message" ]; then
+  printf '80x24'
+  exit 0
+fi
+exit 0
+`,
+    );
+    chmodSync(tmuxPath, 0o755);
+
+    const server = createServer((_req, res) => {
+      sendJson(res, {
+        ok: true,
+        items: [
+          {
+            id: "session-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "session-1",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: "/repo",
+            },
+          },
+        ],
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    let inputTimer: ReturnType<typeof setInterval> | null = null;
+
+    try {
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        clientTty: "/dev/ttys001",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await waitForOutput(output, "codex");
+      inputTimer = setInterval(() => input.write("\x1b[C"), 50);
+      inputTimer.unref?.();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      const log = existsSync(tmuxLog) ? readFileSync(tmuxLog, "utf8") : "";
+      expect(log).not.toContain("display-message -c /dev/ttys001 -p -F #{client_width}x#{client_height}");
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+    } finally {
+      if (inputTimer) clearInterval(inputTimer);
+      process.env.PATH = oldPath;
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("honors Enter received before the API-backed item list resolves", async () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-expose-render-test-"));
     tempRoots.push(root);
