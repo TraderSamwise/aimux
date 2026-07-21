@@ -27,6 +27,7 @@ type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & {
   tokenFilePath: string;
 };
 type PendingExposePaneOutputTapStart = TrackedExposePaneOutputTap & { startedAt: number };
+type PendingPromotionResult = "none" | "promoted" | "discarded";
 
 interface TapOwnershipToken {
   token: string;
@@ -66,6 +67,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
   private readonly tapDir: string;
   private readonly trackedTargets = new Map<string, TrackedExposePaneOutputTap>();
   private readonly pendingStarts = new Map<string, PendingExposePaneOutputTapStart>();
+  private readonly foreignLiveTokens = new Map<string, string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
@@ -93,6 +95,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     const pending = [...this.pendingStarts.values()];
     this.trackedTargets.clear();
     this.pendingStarts.clear();
+    this.foreignLiveTokens.clear();
     for (const item of tracked) this.stopTracked(item);
     for (const item of pending) this.stopTracked(item);
   }
@@ -120,13 +123,14 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
           continue;
         }
         this.trackedTargets.delete(item.target.windowId);
-        removeDeadTapFiles(current.filePath, current.tokenFilePath);
+        this.stopTracked(current);
         current = undefined;
       }
       let pending = this.pendingStarts.get(item.target.windowId);
       if (pending && sameTarget(pending.target, item.target) && existsSync(pending.filePath)) {
         pending.id = item.id;
-        if (this.promotePendingStart(item.target.windowId, pending, now)) {
+        const promotion = this.promotePendingStart(item.target.windowId, pending, now);
+        if (promotion === "promoted") {
           const promoted = this.trackedTargets.get(item.target.windowId);
           if (promoted) {
             promoted.id = item.id;
@@ -135,6 +139,8 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
             continue;
           }
           pending = undefined;
+        } else if (promotion === "discarded") {
+          continue;
         } else if (now - pending.startedAt < this.maintenanceMs) {
           continue;
         } else {
@@ -164,7 +170,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     if (!current) return undefined;
     if (!ownsToken(current.tokenFilePath, current.token)) {
       this.trackedTargets.delete(windowId);
-      removeDeadTapFiles(current.filePath, current.tokenFilePath);
+      this.stopTracked(current);
       return undefined;
     }
     const limit = Math.min(Math.max(0, maxBytes), this.maxBytes);
@@ -187,6 +193,12 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     try {
       filePath = this.tapFilePath(item.target.windowId);
       tokenFilePath = this.tapTokenFilePath(item.target.windowId);
+      const foreignToken = this.foreignLiveTokens.get(item.target.windowId);
+      if (foreignToken) {
+        const ownership = readOwnershipToken(tokenFilePath);
+        if (ownership && ownership.token === foreignToken && isOwnershipLive(ownership)) return;
+        this.foreignLiveTokens.delete(item.target.windowId);
+      }
       if (this.tmux.isPanePiped(item.target)) {
         this.adoptExistingTap(item, expiresAt, filePath, tokenFilePath);
         return;
@@ -246,6 +258,11 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
   }
 
   private stopTracked(item: TrackedExposePaneOutputTap): void {
+    const ownership = readOwnershipToken(item.tokenFilePath);
+    if (ownership && ownership.token !== item.token && isOwnershipLive(ownership)) {
+      this.foreignLiveTokens.set(item.target.windowId, ownership.token);
+      return;
+    }
     if (ownsToken(item.tokenFilePath, item.token)) {
       try {
         this.tmux.stopPanePipe(item.target);
@@ -323,7 +340,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
 
   private reconcilePendingStarts(now: number): void {
     for (const [windowId, item] of this.pendingStarts) {
-      if (this.promotePendingStart(windowId, item, now)) continue;
+      if (this.promotePendingStart(windowId, item, now) !== "none") continue;
       const ownership = readOwnershipToken(item.tokenFilePath);
       if (!ownership && now - item.startedAt < this.maintenanceMs) continue;
       if (ownership && isOwnershipLive(ownership)) continue;
@@ -332,17 +349,25 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     }
   }
 
-  private promotePendingStart(windowId: string, item: PendingExposePaneOutputTapStart, now: number): boolean {
+  private promotePendingStart(
+    windowId: string,
+    item: PendingExposePaneOutputTapStart,
+    now: number,
+  ): PendingPromotionResult {
     const ownership = readOwnershipToken(item.tokenFilePath);
-    if (!ownership || !isOwnershipLive(ownership)) return false;
+    if (!ownership || !isOwnershipLive(ownership)) return "none";
     this.pendingStarts.delete(windowId);
+    if (ownership.token !== item.token) {
+      this.foreignLiveTokens.set(windowId, ownership.token);
+      return "discarded";
+    }
     const tracked = { ...item, token: ownership.token };
     if (now < item.expiresAt) {
       this.trackedTargets.set(windowId, tracked);
     } else {
       this.stopTracked(tracked);
     }
-    return true;
+    return "promoted";
   }
 }
 
