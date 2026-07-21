@@ -250,6 +250,68 @@ describe("ExposePaneOutputTap", () => {
     expect(tap.read("@1")).toBeUndefined();
   });
 
+  it("preserves a different live token seen by a pending start", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    let pendingOwnership: { token: string; tokenFilePath: string } | undefined;
+    let logPath = "";
+    const isPanePiped = vi.fn(() => false);
+    const tmux = {
+      isPanePiped,
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        pendingOwnership = options?.ownership;
+        logPath = filePath;
+        writeFileSync(filePath, "foreign output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({ projectStateDir, tmux });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    expect(pendingOwnership).toBeTruthy();
+    writeFileSync(pendingOwnership!.tokenFilePath, `${process.pid}\tforeign-token\n`);
+
+    expect(tap.read("@1")).toBeUndefined();
+    expect(tmux.stopPanePipe).not.toHaveBeenCalled();
+    expect(readFileSync(logPath, "utf8")).toBe("foreign output\n");
+    expect(readFileSync(pendingOwnership!.tokenFilePath, "utf8")).toContain("foreign-token");
+
+    isPanePiped.mockReturnValue(true);
+    tap.trackItems([item("a-still-demanded", "@1")]);
+
+    expect(tmux.pipeTargetToFile).toHaveBeenCalledTimes(1);
+    expect(tmux.stopPanePipe).not.toHaveBeenCalled();
+    expect(readFileSync(logPath, "utf8")).toBe("foreign output\n");
+    expect(readFileSync(pendingOwnership!.tokenFilePath, "utf8")).toContain("foreign-token");
+  });
+
+  it("preserves a different live token when tracked ownership is lost", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    const tmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
+        writeFileSync(filePath, "owned output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({ projectStateDir, tmux });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    const [logPath] = tapFiles(projectStateDir);
+    const [tokenPath] = tokenFiles(projectStateDir);
+    writeFileSync(tokenPath!, `${process.pid}\tforeign-token\n`);
+
+    tap.trackItems([item("a-still-demanded", "@1")]);
+
+    expect(tmux.pipeTargetToFile).toHaveBeenCalledTimes(1);
+    expect(tmux.stopPanePipe).not.toHaveBeenCalled();
+    expect(tap.read("@1")).toBeUndefined();
+    expect(readFileSync(logPath!, "utf8")).toBe("owned output\n");
+    expect(readFileSync(tokenPath!, "utf8")).toContain("foreign-token");
+  });
+
   it("expires demand and stops active pane pipes", async () => {
     vi.useFakeTimers();
     projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
