@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -143,6 +143,21 @@ describe("expose hot snapshots", () => {
     writeHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" }, view("project"));
 
     expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it("recovers from a stale write lock", () => {
+    const stateDir = createStateDir();
+    const lockPath = join(stateDir, "expose-hot-snapshots.lock");
+    mkdirSync(lockPath);
+    const staleTime = new Date(Date.now() - 6000);
+    utimesSync(lockPath, staleTime, staleTime);
+
+    writeHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" }, view("project"));
+
+    expect(readHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" })?.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "session-1" })]),
+    );
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it("bounds cached preview output and item count", () => {

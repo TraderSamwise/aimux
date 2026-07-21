@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { resolve as pathResolve } from "node:path";
-import { ensureProjectPaths, getProjectIdFor, initPaths } from "./paths.js";
+import { ensureProjectPaths, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
@@ -156,6 +156,8 @@ import {
 } from "./tmux/doctor.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
+import type { ExposeScopeItem, ExposeScopeView } from "./tmux/expose-model.js";
+import { readHotExposeScopeView, writeHotExposeScopeViews } from "./tmux/expose-hot-snapshot.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -179,6 +181,8 @@ const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
 const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_SERVER_CLOSE_GRACE_MS = 500;
+const GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 250;
+const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 1000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
 const LOCAL_AUTH_ROUTES = new Set<string>([
@@ -370,6 +374,8 @@ export class AimuxDaemon {
   private state: DaemonState = loadDaemonState();
   private stopping = false;
   private stoppingPromise: Promise<void> | null = null;
+  private globalExposeHotSnapshotTimer: NodeJS.Timeout | null = null;
+  private globalExposeHotSnapshotRefreshing = false;
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -406,6 +412,7 @@ export class AimuxDaemon {
       });
     });
     this.refreshState();
+    this.scheduleGlobalExposeHotSnapshotRefresh(GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS);
     log.info("daemon started", "daemon", { pid: process.pid, host, port });
     this.connectRelayIfConfigured();
   }
@@ -469,6 +476,9 @@ export class AimuxDaemon {
   private async stopUnlocked(): Promise<void> {
     this.stopping = true;
     log.info("daemon stopping project actors", "daemon", { projectCount: Object.keys(this.state.projects).length });
+    if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
+    this.globalExposeHotSnapshotTimer = null;
+    this.globalExposeHotSnapshotRefreshing = false;
     this.relayClient?.disconnect();
     this.relayClient = null;
     const serverClose = this.closeServer();
@@ -662,6 +672,75 @@ export class AimuxDaemon {
 
   private textError(status: number, message: string): DaemonRouteResponse {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
+  }
+
+  private scheduleGlobalExposeHotSnapshotRefresh(delayMs = GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
+    if (!this.server || this.stopping) return;
+    if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
+    this.globalExposeHotSnapshotTimer = setTimeout(() => {
+      this.globalExposeHotSnapshotTimer = null;
+      this.refreshGlobalExposeHotSnapshots();
+    }, delayMs);
+    this.globalExposeHotSnapshotTimer.unref?.();
+  }
+
+  private buildGlobalExposeHotSnapshotView(projects: ProjectsRouteProject[]): ExposeScopeView {
+    const items: ExposeScopeItem[] = [];
+    for (const project of projects) {
+      try {
+        const projectRoot = pathResolve(project.path);
+        const projectView = readHotExposeScopeView(getProjectStateDirById(project.id), {
+          projectRoot,
+          scope: "project",
+        });
+        if (!projectView) continue;
+        for (const item of projectView.items) {
+          items.push({ ...item, projectId: project.id, projectRoot, projectName: project.name });
+        }
+      } catch {
+        continue;
+      }
+    }
+    return {
+      scope: "global",
+      scopeLabel: "all projects",
+      sublabel: "project-worktree",
+      items,
+    };
+  }
+
+  private writeGlobalExposeHotSnapshotView(view: ExposeScopeView, projects: ProjectsRouteProject[]): void {
+    for (const project of projects) {
+      try {
+        const projectRoot = pathResolve(project.path);
+        writeHotExposeScopeViews(getProjectStateDirById(project.id), [
+          {
+            key: { projectRoot, scope: "global" },
+            view,
+          },
+        ]);
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  private refreshGlobalExposeHotSnapshots(): void {
+    if (this.globalExposeHotSnapshotRefreshing || this.stopping) return;
+    this.globalExposeHotSnapshotRefreshing = true;
+    try {
+      const projects = this.listProjectsForRoute();
+      const activeProjects = projects.filter((project) => project.serviceAlive);
+      const view = this.buildGlobalExposeHotSnapshotView(activeProjects);
+      this.writeGlobalExposeHotSnapshotView(view, activeProjects);
+    } catch (error) {
+      log.debug("global expose hot snapshot refresh failed", "daemon", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.globalExposeHotSnapshotRefreshing = false;
+      this.scheduleGlobalExposeHotSnapshotRefresh();
+    }
   }
 
   private exposeItemsRoute(routeUrl: URL): DaemonRouteResponse {
