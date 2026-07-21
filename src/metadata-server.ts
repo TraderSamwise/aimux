@@ -2656,7 +2656,19 @@ export class MetadataServer {
         this.exposePaneOutputTap?.trackItems(rawItems);
       }
       const items = rawItems.map((item) => {
-        const previewSnapshot = includePreview ? this.exposePreviewCache?.get(item.target.windowId) : undefined;
+        const captureSnapshot = includePreview ? this.exposePreviewCache?.get(item.target.windowId) : undefined;
+        const tapSnapshot =
+          includePreview && !captureSnapshot ? this.exposePaneOutputTap?.read(item.target.windowId) : undefined;
+        const previewSnapshot =
+          captureSnapshot ??
+          (tapSnapshot
+            ? {
+                output: tapSnapshot.output,
+                capturedAt: tapSnapshot.capturedAt,
+                source: tapSnapshot.source,
+                windowId: tapSnapshot.windowId,
+              }
+            : undefined);
         const serialized = serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item);
         return {
           ...serialized,
