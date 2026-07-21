@@ -26,7 +26,7 @@ type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & {
   token: string;
   tokenFilePath: string;
 };
-type PendingExposePaneOutputTapStart = TrackedExposePaneOutputTap;
+type PendingExposePaneOutputTapStart = TrackedExposePaneOutputTap & { startedAt: number };
 
 interface TapOwnershipToken {
   token: string;
@@ -111,19 +111,37 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     }
     const expiresAt = now + this.activeMs;
     for (const item of items) {
-      const current = this.trackedTargets.get(item.target.windowId);
+      let current = this.trackedTargets.get(item.target.windowId);
       if (current && sameTarget(current.target, item.target) && existsSync(current.filePath)) {
-        current.id = item.id;
-        current.expiresAt = expiresAt;
-        this.compactFile(current.filePath);
-        continue;
+        if (ownsToken(current.tokenFilePath, current.token)) {
+          current.id = item.id;
+          current.expiresAt = expiresAt;
+          this.compactFile(current.filePath);
+          continue;
+        }
+        this.trackedTargets.delete(item.target.windowId);
+        removeDeadTapFiles(current.filePath, current.tokenFilePath);
+        current = undefined;
       }
-      const pending = this.pendingStarts.get(item.target.windowId);
+      let pending = this.pendingStarts.get(item.target.windowId);
       if (pending && sameTarget(pending.target, item.target) && existsSync(pending.filePath)) {
         pending.id = item.id;
-        pending.expiresAt = expiresAt;
-        if (this.promotePendingStart(item.target.windowId, pending, now)) this.compactFile(pending.filePath);
-        continue;
+        if (this.promotePendingStart(item.target.windowId, pending, now)) {
+          const promoted = this.trackedTargets.get(item.target.windowId);
+          if (promoted) {
+            promoted.id = item.id;
+            promoted.expiresAt = expiresAt;
+            this.compactFile(promoted.filePath);
+            continue;
+          }
+          pending = undefined;
+        } else if (now - pending.startedAt < this.maintenanceMs) {
+          continue;
+        } else {
+          this.pendingStarts.delete(item.target.windowId);
+          this.stopTracked(pending);
+          pending = undefined;
+        }
       }
       if (current) {
         this.trackedTargets.delete(item.target.windowId);
@@ -144,6 +162,11 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     this.pruneExpired(now);
     const current = this.trackedTargets.get(windowId);
     if (!current) return undefined;
+    if (!ownsToken(current.tokenFilePath, current.token)) {
+      this.trackedTargets.delete(windowId);
+      removeDeadTapFiles(current.filePath, current.tokenFilePath);
+      return undefined;
+    }
     const limit = Math.min(Math.max(0, maxBytes), this.maxBytes);
     if (limit <= 0) return undefined;
     const tail = readTail(current.filePath, limit);
@@ -177,7 +200,14 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
         ownership: { token, tokenFilePath },
       });
       if (!waitForOwnershipToken(tokenFilePath, token)) {
-        this.pendingStarts.set(item.target.windowId, { ...item, expiresAt, filePath, token, tokenFilePath });
+        this.pendingStarts.set(item.target.windowId, {
+          ...item,
+          expiresAt,
+          filePath,
+          token,
+          tokenFilePath,
+          startedAt: this.now().getTime(),
+        });
         return;
       }
       this.trackedTargets.set(item.target.windowId, { ...item, expiresAt, filePath, token, tokenFilePath });
@@ -295,9 +325,10 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     for (const [windowId, item] of this.pendingStarts) {
       if (this.promotePendingStart(windowId, item, now)) continue;
       const ownership = readOwnershipToken(item.tokenFilePath);
-      if (!ownership || isOwnershipLive(ownership)) continue;
+      if (!ownership && now - item.startedAt < this.maintenanceMs) continue;
+      if (ownership && isOwnershipLive(ownership)) continue;
       this.pendingStarts.delete(windowId);
-      removeDeadTapFiles(item.filePath, item.tokenFilePath);
+      this.stopTracked(item);
     }
   }
 
