@@ -168,6 +168,32 @@ describe("ExposePaneOutputTap", () => {
     expect(tapFiles(projectStateDir)).toHaveLength(0);
   });
 
+  it("adopts a newly started pipe when ownership is reported late", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    let pendingOwnership: { token: string; tokenFilePath: string } | undefined;
+    const tmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        pendingOwnership = options?.ownership;
+        writeFileSync(filePath, "late token output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({ projectStateDir, tmux });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    expect(tap.read("@1")).toBeUndefined();
+
+    expect(pendingOwnership).toBeTruthy();
+    markOwned({ ownership: pendingOwnership! });
+    expect(tap.read("@1")?.output).toBe("late token output\n");
+
+    tap.stop();
+    expect(tmux.stopPanePipe).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@1" }));
+    expect(tapFiles(projectStateDir)).toHaveLength(0);
+  });
+
   it("expires demand and stops active pane pipes", async () => {
     vi.useFakeTimers();
     projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));

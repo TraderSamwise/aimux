@@ -26,6 +26,7 @@ type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & {
   token: string;
   tokenFilePath: string;
 };
+type PendingExposePaneOutputTapStart = TrackedExposePaneOutputTap;
 
 interface TapOwnershipToken {
   token: string;
@@ -64,6 +65,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
   private readonly now: () => Date;
   private readonly tapDir: string;
   private readonly trackedTargets = new Map<string, TrackedExposePaneOutputTap>();
+  private readonly pendingStarts = new Map<string, PendingExposePaneOutputTapStart>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
@@ -88,13 +90,17 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     this.running = false;
     this.clearTimer();
     const tracked = [...this.trackedTargets.values()];
+    const pending = [...this.pendingStarts.values()];
     this.trackedTargets.clear();
+    this.pendingStarts.clear();
     for (const item of tracked) this.stopTracked(item);
+    for (const item of pending) this.stopTracked(item);
   }
 
   trackItems(items: ExposePaneOutputTapTarget[]): void {
     if (!this.running) return;
     const now = this.now().getTime();
+    this.reconcilePendingStarts(now);
     this.pruneExpired(now);
     if (items.length === 0) return;
 
@@ -112,9 +118,20 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
         this.compactFile(current.filePath);
         continue;
       }
+      const pending = this.pendingStarts.get(item.target.windowId);
+      if (pending && sameTarget(pending.target, item.target) && existsSync(pending.filePath)) {
+        pending.id = item.id;
+        pending.expiresAt = expiresAt;
+        if (this.promotePendingStart(item.target.windowId, pending, now)) this.compactFile(pending.filePath);
+        continue;
+      }
       if (current) {
         this.trackedTargets.delete(item.target.windowId);
         this.stopTracked(current);
+      }
+      if (pending) {
+        this.pendingStarts.delete(item.target.windowId);
+        this.stopTracked(pending);
       }
       this.startTracked(item, expiresAt);
     }
@@ -122,7 +139,9 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
   }
 
   read(windowId: string, maxBytes = this.maxBytes): ExposePaneOutputTapSnapshot | undefined {
-    this.pruneExpired(this.now().getTime());
+    const now = this.now().getTime();
+    this.reconcilePendingStarts(now);
+    this.pruneExpired(now);
     const current = this.trackedTargets.get(windowId);
     if (!current) return undefined;
     const limit = Math.min(Math.max(0, maxBytes), this.maxBytes);
@@ -158,8 +177,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
         ownership: { token, tokenFilePath },
       });
       if (!waitForOwnershipToken(tokenFilePath, token)) {
-        rmSync(filePath, { force: true });
-        rmSync(tokenFilePath, { force: true });
+        this.pendingStarts.set(item.target.windowId, { ...item, expiresAt, filePath, token, tokenFilePath });
         return;
       }
       this.trackedTargets.set(item.target.windowId, { ...item, expiresAt, filePath, token, tokenFilePath });
@@ -212,13 +230,15 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
   }
 
   private scheduleMaintenance(): void {
-    if (!this.running || this.timer || this.trackedTargets.size === 0) return;
+    if (!this.running || this.timer || this.trackedTargets.size + this.pendingStarts.size === 0) return;
     const now = this.now().getTime();
-    const nextExpiry = Math.min(...[...this.trackedTargets.values()].map((item) => item.expiresAt));
+    const tracked = [...this.trackedTargets.values(), ...this.pendingStarts.values()];
+    const nextExpiry = Math.min(...tracked.map((item) => item.expiresAt));
     this.timer = setTimeout(
       () => {
         this.timer = null;
         const currentTime = this.now().getTime();
+        this.reconcilePendingStarts(currentTime);
         this.pruneExpired(currentTime);
         this.compactTrackedFiles(currentTime);
         this.scheduleMaintenance();
@@ -234,7 +254,12 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
       this.trackedTargets.delete(windowId);
       this.stopTracked(item);
     }
-    if (this.trackedTargets.size === 0) this.clearTimer();
+    for (const [windowId, item] of this.pendingStarts) {
+      if (now < item.expiresAt) continue;
+      this.pendingStarts.delete(windowId);
+      this.stopTracked(item);
+    }
+    if (this.trackedTargets.size + this.pendingStarts.size === 0) this.clearTimer();
   }
 
   private clearTimer(): void {
@@ -264,6 +289,29 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     for (const item of this.trackedTargets.values()) {
       if (now < item.expiresAt) this.compactFile(item.filePath);
     }
+  }
+
+  private reconcilePendingStarts(now: number): void {
+    for (const [windowId, item] of this.pendingStarts) {
+      if (this.promotePendingStart(windowId, item, now)) continue;
+      const ownership = readOwnershipToken(item.tokenFilePath);
+      if (!ownership || isOwnershipLive(ownership)) continue;
+      this.pendingStarts.delete(windowId);
+      removeDeadTapFiles(item.filePath, item.tokenFilePath);
+    }
+  }
+
+  private promotePendingStart(windowId: string, item: PendingExposePaneOutputTapStart, now: number): boolean {
+    const ownership = readOwnershipToken(item.tokenFilePath);
+    if (!ownership || !isOwnershipLive(ownership)) return false;
+    this.pendingStarts.delete(windowId);
+    const tracked = { ...item, token: ownership.token };
+    if (now < item.expiresAt) {
+      this.trackedTargets.set(windowId, tracked);
+    } else {
+      this.stopTracked(tracked);
+    }
+    return true;
   }
 }
 
