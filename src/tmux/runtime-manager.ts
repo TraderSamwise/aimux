@@ -947,7 +947,7 @@ export class TmuxRuntimeManager {
   pipeTargetToFile(target: TmuxTarget, filePath: string, options: PanePipeFileOptions = {}): void {
     let command = `cat >> ${shellQuote(filePath)}`;
     if (options.ownership) {
-      const script = `token_file=$2; printf '%s\\n' "$1" > "$token_file"; trap 'rm -f "$token_file"' EXIT; cat >> "$3"`;
+      const script = `token_file=$2; printf '%s\\t%s\\n' "$$" "$1" > "$token_file"; trap 'rm -f "$token_file"' EXIT; cat >> "$3"`;
       command = [
         "sh",
         "-c",

@@ -27,6 +27,11 @@ type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & {
   tokenFilePath: string;
 };
 
+interface TapOwnershipToken {
+  token: string;
+  pid?: number;
+}
+
 export interface ExposePaneOutputTapSnapshot {
   output: string;
   capturedAt: string;
@@ -138,9 +143,12 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     let filePath: string | undefined;
     let tokenFilePath: string | undefined;
     try {
-      if (this.tmux.isPanePiped(item.target)) return;
       filePath = this.tapFilePath(item.target.windowId);
       tokenFilePath = this.tapTokenFilePath(item.target.windowId);
+      if (this.tmux.isPanePiped(item.target)) {
+        this.adoptExistingTap(item, expiresAt, filePath, tokenFilePath);
+        return;
+      }
       const token = randomUUID();
       rmSync(filePath, { force: true });
       rmSync(tokenFilePath, { force: true });
@@ -167,6 +175,26 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
         } catch {}
       }
     }
+  }
+
+  private adoptExistingTap(
+    item: ExposePaneOutputTapTarget,
+    expiresAt: number,
+    filePath: string,
+    tokenFilePath: string,
+  ): void {
+    const ownership = readOwnershipToken(tokenFilePath);
+    if (!ownership || !isOwnershipLive(ownership)) {
+      removeDeadTapFiles(filePath, tokenFilePath);
+      return;
+    }
+    this.trackedTargets.set(item.target.windowId, {
+      ...item,
+      expiresAt,
+      filePath,
+      token: ownership.token,
+      tokenFilePath,
+    });
   }
 
   private stopTracked(item: TrackedExposePaneOutputTap): void {
@@ -264,10 +292,19 @@ function readTail(filePath: string, maxBytes: number): { buffer: Buffer; totalBy
 }
 
 function ownsToken(tokenFilePath: string, token: string): boolean {
+  const ownership = readOwnershipToken(tokenFilePath);
+  return Boolean(ownership && ownership.token === token && isOwnershipLive(ownership));
+}
+
+function readOwnershipToken(tokenFilePath: string): TapOwnershipToken | null {
   try {
-    return readFileSync(tokenFilePath, "utf8").trim() === token;
+    const raw = readFileSync(tokenFilePath, "utf8").trim();
+    if (!raw) return null;
+    const [first, second] = raw.split(/\s+/, 2);
+    if (second && /^\d+$/.test(first)) return { pid: Number(first), token: second };
+    return { token: raw };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -277,4 +314,23 @@ function waitForOwnershipToken(tokenFilePath: string, token: string): boolean {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
   }
   return false;
+}
+
+function isOwnershipLive(ownership: TapOwnershipToken): boolean {
+  if (!ownership.pid) return true;
+  try {
+    process.kill(ownership.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeDeadTapFiles(filePath: string, tokenFilePath: string): void {
+  try {
+    rmSync(filePath, { force: true });
+  } catch {}
+  try {
+    rmSync(tokenFilePath, { force: true });
+  } catch {}
 }

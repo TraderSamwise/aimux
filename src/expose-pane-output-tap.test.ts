@@ -33,7 +33,8 @@ function tokenFiles(projectStateDir: string): string[] {
 }
 
 function markOwned(options?: { ownership?: { token: string; tokenFilePath: string } }): void {
-  if (options?.ownership) writeFileSync(options.ownership.tokenFilePath, `${options.ownership.token}\n`);
+  if (options?.ownership)
+    writeFileSync(options.ownership.tokenFilePath, `${process.pid}\t${options.ownership.token}\n`);
 }
 
 describe("ExposePaneOutputTap", () => {
@@ -132,6 +133,39 @@ describe("ExposePaneOutputTap", () => {
     expect(tmux.pipeTargetToFile).not.toHaveBeenCalled();
     expect(tmux.stopPanePipe).not.toHaveBeenCalled();
     expect(tap.read("@1")).toBeUndefined();
+  });
+
+  it("adopts a live owned tap after the manager restarts", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    const initialTmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
+        writeFileSync(filePath, "warm tap output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const initialTap = new ExposePaneOutputTap({ projectStateDir, tmux: initialTmux });
+    initialTap.start();
+    initialTap.trackItems([item("a", "@1")]);
+
+    const restartedTmux = {
+      isPanePiped: vi.fn(() => true),
+      pipeTargetToFile: vi.fn(),
+      stopPanePipe: vi.fn(),
+    };
+    const restartedTap = new ExposePaneOutputTap({ projectStateDir, tmux: restartedTmux });
+    restartedTap.start();
+    restartedTap.trackItems([item("a-restarted", "@1")]);
+
+    expect(restartedTmux.pipeTargetToFile).not.toHaveBeenCalled();
+    expect(restartedTap.read("@1")?.output).toBe("warm tap output\n");
+
+    restartedTap.stop();
+    initialTap.stop();
+    expect(restartedTmux.stopPanePipe).toHaveBeenCalledWith(expect.objectContaining({ windowId: "@1" }));
+    expect(initialTmux.stopPanePipe).not.toHaveBeenCalled();
+    expect(tapFiles(projectStateDir)).toHaveLength(0);
   });
 
   it("expires demand and stops active pane pipes", async () => {
