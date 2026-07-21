@@ -80,6 +80,13 @@ export interface PanePipeOptions {
   onlyIfNotPiped?: boolean;
 }
 
+export interface PanePipeFileOptions extends PanePipeOptions {
+  ownership?: {
+    token: string;
+    tokenFilePath: string;
+  };
+}
+
 export interface TmuxCommandSpec {
   cwd: string;
   command: string;
@@ -937,8 +944,21 @@ export class TmuxRuntimeManager {
     this.exec(["pipe-pane", "-t", target.windowId]);
   }
 
-  pipeTargetToFile(target: TmuxTarget, filePath: string, options: PanePipeOptions = {}): void {
-    this.startPanePipe(target, `cat >> ${shellQuote(filePath)}`, options);
+  pipeTargetToFile(target: TmuxTarget, filePath: string, options: PanePipeFileOptions = {}): void {
+    let command = `cat >> ${shellQuote(filePath)}`;
+    if (options.ownership) {
+      const script = `token_file=$2; printf '%s\\n' "$1" > "$token_file"; trap 'rm -f "$token_file"' EXIT; cat >> "$3"`;
+      command = [
+        "sh",
+        "-c",
+        shellQuote(script),
+        "aimux-pane-tap",
+        shellQuote(options.ownership.token),
+        shellQuote(options.ownership.tokenFilePath),
+        shellQuote(filePath),
+      ].join(" ");
+    }
+    this.startPanePipe(target, command, options);
   }
 
   isPanePiped(target: TmuxTarget): boolean {

@@ -19,7 +19,21 @@ function item(
 function tapFiles(projectStateDir: string): string[] {
   const tapDir = join(projectStateDir, "expose-pane-taps");
   if (!existsSync(tapDir)) return [];
-  return readdirSync(tapDir).map((entry) => join(tapDir, entry));
+  return readdirSync(tapDir)
+    .filter((entry) => entry.endsWith(".log"))
+    .map((entry) => join(tapDir, entry));
+}
+
+function tokenFiles(projectStateDir: string): string[] {
+  const tapDir = join(projectStateDir, "expose-pane-taps");
+  if (!existsSync(tapDir)) return [];
+  return readdirSync(tapDir)
+    .filter((entry) => entry.endsWith(".token"))
+    .map((entry) => join(tapDir, entry));
+}
+
+function markOwned(options?: { ownership?: { token: string; tokenFilePath: string } }): void {
+  if (options?.ownership) writeFileSync(options.ownership.tokenFilePath, `${options.ownership.token}\n`);
 }
 
 describe("ExposePaneOutputTap", () => {
@@ -35,7 +49,8 @@ describe("ExposePaneOutputTap", () => {
     projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
     const tmux = {
       isPanePiped: vi.fn(() => false),
-      pipeTargetToFile: vi.fn((target: FastControlItem["target"], filePath: string) => {
+      pipeTargetToFile: vi.fn((target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
         writeFileSync(filePath, `output for ${target.windowId}\n`);
       }),
       stopPanePipe: vi.fn(),
@@ -54,7 +69,10 @@ describe("ExposePaneOutputTap", () => {
     expect(tmux.pipeTargetToFile).toHaveBeenCalledWith(
       expect.objectContaining({ windowId: "@1" }),
       expect.stringContaining("expose-pane-taps"),
-      { onlyIfNotPiped: true },
+      expect.objectContaining({
+        onlyIfNotPiped: true,
+        ownership: expect.objectContaining({ token: expect.any(String), tokenFilePath: expect.any(String) }),
+      }),
     );
     expect(snapshot).toEqual({
       output: "output for @1\n",
@@ -75,7 +93,8 @@ describe("ExposePaneOutputTap", () => {
     let nowMs = Date.parse("2026-07-20T13:00:00.000Z");
     const tmux = {
       isPanePiped: vi.fn(() => false),
-      pipeTargetToFile: vi.fn((target: FastControlItem["target"], filePath: string) => {
+      pipeTargetToFile: vi.fn((target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
         writeFileSync(filePath, `output for ${target.windowId}\n`);
       }),
       stopPanePipe: vi.fn(),
@@ -120,7 +139,8 @@ describe("ExposePaneOutputTap", () => {
     projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
     const tmux = {
       isPanePiped: vi.fn(() => false),
-      pipeTargetToFile: vi.fn((target: FastControlItem["target"], filePath: string) => {
+      pipeTargetToFile: vi.fn((target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
         writeFileSync(filePath, `output for ${target.windowId}\n`);
       }),
       stopPanePipe: vi.fn(),
@@ -145,7 +165,8 @@ describe("ExposePaneOutputTap", () => {
     projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
     const tmux = {
       isPanePiped: vi.fn(() => false),
-      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string) => {
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
         writeFileSync(filePath, "0123456789");
       }),
       stopPanePipe: vi.fn(),
@@ -160,6 +181,59 @@ describe("ExposePaneOutputTap", () => {
     expect(snapshot?.output).toBe("56789");
     expect(snapshot?.byteCount).toBe(5);
     expect(readFileSync(filePath!, "utf8")).toBe("56789");
+  });
+
+  it("compacts active tap files during maintenance without reads", async () => {
+    vi.useFakeTimers();
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    const tmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
+        writeFileSync(filePath, "0123456789");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({
+      projectStateDir,
+      tmux,
+      activeMs: 1000,
+      maintenanceMs: 100,
+      maxBytes: 5,
+      now: () => new Date(Date.now()),
+    });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    const [filePath] = tapFiles(projectStateDir);
+    expect(readFileSync(filePath!, "utf8")).toBe("0123456789");
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(readFileSync(filePath!, "utf8")).toBe("56789");
+    expect(tmux.stopPanePipe).not.toHaveBeenCalled();
+  });
+
+  it("does not stop a pane pipe after ownership is lost", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    const tmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
+        writeFileSync(filePath, "output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({ projectStateDir, tmux });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    const [tokenPath] = tokenFiles(projectStateDir);
+    rmSync(tokenPath!, { force: true });
+    tap.stop();
+
+    expect(tmux.stopPanePipe).not.toHaveBeenCalled();
+    expect(tapFiles(projectStateDir)).toHaveLength(0);
   });
 
   it("does not track a pane when starting the pipe fails", () => {

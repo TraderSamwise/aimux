@@ -1,5 +1,15 @@
-import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { FastControlItem } from "./fast-control.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -7,9 +17,15 @@ import type { TmuxTarget } from "./tmux/runtime-manager.js";
 
 export const EXPOSE_PANE_TAP_ACTIVE_MS = 10_000;
 export const EXPOSE_PANE_TAP_MAX_BYTES = 128_000;
+export const EXPOSE_PANE_TAP_MAINTENANCE_MS = 1000;
 
 type ExposePaneOutputTapTarget = Pick<FastControlItem, "id" | "target">;
-type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & { expiresAt: number; filePath: string };
+type TrackedExposePaneOutputTap = ExposePaneOutputTapTarget & {
+  expiresAt: number;
+  filePath: string;
+  token: string;
+  tokenFilePath: string;
+};
 
 export interface ExposePaneOutputTapSnapshot {
   output: string;
@@ -31,6 +47,7 @@ export interface ExposePaneOutputTapOptions {
   tmux?: Pick<TmuxRuntimeManager, "isPanePiped" | "pipeTargetToFile" | "stopPanePipe">;
   activeMs?: number;
   maxBytes?: number;
+  maintenanceMs?: number;
   now?: () => Date;
 }
 
@@ -38,6 +55,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
   private readonly tmux: Pick<TmuxRuntimeManager, "isPanePiped" | "pipeTargetToFile" | "stopPanePipe">;
   private readonly activeMs: number;
   private readonly maxBytes: number;
+  private readonly maintenanceMs: number;
   private readonly now: () => Date;
   private readonly tapDir: string;
   private readonly trackedTargets = new Map<string, TrackedExposePaneOutputTap>();
@@ -48,6 +66,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     this.tmux = options.tmux ?? new TmuxRuntimeManager();
     this.activeMs = options.activeMs ?? EXPOSE_PANE_TAP_ACTIVE_MS;
     this.maxBytes = options.maxBytes ?? EXPOSE_PANE_TAP_MAX_BYTES;
+    this.maintenanceMs = Math.max(1, options.maintenanceMs ?? EXPOSE_PANE_TAP_MAINTENANCE_MS);
     this.now = options.now ?? (() => new Date());
     this.tapDir = join(options.projectStateDir, "expose-pane-taps");
   }
@@ -94,7 +113,7 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
       }
       this.startTracked(item, expiresAt);
     }
-    this.schedulePrune();
+    this.scheduleMaintenance();
   }
 
   read(windowId: string, maxBytes = this.maxBytes): ExposePaneOutputTapSnapshot | undefined {
@@ -117,42 +136,66 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
 
   private startTracked(item: ExposePaneOutputTapTarget, expiresAt: number): void {
     let filePath: string | undefined;
+    let tokenFilePath: string | undefined;
     try {
       if (this.tmux.isPanePiped(item.target)) return;
       filePath = this.tapFilePath(item.target.windowId);
+      tokenFilePath = this.tapTokenFilePath(item.target.windowId);
+      const token = randomUUID();
       rmSync(filePath, { force: true });
+      rmSync(tokenFilePath, { force: true });
       writeFileSync(filePath, "");
-      this.tmux.pipeTargetToFile(item.target, filePath, { onlyIfNotPiped: true });
-      this.trackedTargets.set(item.target.windowId, { ...item, expiresAt, filePath });
+      this.tmux.pipeTargetToFile(item.target, filePath, {
+        onlyIfNotPiped: true,
+        ownership: { token, tokenFilePath },
+      });
+      if (!waitForOwnershipToken(tokenFilePath, token)) {
+        rmSync(filePath, { force: true });
+        rmSync(tokenFilePath, { force: true });
+        return;
+      }
+      this.trackedTargets.set(item.target.windowId, { ...item, expiresAt, filePath, token, tokenFilePath });
     } catch {
       if (filePath) {
         try {
           rmSync(filePath, { force: true });
         } catch {}
       }
+      if (tokenFilePath) {
+        try {
+          rmSync(tokenFilePath, { force: true });
+        } catch {}
+      }
     }
   }
 
   private stopTracked(item: TrackedExposePaneOutputTap): void {
-    try {
-      this.tmux.stopPanePipe(item.target);
-    } catch {}
+    if (ownsToken(item.tokenFilePath, item.token)) {
+      try {
+        this.tmux.stopPanePipe(item.target);
+      } catch {}
+    }
     try {
       rmSync(item.filePath, { force: true });
     } catch {}
+    try {
+      rmSync(item.tokenFilePath, { force: true });
+    } catch {}
   }
 
-  private schedulePrune(): void {
+  private scheduleMaintenance(): void {
     if (!this.running || this.timer || this.trackedTargets.size === 0) return;
     const now = this.now().getTime();
     const nextExpiry = Math.min(...[...this.trackedTargets.values()].map((item) => item.expiresAt));
     this.timer = setTimeout(
       () => {
         this.timer = null;
-        this.pruneExpired(this.now().getTime());
-        this.schedulePrune();
+        const currentTime = this.now().getTime();
+        this.pruneExpired(currentTime);
+        this.compactTrackedFiles(currentTime);
+        this.scheduleMaintenance();
       },
-      Math.max(0, nextExpiry - now),
+      Math.max(0, Math.min(this.maintenanceMs, nextExpiry - now)),
     );
     this.timer.unref?.();
   }
@@ -183,6 +226,17 @@ export class ExposePaneOutputTap implements ExposePaneOutputTapLike {
     const hash = createHash("sha256").update(windowId).digest("hex").slice(0, 16);
     return join(this.tapDir, `${hash}.log`);
   }
+
+  private tapTokenFilePath(windowId: string): string {
+    const hash = createHash("sha256").update(windowId).digest("hex").slice(0, 16);
+    return join(this.tapDir, `${hash}.token`);
+  }
+
+  private compactTrackedFiles(now: number): void {
+    for (const item of this.trackedTargets.values()) {
+      if (now < item.expiresAt) this.compactFile(item.filePath);
+    }
+  }
 }
 
 function sameTarget(left: TmuxTarget, right: TmuxTarget): boolean {
@@ -207,4 +261,20 @@ function readTail(filePath: string, maxBytes: number): { buffer: Buffer; totalBy
       } catch {}
     }
   }
+}
+
+function ownsToken(tokenFilePath: string, token: string): boolean {
+  try {
+    return readFileSync(tokenFilePath, "utf8").trim() === token;
+  } catch {
+    return false;
+  }
+}
+
+function waitForOwnershipToken(tokenFilePath: string, token: string): boolean {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (ownsToken(tokenFilePath, token)) return true;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+  }
+  return false;
 }
