@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -53,6 +53,26 @@ describe("aimux launch contracts", () => {
       env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(dir, "native") },
       currentArgvEntry: nativeEntry,
     });
+    expect(launch).toMatchObject({
+      command: shim,
+      args: ["--tmux-dashboard-internal"],
+      source: "stable-shim",
+    });
+  });
+
+  it("uses the stable shim when native install paths resolve through symlink aliases", () => {
+    const realRoot = join(dir, "real");
+    const aliasRoot = join(dir, "alias");
+    const aliasEntry = join(aliasRoot, "native", "old-build", "dist", "launcher-bin.js");
+    mkdirSync(join(realRoot, "native", "old-build", "dist"), { recursive: true });
+    writeFileSync(join(realRoot, "native", "old-build", "dist", "launcher-bin.js"), "console.log('old');\n");
+    symlinkSync(realRoot, aliasRoot, "dir");
+
+    const launch = getAimuxDashboardLaunchCommand({
+      env: { AIMUX_CLI_BIN: shim, AIMUX_INSTALL_ROOT: join(realRoot, "native") },
+      currentArgvEntry: aliasEntry,
+    });
+
     expect(launch).toMatchObject({
       command: shim,
       args: ["--tmux-dashboard-internal"],

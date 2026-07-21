@@ -12,6 +12,7 @@ import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { getDaemonLogPath, getProjectIdFor, getProjectLogPathFor, getProjectStateDirFor } from "./paths.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
+import { refreshGlobalExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -584,7 +585,6 @@ describe("daemon supervision", () => {
   });
 
   it("mirrors project hot snapshots into a global expose hot snapshot", async () => {
-    const { AimuxDaemon } = await import("./daemon.js");
     const projectStateDir = getProjectStateDirFor(projectRoot);
     writeHotExposeScopeView(
       projectStateDir,
@@ -615,12 +615,9 @@ describe("daemon supervision", () => {
       },
     );
 
-    const daemon = new AimuxDaemon();
-    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
-      command: CORE_COMMAND_NAMES.projectEnsure,
-      payload: { projectRoot },
-    });
-    (daemon as unknown as { refreshGlobalExposeHotSnapshots: () => void }).refreshGlobalExposeHotSnapshots();
+    refreshGlobalExposeHotSnapshots([
+      { id: getProjectIdFor(projectRoot), name: basename(projectRoot), path: projectRoot, serviceAlive: true },
+    ]);
 
     expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "global" })).toMatchObject({
       scope: "global",
@@ -642,7 +639,6 @@ describe("daemon supervision", () => {
   });
 
   it("clears stale global expose hot snapshots when no project snapshots remain", async () => {
-    const { AimuxDaemon } = await import("./daemon.js");
     const projectStateDir = getProjectStateDirFor(projectRoot);
     const item = {
       id: "stale-agent",
@@ -667,12 +663,9 @@ describe("daemon supervision", () => {
     );
     expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "global" })).not.toBeNull();
 
-    const daemon = new AimuxDaemon();
-    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
-      command: CORE_COMMAND_NAMES.projectEnsure,
-      payload: { projectRoot },
-    });
-    (daemon as unknown as { refreshGlobalExposeHotSnapshots: () => void }).refreshGlobalExposeHotSnapshots();
+    refreshGlobalExposeHotSnapshots([
+      { id: getProjectIdFor(projectRoot), name: basename(projectRoot), path: projectRoot, serviceAlive: true },
+    ]);
 
     expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "global" })).toBeNull();
   });

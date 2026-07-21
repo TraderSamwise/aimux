@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,8 +26,16 @@ function currentEntryPath(): string {
 }
 
 function normalizeDir(path: string): string {
-  const normalized = resolve(path);
+  const normalized = canonicalPath(path);
   return normalized.endsWith(sep) ? normalized : `${normalized}${sep}`;
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 export function getAimuxStableShimPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -42,9 +50,9 @@ function shouldUseStableShim(input: {
   if (!fileExists(input.stableShimPath)) return false;
   const current = input.currentArgvEntry?.trim();
   if (!current) return false;
-  if (resolve(current) === resolve(input.stableShimPath)) return true;
+  if (canonicalPath(current) === canonicalPath(input.stableShimPath)) return true;
   const nativeRoot = normalizeDir(input.env.AIMUX_INSTALL_ROOT || `${homedir()}/.aimux/native`);
-  return resolve(current).startsWith(nativeRoot);
+  return canonicalPath(current).startsWith(nativeRoot);
 }
 
 function resolveAimuxCliLaunchCommand(

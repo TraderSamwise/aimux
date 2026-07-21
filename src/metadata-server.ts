@@ -3,8 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve as pathResolve } from "node:path";
+import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
+import type { Worker } from "node:worker_threads";
 import {
   getDashboardClientUiStatePath,
   getProjectId,
@@ -161,7 +162,7 @@ import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
 import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
-import { writeHotExposeScopeViews, type HotExposeScopeWrite } from "./tmux/expose-hot-snapshot.js";
+import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
@@ -651,9 +652,9 @@ export interface MetadataServerOptions {
   exposeHotSnapshots?: boolean;
 }
 
+const EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 1500;
+const EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS = 1500;
 const EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
-const EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS = 12;
-
 type InteractionDisplay = {
   title: string;
   message: string;
@@ -666,6 +667,15 @@ function trimmedString(value: unknown): string | undefined {
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function stableJitterMs(value: string, rangeMs: number): number {
+  if (rangeMs <= 0) return 0;
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash % rangeMs;
 }
 
 function parseObjectString(value: unknown): Record<string, unknown> | undefined {
@@ -1379,6 +1389,7 @@ export class MetadataServer {
   private readonly exposeHotSnapshotsEnabled: boolean;
   private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeHotSnapshotRefreshing = false;
+  private exposeHotSnapshotWorker: Worker | null = null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1425,7 +1436,9 @@ export class MetadataServer {
     });
     this.exposePreviewCache?.start();
     this.exposePaneOutputTap?.start();
-    this.scheduleExposeHotSnapshotRefresh(0);
+    const initialDelay =
+      EXPOSE_HOT_SNAPSHOT_INITIAL_MS + stableJitterMs(this.currentProjectRoot(), EXPOSE_HOT_SNAPSHOT_INITIAL_JITTER_MS);
+    this.scheduleExposeHotSnapshotRefresh(initialDelay);
   }
 
   private publishEndpoint(): void {
@@ -1456,6 +1469,8 @@ export class MetadataServer {
     if (this.exposeHotSnapshotTimer) clearTimeout(this.exposeHotSnapshotTimer);
     this.exposeHotSnapshotTimer = null;
     this.exposeHotSnapshotRefreshing = false;
+    this.exposeHotSnapshotWorker?.terminate().catch(() => {});
+    this.exposeHotSnapshotWorker = null;
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
     if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
@@ -1555,10 +1570,13 @@ export class MetadataServer {
     return this.projectRoot ?? process.cwd();
   }
 
-  private attachExposePreviewSnapshots(rawItems: FastControlItem[]): FastControlItem[] {
+  private attachExposePreviewSnapshots(
+    rawItems: FastControlItem[],
+    options: { trackPaneOutput?: boolean } = {},
+  ): FastControlItem[] {
     const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
     const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
-    this.exposePaneOutputTap?.trackItems(rawItems);
+    if (options.trackPaneOutput !== false) this.exposePaneOutputTap?.trackItems(rawItems);
     for (const item of rawItems) {
       tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
     }
@@ -1593,56 +1611,44 @@ export class MetadataServer {
   }
 
   private refreshExposeHotSnapshots(): void {
-    if (!this.exposeHotSnapshotsEnabled || this.exposeHotSnapshotRefreshing || !this.server) return;
+    if (!this.exposeHotSnapshotsEnabled || !this.server) return;
+    if (this.exposeHotSnapshotRefreshing) {
+      this.scheduleExposeHotSnapshotRefresh();
+      return;
+    }
     this.exposeHotSnapshotRefreshing = true;
+    const timeoutMs = 10_000;
     try {
-      const projectRoot = this.currentProjectRoot();
-      const projectStateDir = getProjectStateDirFor(projectRoot);
-      const tmux = new TmuxRuntimeManager();
-      const projectRawItems = listSwitchableAgentItems({ projectRoot, currentPath: projectRoot }, tmux, {
-        scope: "all",
-      });
-      const projectItems = this.attachExposePreviewSnapshots(projectRawItems);
-      const snapshotWrites: HotExposeScopeWrite[] = [
+      const worker = startExposeHotSnapshotWorker(
+        { kind: "project", projectRoot: this.currentProjectRoot() },
         {
-          key: { projectRoot, scope: "project" },
-          view: { scope: "project", scopeLabel: "all worktrees", sublabel: "worktree", items: projectItems },
+          category: "api",
+          description: "expose hot snapshot refresh",
+          timeoutMs,
         },
-      ];
-
-      const launchContexts = tmux
-        .listProjectManagedWindows(projectRoot)
-        .filter(({ target }) => !target.paneDead && !isDashboardWindowName(target.windowName))
-        .slice(0, EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS);
-      const keepLaunchWindowIds = new Set(launchContexts.map(({ target }) => target.windowId));
-      for (const { target, metadata } of launchContexts) {
-        const worktreePath = pathResolve(metadata.worktreePath || projectRoot);
-        const worktreeRawItems = listSwitchableAgentItems(
-          {
-            projectRoot,
-            currentPath: worktreePath,
-            currentWindow: target.windowName,
-            currentWindowId: target.windowId,
-          },
-          tmux,
-          { scope: "worktree" },
-        );
-        const worktreeItems = this.attachExposePreviewSnapshots(worktreeRawItems);
-        snapshotWrites.push({
-          key: { projectRoot, scope: "worktree", worktreeKey: worktreePath, launchWindowId: target.windowId },
-          view: { scope: "worktree", scopeLabel: "this worktree", sublabel: "none", items: worktreeItems },
-        });
-      }
-      writeHotExposeScopeViews(projectStateDir, snapshotWrites, {
-        prune: { projectRoot, scopes: ["worktree"], keepLaunchWindowIds },
-      });
+      );
+      this.exposeHotSnapshotWorker = worker;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(fallback);
+        if (this.exposeHotSnapshotWorker === worker) this.exposeHotSnapshotWorker = null;
+        this.exposeHotSnapshotRefreshing = false;
+        if (this.server) this.scheduleExposeHotSnapshotRefresh();
+      };
+      const fallback = setTimeout(() => {
+        worker.terminate().catch(() => {});
+        finish();
+      }, timeoutMs + 1_000);
+      fallback.unref?.();
+      worker.once("exit", finish);
     } catch (error) {
+      this.exposeHotSnapshotRefreshing = false;
       log.debug("expose hot snapshot refresh failed", "api", {
         projectRoot: this.currentProjectRoot(),
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      this.exposeHotSnapshotRefreshing = false;
       this.scheduleExposeHotSnapshotRefresh();
     }
   }

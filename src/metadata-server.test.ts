@@ -14,6 +14,7 @@ import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
+import { refreshProjectExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
 import { getParserFixture } from "./agent-output-parser-test-utils.js";
 import {
@@ -2268,6 +2269,7 @@ describe("MetadataServer threads API", () => {
     const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
     const listWindows = TmuxRuntimeManager.prototype.listWindows;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const captureTarget = TmuxRuntimeManager.prototype.captureTarget;
     const exposePreviewCache = {
       start: vi.fn(),
       stop: vi.fn(),
@@ -2326,14 +2328,16 @@ describe("MetadataServer threads API", () => {
       },
     ] as any;
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    const listProjectManagedWindowsMock = vi.fn(() => managedWindows);
     TmuxRuntimeManager.prototype.listManagedWindows = () => managedWindows;
-    TmuxRuntimeManager.prototype.listProjectManagedWindows = () => managedWindows;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindowsMock;
     TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test"];
     TmuxRuntimeManager.prototype.listWindows = () => [
       { id: "@11", index: 11, name: "codex", active: true, activity: 12 },
       { id: "@12", index: 12, name: "claude", active: false, activity: 13 },
     ];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.captureTarget = (target) => `${target.windowId} captured preview\n`;
     writeHotExposeScopeView(
       getProjectStateDir(),
       { projectRoot: repoRoot, scope: "worktree", worktreeKey: repoRoot, launchWindowId: "@99" },
@@ -2363,6 +2367,8 @@ describe("MetadataServer threads API", () => {
     );
     server = new MetadataServer({ exposePreviewCache, exposePaneOutputTap, exposeHotSnapshots: true });
     await server.start();
+    expect(listProjectManagedWindowsMock).not.toHaveBeenCalled();
+    refreshProjectExposeHotSnapshots(repoRoot);
 
     try {
       const stateDir = getProjectStateDir();
@@ -2384,11 +2390,11 @@ describe("MetadataServer threads API", () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: "agent-1",
-            previewSnapshot: expect.objectContaining({ source: "tap", output: "tap warmed preview\n" }),
+            previewSnapshot: expect.objectContaining({ source: "capture", output: "@11 captured preview\n" }),
           }),
           expect.objectContaining({
             id: "agent-2",
-            previewSnapshot: expect.objectContaining({ source: "capture", output: "capture warmed preview\n" }),
+            previewSnapshot: expect.objectContaining({ source: "capture", output: "@12 captured preview\n" }),
           }),
         ]),
       );
@@ -2416,8 +2422,8 @@ describe("MetadataServer threads API", () => {
           launchWindowId: "@99",
         }),
       ).toBeNull();
-      expect(exposePaneOutputTap.trackItems).toHaveBeenCalled();
-      expect(exposePreviewCache.trackItems).toHaveBeenCalled();
+      expect(exposePaneOutputTap.trackItems).not.toHaveBeenCalled();
+      expect(exposePreviewCache.trackItems).not.toHaveBeenCalled();
 
       server.stop();
       const tapCallsAfterStop = exposePaneOutputTap.trackItems.mock.calls.length;
@@ -2431,6 +2437,7 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
       TmuxRuntimeManager.prototype.listWindows = listWindows;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.captureTarget = captureTarget;
     }
   });
 

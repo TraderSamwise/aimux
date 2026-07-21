@@ -160,6 +160,19 @@ describe("expose hot snapshots", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it("skips writes behind a live write lock without blocking", () => {
+    const stateDir = createStateDir();
+    const lockPath = join(stateDir, "expose-hot-snapshots.lock");
+    mkdirSync(lockPath);
+
+    const startedAt = Date.now();
+    writeHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" }, view("project"));
+
+    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(readHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" })).toBeNull();
+    expect(existsSync(lockPath)).toBe(true);
+  });
+
   it("bounds cached preview output and item count", () => {
     const stateDir = createStateDir();
     const items = Array.from({ length: 120 }, (_, index) => {
