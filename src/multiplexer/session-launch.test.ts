@@ -2236,6 +2236,73 @@ describe("runDashboard", () => {
     expect(host.renderCurrentDashboardView).toHaveBeenCalledTimes(2);
   });
 
+  it("marks tmux dashboards ready after the first startup frame", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-ready-"));
+    const previousTmuxPane = process.env.TMUX_PANE;
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    let resolvePriming: () => void = () => {};
+    const primingSettled = new Promise<void>((resolve) => {
+      resolvePriming = resolve;
+    });
+    const setWindowOption = vi.fn();
+    const host: any = {
+      projectRoot: repoRoot,
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromTopology: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      tmuxRuntimeManager: { setWindowOption },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      handleRuntimeGuardKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
+      refreshDashboardModelFromService: vi.fn(async () => {
+        await primingSettled;
+        return true;
+      }),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    process.env.TMUX_PANE = "%42";
+    try {
+      const runPromise = runDashboard(host);
+      await vi.waitFor(() => expect(host.refreshDashboardModelFromService).toHaveBeenCalledOnce());
+
+      expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
+      expect(setWindowOption).toHaveBeenCalledWith("%42", "@aimux-dashboard-build", expect.any(String));
+      expect(setWindowOption).toHaveBeenCalledWith("%42", "@aimux-dashboard-ready", expect.any(String));
+
+      resolvePriming();
+      await vi.waitFor(() => expect(typeof host.resolveRun).toBe("function"));
+      host.resolveRun(0);
+      await expect(runPromise).resolves.toBe(0);
+    } finally {
+      if (previousTmuxPane === undefined) delete process.env.TMUX_PANE;
+      else process.env.TMUX_PANE = previousTmuxPane;
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not render or report stale startup repair after a newer dashboard run starts", async () => {
     const host: any = {
       startHeartbeat: vi.fn(),

@@ -7,7 +7,6 @@ const HOT_SNAPSHOT_VERSION = 1;
 const HOT_SNAPSHOT_FILE = "expose-hot-snapshots.json";
 const HOT_SNAPSHOT_LOCK_DIR = "expose-hot-snapshots.lock";
 const HOT_SNAPSHOT_MAX_AGE_MS = 10 * 60 * 1000;
-const HOT_SNAPSHOT_LOCK_WAIT_MS = 250;
 const HOT_SNAPSHOT_LOCK_STALE_MS = 5000;
 const MAX_ITEMS = 100;
 const MAX_PREVIEW_BYTES = 16 * 1024;
@@ -233,13 +232,8 @@ function boundedItem(item: ExposeScopeItem): ExposeScopeItem {
   };
 }
 
-function sleepMs(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 function acquireWriteLock(projectStateDir: string): boolean {
   const path = lockPath(projectStateDir);
-  const deadline = Date.now() + HOT_SNAPSHOT_LOCK_WAIT_MS;
   mkdirSync(projectStateDir, { recursive: true });
   while (true) {
     try {
@@ -257,9 +251,7 @@ function acquireWriteLock(projectStateDir: string): boolean {
       }
     } catch {}
 
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) return false;
-    sleepMs(Math.min(10, remaining));
+    return false;
   }
 }
 

@@ -703,9 +703,7 @@ program
         }
       }
       await initPaths(projectRoot);
-      if (opts.tmuxDashboardInternal) {
-        await ensureDaemonProjectSpawned(projectRoot);
-      } else {
+      if (!opts.tmuxDashboardInternal) {
         initProject();
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
