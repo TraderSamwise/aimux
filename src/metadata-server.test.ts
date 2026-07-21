@@ -2189,7 +2189,6 @@ describe("MetadataServer threads API", () => {
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
       ]);
       expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
-        expect.objectContaining({ target: expect.objectContaining({ windowId: "@7" }) }),
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
       ]);
       expect(exposePaneOutputTap.read).not.toHaveBeenCalledWith("@7");
