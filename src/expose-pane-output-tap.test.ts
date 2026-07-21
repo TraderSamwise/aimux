@@ -194,6 +194,62 @@ describe("ExposePaneOutputTap", () => {
     expect(tapFiles(projectStateDir)).toHaveLength(0);
   });
 
+  it("restarts a tracked tap after ownership is lost while demand continues", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    let writes = 0;
+    const tmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string, options?: any) => {
+        markOwned(options);
+        writes += 1;
+        writeFileSync(filePath, writes === 1 ? "stale output\n" : "fresh output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({ projectStateDir, tmux });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    expect(tap.read("@1")?.output).toBe("stale output\n");
+    const [tokenPath] = tokenFiles(projectStateDir);
+    rmSync(tokenPath!, { force: true });
+
+    tap.trackItems([item("a-fresh", "@1")]);
+
+    expect(tmux.pipeTargetToFile).toHaveBeenCalledTimes(2);
+    expect(tap.read("@1")?.output).toBe("fresh output\n");
+  });
+
+  it("retries a pending start that never reports ownership", () => {
+    projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
+    let nowMs = Date.parse("2026-07-20T13:00:00.000Z");
+    const tmux = {
+      isPanePiped: vi.fn(() => false),
+      pipeTargetToFile: vi.fn((_target: FastControlItem["target"], filePath: string) => {
+        writeFileSync(filePath, "pending output\n");
+      }),
+      stopPanePipe: vi.fn(),
+    };
+    const tap = new ExposePaneOutputTap({
+      projectStateDir,
+      tmux,
+      maintenanceMs: 100,
+      now: () => new Date(nowMs),
+    });
+
+    tap.start();
+    tap.trackItems([item("a", "@1")]);
+    nowMs += 50;
+    tap.trackItems([item("a-renewed", "@1")]);
+    expect(tmux.pipeTargetToFile).toHaveBeenCalledTimes(1);
+
+    nowMs += 51;
+    tap.trackItems([item("a-retry", "@1")]);
+
+    expect(tmux.pipeTargetToFile).toHaveBeenCalledTimes(2);
+    expect(tap.read("@1")).toBeUndefined();
+  });
+
   it("expires demand and stops active pane pipes", async () => {
     vi.useFakeTimers();
     projectStateDir = mkdtempSync(join(tmpdir(), "aimux-expose-tap-"));
