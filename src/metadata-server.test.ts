@@ -2096,11 +2096,19 @@ describe("MetadataServer threads API", () => {
     const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
     const listWindows = TmuxRuntimeManager.prototype.listWindows;
     const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
-    const previewSnapshot = {
-      output: "warm preview\n",
+    const captureSnapshot = {
+      output: "capture preview\n",
       capturedAt: "2026-07-20T13:00:00.000Z",
       source: "capture" as const,
       windowId: "@7",
+      startLine: -40,
+      lineCount: 40,
+    };
+    const repairCaptureSnapshot = {
+      output: "repair capture\n",
+      capturedAt: "2026-07-20T13:00:02.000Z",
+      source: "capture" as const,
+      windowId: "@8",
       startLine: -40,
       lineCount: 40,
     };
@@ -2108,22 +2116,32 @@ describe("MetadataServer threads API", () => {
       start: vi.fn(),
       stop: vi.fn(),
       trackItems: vi.fn(),
-      get: vi.fn((windowId: string) => (windowId === "@7" ? previewSnapshot : undefined)),
+      get: vi.fn((windowId: string) =>
+        windowId === "@7" ? captureSnapshot : windowId === "@8" ? repairCaptureSnapshot : undefined,
+      ),
     };
     const exposePaneOutputTap = {
       start: vi.fn(),
       stop: vi.fn(),
       trackItems: vi.fn(),
       read: vi.fn((windowId: string) =>
-        windowId === "@8"
+        windowId === "@7"
           ? {
-              output: "tap preview\n",
+              output: "live tap preview\n",
               capturedAt: "2026-07-20T13:00:01.000Z",
               source: "tap" as const,
-              windowId: "@8",
-              byteCount: 12,
+              windowId: "@7",
+              byteCount: 17,
             }
-          : undefined,
+          : windowId === "@9"
+            ? {
+                output: "tap only preview\n",
+                capturedAt: "2026-07-20T13:00:03.000Z",
+                source: "tap" as const,
+                windowId: "@9",
+                byteCount: 17,
+              }
+            : undefined,
       ),
     };
 
@@ -2152,10 +2170,22 @@ describe("MetadataServer threads API", () => {
             worktreePath: repoRoot,
           },
         },
+        {
+          target: { sessionName: "aimux-test", windowId: "@9", windowIndex: 9, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-3",
+            command: "codex",
+            args: [],
+            toolConfigKey: "codex",
+            worktreePath: repoRoot,
+          },
+        },
       ] as any;
     TmuxRuntimeManager.prototype.listWindows = () => [
       { id: "@7", index: 7, name: "codex", active: true, activity: 12 },
       { id: "@8", index: 8, name: "claude", active: false, activity: 13 },
+      { id: "@9", index: 9, name: "codex", active: false, activity: 14 },
     ];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
     server = new MetadataServer({ exposePreviewCache, exposePaneOutputTap });
@@ -2177,22 +2207,39 @@ describe("MetadataServer threads API", () => {
       const body = (await response.json()) as { ok: boolean; items: Array<Record<string, any>> };
 
       expect(response.status).toBe(200);
-      expect(body.items.find((item) => item.target.windowId === "@7")?.previewSnapshot).toEqual(previewSnapshot);
-      expect(body.items.find((item) => item.target.windowId === "@8")?.previewSnapshot).toEqual({
-        output: "tap preview\n",
+      expect(body.items.find((item) => item.target.windowId === "@7")?.previewSnapshot).toEqual({
+        output: "live tap preview\n",
         capturedAt: "2026-07-20T13:00:01.000Z",
         source: "tap",
-        windowId: "@8",
+        windowId: "@7",
       });
-      expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([
+      expect(body.items.find((item) => item.target.windowId === "@8")?.previewSnapshot).toEqual({
+        output: "repair capture\n",
+        capturedAt: "2026-07-20T13:00:02.000Z",
+        source: "capture",
+        windowId: "@8",
+        startLine: -40,
+        lineCount: 40,
+      });
+      expect(body.items.find((item) => item.target.windowId === "@9")?.previewSnapshot).toEqual({
+        output: "tap only preview\n",
+        capturedAt: "2026-07-20T13:00:03.000Z",
+        source: "tap",
+        windowId: "@9",
+      });
+      expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@7" }) }),
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
+        expect.objectContaining({ target: expect.objectContaining({ windowId: "@9" }) }),
       ]);
-      expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
+      expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
       ]);
-      expect(exposePaneOutputTap.read).not.toHaveBeenCalledWith("@7");
+      expect(exposePreviewCache.get).not.toHaveBeenCalledWith("@7");
+      expect(exposePreviewCache.get).toHaveBeenCalledWith("@8");
       expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@8");
+      expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@7");
+      expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@9");
       expect(exposePreviewCache.start).toHaveBeenCalledTimes(1);
       expect(exposePaneOutputTap.start).toHaveBeenCalledTimes(1);
     } finally {
