@@ -425,6 +425,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       nextScope === "worktree"
         ? resolveScopedWorktreePath(options.projectRoot, options.currentPath || options.projectRoot)
         : undefined,
+    launchWindowId: nextScope === "worktree" ? options.currentWindowId : undefined,
   });
   const initialHotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
   let view = initialHotView ?? defaultExposeScopeView(scope);

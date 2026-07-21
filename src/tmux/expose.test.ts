@@ -217,7 +217,7 @@ describe("runTmuxExpose", () => {
     mkdirSync(projectStateDir);
     writeHotExposeScopeView(
       projectStateDir,
-      { projectRoot: "/repo", scope: "worktree", worktreeKey: "/repo" },
+      { projectRoot: "/repo", scope: "worktree", worktreeKey: "/repo", launchWindowId: "@1" },
       {
         scope: "worktree",
         scopeLabel: "this worktree",
