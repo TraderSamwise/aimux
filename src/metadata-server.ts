@@ -2652,19 +2652,22 @@ export class MetadataServer {
         { scope },
       );
       const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
+      const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
       if (includePreview) {
-        this.exposePreviewCache?.trackItems(rawItems);
+        this.exposePaneOutputTap?.trackItems(rawItems);
         for (const item of rawItems) {
+          tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
+        }
+        const captureRepairItems = rawItems.filter((item) => !tapSnapshots.get(item.target.windowId));
+        this.exposePreviewCache?.trackItems(captureRepairItems);
+        for (const item of captureRepairItems) {
           captureSnapshots.set(item.target.windowId, this.exposePreviewCache?.get(item.target.windowId));
         }
-        this.exposePaneOutputTap?.trackItems(rawItems.filter((item) => !captureSnapshots.get(item.target.windowId)));
       }
       const items = rawItems.map((item) => {
-        const captureSnapshot = includePreview ? captureSnapshots.get(item.target.windowId) : undefined;
-        const tapSnapshot =
-          includePreview && !captureSnapshot ? this.exposePaneOutputTap?.read(item.target.windowId) : undefined;
+        const tapSnapshot = includePreview ? tapSnapshots.get(item.target.windowId) : undefined;
+        const captureSnapshot = includePreview && !tapSnapshot ? captureSnapshots.get(item.target.windowId) : undefined;
         const previewSnapshot =
-          captureSnapshot ??
           (tapSnapshot
             ? {
                 output: tapSnapshot.output,
@@ -2672,7 +2675,7 @@ export class MetadataServer {
                 source: tapSnapshot.source,
                 windowId: tapSnapshot.windowId,
               }
-            : undefined);
+            : undefined) ?? captureSnapshot;
         const serialized = serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item);
         return {
           ...serialized,
