@@ -1,11 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve as pathResolve } from "node:path";
 import { atomicWriteFast } from "../atomic-write.js";
 import type { ExposeScope, ExposeScopeItem, ExposeScopeView, ExposeSublabel } from "./expose-model.js";
 
 const HOT_SNAPSHOT_VERSION = 1;
 const HOT_SNAPSHOT_FILE = "expose-hot-snapshots.json";
+const HOT_SNAPSHOT_LOCK_DIR = "expose-hot-snapshots.lock";
 const HOT_SNAPSHOT_MAX_AGE_MS = 10 * 60 * 1000;
+const HOT_SNAPSHOT_LOCK_WAIT_MS = 250;
+const HOT_SNAPSHOT_LOCK_STALE_MS = 5000;
 const MAX_ITEMS = 100;
 const MAX_PREVIEW_BYTES = 16 * 1024;
 const MAX_PREVIEW_LINES = 80;
@@ -44,6 +47,10 @@ interface HotExposeSnapshotFile {
 
 function snapshotPath(projectStateDir: string): string {
   return join(projectStateDir, HOT_SNAPSHOT_FILE);
+}
+
+function lockPath(projectStateDir: string): string {
+  return join(projectStateDir, HOT_SNAPSHOT_LOCK_DIR);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -100,6 +107,7 @@ function isExposeScopeItem(value: unknown): value is ExposeScopeItem {
     !isFiniteNumber(value.activity) ||
     !isFiniteNumber(value.recentRank) ||
     (value.lastUsedAt !== undefined && typeof value.lastUsedAt !== "string") ||
+    (value.projectId !== undefined && typeof value.projectId !== "string") ||
     (value.projectRoot !== undefined && typeof value.projectRoot !== "string") ||
     (value.projectName !== undefined && typeof value.projectName !== "string") ||
     !isPreviewSnapshot(value.previewSnapshot)
@@ -225,6 +233,42 @@ function boundedItem(item: ExposeScopeItem): ExposeScopeItem {
   };
 }
 
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function acquireWriteLock(projectStateDir: string): boolean {
+  const path = lockPath(projectStateDir);
+  const deadline = Date.now() + HOT_SNAPSHOT_LOCK_WAIT_MS;
+  mkdirSync(projectStateDir, { recursive: true });
+  while (true) {
+    try {
+      mkdirSync(path);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    }
+
+    try {
+      const ageMs = Date.now() - statSync(path).mtimeMs;
+      if (ageMs > HOT_SNAPSHOT_LOCK_STALE_MS) {
+        rmSync(path, { recursive: true, force: true });
+        continue;
+      }
+    } catch {}
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    sleepMs(Math.min(10, remaining));
+  }
+}
+
+function releaseWriteLock(projectStateDir: string): void {
+  try {
+    rmSync(lockPath(projectStateDir), { recursive: true, force: true });
+  } catch {}
+}
+
 export function readHotExposeScopeView(projectStateDir: string, key: HotExposeScopeKey): ExposeScopeView | null {
   try {
     const view = parseHotView(readFile(projectStateDir).views[cacheId(key)], key);
@@ -245,6 +289,7 @@ export function writeHotExposeScopeViews(
   entries: HotExposeScopeWrite[],
   options: { prune?: HotExposeScopePrune } = {},
 ): void {
+  if (!acquireWriteLock(projectStateDir)) return;
   try {
     let file: HotExposeSnapshotFile;
     try {
@@ -271,7 +316,10 @@ export function writeHotExposeScopeViews(
       }
     }
     atomicWriteFast(snapshotPath(projectStateDir), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
-  } catch {}
+  } catch {
+  } finally {
+    releaseWriteLock(projectStateDir);
+  }
 }
 
 export function writeHotExposeScopeView(

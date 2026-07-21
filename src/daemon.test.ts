@@ -10,7 +10,8 @@ import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
-import { getDaemonLogPath, getProjectIdFor, getProjectLogPathFor } from "./paths.js";
+import { getDaemonLogPath, getProjectIdFor, getProjectLogPathFor, getProjectStateDirFor } from "./paths.js";
+import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -580,6 +581,100 @@ describe("daemon supervision", () => {
     expect(list.body).toEqual({ ok: false, error: "expose routes are loopback-only" });
     expect(focus.status).toBe(403);
     expect(focus.body).toEqual({ ok: false, error: "expose routes are loopback-only" });
+  });
+
+  it("mirrors project hot snapshots into a global expose hot snapshot", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const projectStateDir = getProjectStateDirFor(projectRoot);
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot, scope: "project" },
+      {
+        scope: "project",
+        scopeLabel: "all worktrees",
+        sublabel: "worktree",
+        items: [
+          {
+            id: "agent-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: { worktreePath: projectRoot },
+            previewSnapshot: {
+              output: "warm global preview\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "tap",
+              windowId: "@1",
+              startLine: -40,
+              lineCount: 40,
+            },
+          },
+        ],
+      },
+    );
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    (daemon as unknown as { refreshGlobalExposeHotSnapshots: () => void }).refreshGlobalExposeHotSnapshots();
+
+    expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "global" })).toMatchObject({
+      scope: "global",
+      scopeLabel: "all projects",
+      sublabel: "project-worktree",
+      items: [
+        expect.objectContaining({
+          id: "agent-1",
+          projectId: "proj-repo",
+          projectName: "repo",
+          projectRoot,
+          previewSnapshot: expect.objectContaining({ output: "warm global preview\n" }),
+        }),
+      ],
+    });
+    expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "project" })?.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "agent-1" })]),
+    );
+  });
+
+  it("clears stale global expose hot snapshots when no project snapshots remain", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const projectStateDir = getProjectStateDirFor(projectRoot);
+    const item = {
+      id: "stale-agent",
+      label: "codex",
+      urgency: 0,
+      activity: 0,
+      recentRank: 0,
+      projectRoot,
+      projectName: "repo",
+      target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+      metadata: { worktreePath: projectRoot },
+    };
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot, scope: "global" },
+      {
+        scope: "global",
+        scopeLabel: "all projects",
+        sublabel: "project-worktree",
+        items: [item],
+      },
+    );
+    expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "global" })).not.toBeNull();
+
+    const daemon = new AimuxDaemon();
+    await daemon.routeRequest("POST", CORE_API_ROUTES.commands, {
+      command: CORE_COMMAND_NAMES.projectEnsure,
+      payload: { projectRoot },
+    });
+    (daemon as unknown as { refreshGlobalExposeHotSnapshots: () => void }).refreshGlobalExposeHotSnapshots();
+
+    expect(readHotExposeScopeView(projectStateDir, { projectRoot, scope: "global" })).toBeNull();
   });
 
   it("stops project actors through the core command bus", async () => {
