@@ -2110,6 +2110,22 @@ describe("MetadataServer threads API", () => {
       trackItems: vi.fn(),
       get: vi.fn((windowId: string) => (windowId === "@7" ? previewSnapshot : undefined)),
     };
+    const exposePaneOutputTap = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      read: vi.fn((windowId: string) =>
+        windowId === "@8"
+          ? {
+              output: "tap preview\n",
+              capturedAt: "2026-07-20T13:00:01.000Z",
+              source: "tap" as const,
+              windowId: "@8",
+              byteCount: 12,
+            }
+          : undefined,
+      ),
+    };
 
     TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
     TmuxRuntimeManager.prototype.listManagedWindows = () =>
@@ -2125,12 +2141,24 @@ describe("MetadataServer threads API", () => {
             worktreePath: repoRoot,
           },
         },
+        {
+          target: { sessionName: "aimux-test", windowId: "@8", windowIndex: 8, windowName: "claude" },
+          metadata: {
+            kind: "agent",
+            sessionId: "agent-2",
+            command: "claude",
+            args: [],
+            toolConfigKey: "claude",
+            worktreePath: repoRoot,
+          },
+        },
       ] as any;
     TmuxRuntimeManager.prototype.listWindows = () => [
       { id: "@7", index: 7, name: "codex", active: true, activity: 12 },
+      { id: "@8", index: 8, name: "claude", active: false, activity: 13 },
     ];
     TmuxRuntimeManager.prototype.isWindowAlive = () => true;
-    server = new MetadataServer({ exposePreviewCache });
+    server = new MetadataServer({ exposePreviewCache, exposePaneOutputTap });
     await server.start();
 
     try {
@@ -2142,16 +2170,31 @@ describe("MetadataServer threads API", () => {
       expect(withoutPreview.status).toBe(200);
       expect(withoutPreviewBody.items[0]?.previewSnapshot).toBeUndefined();
       expect(exposePreviewCache.trackItems).not.toHaveBeenCalled();
+      expect(exposePaneOutputTap.trackItems).not.toHaveBeenCalled();
+      expect(exposePaneOutputTap.read).not.toHaveBeenCalled();
 
       const response = await fetch(`${base}?scope=all&labelFormat=raw&includePreview=1`);
       const body = (await response.json()) as { ok: boolean; items: Array<Record<string, any>> };
 
       expect(response.status).toBe(200);
-      expect(body.items[0]?.previewSnapshot).toEqual(previewSnapshot);
+      expect(body.items.find((item) => item.target.windowId === "@7")?.previewSnapshot).toEqual(previewSnapshot);
+      expect(body.items.find((item) => item.target.windowId === "@8")?.previewSnapshot).toEqual({
+        output: "tap preview\n",
+        capturedAt: "2026-07-20T13:00:01.000Z",
+        source: "tap",
+        windowId: "@8",
+      });
       expect(exposePreviewCache.trackItems).toHaveBeenCalledWith([
         expect.objectContaining({ target: expect.objectContaining({ windowId: "@7" }) }),
+        expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
       ]);
+      expect(exposePaneOutputTap.trackItems).toHaveBeenCalledWith([
+        expect.objectContaining({ target: expect.objectContaining({ windowId: "@8" }) }),
+      ]);
+      expect(exposePaneOutputTap.read).not.toHaveBeenCalledWith("@7");
+      expect(exposePaneOutputTap.read).toHaveBeenCalledWith("@8");
       expect(exposePreviewCache.start).toHaveBeenCalledTimes(1);
+      expect(exposePaneOutputTap.start).toHaveBeenCalledTimes(1);
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
