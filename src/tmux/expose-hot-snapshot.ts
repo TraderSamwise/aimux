@@ -16,11 +16,24 @@ export interface HotExposeScopeKey {
   projectRoot: string;
   scope: ExposeScope;
   worktreeKey?: string;
+  launchWindowId?: string;
+}
+
+export interface HotExposeScopePrune {
+  projectRoot: string;
+  scopes?: ExposeScope[];
+  keepLaunchWindowIds?: Set<string>;
+}
+
+export interface HotExposeScopeWrite {
+  key: HotExposeScopeKey;
+  view: ExposeScopeView;
 }
 
 interface HotExposeScopeViewRecord extends ExposeScopeView {
   projectRoot: string;
   worktreeKey?: string;
+  launchWindowId?: string;
   updatedAt: string;
 }
 
@@ -50,12 +63,15 @@ export function hotExposeScopeKey(input: HotExposeScopeKey): HotExposeScopeKey {
     projectRoot: normalizedProjectRoot(input.projectRoot),
     scope: input.scope,
     worktreeKey: input.scope === "worktree" ? normalizedWorktreeKey(input.worktreeKey) : undefined,
+    launchWindowId: input.scope === "worktree" && input.launchWindowId ? input.launchWindowId : undefined,
   };
 }
 
 function cacheId(input: HotExposeScopeKey): string {
   const key = hotExposeScopeKey(input);
-  return [key.scope, key.projectRoot, key.worktreeKey ?? ""].map(encodeURIComponent).join("|");
+  return [key.scope, key.projectRoot, key.worktreeKey ?? "", key.launchWindowId ?? ""]
+    .map(encodeURIComponent)
+    .join("|");
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -127,6 +143,8 @@ function parseHotView(value: unknown, key: HotExposeScopeKey): HotExposeScopeVie
     value.projectRoot !== expected.projectRoot ||
     (expected.worktreeKey !== undefined && value.worktreeKey !== expected.worktreeKey) ||
     (expected.worktreeKey === undefined && value.worktreeKey !== undefined) ||
+    (expected.launchWindowId !== undefined && value.launchWindowId !== expected.launchWindowId) ||
+    (expected.launchWindowId === undefined && value.launchWindowId !== undefined) ||
     typeof value.scopeLabel !== "string" ||
     typeof value.updatedAt !== "string" ||
     !isFresh(value.updatedAt) ||
@@ -141,6 +159,7 @@ function parseHotView(value: unknown, key: HotExposeScopeKey): HotExposeScopeVie
     scope,
     projectRoot: expected.projectRoot,
     worktreeKey: expected.worktreeKey,
+    launchWindowId: expected.launchWindowId,
     scopeLabel: value.scopeLabel,
     sublabel,
     items: value.items,
@@ -156,6 +175,36 @@ function readFile(projectStateDir: string): HotExposeSnapshotFile {
     return { version: HOT_SNAPSHOT_VERSION, views: {} };
   }
   return { version: HOT_SNAPSHOT_VERSION, views: parsed.views as Record<string, HotExposeScopeViewRecord> };
+}
+
+function viewMatchesPrune(record: HotExposeScopeViewRecord, prune: HotExposeScopePrune): boolean {
+  const projectRoot = normalizedProjectRoot(prune.projectRoot);
+  if (record.projectRoot !== projectRoot) return false;
+  if (prune.scopes && !prune.scopes.includes(record.scope)) return false;
+  return true;
+}
+
+function pruneViews(
+  views: Record<string, HotExposeScopeViewRecord>,
+  prune?: HotExposeScopePrune,
+): Record<string, HotExposeScopeViewRecord> {
+  const now = Date.now();
+  const next: Record<string, HotExposeScopeViewRecord> = {};
+  for (const [id, record] of Object.entries(views)) {
+    if (!isFresh(record.updatedAt, now)) continue;
+    if (
+      prune &&
+      viewMatchesPrune(record, prune) &&
+      record.scope === "worktree" &&
+      record.launchWindowId &&
+      prune.keepLaunchWindowIds &&
+      !prune.keepLaunchWindowIds.has(record.launchWindowId)
+    ) {
+      continue;
+    }
+    next[id] = record;
+  }
+  return next;
 }
 
 function truncatePreviewOutput(output: string): string {
@@ -191,28 +240,45 @@ export function readHotExposeScopeView(projectStateDir: string, key: HotExposeSc
   }
 }
 
-export function writeHotExposeScopeView(projectStateDir: string, key: HotExposeScopeKey, view: ExposeScopeView): void {
+export function writeHotExposeScopeViews(
+  projectStateDir: string,
+  entries: HotExposeScopeWrite[],
+  options: { prune?: HotExposeScopePrune } = {},
+): void {
   try {
-    const normalizedKey = hotExposeScopeKey(key);
-    if (normalizedKey.scope !== view.scope) return;
     let file: HotExposeSnapshotFile;
     try {
       file = readFile(projectStateDir);
     } catch {
       file = { version: HOT_SNAPSHOT_VERSION, views: {} };
     }
-    const id = cacheId(normalizedKey);
-    if (view.items.length === 0) {
-      delete file.views[id];
-    } else {
-      file.views[id] = {
-        ...view,
-        projectRoot: normalizedKey.projectRoot,
-        worktreeKey: normalizedKey.worktreeKey,
-        items: view.items.slice(0, MAX_ITEMS).map(boundedItem),
-        updatedAt: new Date().toISOString(),
-      };
+    file.views = pruneViews(file.views, options.prune);
+    for (const { key, view } of entries) {
+      const normalizedKey = hotExposeScopeKey(key);
+      if (normalizedKey.scope !== view.scope) continue;
+      const id = cacheId(normalizedKey);
+      if (view.items.length === 0) {
+        delete file.views[id];
+      } else {
+        file.views[id] = {
+          ...view,
+          projectRoot: normalizedKey.projectRoot,
+          worktreeKey: normalizedKey.worktreeKey,
+          launchWindowId: normalizedKey.launchWindowId,
+          items: view.items.slice(0, MAX_ITEMS).map(boundedItem),
+          updatedAt: new Date().toISOString(),
+        };
+      }
     }
     atomicWriteFast(snapshotPath(projectStateDir), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
   } catch {}
+}
+
+export function writeHotExposeScopeView(
+  projectStateDir: string,
+  key: HotExposeScopeKey,
+  view: ExposeScopeView,
+  options: { prune?: HotExposeScopePrune } = {},
+): void {
+  writeHotExposeScopeViews(projectStateDir, [{ key, view }], options);
 }

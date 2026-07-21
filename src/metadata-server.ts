@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as pathResolve } from "node:path";
 import { PassThrough } from "node:stream";
 import {
   getDashboardClientUiStatePath,
@@ -138,6 +138,7 @@ import {
   resolveNextAgent,
   resolvePrevAgent,
   serializeFastControlItem,
+  type FastControlItem,
 } from "./fast-control.js";
 import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget, TmuxWindowMetadata } from "./tmux/runtime-manager.js";
@@ -160,6 +161,7 @@ import { describeSessionRestorability } from "./session-restorability.js";
 import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
 import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
+import { writeHotExposeScopeViews, type HotExposeScopeWrite } from "./tmux/expose-hot-snapshot.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
@@ -646,7 +648,11 @@ export interface MetadataServerOptions {
   };
   exposePreviewCache?: ExposePreviewCacheLike | false;
   exposePaneOutputTap?: ExposePaneOutputTapLike | false;
+  exposeHotSnapshots?: boolean;
 }
+
+const EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
+const EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS = 12;
 
 type InteractionDisplay = {
   title: string;
@@ -1370,6 +1376,9 @@ export class MetadataServer {
   private exposeSocketPath: string | null = null;
   private readonly exposePreviewCache: ExposePreviewCacheLike | null;
   private readonly exposePaneOutputTap: ExposePaneOutputTapLike | null;
+  private readonly exposeHotSnapshotsEnabled: boolean;
+  private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+  private exposeHotSnapshotRefreshing = false;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -1387,6 +1396,7 @@ export class MetadataServer {
       options.exposePreviewCache === false ? null : (options.exposePreviewCache ?? defaultExposePreviewCache);
     this.exposePaneOutputTap =
       options.exposePaneOutputTap === false ? null : (options.exposePaneOutputTap ?? defaultExposePaneOutputTap);
+    this.exposeHotSnapshotsEnabled = options.exposeHotSnapshots ?? Boolean(options.lifecycle?.readAgentOutput);
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
@@ -1415,6 +1425,7 @@ export class MetadataServer {
     });
     this.exposePreviewCache?.start();
     this.exposePaneOutputTap?.start();
+    this.scheduleExposeHotSnapshotRefresh(0);
   }
 
   private publishEndpoint(): void {
@@ -1442,6 +1453,9 @@ export class MetadataServer {
     this.stopExposeSocket();
     this.exposePreviewCache?.stop();
     this.exposePaneOutputTap?.stop();
+    if (this.exposeHotSnapshotTimer) clearTimeout(this.exposeHotSnapshotTimer);
+    this.exposeHotSnapshotTimer = null;
+    this.exposeHotSnapshotRefreshing = false;
     if (this.desktopStateRefreshTimer) clearTimeout(this.desktopStateRefreshTimer);
     this.desktopStateRefreshTimer = null;
     if (this.shellStateFlushTimer) clearTimeout(this.shellStateFlushTimer);
@@ -1539,6 +1553,98 @@ export class MetadataServer {
 
   private currentProjectRoot(): string {
     return this.projectRoot ?? process.cwd();
+  }
+
+  private attachExposePreviewSnapshots(rawItems: FastControlItem[]): FastControlItem[] {
+    const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
+    const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
+    this.exposePaneOutputTap?.trackItems(rawItems);
+    for (const item of rawItems) {
+      tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
+    }
+    const captureRepairItems = rawItems.filter((item) => !tapSnapshots.get(item.target.windowId));
+    this.exposePreviewCache?.trackItems(captureRepairItems);
+    for (const item of captureRepairItems) {
+      captureSnapshots.set(item.target.windowId, this.exposePreviewCache?.get(item.target.windowId));
+    }
+    return rawItems.map((item) => {
+      const tapSnapshot = tapSnapshots.get(item.target.windowId);
+      const captureSnapshot = !tapSnapshot ? captureSnapshots.get(item.target.windowId) : undefined;
+      const previewSnapshot =
+        (tapSnapshot
+          ? {
+              output: tapSnapshot.output,
+              capturedAt: tapSnapshot.capturedAt,
+              source: tapSnapshot.source,
+              windowId: tapSnapshot.windowId,
+            }
+          : undefined) ?? captureSnapshot;
+      return previewSnapshot ? { ...item, previewSnapshot } : item;
+    });
+  }
+
+  private scheduleExposeHotSnapshotRefresh(delayMs = EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
+    if (!this.exposeHotSnapshotsEnabled || this.exposeHotSnapshotTimer || !this.server) return;
+    this.exposeHotSnapshotTimer = setTimeout(() => {
+      this.exposeHotSnapshotTimer = null;
+      this.runInProjectContext(() => this.refreshExposeHotSnapshots());
+    }, delayMs);
+    this.exposeHotSnapshotTimer.unref?.();
+  }
+
+  private refreshExposeHotSnapshots(): void {
+    if (!this.exposeHotSnapshotsEnabled || this.exposeHotSnapshotRefreshing || !this.server) return;
+    this.exposeHotSnapshotRefreshing = true;
+    try {
+      const projectRoot = this.currentProjectRoot();
+      const projectStateDir = getProjectStateDirFor(projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      const projectRawItems = listSwitchableAgentItems({ projectRoot, currentPath: projectRoot }, tmux, {
+        scope: "all",
+      });
+      const projectItems = this.attachExposePreviewSnapshots(projectRawItems);
+      const snapshotWrites: HotExposeScopeWrite[] = [
+        {
+          key: { projectRoot, scope: "project" },
+          view: { scope: "project", scopeLabel: "all worktrees", sublabel: "worktree", items: projectItems },
+        },
+      ];
+
+      const launchContexts = tmux
+        .listProjectManagedWindows(projectRoot)
+        .filter(({ target }) => !target.paneDead && !isDashboardWindowName(target.windowName))
+        .slice(0, EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS);
+      const keepLaunchWindowIds = new Set(launchContexts.map(({ target }) => target.windowId));
+      for (const { target, metadata } of launchContexts) {
+        const worktreePath = pathResolve(metadata.worktreePath || projectRoot);
+        const worktreeRawItems = listSwitchableAgentItems(
+          {
+            projectRoot,
+            currentPath: worktreePath,
+            currentWindow: target.windowName,
+            currentWindowId: target.windowId,
+          },
+          tmux,
+          { scope: "worktree" },
+        );
+        const worktreeItems = this.attachExposePreviewSnapshots(worktreeRawItems);
+        snapshotWrites.push({
+          key: { projectRoot, scope: "worktree", worktreeKey: worktreePath, launchWindowId: target.windowId },
+          view: { scope: "worktree", scopeLabel: "this worktree", sublabel: "none", items: worktreeItems },
+        });
+      }
+      writeHotExposeScopeViews(projectStateDir, snapshotWrites, {
+        prune: { projectRoot, scopes: ["worktree"], keepLaunchWindowIds },
+      });
+    } catch (error) {
+      log.debug("expose hot snapshot refresh failed", "api", {
+        projectRoot: this.currentProjectRoot(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.exposeHotSnapshotRefreshing = false;
+      this.scheduleExposeHotSnapshotRefresh();
+    }
   }
 
   private readTeamConfigResponse(): { ok: true; config: ReturnType<typeof loadTeamConfig> } {
@@ -2651,32 +2757,9 @@ export class MetadataServer {
         new TmuxRuntimeManager(),
         { scope },
       );
-      const captureSnapshots = new Map<string, ReturnType<ExposePreviewCacheLike["get"]>>();
-      const tapSnapshots = new Map<string, ReturnType<ExposePaneOutputTapLike["read"]>>();
-      if (includePreview) {
-        this.exposePaneOutputTap?.trackItems(rawItems);
-        for (const item of rawItems) {
-          tapSnapshots.set(item.target.windowId, this.exposePaneOutputTap?.read(item.target.windowId));
-        }
-        const captureRepairItems = rawItems.filter((item) => !tapSnapshots.get(item.target.windowId));
-        this.exposePreviewCache?.trackItems(captureRepairItems);
-        for (const item of captureRepairItems) {
-          captureSnapshots.set(item.target.windowId, this.exposePreviewCache?.get(item.target.windowId));
-        }
-      }
-      const items = rawItems.map((item) => {
-        const tapSnapshot = includePreview ? tapSnapshots.get(item.target.windowId) : undefined;
-        const captureSnapshot = includePreview && !tapSnapshot ? captureSnapshots.get(item.target.windowId) : undefined;
-        const previewSnapshot =
-          (tapSnapshot
-            ? {
-                output: tapSnapshot.output,
-                capturedAt: tapSnapshot.capturedAt,
-                source: tapSnapshot.source,
-                windowId: tapSnapshot.windowId,
-              }
-            : undefined) ?? captureSnapshot;
-        const serialized = serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item);
+      const itemsWithPreview = includePreview ? this.attachExposePreviewSnapshots(rawItems) : rawItems;
+      const items = itemsWithPreview.map((item) => {
+        const serialized = serializeFastControlItem(item);
         return {
           ...serialized,
           label:

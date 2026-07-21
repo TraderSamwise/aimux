@@ -85,6 +85,24 @@ describe("expose hot snapshots", () => {
     ).toBeNull();
   });
 
+  it("does not reuse one launch window snapshot for another worktree launcher", () => {
+    const stateDir = createStateDir();
+    writeHotExposeScopeView(
+      stateDir,
+      { projectRoot: "/repo", scope: "worktree", worktreeKey: "/repo", launchWindowId: "@1" },
+      view("worktree", [item("a", "@1")]),
+    );
+
+    expect(
+      readHotExposeScopeView(stateDir, {
+        projectRoot: "/repo",
+        scope: "worktree",
+        worktreeKey: "/repo",
+        launchWindowId: "@2",
+      }),
+    ).toBeNull();
+  });
+
   it("ignores malformed or expired cache files", () => {
     const stateDir = createStateDir();
     const path = join(stateDir, "expose-hot-snapshots.json");
@@ -96,7 +114,7 @@ describe("expose hot snapshots", () => {
       JSON.stringify({
         version: 1,
         views: {
-          "project|%2Frepo|": {
+          "project|%2Frepo||": {
             ...view("project"),
             projectRoot: "/repo",
             updatedAt: "2020-01-01T00:00:00.000Z",
@@ -157,7 +175,7 @@ describe("expose hot snapshots", () => {
       JSON.stringify({
         version: 1,
         views: {
-          "project|%2Frepo|": {
+          "project|%2Frepo||": {
             scope: "project",
             projectRoot: "/repo",
             scopeLabel: "all worktrees",

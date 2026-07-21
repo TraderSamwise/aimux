@@ -13,6 +13,7 @@ import { addDashboardOperationFailure, listDashboardOperationFailures } from "./
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
 import { getParserFixture } from "./agent-output-parser-test-utils.js";
 import {
@@ -43,6 +44,15 @@ async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text
   } finally {
     reader.releaseLock();
   }
+}
+
+async function waitForCondition(predicate: () => boolean, ms = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < ms) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out after ${ms}ms`);
 }
 
 describe("MetadataServer threads API", () => {
@@ -2245,6 +2255,180 @@ describe("MetadataServer threads API", () => {
     } finally {
       TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
       TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+    }
+  });
+
+  it("warms project and per-launch-window worktree expose snapshots in the project service", async () => {
+    server?.stop();
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const exposePreviewCache = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      get: vi.fn((windowId: string) =>
+        windowId === "@12"
+          ? {
+              output: "capture warmed preview\n",
+              capturedAt: "2026-07-20T13:00:02.000Z",
+              source: "capture" as const,
+              windowId,
+              startLine: -40,
+              lineCount: 40,
+            }
+          : undefined,
+      ),
+    };
+    const exposePaneOutputTap = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      trackItems: vi.fn(),
+      read: vi.fn((windowId: string) =>
+        windowId === "@11"
+          ? {
+              output: "tap warmed preview\n",
+              capturedAt: "2026-07-20T13:00:01.000Z",
+              source: "tap" as const,
+              windowId,
+              byteCount: 18,
+            }
+          : undefined,
+      ),
+    };
+    const managedWindows = [
+      {
+        target: { sessionName: "aimux-test", windowId: "@11", windowIndex: 11, windowName: "codex" },
+        metadata: {
+          kind: "agent",
+          sessionId: "agent-1",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          worktreePath: repoRoot,
+        },
+      },
+      {
+        target: { sessionName: "aimux-test", windowId: "@12", windowIndex: 12, windowName: "claude" },
+        metadata: {
+          kind: "agent",
+          sessionId: "agent-2",
+          command: "claude",
+          args: [],
+          toolConfigKey: "claude",
+          worktreePath: repoRoot,
+        },
+      },
+    ] as any;
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.listManagedWindows = () => managedWindows;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () => managedWindows;
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test"];
+    TmuxRuntimeManager.prototype.listWindows = () => [
+      { id: "@11", index: 11, name: "codex", active: true, activity: 12 },
+      { id: "@12", index: 12, name: "claude", active: false, activity: 13 },
+    ];
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    writeHotExposeScopeView(
+      getProjectStateDir(),
+      { projectRoot: repoRoot, scope: "worktree", worktreeKey: repoRoot, launchWindowId: "@99" },
+      {
+        scope: "worktree",
+        scopeLabel: "this worktree",
+        sublabel: "none",
+        items: [
+          {
+            id: "stale-agent",
+            target: { sessionName: "aimux-test", windowId: "@99", windowIndex: 99, windowName: "old" },
+            metadata: {
+              kind: "agent",
+              sessionId: "stale-agent",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+            },
+            label: "old",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+          },
+        ],
+      },
+    );
+    server = new MetadataServer({ exposePreviewCache, exposePaneOutputTap, exposeHotSnapshots: true });
+    await server.start();
+
+    try {
+      const stateDir = getProjectStateDir();
+      await waitForCondition(
+        () =>
+          Boolean(
+            readHotExposeScopeView(stateDir, { projectRoot: repoRoot, scope: "project" }) &&
+            readHotExposeScopeView(stateDir, {
+              projectRoot: repoRoot,
+              scope: "worktree",
+              worktreeKey: repoRoot,
+              launchWindowId: "@11",
+            }),
+          ),
+        1000,
+      );
+
+      expect(readHotExposeScopeView(stateDir, { projectRoot: repoRoot, scope: "project" })?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "agent-1",
+            previewSnapshot: expect.objectContaining({ source: "tap", output: "tap warmed preview\n" }),
+          }),
+          expect.objectContaining({
+            id: "agent-2",
+            previewSnapshot: expect.objectContaining({ source: "capture", output: "capture warmed preview\n" }),
+          }),
+        ]),
+      );
+      expect(
+        readHotExposeScopeView(stateDir, {
+          projectRoot: repoRoot,
+          scope: "worktree",
+          worktreeKey: repoRoot,
+          launchWindowId: "@11",
+        })?.items.map((item) => item.id),
+      ).toEqual(["agent-1", "agent-2"]);
+      expect(
+        readHotExposeScopeView(stateDir, {
+          projectRoot: repoRoot,
+          scope: "worktree",
+          worktreeKey: repoRoot,
+          launchWindowId: "@12",
+        })?.items.map((item) => item.id),
+      ).toEqual(["agent-1", "agent-2"]);
+      expect(
+        readHotExposeScopeView(stateDir, {
+          projectRoot: repoRoot,
+          scope: "worktree",
+          worktreeKey: repoRoot,
+          launchWindowId: "@99",
+        }),
+      ).toBeNull();
+      expect(exposePaneOutputTap.trackItems).toHaveBeenCalled();
+      expect(exposePreviewCache.trackItems).toHaveBeenCalled();
+
+      server.stop();
+      const tapCallsAfterStop = exposePaneOutputTap.trackItems.mock.calls.length;
+      (server as unknown as { refreshExposeHotSnapshots: () => void }).refreshExposeHotSnapshots();
+      expect(exposePaneOutputTap.trackItems).toHaveBeenCalledTimes(tapCallsAfterStop);
+    } finally {
+      server?.stop();
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
       TmuxRuntimeManager.prototype.listWindows = listWindows;
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
     }
