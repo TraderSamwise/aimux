@@ -16,6 +16,8 @@ const FEATURES: Array<{ title: string; description: string }> = [
     description: "Use web or mobile as clients of the same local daemon.",
   },
 ];
+const WEB_INSTALL_COMMAND =
+  "$ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/install.sh | sh";
 
 interface BrandPanelProps {
   variant: "side" | "compact";
@@ -77,7 +79,7 @@ export function BrandPanel({ variant }: BrandPanelProps) {
 
       {Platform.OS === "web" ? (
         <View className="rounded-md border border-border bg-background/60 px-4 py-3 max-w-[360px]">
-          <Text className="font-mono text-[12px] text-muted-foreground">$ brew install aimux</Text>
+          <Text className="font-mono text-[12px] text-muted-foreground">{WEB_INSTALL_COMMAND}</Text>
           <Text className="font-mono text-[12px] text-muted-foreground/70 mt-1">$ aimux login</Text>
         </View>
       ) : null}

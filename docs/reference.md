@@ -70,9 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 To install a frozen local build from the current checkout:
 
 ```bash
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$(uname -m)" in arm64 | aarch64) ARCH=arm64 ;; x86_64 | amd64) ARCH=x64 ;; esac
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
-ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
-scripts/install.sh "$ASSET"
+scripts/install.sh "release/aimux-${PLATFORM}-${ARCH}.tar.gz"
 ```
 
 That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository. The installer updates `~/.local/bin/aimux` to point at the installed bundle.
@@ -93,9 +94,10 @@ yarn install
 yarn build
 
 # Install this checkout as the plain `aimux` command
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$(uname -m)" in arm64 | aarch64) ARCH=arm64 ;; x86_64 | amd64) ARCH=x64 ;; esac
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
-ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
-scripts/install.sh "$ASSET"
+scripts/install.sh "release/aimux-${PLATFORM}-${ARCH}.tar.gz"
 aimux doctor versions
 ```
 
@@ -375,9 +377,10 @@ For GUI and daemon development, use the installed `aimux` runtime. Backend chang
 need a local release install before the daemon or project services can run them:
 
 ```bash
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$(uname -m)" in arm64 | aarch64) ARCH=arm64 ;; x86_64 | amd64) ARCH=x64 ;; esac
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
-ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
-scripts/install.sh "$ASSET"
+scripts/install.sh "release/aimux-${PLATFORM}-${ARCH}.tar.gz"
 cd app
 yarn dev:web:local
 ```
@@ -635,8 +638,8 @@ Built-in watchers already publish:
 
 When you run `aimux` without arguments, aimux ensures the project tmux session exists and switches you to the dashboard window showing all agents across all states:
 
-```
-         aimux — agent multiplexer
+```text
+       aimux — agent multiplexer
 ──────────────────────────────────────
 
   ● [1] claude — running ←
@@ -655,7 +658,7 @@ When you run `aimux` without arguments, aimux ensures the project tmux session e
 
 With worktrees, agents are grouped:
 
-```
+```text
    (main) — active
     ● [1] claude — running ←
 
@@ -886,7 +889,7 @@ Run aimux in multiple terminal tabs or through the dashboard for the same projec
 
 Agents have three states: **running**, **offline**, and **graveyarded**.
 
-```
+```text
   running  ──[x]──▶  offline  ──[x]──▶  graveyard
                       │                     │
                       ◀──Enter──            ◀── aimux graveyard resurrect
@@ -940,7 +943,7 @@ Relative `baseDir` values are resolved from the main repo root. Absolute paths a
 
 ## Requirements
 
-- macOS (Linux support planned)
+- macOS or Linux
 - Node.js >= 24
 - At least one supported AI tool installed: `claude`, `codex`, or `aider`
 - Notifications work out of the box on macOS, Linux, and Windows
