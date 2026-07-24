@@ -726,7 +726,10 @@ program
         }
       }
 
-      const mux = new Multiplexer({ contextWatcherEnabled: !opts.tmuxDashboardInternal });
+      const mux = new Multiplexer({
+        contextWatcherEnabled: !opts.tmuxDashboardInternal,
+        dashboardCoreCommandRequest: opts.tmuxDashboardInternal ? requestCoreCommand : undefined,
+      });
       let cleanedUp = false;
       const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
       const cleanupAll = async () => {

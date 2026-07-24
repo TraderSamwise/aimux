@@ -1584,11 +1584,13 @@ export async function ensureDashboardControlPlane(
   }
   const recovery = (async () => {
     const projectRoot = dashboardProjectRoot(host);
+    const requestCoreCommandForDashboard =
+      typeof host.dashboardCoreCommandRequest === "function" ? host.dashboardCoreCommandRequest : sendCoreCommand;
     if (opts.restartProjectService) {
-      await sendCoreCommand(CORE_COMMAND_NAMES.projectStop, { projectRoot });
+      await requestCoreCommandForDashboard(CORE_COMMAND_NAMES.projectStop, { projectRoot });
       removeMetadataEndpoint(projectRoot);
     }
-    await sendCoreCommand(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
+    await requestCoreCommandForDashboard(CORE_COMMAND_NAMES.projectEnsure, { projectRoot });
   })();
   host.dashboardServiceRecovery = recovery;
   try {
