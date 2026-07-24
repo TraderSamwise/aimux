@@ -1,5 +1,6 @@
 import { Stack, useRouter, useSegments } from "expo-router";
 import React, { useEffect } from "react";
+import { Platform } from "react-native";
 import { useColorScheme } from "nativewind";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
@@ -35,6 +36,20 @@ export default function RootLayout() {
   useThemeEffect();
   const { colorScheme } = useColorScheme();
   const navTheme = colorScheme === "dark" ? DarkTheme : DefaultTheme;
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    document.title = "aimux - local AI agent multiplexer";
+    const description =
+      "Run Claude, Codex, Aider, and shell sessions in tmux with one local control plane for terminal, web, and mobile.";
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "description";
+      document.head.appendChild(meta);
+    }
+    meta.content = description;
+  }, []);
 
   return (
     <SafeAreaProvider>
