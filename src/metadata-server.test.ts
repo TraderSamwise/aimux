@@ -2441,6 +2441,100 @@ describe("MetadataServer threads API", () => {
     }
   });
 
+  it("keeps live worktree expose snapshots outside the refresh cap", () => {
+    server?.stop();
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const listManagedWindows = TmuxRuntimeManager.prototype.listManagedWindows;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const listSessionNames = TmuxRuntimeManager.prototype.listSessionNames;
+    const listWindows = TmuxRuntimeManager.prototype.listWindows;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const captureTarget = TmuxRuntimeManager.prototype.captureTarget;
+    const managedWindows = Array.from({ length: 7 }, (_, index) => {
+      const number = index + 1;
+      return {
+        target: {
+          sessionName: "aimux-test",
+          windowId: `@${number}`,
+          windowIndex: number,
+          windowName: `agent-${number}`,
+        },
+        metadata: {
+          kind: "agent",
+          sessionId: `agent-${number}`,
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          worktreePath: repoRoot,
+        },
+      };
+    }) as any;
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.listManagedWindows = () => managedWindows;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () => managedWindows;
+    TmuxRuntimeManager.prototype.listSessionNames = () => ["aimux-test"];
+    TmuxRuntimeManager.prototype.listWindows = () =>
+      managedWindows.map(({ target }: any) => ({
+        id: target.windowId,
+        index: target.windowIndex,
+        name: target.windowName,
+        active: target.windowId === "@1",
+        activity: target.windowIndex,
+      }));
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.captureTarget = (target) => `${target.windowId} captured preview\n`;
+
+    try {
+      const stateDir = getProjectStateDir();
+      writeHotExposeScopeView(
+        stateDir,
+        { projectRoot: repoRoot, scope: "worktree", worktreeKey: repoRoot, launchWindowId: "@7" },
+        {
+          scope: "worktree",
+          scopeLabel: "this worktree",
+          sublabel: "none",
+          items: [
+            {
+              id: "agent-7",
+              target: { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "agent-7" },
+              metadata: {
+                kind: "agent",
+                sessionId: "agent-7",
+                command: "codex",
+                args: [],
+                toolConfigKey: "codex",
+                worktreePath: repoRoot,
+              },
+              label: "agent-7",
+              urgency: 0,
+              activity: 0,
+              recentRank: 0,
+            },
+          ],
+        },
+      );
+
+      refreshProjectExposeHotSnapshots(repoRoot);
+
+      expect(
+        readHotExposeScopeView(stateDir, {
+          projectRoot: repoRoot,
+          scope: "worktree",
+          worktreeKey: repoRoot,
+          launchWindowId: "@7",
+        })?.items.map((item) => item.id),
+      ).toEqual(["agent-7"]);
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.listManagedWindows = listManagedWindows;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.listSessionNames = listSessionNames;
+      TmuxRuntimeManager.prototype.listWindows = listWindows;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.captureTarget = captureTarget;
+    }
+  });
+
   it("prunes expired expose hot snapshots from the project service refresh owner", async () => {
     server?.stop();
     const stateDir = getProjectStateDir();
