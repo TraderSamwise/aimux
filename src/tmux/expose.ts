@@ -4,7 +4,7 @@ import { performance } from "node:perf_hooks";
 import { basename, resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
 import { log } from "../debug.js";
-import type { FastControlContext, FastControlItem } from "../fast-control.js";
+import { resolveScopedWorktreePath, type FastControlContext, type FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
@@ -22,6 +22,7 @@ import {
   type ExposeScopeView,
   type ExposeSublabel,
 } from "./expose-model.js";
+import { readHotExposeScopeView, writeHotExposeScopeView, type HotExposeScopeKey } from "./expose-hot-snapshot.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
 
 export interface TmuxExposeOptions {
@@ -417,11 +418,22 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const exposeDeps = { daemonEndpoint: options.daemonEndpoint };
   const exposeConfig = options.exposeConfig ?? loadConfig({ projectRoot: options.projectRoot }).expose;
   let scope = initialExposeScope(crossProject, context, exposeConfig);
-  let view = defaultExposeScopeView(scope);
+  const hotSnapshotKeyForScope = (nextScope: ExposeScope): HotExposeScopeKey => ({
+    projectRoot: options.projectRoot,
+    scope: nextScope,
+    worktreeKey:
+      nextScope === "worktree"
+        ? resolveScopedWorktreePath(options.projectRoot, options.currentPath || options.projectRoot)
+        : undefined,
+    launchWindowId: nextScope === "worktree" ? options.currentWindowId : undefined,
+  });
+  const initialHotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
+  let view = initialHotView ?? defaultExposeScopeView(scope);
   let items = view.items;
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
-  let loading = true;
+  let loading = !initialHotView;
+  let viewStale = Boolean(initialHotView);
 
   const tileSublabel = (item: ExposeScopeItem): string => {
     if (sublabel === "worktree") return shortWorktree(item, options.projectRoot);
@@ -489,6 +501,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       previewSnapshotCount += 1;
     }
   };
+  if (viewStale) seedPreviewSnapshots();
 
   // Returns whether any capture changed, so the refresh loop can skip a repaint when
   // idle — the dominant cause of the periodic flicker was repainting unchanged tiles.
@@ -712,8 +725,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
     loading = false;
+    viewStale = false;
     captures.clear();
     seedPreviewSnapshots();
+    writeHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(reloadScope), view);
     markTiming("items-load-end", {
       scope: reloadScope,
       itemCount: items.length,
@@ -725,8 +740,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     if (capture && firstItemsRenderMarked) refreshCaptures();
     return "committed";
   };
-
-  render();
 
   return await new Promise<number>((resolve) => {
     const finish = (code: number) => {
@@ -767,12 +780,17 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       if (next === scope) return false;
       const previousScope = scope;
       const previousView = view;
+      const previousViewStale = viewStale;
       scope = next;
-      view = defaultExposeScopeView(scope);
+      const hotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
+      view = hotView ?? defaultExposeScopeView(scope);
       items = view.items;
       scopeLabel = view.scopeLabel;
       sublabel = view.sublabel;
-      loading = true;
+      loading = !hotView;
+      viewStale = Boolean(hotView);
+      captures.clear();
+      seedPreviewSnapshots();
       render();
       void reload(false)
         .then((result) => {
@@ -789,8 +807,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           items = view.items;
           scopeLabel = view.scopeLabel;
           sublabel = view.sublabel;
+          viewStale = previousViewStale;
           loading = false;
           pendingKeys = [];
+          captures.clear();
+          seedPreviewSnapshots();
           render();
           startRefreshLoop();
         });
@@ -798,7 +819,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     };
 
     const loadInitialItems = () => {
-      loading = true;
+      if (!viewStale || items.length === 0) loading = true;
       void reload(false)
         .then((result) => {
           if (finished || result === "stale") return;
@@ -822,7 +843,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       opening = true;
       markTiming("focus-start", { scope, itemCount: items.length });
       focusTimingOpen = true;
-      if (writeSelectedWindow(options, item)) {
+      if (!viewStale && writeSelectedWindow(options, item)) {
         closeFocusTiming();
         finish(0);
         return;
@@ -982,6 +1003,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     };
     input.on("data", onData);
     input.on("end", onEnd);
+    render();
     loadInitialItems();
   });
 }
