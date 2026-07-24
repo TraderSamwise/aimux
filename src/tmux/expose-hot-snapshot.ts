@@ -7,12 +7,14 @@ const HOT_SNAPSHOT_VERSION = 1;
 const HOT_SNAPSHOT_FILE = "expose-hot-snapshots.json";
 const HOT_SNAPSHOT_LOCK_DIR = "expose-hot-snapshots.lock";
 const HOT_SNAPSHOT_MAX_AGE_MS = 10 * 60 * 1000;
+const HOT_SNAPSHOT_EXPIRY_SLACK_MS = 1;
 const HOT_SNAPSHOT_LOCK_STALE_MS = 5000;
 const MAX_ITEMS = 100;
 const MAX_PREVIEW_BYTES = 16 * 1024;
 const MAX_PREVIEW_LINES = 80;
 const SCOPES = new Set<ExposeScope>(["worktree", "project", "global"]);
 const SUBLABELS = new Set<ExposeSublabel>(["none", "worktree", "project-worktree"]);
+const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 export interface HotExposeScopeKey {
   projectRoot: string;
@@ -139,6 +141,10 @@ function isFresh(updatedAt: string, now = Date.now()): boolean {
   return Number.isFinite(parsed) && now - parsed >= 0 && now - parsed <= HOT_SNAPSHOT_MAX_AGE_MS;
 }
 
+function hasExpiredViews(views: Record<string, HotExposeScopeViewRecord>, now = Date.now()): boolean {
+  return Object.values(views).some((record) => !isFresh(record.updatedAt, now));
+}
+
 function parseHotView(value: unknown, key: HotExposeScopeKey): HotExposeScopeViewRecord | null {
   if (!isRecord(value)) return null;
   const scope = parseScope(value.scope);
@@ -214,6 +220,52 @@ function pruneViews(
   return next;
 }
 
+function viewsEqual(
+  left: Record<string, HotExposeScopeViewRecord>,
+  right: Record<string, HotExposeScopeViewRecord>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => right[key] === left[key]);
+}
+
+function nextExpiryDelayMs(views: Record<string, HotExposeScopeViewRecord>, now = Date.now()): number | null {
+  let nextExpiry = Number.POSITIVE_INFINITY;
+  for (const record of Object.values(views)) {
+    const updatedAt = Date.parse(record.updatedAt);
+    if (!Number.isFinite(updatedAt)) return 0;
+    nextExpiry = Math.min(nextExpiry, updatedAt + HOT_SNAPSHOT_MAX_AGE_MS + HOT_SNAPSHOT_EXPIRY_SLACK_MS);
+  }
+  if (!Number.isFinite(nextExpiry)) return null;
+  return Math.max(0, nextExpiry - now);
+}
+
+function scheduleExpiryCleanup(projectStateDir: string, views: Record<string, HotExposeScopeViewRecord>): void {
+  const key = pathResolve(projectStateDir);
+  const existing = expiryTimers.get(key);
+  if (existing) clearTimeout(existing);
+  expiryTimers.delete(key);
+
+  const delay = nextExpiryDelayMs(views);
+  if (delay === null) return;
+  const timer = setTimeout(() => {
+    expiryTimers.delete(key);
+    pruneExpiredHotExposeSnapshots(projectStateDir);
+  }, delay);
+  timer.unref?.();
+  expiryTimers.set(key, timer);
+}
+
+function writeFileOrDelete(projectStateDir: string, file: HotExposeSnapshotFile): void {
+  if (Object.keys(file.views).length === 0) {
+    rmSync(snapshotPath(projectStateDir), { force: true });
+  } else {
+    atomicWriteFast(snapshotPath(projectStateDir), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+  }
+  scheduleExpiryCleanup(projectStateDir, file.views);
+}
+
 function truncatePreviewOutput(output: string): string {
   const lines = output.replace(/\r/g, "").split("\n").slice(-MAX_PREVIEW_LINES).join("\n");
   const buffer = Buffer.from(lines, "utf8");
@@ -263,7 +315,13 @@ function releaseWriteLock(projectStateDir: string): void {
 
 export function readHotExposeScopeView(projectStateDir: string, key: HotExposeScopeKey): ExposeScopeView | null {
   try {
-    const view = parseHotView(readFile(projectStateDir).views[cacheId(key)], key);
+    let file = readFile(projectStateDir);
+    if (hasExpiredViews(file.views)) {
+      pruneExpiredHotExposeSnapshots(projectStateDir);
+      file = readFile(projectStateDir);
+    }
+    scheduleExpiryCleanup(projectStateDir, file.views);
+    const view = parseHotView(file.views[cacheId(key)], key);
     if (!view) return null;
     return {
       scope: view.scope,
@@ -273,6 +331,30 @@ export function readHotExposeScopeView(projectStateDir: string, key: HotExposeSc
     };
   } catch {
     return null;
+  }
+}
+
+export function pruneExpiredHotExposeSnapshots(projectStateDir: string): boolean {
+  if (!acquireWriteLock(projectStateDir)) return false;
+  try {
+    let file: HotExposeSnapshotFile;
+    try {
+      file = readFile(projectStateDir);
+    } catch {
+      return false;
+    }
+    const pruned = pruneViews(file.views);
+    if (viewsEqual(file.views, pruned)) {
+      scheduleExpiryCleanup(projectStateDir, pruned);
+      return false;
+    }
+    file.views = pruned;
+    writeFileOrDelete(projectStateDir, file);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    releaseWriteLock(projectStateDir);
   }
 }
 
@@ -307,7 +389,7 @@ export function writeHotExposeScopeViews(
         };
       }
     }
-    atomicWriteFast(snapshotPath(projectStateDir), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+    writeFileOrDelete(projectStateDir, file);
   } catch {
   } finally {
     releaseWriteLock(projectStateDir);
