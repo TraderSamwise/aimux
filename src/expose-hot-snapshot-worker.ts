@@ -87,12 +87,12 @@ export function refreshProjectExposeHotSnapshots(projectRoot: string): void {
       },
     ];
 
-    const launchContexts = tmux
+    const liveLaunchContexts = tmux
       .listProjectManagedWindows(resolvedProjectRoot)
-      .filter(({ target }) => !target.paneDead && !isDashboardWindowName(target.windowName))
-      .slice(0, EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS);
-    const keepLaunchWindowIds = new Set(launchContexts.map(({ target }) => target.windowId));
-    for (const { target, metadata } of launchContexts) {
+      .filter(({ target }) => !target.paneDead && !isDashboardWindowName(target.windowName));
+    const keepLaunchWindowIds = new Set(liveLaunchContexts.map(({ target }) => target.windowId));
+    const refreshLaunchContexts = liveLaunchContexts.slice(0, EXPOSE_HOT_SNAPSHOT_MAX_LAUNCH_CONTEXTS);
+    for (const { target, metadata } of refreshLaunchContexts) {
       const worktreePath = pathResolve(metadata.worktreePath || resolvedProjectRoot);
       const worktreeRawItems = listSwitchableAgentItems(
         {
