@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { resolve as pathResolve } from "node:path";
 import type { Worker } from "node:worker_threads";
-import { ensureProjectPaths, getProjectIdFor, initPaths } from "./paths.js";
+import { ensureProjectPaths, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
@@ -158,6 +158,7 @@ import {
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
+import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -689,6 +690,10 @@ export class AimuxDaemon {
 
   private refreshGlobalExposeHotSnapshots(): void {
     if (this.stopping) return;
+    const projects = this.listProjectsForRoute();
+    for (const project of projects) {
+      pruneExpiredHotExposeSnapshots(getProjectStateDirById(project.id));
+    }
     if (this.globalExposeHotSnapshotRefreshing) {
       this.scheduleGlobalExposeHotSnapshotRefresh();
       return;
@@ -696,7 +701,6 @@ export class AimuxDaemon {
     this.globalExposeHotSnapshotRefreshing = true;
     const timeoutMs = 5_000;
     try {
-      const projects = this.listProjectsForRoute();
       const worker = startExposeHotSnapshotWorker(
         { kind: "global", projects },
         {

@@ -163,6 +163,7 @@ import { shouldRelaunchFreshSession } from "./session-fresh-relaunch.js";
 import { ExposePreviewCache, type ExposePreviewCacheLike } from "./expose-preview-cache.js";
 import { ExposePaneOutputTap, type ExposePaneOutputTapLike } from "./expose-pane-output-tap.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
+import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
@@ -1612,6 +1613,7 @@ export class MetadataServer {
 
   private refreshExposeHotSnapshots(): void {
     if (!this.exposeHotSnapshotsEnabled || !this.server) return;
+    pruneExpiredHotExposeSnapshots(getProjectStateDir());
     if (this.exposeHotSnapshotRefreshing) {
       this.scheduleExposeHotSnapshotRefresh();
       return;
