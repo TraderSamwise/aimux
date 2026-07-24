@@ -114,9 +114,10 @@ yarn build
 Install the current checkout as a frozen local build:
 
 ```bash
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$(uname -m)" in arm64 | aarch64) ARCH=arm64 ;; x86_64 | amd64) ARCH=x64 ;; esac
 AIMUX_RELEASE_VERSION=local-$(git rev-parse --short HEAD) yarn release:asset
-ASSET="$(ls -t release/aimux-*.tar.gz | head -n 1)"
-scripts/install.sh "$ASSET"
+scripts/install.sh "release/aimux-${PLATFORM}-${ARCH}.tar.gz"
 aimux doctor versions
 ```
 
