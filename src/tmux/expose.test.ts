@@ -7,9 +7,13 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTmuxExpose } from "./expose.js";
 import type { TmuxExposeTimingEvent } from "./expose.js";
+import { writeHotExposeScopeView } from "./expose-hot-snapshot.js";
 
 const runtimeManagerMock = vi.hoisted(() => ({
   captureTarget: vi.fn(() => "agent output\n"),
+}));
+const worktreeMock = vi.hoisted(() => ({
+  listWorktrees: vi.fn(() => [{ name: "repo", path: "/repo", branch: "master", isBare: false }]),
 }));
 
 vi.mock("./runtime-manager.js", () => ({
@@ -21,6 +25,9 @@ vi.mock("./runtime-manager.js", () => ({
     }
   },
 }));
+vi.mock("../worktree.js", () => ({
+  listWorktrees: worktreeMock.listWorktrees,
+}));
 
 const tempRoots: string[] = [];
 
@@ -28,6 +35,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   runtimeManagerMock.captureTarget.mockReset();
   runtimeManagerMock.captureTarget.mockReturnValue("agent output\n");
+  worktreeMock.listWorktrees.mockReset();
+  worktreeMock.listWorktrees.mockReturnValue([{ name: "repo", path: "/repo", branch: "master", isBare: false }]);
   while (tempRoots.length) {
     rmSync(tempRoots.pop()!, { recursive: true, force: true });
   }
@@ -111,6 +120,283 @@ async function waitForCondition(predicate: () => boolean, ms = 1000): Promise<vo
 }
 
 describe("runTmuxExpose", () => {
+  it("renders a hot snapshot before slow item discovery resolves", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-hot-render-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot: "/repo", scope: "project" },
+      {
+        scope: "project",
+        scopeLabel: "all worktrees",
+        sublabel: "worktree",
+        items: [
+          {
+            id: "session-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            previewSnapshot: {
+              output: "hot preview line\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@1",
+              startLine: -40,
+              lineCount: 40,
+            },
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "session-1",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: "/repo",
+            },
+          },
+        ],
+      },
+    );
+
+    const allowSwitchableResponse = deferred();
+    let switchableResolved = false;
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        await allowSwitchableResponse.promise;
+        switchableResolved = true;
+        sendJson(res, { ok: true, items: [] });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const hotOutput = waitForOutput(output, "hot preview line");
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await hotOutput;
+      expect(switchableResolved).toBe(false);
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+    } finally {
+      allowSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("uses the worktree root, not the nested cwd, for worktree hot snapshots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-hot-worktree-key-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot: "/repo", scope: "worktree", worktreeKey: "/repo", launchWindowId: "@1" },
+      {
+        scope: "worktree",
+        scopeLabel: "this worktree",
+        sublabel: "none",
+        items: [
+          {
+            id: "session-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            previewSnapshot: {
+              output: "nested cwd hot preview\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@1",
+              startLine: -40,
+              lineCount: 40,
+            },
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "session-1",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: "/repo",
+            },
+          },
+        ],
+      },
+    );
+
+    const allowSwitchableResponse = deferred();
+    let switchableResolved = false;
+    const server = createServer(async (req, res) => {
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        await allowSwitchableResponse.promise;
+        switchableResolved = true;
+        sendJson(res, { ok: true, items: [] });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const hotOutput = waitForOutput(output, "nested cwd hot preview");
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo/packages/a",
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "worktree" },
+      });
+
+      await hotOutput;
+      expect(switchableResolved).toBe(false);
+      input.write("q");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+    } finally {
+      allowSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
+  it("validates a hot snapshot tile through the focus API before using a selection file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-expose-hot-focus-test-"));
+    tempRoots.push(root);
+    const projectStateDir = join(root, "state");
+    mkdirSync(projectStateDir);
+    writeHotExposeScopeView(
+      projectStateDir,
+      { projectRoot: "/repo", scope: "project" },
+      {
+        scope: "project",
+        scopeLabel: "all worktrees",
+        sublabel: "worktree",
+        items: [
+          {
+            id: "session-1",
+            label: "codex",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            previewSnapshot: {
+              output: "hot preview line\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@1",
+              startLine: -40,
+              lineCount: 40,
+            },
+            target: { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "session-1",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: "/repo",
+            },
+          },
+        ],
+      },
+    );
+
+    const allowSwitchableResponse = deferred();
+    let focusRequested = false;
+    const server = createServer(async (req, res) => {
+      if (req.method === "POST" && req.url?.startsWith("/control/focus-window")) {
+        focusRequested = true;
+        sendJson(res, { ok: true });
+        return;
+      }
+      if (req.url?.startsWith("/control/switchable-agents")) {
+        await allowSwitchableResponse.promise;
+        sendJson(res, { ok: true, items: [] });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), `${endpoint}\n`);
+    const selectionFile = join(root, "selected-window.txt");
+    const input = new PassThrough();
+    const output = new PassThrough() as PassThrough & { columns: number; rows: number };
+    output.columns = 80;
+    output.rows = 24;
+    output.on("data", () => {});
+
+    try {
+      const hotOutput = waitForOutput(output, "hot preview line");
+      const result = runTmuxExpose({
+        projectRoot: "/repo",
+        projectStateDir,
+        currentWindow: "codex",
+        currentWindowId: "@1",
+        currentPath: "/repo",
+        selectionFile,
+        input,
+        output,
+        manageTerminal: false,
+        columns: 80,
+        rows: 24,
+        exposeConfig: { initialScope: "project" },
+      });
+
+      await hotOutput;
+      input.write("\r");
+      await expect(withTimeout(result, 1000)).resolves.toBe(0);
+      expect(focusRequested).toBe(true);
+      expect(existsSync(selectionFile)).toBe(false);
+    } finally {
+      allowSwitchableResponse.resolve();
+      server.close();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it("renders preview snapshots from the item API before live capture succeeds", async () => {
     const events: string[] = [];
     runtimeManagerMock.captureTarget.mockImplementation(() => {

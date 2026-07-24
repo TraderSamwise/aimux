@@ -1,7 +1,7 @@
 {
   "name": "aimux-cli",
   "version": "0.1.28",
-  "description": "Native CLI agent multiplexer — run AI coding tools with their native TUIs intact",
+  "description": "Local agent multiplexer for AI coding tools with native TUIs",
   "main": "bin/aimux",
   "bin": {
     "aimux": "./bin/aimux"
@@ -10,8 +10,14 @@
     "bin",
     "dist",
     "dist-ui",
+    "docs",
+    "scripts/installed-aimux-shim.sh",
+    "scripts/tmux-control.sh",
+    "scripts/tmux-open-hyperlink.sh",
+    "scripts/tmux-statusline.sh",
     "native/darwin-arm64",
     "native/darwin-x64",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {
@@ -64,7 +70,17 @@
     "type": "git",
     "url": "git+https://github.com/TraderSamwise/aimux.git"
   },
-  "homepage": "https://github.com/TraderSamwise/aimux#readme",
+  "homepage": "https://aimux.app",
+  "keywords": [
+    "ai",
+    "agents",
+    "cli",
+    "tmux",
+    "codex",
+    "claude",
+    "aider",
+    "multiplexer"
+  ],
   "bugs": {
     "url": "https://github.com/TraderSamwise/aimux/issues"
   },

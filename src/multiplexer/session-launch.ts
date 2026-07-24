@@ -328,6 +328,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.terminalHost.enterAlternateScreen(true);
   host.startStatusRefresh();
   host.renderCurrentDashboardView();
+  markDashboardReadyForInput(host);
 
   const startupModelLifecycle = captureDashboardLifecycle(host);
   const primed = await refreshDashboardModelThroughApi(host, { force: true, lifecycle: startupModelLifecycle });

@@ -703,9 +703,7 @@ program
         }
       }
       await initPaths(projectRoot);
-      if (opts.tmuxDashboardInternal) {
-        await ensureDaemonProjectSpawned(projectRoot);
-      } else {
+      if (!opts.tmuxDashboardInternal) {
         initProject();
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
@@ -728,7 +726,10 @@ program
         }
       }
 
-      const mux = new Multiplexer({ contextWatcherEnabled: !opts.tmuxDashboardInternal });
+      const mux = new Multiplexer({
+        contextWatcherEnabled: !opts.tmuxDashboardInternal,
+        dashboardCoreCommandRequest: opts.tmuxDashboardInternal ? requestCoreCommand : undefined,
+      });
       let cleanedUp = false;
       const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
       const cleanupAll = async () => {
