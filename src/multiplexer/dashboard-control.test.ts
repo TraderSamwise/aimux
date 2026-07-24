@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   removeMetadataEndpoint: vi.fn(),
   updateSessionMetadata: vi.fn(),
   sendCoreCommand: vi.fn(),
+  requestCoreCommand: vi.fn(),
   restartAimuxControlPlane: vi.fn(),
   isRuntimeRestartInProgress: vi.fn(),
 }));
@@ -112,6 +113,7 @@ function resetDashboardControlMocks(): void {
   mocks.removeMetadataEndpoint.mockReset();
   mocks.updateSessionMetadata.mockReset();
   mocks.sendCoreCommand.mockReset();
+  mocks.requestCoreCommand.mockReset();
   mocks.restartAimuxControlPlane.mockReset();
   mocks.isRuntimeRestartInProgress.mockReset();
   mocks.restartAimuxControlPlane.mockReturnValue(new Promise(() => {}));
@@ -122,7 +124,7 @@ function resetDashboardControlMocks(): void {
     pid: 2,
     updatedAt: "2026-06-21T00:00:00.000Z",
   });
-  mocks.sendCoreCommand.mockImplementation(async (command: string, payload?: { projectRoot?: string }) => {
+  const coreCommandImplementation = async (command: string, payload?: { projectRoot?: string }) => {
     if (command === CORE_COMMAND_NAMES.projectStop) {
       return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
     }
@@ -130,7 +132,9 @@ function resetDashboardControlMocks(): void {
       return coreCommandOk(command, { project: projectServiceState(payload?.projectRoot) });
     }
     return coreCommandOk(command, {});
-  });
+  };
+  mocks.sendCoreCommand.mockImplementation(coreCommandImplementation);
+  mocks.requestCoreCommand.mockImplementation(coreCommandImplementation);
 }
 
 vi.mock("../http-client.js", () => ({
@@ -463,6 +467,21 @@ describe("postToProjectService", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("uses an injected core command requester for dashboard recovery", async () => {
+    const { ensureDashboardControlPlane } = await import("./dashboard-control.js");
+    const host = {
+      dashboardServiceRecovery: null,
+      dashboardCoreCommandRequest: mocks.requestCoreCommand,
+    };
+
+    await ensureDashboardControlPlane(host, 1000);
+
+    expect(mocks.requestCoreCommand).toHaveBeenCalledWith(CORE_COMMAND_NAMES.projectEnsure, {
+      projectRoot: process.cwd(),
+    });
+    expectNoCoreProjectLifecycleCommand();
   });
 
   it("escalates a later restart request after an in-flight ensure completes", async () => {
