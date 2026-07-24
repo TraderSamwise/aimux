@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -2439,6 +2439,60 @@ describe("MetadataServer threads API", () => {
       TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
       TmuxRuntimeManager.prototype.captureTarget = captureTarget;
     }
+  });
+
+  it("prunes expired expose hot snapshots from the project service refresh owner", async () => {
+    server?.stop();
+    const stateDir = getProjectStateDir();
+    const path = join(stateDir, "expose-hot-snapshots.json");
+    writeHotExposeScopeView(
+      stateDir,
+      { projectRoot: repoRoot, scope: "project" },
+      {
+        scope: "project",
+        scopeLabel: "all worktrees",
+        sublabel: "worktree",
+        items: [
+          {
+            id: "stale-agent",
+            target: { sessionName: "aimux-test", windowId: "@99", windowIndex: 99, windowName: "old" },
+            metadata: {
+              kind: "agent",
+              sessionId: "stale-agent",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+            },
+            label: "old",
+            urgency: 0,
+            activity: 0,
+            recentRank: 0,
+            previewSnapshot: {
+              output: "SECRET_TOKEN=should-expire\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@99",
+            },
+          },
+        ],
+      },
+    );
+    const raw = JSON.parse(readFileSync(path, "utf8")) as { views: Record<string, { updatedAt: string }> };
+    for (const record of Object.values(raw.views)) record.updatedAt = "2020-01-01T00:00:00.000Z";
+    writeFileSync(path, JSON.stringify(raw, null, 2));
+
+    server = new MetadataServer({ exposeHotSnapshots: true, exposePreviewCache: false, exposePaneOutputTap: false });
+    await server.start();
+    const testServer = server as unknown as {
+      exposeHotSnapshotRefreshing: boolean;
+      refreshExposeHotSnapshots: () => void;
+    };
+    testServer.exposeHotSnapshotRefreshing = true;
+    testServer.refreshExposeHotSnapshots();
+
+    const snapshotText = existsSync(path) ? readFileSync(path, "utf8") : "";
+    expect(snapshotText).not.toContain("SECRET_TOKEN=should-expire");
   });
 
   it("serves a reconciled coordination worklist from desktop state + notifications", async () => {

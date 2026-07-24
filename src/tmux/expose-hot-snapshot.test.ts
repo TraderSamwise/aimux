@@ -1,8 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { readHotExposeScopeView, writeHotExposeScopeView } from "./expose-hot-snapshot.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  pruneExpiredHotExposeSnapshots,
+  readHotExposeScopeView,
+  writeHotExposeScopeView,
+} from "./expose-hot-snapshot.js";
 import type { ExposeScopeItem, ExposeScopeView } from "./expose-model.js";
 
 const tempRoots: string[] = [];
@@ -151,27 +155,31 @@ describe("expose hot snapshots", () => {
     expect(existsSync(path)).toBe(false);
   });
 
-  it("removes cached previews after the ttl even without another write", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-07-20T13:00:00.000Z"));
-      const stateDir = createStateDir();
-      const path = join(stateDir, "expose-hot-snapshots.json");
-      const secretItem = item();
-      secretItem.previewSnapshot = {
-        ...secretItem.previewSnapshot!,
-        output: "SECRET_TOKEN=should-expire\n",
-      };
+  it("removes cached previews when a long-lived owner prunes expired entries", () => {
+    const stateDir = createStateDir();
+    const path = join(stateDir, "expose-hot-snapshots.json");
+    const staleItem = item();
+    staleItem.previewSnapshot = {
+      ...staleItem.previewSnapshot!,
+      output: "SECRET_TOKEN=should-expire\n",
+    };
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        views: {
+          "project|%2Frepo||": {
+            ...view("project", [staleItem]),
+            projectRoot: "/repo",
+            updatedAt: "2020-01-01T00:00:00.000Z",
+          },
+        },
+      }),
+    );
 
-      writeHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" }, view("project", [secretItem]));
-      expect(readFileSync(path, "utf8")).toContain("SECRET_TOKEN=should-expire");
+    expect(pruneExpiredHotExposeSnapshots(stateDir)).toBe(true);
 
-      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
-
-      expect(existsSync(path)).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(existsSync(path)).toBe(false);
   });
 
   it("replaces a malformed cache file on the next successful write", () => {
