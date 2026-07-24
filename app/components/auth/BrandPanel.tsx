@@ -17,7 +17,7 @@ const FEATURES: Array<{ title: string; description: string }> = [
   },
 ];
 const WEB_INSTALL_COMMAND =
-  "$ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/install.sh | sh";
+  "$ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/v0.1.28/scripts/install.sh | sh";
 
 interface BrandPanelProps {
   variant: "side" | "compact";
