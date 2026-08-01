@@ -89,9 +89,42 @@ describe("loadExposeScopeItems", () => {
     expect(requested.pathname).toBe("/control/switchable-agents");
     expect(requested.searchParams.get("scope")).toBe("worktree");
     expect(requested.searchParams.get("labelFormat")).toBe("raw");
+    expect(requested.searchParams.get("includePreview")).toBe("1");
     expect(requested.searchParams.get("currentWindowId")).toBe("@2");
     expect(view).toMatchObject({ scope: "worktree", scopeLabel: "this worktree", sublabel: "none" });
     expect(view.items.map((i) => i.id)).toEqual(["wt-agent"]);
+  });
+
+  it("preserves preview snapshots from the scope item API", async () => {
+    const requestJsonFn = vi.fn(async () => ({
+      status: 200,
+      json: {
+        ok: true,
+        items: [
+          {
+            id: "wt-agent",
+            previewSnapshot: {
+              output: "warm output\n",
+              capturedAt: "2026-07-20T13:00:00.000Z",
+              source: "capture",
+              windowId: "@2",
+              startLine: -40,
+              lineCount: 40,
+            },
+          },
+        ],
+      },
+    }));
+    const view = await loadExposeScopeItems("worktree", context, createProjectStateDir(), { requestJsonFn });
+
+    expect(view.items[0]?.previewSnapshot).toEqual({
+      output: "warm output\n",
+      capturedAt: "2026-07-20T13:00:00.000Z",
+      source: "capture",
+      windowId: "@2",
+      startLine: -40,
+      lineCount: 40,
+    });
   });
 
   it("loads project scope as all switchable project sessions", async () => {
@@ -102,6 +135,7 @@ describe("loadExposeScopeItems", () => {
     const view = await loadExposeScopeItems("project", context, createProjectStateDir(), { requestJsonFn });
     const requested = new URL(requestJsonFn.mock.calls[0]![0]);
     expect(requested.searchParams.get("scope")).toBe("all");
+    expect(requested.searchParams.get("includePreview")).toBe("1");
     expect(view).toMatchObject({ scope: "project", scopeLabel: "all worktrees", sublabel: "worktree" });
     expect(view.items.map((i) => i.id)).toEqual(["project-agent"]);
   });
@@ -118,6 +152,7 @@ describe("loadExposeScopeItems", () => {
     const requested = new URL(requestJsonFn.mock.calls[0]![0]);
     expect(requested.pathname).toBe("/core/expose/items");
     expect(requested.searchParams.get("scope")).toBe(null);
+    expect(requested.searchParams.get("includePreview")).toBe("1");
     expect(view).toMatchObject({ scope: "global", scopeLabel: "all projects", sublabel: "project-worktree" });
     expect(view.items.map((i) => i.id)).toEqual(["global-agent"]);
   });

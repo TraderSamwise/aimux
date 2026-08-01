@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { getRepoRoot } from "../paths.js";
@@ -15,6 +16,7 @@ import {
 } from "../runtime-core/topology-sessions.js";
 import type { RuntimeTopologySessionStatus } from "../runtime-core/topology-store.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
+import { listTopologyWorktreeStates } from "../runtime-core/topology-worktrees.js";
 import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
 import { shouldMarkFreshRelaunchAllowed, shouldRelaunchFreshSession } from "../session-fresh-relaunch.js";
@@ -47,6 +49,14 @@ function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWor
   if (!worktreePath) return true;
   if (graveyardPaths.has(worktreePath)) return false;
   return existsSync(worktreePath);
+}
+
+function hasSettlingTopologyWorktree(worktreePath: string | undefined): boolean {
+  if (!worktreePath) return false;
+  const normalizedPath = pathResolve(worktreePath);
+  return listTopologyWorktreeStates({ statuses: ["planned", "creating"] }).some(
+    (worktree) => pathResolve(worktree.path) === normalizedPath,
+  );
 }
 
 function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
@@ -291,7 +301,7 @@ export function reconcileOrphanedTopologySessions(
     const staleStarting =
       session.status === "starting" &&
       (!Number.isFinite(startingUpdatedAt) || Date.now() - startingUpdatedAt >= STARTING_ORPHAN_RECONCILE_GRACE_MS);
-    if (pendingStart && !staleStarting) continue;
+    if (pendingStart && (!staleStarting || hasSettlingTopologyWorktree(session.worktreePath))) continue;
 
     if (isOrphanWorktreeUnrecoverable(session.worktreePath, graveyardPaths)) {
       const reason = `worktree missing after restart: ${session.worktreePath}`;

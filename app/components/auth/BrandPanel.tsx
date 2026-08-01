@@ -4,18 +4,20 @@ import { Text } from "@/components/ui/text";
 
 const FEATURES: Array<{ title: string; description: string }> = [
   {
-    title: "Remote visibility",
-    description: "Monitor agent sessions from your phone or another machine.",
+    title: "Native terminals",
+    description: "Claude, Codex, Aider, and shell sessions keep their own TUIs.",
   },
   {
-    title: "Multi-project",
-    description: "Switch between projects. Each with its own worktrees, agents, and services.",
+    title: "Project control",
+    description: "Switch across projects, worktrees, agents, services, and teammates.",
   },
   {
-    title: "Real-time",
-    description: "Live status updates via SSE. See what your agents are doing right now.",
+    title: "Remote check-ins",
+    description: "Use web or mobile as clients of the same local daemon.",
   },
 ];
+const WEB_INSTALL_COMMAND =
+  "$ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/v0.1.28/scripts/install.sh | sh";
 
 interface BrandPanelProps {
   variant: "side" | "compact";
@@ -35,7 +37,7 @@ export function BrandPanel({ variant }: BrandPanelProps) {
           aimux
         </Text>
         <Text className="text-[14px] text-muted-foreground mt-2 text-center">
-          Manage your AI agents from anywhere.
+          Local control plane for AI coding agents.
         </Text>
       </View>
     );
@@ -56,7 +58,8 @@ export function BrandPanel({ variant }: BrandPanelProps) {
           </Text>
         </View>
         <Text className="text-[18px] text-muted-foreground mt-5 leading-relaxed max-w-[360px]">
-          Manage your AI agents from anywhere. One dashboard for Claude, Codex, and shell sessions.
+          Multiplex long-running AI coding agents without replacing their terminals. One dashboard
+          for Claude, Codex, Aider, shell sessions, and worktrees.
         </Text>
 
         <View className="mt-12">
@@ -76,10 +79,8 @@ export function BrandPanel({ variant }: BrandPanelProps) {
 
       {Platform.OS === "web" ? (
         <View className="rounded-md border border-border bg-background/60 px-4 py-3 max-w-[360px]">
-          <Text className="font-mono text-[12px] text-muted-foreground">$ aimux serve</Text>
-          <Text className="text-[11px] text-muted-foreground/70 mt-1">
-            Run locally to connect your agents.
-          </Text>
+          <Text className="font-mono text-[12px] text-muted-foreground">{WEB_INSTALL_COMMAND}</Text>
+          <Text className="font-mono text-[12px] text-muted-foreground/70 mt-1">$ aimux login</Text>
         </View>
       ) : null}
     </View>

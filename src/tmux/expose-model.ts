@@ -16,7 +16,7 @@ export type ExposeScope = "worktree" | "project" | "global";
 const SCOPE_LADDER: ExposeScope[] = ["worktree", "project", "global"];
 
 /** A tile's agent item; global-scope items also carry their project. */
-export type ExposeScopeItem = FastControlItem & { projectRoot?: string; projectName?: string };
+export type ExposeScopeItem = FastControlItem & { projectId?: string; projectRoot?: string; projectName?: string };
 
 export type ExposeSublabel = "none" | "worktree" | "project-worktree";
 
@@ -96,6 +96,7 @@ export async function loadExposeScopeItems(
   if (scope === "global") {
     const endpoint = deps.daemonEndpoint ?? getDaemonBaseUrl();
     const url = new URL(CORE_API_ROUTES.exposeItems, endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
+    url.searchParams.set("includePreview", "1");
     const items = await requestExposeItems(url, deps);
     return {
       scope,
@@ -109,6 +110,7 @@ export async function loadExposeScopeItems(
   const url = new URL(PROJECT_API_ROUTES.controls.switchableAgents, endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
   url.searchParams.set("scope", scope === "worktree" ? "worktree" : "all");
   url.searchParams.set("labelFormat", "raw");
+  url.searchParams.set("includePreview", "1");
   appendFocusContext(url, context);
   const items = await requestExposeItems(url, deps);
   return {

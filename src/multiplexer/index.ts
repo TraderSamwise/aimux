@@ -17,6 +17,7 @@ import { PluginRuntime } from "../plugin-runtime.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
+import type { CoreCommandName, CoreCommandOk, CoreCommandPayloadByName } from "../core-command-contract.js";
 import {
   contextualizeAlertInput,
   mergeDisplayContext,
@@ -76,6 +77,10 @@ import {
 } from "./session-launch.js";
 
 export type MuxMode = "dashboard" | "project-service";
+type DashboardCoreCommandRequest = <TCommand extends CoreCommandName>(
+  command: TCommand,
+  payload?: CoreCommandPayloadByName[TCommand],
+) => Promise<CoreCommandOk<TCommand>>;
 
 export interface SessionState {
   id: string;
@@ -282,6 +287,7 @@ export class Multiplexer {
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;
   private dashboardServiceRecovery: Promise<void> | null = null;
+  private readonly dashboardCoreCommandRequest?: DashboardCoreCommandRequest;
   private dashboardNextBackgroundRefreshAt = 0;
   private runtimeSync!: MultiplexerRuntimeSync;
   private _runtimeGuard: RuntimeGuardState = { kind: "ok" };
@@ -289,7 +295,13 @@ export class Multiplexer {
   private runtimeGuardProbing = false;
   private runtimeGuardDisconnectProbeCount = 0;
 
-  constructor(options: { contextWatcherEnabled?: boolean; projectRoot?: string } = {}) {
+  constructor(
+    options: {
+      contextWatcherEnabled?: boolean;
+      projectRoot?: string;
+      dashboardCoreCommandRequest?: DashboardCoreCommandRequest;
+    } = {},
+  ) {
     this.projectRoot = (() => {
       if (options.projectRoot?.trim()) return options.projectRoot.trim();
       try {
@@ -299,6 +311,7 @@ export class Multiplexer {
       }
     })();
     this.terminalHost = new TerminalHost();
+    this.dashboardCoreCommandRequest = options.dashboardCoreCommandRequest;
     this.contextWatcher = new ContextWatcher(
       (target) => this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
       { enabled: options.contextWatcherEnabled ?? true },

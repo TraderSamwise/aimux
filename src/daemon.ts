@@ -2,12 +2,14 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { resolve as pathResolve } from "node:path";
-import { ensureProjectPaths, getProjectIdFor, initPaths } from "./paths.js";
+import type { Worker } from "node:worker_threads";
+import { ensureProjectPaths, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems } from "./expose-control.js";
+import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
 import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
@@ -155,6 +157,8 @@ import {
 } from "./tmux/doctor.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
+import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
+import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import {
   clearDaemonInfo,
   getDaemonBaseUrl,
@@ -178,6 +182,8 @@ const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
 const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_SERVER_CLOSE_GRACE_MS = 500;
+const GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 3500;
+const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
 const LOCAL_AUTH_ROUTES = new Set<string>([
@@ -369,6 +375,9 @@ export class AimuxDaemon {
   private state: DaemonState = loadDaemonState();
   private stopping = false;
   private stoppingPromise: Promise<void> | null = null;
+  private globalExposeHotSnapshotTimer: NodeJS.Timeout | null = null;
+  private globalExposeHotSnapshotRefreshing = false;
+  private globalExposeHotSnapshotWorker: Worker | null = null;
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -405,6 +414,7 @@ export class AimuxDaemon {
       });
     });
     this.refreshState();
+    this.scheduleGlobalExposeHotSnapshotRefresh(GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS);
     log.info("daemon started", "daemon", { pid: process.pid, host, port });
     this.connectRelayIfConfigured();
   }
@@ -468,6 +478,11 @@ export class AimuxDaemon {
   private async stopUnlocked(): Promise<void> {
     this.stopping = true;
     log.info("daemon stopping project actors", "daemon", { projectCount: Object.keys(this.state.projects).length });
+    if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
+    this.globalExposeHotSnapshotTimer = null;
+    this.globalExposeHotSnapshotRefreshing = false;
+    this.globalExposeHotSnapshotWorker?.terminate().catch(() => {});
+    this.globalExposeHotSnapshotWorker = null;
     this.relayClient?.disconnect();
     this.relayClient = null;
     const serverClose = this.closeServer();
@@ -663,13 +678,87 @@ export class AimuxDaemon {
     return { status, body: `${message}\n`, contentType: "text/plain; charset=utf-8" };
   }
 
-  private exposeItemsRoute(): DaemonRouteResponse {
-    const items = listAllProjectsExposeItems().map((item) => ({
-      ...serializeFastControlItem(item),
-      projectId: item.projectId,
-      projectName: item.projectName,
-      projectRoot: item.projectRoot,
-    }));
+  private scheduleGlobalExposeHotSnapshotRefresh(delayMs = GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS): void {
+    if (!this.server || this.stopping) return;
+    if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
+    this.globalExposeHotSnapshotTimer = setTimeout(() => {
+      this.globalExposeHotSnapshotTimer = null;
+      this.refreshGlobalExposeHotSnapshots();
+    }, delayMs);
+    this.globalExposeHotSnapshotTimer.unref?.();
+  }
+
+  private refreshGlobalExposeHotSnapshots(): void {
+    if (this.stopping) return;
+    const projects = this.listProjectsForRoute();
+    for (const project of projects) {
+      pruneExpiredHotExposeSnapshots(getProjectStateDirById(project.id));
+    }
+    if (this.globalExposeHotSnapshotRefreshing) {
+      this.scheduleGlobalExposeHotSnapshotRefresh();
+      return;
+    }
+    this.globalExposeHotSnapshotRefreshing = true;
+    const timeoutMs = 5_000;
+    try {
+      const worker = startExposeHotSnapshotWorker(
+        { kind: "global", projects },
+        {
+          category: "daemon",
+          description: "global expose hot snapshot refresh",
+          timeoutMs,
+        },
+      );
+      this.globalExposeHotSnapshotWorker = worker;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(fallback);
+        if (this.globalExposeHotSnapshotWorker === worker) this.globalExposeHotSnapshotWorker = null;
+        this.globalExposeHotSnapshotRefreshing = false;
+        if (!this.stopping) this.scheduleGlobalExposeHotSnapshotRefresh();
+      };
+      const fallback = setTimeout(() => {
+        worker.terminate().catch(() => {});
+        finish();
+      }, timeoutMs + 1_000);
+      fallback.unref?.();
+      worker.once("exit", finish);
+    } catch (error) {
+      this.globalExposeHotSnapshotRefreshing = false;
+      log.debug("global expose hot snapshot refresh failed", "daemon", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.scheduleGlobalExposeHotSnapshotRefresh();
+    }
+  }
+
+  private exposeItemsRoute(routeUrl: URL): DaemonRouteResponse {
+    const includePreview = routeUrl.searchParams.get("includePreview") === "1";
+    const rawItems = listAllProjectsExposeItems();
+    if (includePreview) {
+      const itemsByProjectRoot = new Map<string, typeof rawItems>();
+      for (const item of rawItems) {
+        const projectItems = itemsByProjectRoot.get(item.projectRoot) ?? [];
+        projectItems.push(item);
+        itemsByProjectRoot.set(item.projectRoot, projectItems);
+      }
+      for (const [projectRoot, projectItems] of itemsByProjectRoot) {
+        trackExposePreviewItems(projectRoot, projectItems);
+      }
+    }
+    const items = rawItems.map((item) => {
+      const previewSnapshot = includePreview
+        ? getExposePreviewSnapshot(item.projectRoot, item.target.windowId)
+        : undefined;
+      return {
+        ...serializeFastControlItem(previewSnapshot ? { ...item, previewSnapshot } : item),
+        projectId: item.projectId,
+        projectName: item.projectName,
+        projectRoot: item.projectRoot,
+      };
+    });
     return { status: 200, body: { ok: true, items } };
   }
 
@@ -3352,7 +3441,7 @@ export class AimuxDaemon {
 
     if (method === "GET" && pathname === CORE_API_ROUTES.exposeItems) {
       if (actor) return { status: 403, body: { ok: false, error: "expose routes are loopback-only" } };
-      return this.exposeItemsRoute();
+      return this.exposeItemsRoute(routeUrl);
     }
 
     if (method === "POST" && pathname === CORE_API_ROUTES.exposeFocus) {

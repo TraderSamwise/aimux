@@ -1184,10 +1184,26 @@ export interface SwitchableAgentsInput {
   currentWindowId?: string;
   currentPath?: string;
   scope?: "all" | "worktree";
+  includePreview?: "1";
+}
+
+export type ExposePreviewSnapshotSource = "capture" | "tap";
+
+export interface ExposePreviewSnapshot {
+  output: string;
+  capturedAt: string;
+  source: ExposePreviewSnapshotSource;
+  windowId?: string;
+  startLine?: number;
+  lineCount?: number;
+}
+
+export interface SwitchableAgentItem extends Record<string, unknown> {
+  previewSnapshot?: ExposePreviewSnapshot;
 }
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {
-  items: Array<Record<string, unknown>>;
+  items: SwitchableAgentItem[];
 }
 
 export interface InteractionPendingResponse extends ProjectApiOk {

@@ -1661,6 +1661,51 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
+  it("starts and stops pane pipes with a quoted file sink", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux-mobile-abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.startPanePipe(target, "cat >> /tmp/plain.log");
+    manager.pipeTargetToFile(target, "/tmp/aimux tap/it's.log", { onlyIfNotPiped: true });
+    manager.stopPanePipe(target);
+
+    expect(exec.calls.slice(-3).map((call) => call.args)).toEqual([
+      ["pipe-pane", "-t", "@3", "cat >> /tmp/plain.log"],
+      ["pipe-pane", "-t", "@3", "-o", `cat >> '/tmp/aimux tap/it'"'"'s.log'`],
+      ["pipe-pane", "-t", "@3"],
+    ]);
+  });
+
+  it("can mark pane pipe file sinks with an ownership token", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux-mobile-abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.pipeTargetToFile(target, "/tmp/aimux tap/output.log", {
+      onlyIfNotPiped: true,
+      ownership: { token: "tap-token", tokenFilePath: "/tmp/aimux tap/token.txt" },
+    });
+
+    const command = exec.calls.at(-1)?.args.at(-1) ?? "";
+    expect(exec.calls.at(-1)?.args.slice(0, -1)).toEqual(["pipe-pane", "-t", "@3", "-o"]);
+    expect(command).toContain("sh -c");
+    expect(command).toContain("'tap-token'");
+    expect(command).toContain("'/tmp/aimux tap/token.txt'");
+    expect(command).toContain("'/tmp/aimux tap/output.log'");
+    expect(command).toContain("trap");
+  });
+
   it("does not leak raw tmux launch argv when window creation fails", () => {
     const manager = new TmuxRuntimeManager(
       vi.fn<TmuxExec>(() => {
