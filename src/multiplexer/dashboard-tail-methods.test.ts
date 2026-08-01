@@ -51,6 +51,7 @@ import { listDashboardOperationFailures } from "../dashboard/operation-failures.
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { initPaths } from "../paths.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
+import { upsertTopologyWorktree } from "../runtime-core/topology-worktrees.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 
 describe("dashboard lifecycle adapter", () => {
@@ -124,6 +125,219 @@ describe("dashboard lifecycle adapter", () => {
       { CODEX_FLAG: "1" },
     );
     expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({ id: "codex-planned" });
+  });
+
+  it("waits for a creating target worktree before creating the tmux window", async () => {
+    vi.useFakeTimers();
+    const worktreePath = join(repoRoot, "feature-wt");
+    upsertTopologyWorktree({ path: worktreePath, name: "feature-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      generateDashboardSessionId: vi.fn(() => "codex-planned"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: worktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-planned" });
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+
+    mkdirSync(worktreePath, { recursive: true });
+    upsertTopologyWorktree({ path: worktreePath, name: "feature-wt" }, "active", { projectRoot: repoRoot });
+    await vi.advanceTimersByTimeAsync(310);
+
+    expect(createSessionAsyncMock).toHaveBeenCalledOnce();
+    expect(createSessionAsyncMock.mock.calls[0]?.[7]).toBe(worktreePath);
+  });
+
+  it("does not stall ready agent creation behind a pending worktree", async () => {
+    vi.useFakeTimers();
+    const blockedWorktreePath = join(repoRoot, "blocked-wt");
+    upsertTopologyWorktree({ path: blockedWorktreePath, name: "blocked-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      generateDashboardSessionId: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetSessionId: "codex-blocked",
+        targetWorktreePath: blockedWorktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-blocked" });
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetSessionId: "codex-ready",
+        targetWorktreePath: repoRoot,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-ready" });
+
+    await vi.advanceTimersByTimeAsync(120);
+
+    expect(createSessionAsyncMock).toHaveBeenCalledOnce();
+    expect(createSessionAsyncMock.mock.calls[0]?.[9]).toBe("codex-ready");
+  });
+
+  it("cancels deferred agent creation when the user stops before the worktree is ready", async () => {
+    vi.useFakeTimers();
+    const worktreePath = join(repoRoot, "stop-wt");
+    upsertTopologyWorktree({ path: worktreePath, name: "stop-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      generateDashboardSessionId: vi.fn(() => "codex-deferred-stop"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: worktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-deferred-stop" });
+    await vi.advanceTimersByTimeAsync(60);
+
+    await expect(dashboardTailMethods.stopAgent.call(host, "codex-deferred-stop")).resolves.toEqual({
+      sessionId: "codex-deferred-stop",
+      status: "offline",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+    expect(listTopologySessionStates({ statuses: ["starting"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["offline"] })[0]).toMatchObject({
+      id: "codex-deferred-stop",
+      status: "offline",
+    });
+    expect(host.stoppingSessionIds.has("codex-deferred-stop")).toBe(false);
+  });
+
+  it("cancels deferred agent creation when the user graveyards before the worktree is ready", async () => {
+    vi.useFakeTimers();
+    const worktreePath = join(repoRoot, "graveyard-wt");
+    upsertTopologyWorktree({ path: worktreePath, name: "graveyard-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      graveyardAfterStopSessionIds: new Set(),
+      sessionTmuxTargets: new Map(),
+      generateDashboardSessionId: vi.fn(() => "codex-deferred-graveyard"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: worktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-deferred-graveyard" });
+    await vi.advanceTimersByTimeAsync(60);
+
+    await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "codex-deferred-graveyard")).resolves.toEqual({
+      sessionId: "codex-deferred-graveyard",
+      status: "graveyard",
+      previousStatus: "running",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+    expect(listTopologySessionStates({ statuses: ["starting"] })).toEqual([]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] })[0]).toMatchObject({
+      id: "codex-deferred-graveyard",
+      status: "graveyard",
+    });
+    expect(host.stoppingSessionIds.has("codex-deferred-graveyard")).toBe(false);
+    expect(host.graveyardAfterStopSessionIds.has("codex-deferred-graveyard")).toBe(false);
+  });
+
+  it("creates the tmux window when stale topology says creating but the worktree path exists", async () => {
+    vi.useFakeTimers();
+    const worktreePath = join(repoRoot, "existing-wt");
+    mkdirSync(worktreePath, { recursive: true });
+    upsertTopologyWorktree({ path: worktreePath, name: "existing-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      generateDashboardSessionId: vi.fn(() => "codex-existing"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: worktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-existing" });
+
+    await vi.advanceTimersByTimeAsync(60);
+
+    expect(createSessionAsyncMock).toHaveBeenCalledOnce();
+    expect(createSessionAsyncMock.mock.calls[0]?.[7]).toBe(worktreePath);
+  });
+
+  it("keeps waiting when an in-process worktree create job owns the existing path", async () => {
+    vi.useFakeTimers();
+    const worktreePath = join(repoRoot, "inflight-wt");
+    mkdirSync(worktreePath, { recursive: true });
+    upsertTopologyWorktree({ path: worktreePath, name: "inflight-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      pendingWorktreeCreates: new Map([[worktreePath, Promise.resolve({ path: worktreePath, status: "creating" })]]),
+      worktreeCreateJob: { path: worktreePath, name: "inflight-wt", startedAt: Date.now() },
+      generateDashboardSessionId: vi.fn(() => "codex-inflight"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: worktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-inflight" });
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+
+    host.pendingWorktreeCreates.delete(worktreePath);
+    host.worktreeCreateJob = null;
+    upsertTopologyWorktree({ path: worktreePath, name: "inflight-wt" }, "active", { projectRoot: repoRoot });
+    await vi.advanceTimersByTimeAsync(310);
+
+    expect(createSessionAsyncMock).toHaveBeenCalledOnce();
+    expect(createSessionAsyncMock.mock.calls[0]?.[7]).toBe(worktreePath);
   });
 
   it("records failed deferred agent creation as an offline failure instead of leaving a starting zombie", async () => {

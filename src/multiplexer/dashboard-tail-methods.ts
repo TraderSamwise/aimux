@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
 import {
@@ -70,6 +72,7 @@ import {
   upsertTopologySession,
   type RuntimeTopologySessionState,
 } from "../runtime-core/topology-sessions.js";
+import { listTopologyWorktreeStates, type RuntimeTopologyWorktreeState } from "../runtime-core/topology-worktrees.js";
 import { shouldMarkFreshRelaunchAllowed } from "../session-fresh-relaunch.js";
 
 type DashboardTailHost = {
@@ -266,10 +269,105 @@ type ScheduledSessionCreate = {
   label?: string;
   open?: boolean;
   overseer?: boolean;
+  targetWorktreeReadyDeadlineMs?: number;
 };
 
 const sessionCreateQueue: Array<{ host: Multiplexer; input: ScheduledSessionCreate }> = [];
 let sessionCreateQueueRunning = false;
+const TARGET_WORKTREE_READY_WAIT_TIMEOUT_MS = 180_000;
+const TARGET_WORKTREE_READY_WAIT_INTERVAL_MS = 250;
+const SESSION_CREATE_QUEUE_DELAY_MS = 50;
+const TARGET_WORKTREE_STATUSES: NonNullable<RuntimeTopologyWorktreeState["status"]>[] = [
+  "planned",
+  "creating",
+  "active",
+  "removing",
+  "graveyard",
+  "missing",
+  "error",
+];
+const deferredSessionCreates = new Map<
+  string,
+  { host: Multiplexer; input: ScheduledSessionCreate; timer: ReturnType<typeof setTimeout> }
+>();
+
+function findTopologyWorktreeByPath(targetPath: string): RuntimeTopologyWorktreeState | undefined {
+  const normalizedTarget = resolve(targetPath);
+  return listTopologyWorktreeStates({ statuses: TARGET_WORKTREE_STATUSES }).find(
+    (worktree) => resolve(worktree.path) === normalizedTarget,
+  );
+}
+
+function assertWorktreeCanSettle(worktree: RuntimeTopologyWorktreeState): void {
+  if (worktree.operationFailure) {
+    throw new Error(`worktree "${worktree.name ?? worktree.path}" failed to create: ${worktree.operationFailure}`);
+  }
+  if (worktree.status === "planned" || worktree.status === "creating" || worktree.status === "active") return;
+  throw new Error(`worktree "${worktree.name ?? worktree.path}" is ${worktree.status ?? "unavailable"}`);
+}
+
+function hasPendingTargetWorktreeCreate(host: Multiplexer, targetPath: string): boolean {
+  const normalizedTarget = resolve(targetPath);
+  const pendingCreates = (host as any).pendingWorktreeCreates;
+  if (pendingCreates instanceof Map) {
+    for (const pendingPath of pendingCreates.keys()) {
+      if (typeof pendingPath === "string" && resolve(pendingPath) === normalizedTarget) return true;
+    }
+  }
+  const createJobPath = (host as any).worktreeCreateJob?.path;
+  return typeof createJobPath === "string" && resolve(createJobPath) === normalizedTarget;
+}
+
+function isWorktreeReady(
+  host: Multiplexer,
+  worktree: RuntimeTopologyWorktreeState | undefined,
+  targetPath: string,
+): boolean {
+  if (!worktree) return true;
+  if (worktree.operationFailure) return false;
+  if (!existsSync(targetPath)) return false;
+  if (worktree.status === "active") return true;
+  return (
+    (worktree.status === "planned" || worktree.status === "creating") &&
+    !hasPendingTargetWorktreeCreate(host, targetPath)
+  );
+}
+
+function sessionCreateKey(projectRoot: string, sessionId: string): string {
+  return `${projectRoot}\0${sessionId}`;
+}
+
+function sessionCreateKeyFor(host: Multiplexer, sessionId: string): string {
+  return sessionCreateKey(projectRootFor(host), sessionId);
+}
+
+function shouldDeferForTargetWorktree(host: Multiplexer, input: ScheduledSessionCreate): boolean {
+  const targetPath = input.targetWorktreePath?.trim();
+  if (!targetPath) return false;
+
+  const worktree = findTopologyWorktreeByPath(targetPath);
+  if (!worktree) return false;
+  if (isWorktreeReady(host, worktree, targetPath)) return false;
+  assertWorktreeCanSettle(worktree);
+
+  input.targetWorktreeReadyDeadlineMs ??= Date.now() + TARGET_WORKTREE_READY_WAIT_TIMEOUT_MS;
+  if (Date.now() < input.targetWorktreeReadyDeadlineMs) {
+    return true;
+  }
+
+  throw new Error(`timed out waiting for worktree "${worktree.name ?? targetPath}" to become ready`);
+}
+
+function deferSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): void {
+  const key = sessionCreateKeyFor(host, input.sessionId);
+  if (deferredSessionCreates.has(key)) return;
+  const timer = setTimeout(() => {
+    deferredSessionCreates.delete(key);
+    scheduleSessionCreate(host, input);
+  }, TARGET_WORKTREE_READY_WAIT_INTERVAL_MS);
+  timer.unref?.();
+  deferredSessionCreates.set(key, { host, input, timer });
+}
 
 function findRuntime(host: Multiplexer, sessionId: string): SessionRuntime | undefined {
   return (host as any).sessions?.find?.((session: any) => session.id === sessionId);
@@ -310,14 +408,21 @@ function cancelQueuedSessionCreate(host: Multiplexer, sessionId: string): Schedu
   const index = sessionCreateQueue.findIndex(
     (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
   );
-  if (index === -1) return undefined;
-  return sessionCreateQueue.splice(index, 1)[0]?.input;
+  if (index !== -1) return sessionCreateQueue.splice(index, 1)[0]?.input;
+  const key = sessionCreateKey(projectRoot, sessionId);
+  const deferred = deferredSessionCreates.get(key);
+  if (!deferred) return undefined;
+  clearTimeout(deferred.timer);
+  deferredSessionCreates.delete(key);
+  return deferred.input;
 }
 
 function hasQueuedSessionCreate(host: Multiplexer, sessionId: string): boolean {
   const projectRoot = projectRootFor(host);
-  return sessionCreateQueue.some(
-    (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
+  return (
+    sessionCreateQueue.some(
+      (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
+    ) || deferredSessionCreates.has(sessionCreateKey(projectRoot, sessionId))
   );
 }
 
@@ -400,6 +505,10 @@ function recordSessionCreateFailure(host: Multiplexer, input: ScheduledSessionCr
 
 async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): Promise<void> {
   try {
+    if (shouldDeferForTargetWorktree(host, input)) {
+      deferSessionCreate(host, input);
+      return;
+    }
     const transport = await createSessionAsync(
       host,
       input.command,
@@ -474,7 +583,7 @@ function scheduleNextSessionCreate(): void {
     } else {
       sessionCreateQueueRunning = false;
     }
-  }, 50);
+  }, SESSION_CREATE_QUEUE_DELAY_MS);
   timer.unref?.();
 }
 
