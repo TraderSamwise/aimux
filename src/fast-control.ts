@@ -2,6 +2,7 @@ import { resolve as pathResolve } from "node:path";
 import { loadMetadataState } from "./metadata-store.js";
 import { compareLastUsed, getLastUsedAt, getRecentRankMap } from "./last-used.js";
 import { parseRecencyTimestamp } from "./recency.js";
+import type { ExposePreviewSnapshot } from "./project-api-contract.js";
 import {
   isDashboardWindowName,
   TmuxRuntimeManager,
@@ -30,6 +31,7 @@ export interface FastControlItem {
   activity: number;
   lastUsedAt?: string;
   recentRank: number;
+  previewSnapshot?: ExposePreviewSnapshot;
 }
 
 type ManagedWindowEntry = { target: TmuxTarget; metadata: TmuxWindowMetadata };
@@ -287,6 +289,7 @@ export function serializeFastControlItem(item: FastControlItem) {
     activity: item.activity,
     lastUsedAt: item.lastUsedAt,
     recentRank: item.recentRank,
+    previewSnapshot: item.previewSnapshot,
   };
 }
 
