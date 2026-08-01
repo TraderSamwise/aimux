@@ -270,12 +270,14 @@ type ScheduledSessionCreate = {
   open?: boolean;
   overseer?: boolean;
   targetWorktreeReadyDeadlineMs?: number;
+  pendingActionToken?: number;
 };
 
 const sessionCreateQueue: Array<{ host: Multiplexer; input: ScheduledSessionCreate }> = [];
 let sessionCreateQueueRunning = false;
 const TARGET_WORKTREE_READY_WAIT_TIMEOUT_MS = 180_000;
 const TARGET_WORKTREE_READY_WAIT_INTERVAL_MS = 250;
+const QUEUED_SESSION_PENDING_TIMEOUT_MS = TARGET_WORKTREE_READY_WAIT_TIMEOUT_MS + 30_000;
 const SESSION_CREATE_QUEUE_DELAY_MS = 50;
 const TARGET_WORKTREE_STATUSES: NonNullable<RuntimeTopologyWorktreeState["status"]>[] = [
   "planned",
@@ -369,6 +371,21 @@ function deferSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): v
   deferredSessionCreates.set(key, { host, input, timer });
 }
 
+function setQueuedSessionStartingAction(host: Multiplexer, input: ScheduledSessionCreate): void {
+  const pendingActions = (host as any).dashboardPendingActions;
+  if (typeof pendingActions?.setSessionAction !== "function") return;
+  input.pendingActionToken = pendingActions.setSessionAction(input.sessionId, "starting", {
+    timeoutMs: QUEUED_SESSION_PENDING_TIMEOUT_MS,
+  });
+}
+
+function clearQueuedSessionStartingAction(host: Multiplexer, input: ScheduledSessionCreate): void {
+  if (typeof input.pendingActionToken !== "number") return;
+  const pendingActions = (host as any).dashboardPendingActions;
+  pendingActions?.clearSessionActionIfToken?.(input.sessionId, input.pendingActionToken);
+  input.pendingActionToken = undefined;
+}
+
 function findRuntime(host: Multiplexer, sessionId: string): SessionRuntime | undefined {
   return (host as any).sessions?.find?.((session: any) => session.id === sessionId);
 }
@@ -408,12 +425,17 @@ function cancelQueuedSessionCreate(host: Multiplexer, sessionId: string): Schedu
   const index = sessionCreateQueue.findIndex(
     (entry) => entry.input.sessionId === sessionId && projectRootFor(entry.host) === projectRoot,
   );
-  if (index !== -1) return sessionCreateQueue.splice(index, 1)[0]?.input;
+  if (index !== -1) {
+    const input = sessionCreateQueue.splice(index, 1)[0]?.input;
+    if (input) clearQueuedSessionStartingAction(host, input);
+    return input;
+  }
   const key = sessionCreateKey(projectRoot, sessionId);
   const deferred = deferredSessionCreates.get(key);
   if (!deferred) return undefined;
   clearTimeout(deferred.timer);
   deferredSessionCreates.delete(key);
+  clearQueuedSessionStartingAction(host, deferred.input);
   return deferred.input;
 }
 
@@ -504,8 +526,10 @@ function recordSessionCreateFailure(host: Multiplexer, input: ScheduledSessionCr
 }
 
 async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): Promise<void> {
+  let deferred = false;
   try {
     if (shouldDeferForTargetWorktree(host, input)) {
+      deferred = true;
       deferSessionCreate(host, input);
       return;
     }
@@ -567,6 +591,8 @@ async function runScheduledSessionCreate(host: Multiplexer, input: ScheduledSess
     const message = error instanceof Error ? error.message : String(error);
     (host as any).debug?.(`failed to create tmux window for ${input.sessionId}: ${message}`, "session");
     recordSessionCreateFailure(host, input, error);
+  } finally {
+    if (!deferred) clearQueuedSessionStartingAction(host, input);
   }
 }
 
@@ -588,6 +614,7 @@ function scheduleNextSessionCreate(): void {
 }
 
 function scheduleSessionCreate(host: Multiplexer, input: ScheduledSessionCreate): void {
+  setQueuedSessionStartingAction(host, input);
   sessionCreateQueue.push({ host, input });
   if (sessionCreateQueueRunning) return;
   sessionCreateQueueRunning = true;

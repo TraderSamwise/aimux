@@ -47,6 +47,7 @@ vi.mock("./session-launch.js", () => ({
 
 import { agentIoMethods } from "./agent-io-methods.js";
 import { dashboardTailMethods } from "./dashboard-tail-methods.js";
+import { reconcileOrphanedTopologySessions } from "./runtime-state.js";
 import { listDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { initPaths } from "../paths.js";
@@ -156,6 +157,48 @@ describe("dashboard lifecycle adapter", () => {
 
     expect(createSessionAsyncMock).toHaveBeenCalledOnce();
     expect(createSessionAsyncMock.mock.calls[0]?.[7]).toBe(worktreePath);
+  });
+
+  it("keeps a deferred worktree agent protected from stale-start reconciliation", async () => {
+    vi.useFakeTimers();
+    const pending = new DashboardPendingActions(() => undefined);
+    const worktreePath = join(repoRoot, "reconcile-wt");
+    upsertTopologyWorktree({ path: worktreePath, name: "reconcile-wt" }, "creating", { projectRoot: repoRoot });
+    const host: any = {
+      projectRoot: repoRoot,
+      mode: "project-service",
+      sessions: [],
+      offlineSessions: [],
+      dashboardPendingActions: pending,
+      tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []) },
+      generateDashboardSessionId: vi.fn(() => "codex-deferred-reconcile"),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+      debug: vi.fn(),
+    };
+
+    await expect(
+      dashboardTailMethods.spawnAgent.call(host, {
+        toolConfigKey: "codex",
+        targetWorktreePath: worktreePath,
+        open: false,
+      }),
+    ).resolves.toEqual({ sessionId: "codex-deferred-reconcile" });
+    await vi.advanceTimersByTimeAsync(5_500);
+
+    expect(reconcileOrphanedTopologySessions(host)).toBe(false);
+    expect(listTopologySessionStates({ statuses: ["starting"] }).map((session) => session.id)).toEqual([
+      "codex-deferred-reconcile",
+    ]);
+    expect(createSessionAsyncMock).not.toHaveBeenCalled();
+
+    mkdirSync(worktreePath, { recursive: true });
+    upsertTopologyWorktree({ path: worktreePath, name: "reconcile-wt" }, "active", { projectRoot: repoRoot });
+    await vi.advanceTimersByTimeAsync(310);
+
+    expect(createSessionAsyncMock).toHaveBeenCalledOnce();
+    expect(createSessionAsyncMock.mock.calls[0]?.[9]).toBe("codex-deferred-reconcile");
+    expect(pending.getSessionAction("codex-deferred-reconcile")).toBeUndefined();
   });
 
   it("does not stall ready agent creation behind a pending worktree", async () => {
