@@ -156,3 +156,7 @@ owner keeps theirs.
   loopback and a DNS-rebinding hole behind a tunnel.
 - `~/.aimux/hosted/` holds principals, devices, the audit log, the outbox and the lockdown marker,
   all 0600 inside a 0700 directory. Back it up like a credential store, because it is one.
+- `yarn check:hosted` runs the whole thing end to end against a real daemon, a real listener and a
+  real tmux session — proving an operator's command executes in its granted session, and that every
+  other route is refused. It is self-contained (its own home, ports, tmux sessions and temp project)
+  and skips when tmux is absent. Run it after changing anything in the hosted path.
