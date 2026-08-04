@@ -23,13 +23,41 @@ Exactly three routes, on sessions explicitly granted to them:
 | `POST /agents/input` | send it text |
 | `POST /agents/interrupt` | interrupt a running turn |
 
+Plus one streaming route:
+
+| | |
+|---|---|
+| `GET /agents/output/stream` | follow the session's pane as Server-Sent Events |
+
 Everything else on the project service — spawn, fork, stop, kill, migrate, worktrees, services,
 graveyard, threads, tasks, shell state — is refused, as are all daemon-level routes. `/agents` (the
 session list) is refused too: it returns every session in the project, which would leak other
-operators' session ids.
+operators' session ids. So is `/events`: it is project-wide rather than per-session, so it would
+carry other operators' sessions to whoever subscribed.
 
-Streaming (`/agents/output/stream`) and `/events` are not available to operators yet; poll
-`/agents/output` instead.
+### Streaming
+
+The stream is authorized by a **separate gate** from the buffered routes and never appears on their
+allowlist. That is not tidiness: the buffered path reads a whole response before replying, and an
+SSE body never ends, so a stream reaching it would hang the request forever.
+
+Its limits are its own, because a request that lives for minutes does not fit a per-minute token
+bucket — two concurrent streams per principal, a ten-minute lifetime, a two-minute idle timeout and
+a cumulative byte budget. It also releases its pre-authentication peer slot once piping starts:
+behind a tunnel every request shares one peer address, so long-lived streams holding those slots
+would block everyone else's ordinary calls.
+
+Response headers are synthesized rather than forwarded. The project service sets
+`access-control-allow-origin: *` on this route, and copying that onto an authenticated
+cross-origin surface would be a real hole.
+
+Closing the connection tears down the upstream capture loop; without that the project service goes
+on polling `capture-pane` for a client that has gone. A record is written when the stream opens as
+well as when it closes, since a stream can outlive the daemon and a close-only record would leave
+no trace of one that never closed.
+
+Note that `startLine` is a tmux scrollback offset, not a cursor, and the upstream re-sends the whole
+pane whenever it changes — so a client reconnecting after a drop must expect overlap and dedupe.
 
 ## Enabling it
 

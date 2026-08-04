@@ -10,6 +10,7 @@ import { configureLogging, resetLoggingForTests } from "./debug.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { CORE_API_ROUTES, CORE_COMMAND_NAMES, type CoreCommandOk } from "./core-command-contract.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import type { RemoteActor } from "./remote-access.js";
 import { getDaemonLogPath, getProjectIdFor, getProjectLogPathFor, getProjectStateDirFor } from "./paths.js";
 import { readHotExposeScopeView, writeHotExposeScopeView } from "./tmux/expose-hot-snapshot.js";
 import { refreshGlobalExposeHotSnapshots } from "./expose-hot-snapshot-worker.js";
@@ -4494,5 +4495,63 @@ describe("daemon routing (relay + proxy)", () => {
         process.env.AIMUX_DAEMON_PORT = originalPort;
       }
     }
+  });
+});
+
+describe("daemon hosted stream resolution", () => {
+  async function newDaemon() {
+    const { AimuxDaemon } = await import("./daemon.js");
+    return new AimuxDaemon();
+  }
+
+  function operator(grants: Array<{ projectRoot: string; sessionId: string }>): RemoteActor {
+    return {
+      role: "operator",
+      principal: {
+        id: "prn_stream",
+        label: "grand",
+        tokenHash: "sha256:abcd",
+        role: "operator",
+        grants,
+        createdAt: new Date(0).toISOString(),
+        revokedAt: null,
+        lastSeenAt: null,
+      },
+    };
+  }
+
+  const STREAM = "/proxy/127.0.0.1/43210/agents/output/stream?sessionId=assistant";
+
+  it("refuses when the port cannot be bound to a project", async () => {
+    // Fails closed: with no live service on that port there is no root to check
+    // the grant against, and an unbound check would let a grant in one project
+    // authorize the same session name in another.
+    const daemon = await newDaemon();
+    const granted = operator([{ projectRoot: "/srv/grand", sessionId: "assistant" }]);
+    const result = daemon.resolveHostedStream(granted, "GET", STREAM);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.status).toBe(403);
+  });
+
+  it("refuses a non-operator and a daemon-level path", async () => {
+    const daemon = await newDaemon();
+    expect(daemon.resolveHostedStream({ role: "owner" }, "GET", STREAM).ok).toBe(false);
+    expect(daemon.resolveHostedStream(operator([]), "GET", "/events?sessionId=assistant").ok).toBe(false);
+  });
+
+  it("refuses a route that is not the output stream", async () => {
+    const daemon = await newDaemon();
+    for (const path of [
+      "/proxy/127.0.0.1/43210/events?sessionId=assistant",
+      "/proxy/127.0.0.1/43210/agents?sessionId=assistant",
+      "/proxy/127.0.0.1/43210/agents/output?sessionId=assistant",
+    ]) {
+      expect(daemon.resolveHostedStream(operator([]), "GET", path).ok, path).toBe(false);
+    }
+  });
+
+  it("refuses a non-GET", async () => {
+    const daemon = await newDaemon();
+    expect(daemon.resolveHostedStream(operator([]), "POST", STREAM).ok).toBe(false);
   });
 });

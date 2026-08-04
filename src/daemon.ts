@@ -14,7 +14,12 @@ import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } fro
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadConfig } from "./config.js";
-import { assertRemoteAccessAllowed, parseRemoteActor, type RemoteActor } from "./remote-access.js";
+import {
+  assertOperatorStreamAllowed,
+  assertRemoteAccessAllowed,
+  parseRemoteActor,
+  type RemoteActor,
+} from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
 import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
@@ -446,6 +451,7 @@ export class AimuxDaemon {
       this.hostedServer = await startHostedServer({
         config,
         routeHostedRequest: (actor, method, path, body) => this.routeHostedRequest(actor, method, path, body),
+        resolveHostedStream: (actor, method, path) => this.resolveHostedStream(actor, method, path),
       });
     } catch (error) {
       log.warn("hosted listener failed to bind", "hosted", {
@@ -2974,6 +2980,45 @@ export class AimuxDaemon {
     body?: unknown,
   ): Promise<DaemonRouteResponse> {
     return this.routeWithActor(actor, method, path, body, {});
+  }
+
+  /**
+   * Resolve an operator's stream request to an upstream URL.
+   *
+   * The streaming twin of `routeHostedRequest`, and separate from
+   * `resolveProjectEventStream` for the same reason: that one derives its actor
+   * from headers via `parseRemoteActor`, which by construction can never mint an
+   * operator, so reusing it would silently degrade every hosted stream to guest.
+   * The actor is required here too.
+   *
+   * Returns only a URL. The listener does the piping, because the response has
+   * to be synthesized rather than forwarded — the project service sets a
+   * wildcard CORS header on this route, which must not reach an authenticated
+   * cross-origin surface.
+   */
+  resolveHostedStream(
+    actor: RemoteActor,
+    method: string,
+    path: string,
+  ): { ok: true; url: string } | { ok: false; status: number; error: string } {
+    this.refreshState();
+    const routeUrl = new URL(path, getDaemonBaseUrl());
+    const access = assertOperatorStreamAllowed(actor, method, routeUrl.pathname, routeUrl.searchParams, {
+      projectRoot: this.resolveProxyProjectRoot(routeUrl.pathname),
+    });
+    if (!access.ok) {
+      return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
+    }
+
+    const target = parseProxyTarget(routeUrl.pathname);
+    if (!target) return { ok: false, status: 404, error: "not found" };
+    if (!PROXY_ALLOWED_HOSTS.has(target.host)) {
+      return { ok: false, status: 403, error: "proxy host not allowed" };
+    }
+    // Same parsed target the grant was checked against — resolving from one
+    // source and forwarding to another would authorize one service and talk to
+    // another. See proxy-project-binding.ts.
+    return { ok: true, url: `http://${target.host}:${target.port}${target.subPath}${routeUrl.search}` };
   }
 
   async routeRequest(
