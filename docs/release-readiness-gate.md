@@ -44,6 +44,19 @@ Expected result:
 - repair notices are recorded in the debug log and visible enough to explain
   why repair happened.
 
+## Hosted Mode Smoke
+
+Run when the release touches anything under the hosted path — the listener, the operator role, the
+principal store, the audit log or the events:
+
+```bash
+yarn check:hosted
+```
+
+It stands up a real daemon, listener and tmux session in an isolated home, proves an operator's
+command executes in its granted session, and proves every route outside the allowlist is refused.
+It skips when tmux is absent and cleans up after itself.
+
 ## Multi-Project Smoke
 
 Use at least two active projects with existing dashboards and agent windows.
