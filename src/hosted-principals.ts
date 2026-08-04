@@ -1,8 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 import { atomicWrite, quarantineCorruptFile } from "./atomic-write.js";
+import { withHostedLock } from "./hosted-lock.js";
 import { getHostedDir, getHostedPrincipalsPath } from "./paths.js";
 
 /**
@@ -148,46 +149,6 @@ function saveHostedPrincipals(state: HostedPrincipalsState): void {
   principalsCache = null;
 }
 
-const LOCK_RETRY_MS = 25;
-const LOCK_TIMEOUT_MS = 5_000;
-const LOCK_STALE_MS = 30_000;
-
-function lockPath(): string {
-  return `${getHostedPrincipalsPath()}.lock`;
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function acquireLock(options: { wait?: boolean } = {}): { fd: number; token: string } | null {
-  const wait = options.wait !== false;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  mkdirSync(getHostedDir(), { recursive: true, mode: 0o700 });
-  for (;;) {
-    try {
-      const fd = openSync(lockPath(), "wx", 0o600);
-      // Ownership stamp: a stale-lock stealer must not delete a lock that some
-      // other process has since legitimately taken.
-      const token = `${process.pid}.${randomBytes(8).toString("hex")}`;
-      writeSync(fd, token);
-      return { fd, token };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - statSync(lockPath()).mtimeMs > LOCK_STALE_MS) rmSync(lockPath(), { force: true });
-      } catch {
-        // The holder released it between our open and stat; just retry.
-      }
-      // Callers on a request path pass wait:false — blocking the event loop in
-      // sleepSync would stall every other request the process is serving.
-      if (!wait) return null;
-      if (Date.now() > deadline) throw new Error("hosted principal store is locked", { cause: error });
-      sleepSync(LOCK_RETRY_MS);
-    }
-  }
-}
-
 /**
  * Read-modify-write under an exclusive lock.
  *
@@ -196,22 +157,16 @@ function acquireLock(options: { wait?: boolean } = {}): { fd: number; token: str
  * un-revoking a token. That is an authentication bypass, not a lost write.
  */
 function mutate<T>(fn: (state: HostedPrincipalsState) => T, options: { wait?: boolean } = {}): T | null {
-  const held = acquireLock(options);
-  if (!held) return null;
-  const { fd, token } = held;
-  try {
-    const state = loadHostedPrincipals();
-    const result = fn(state);
-    saveHostedPrincipals(state);
-    return result;
-  } finally {
-    closeSync(fd);
-    try {
-      if (readFileSync(lockPath(), "utf-8") === token) rmSync(lockPath(), { force: true });
-    } catch {
-      // Already gone, or now someone else's — either way not ours to remove.
-    }
-  }
+  return withHostedLock(
+    getHostedPrincipalsPath(),
+    () => {
+      const state = loadHostedPrincipals();
+      const result = fn(state);
+      saveHostedPrincipals(state);
+      return result;
+    },
+    options,
+  );
 }
 
 /** Waits for the lock; a mutation that could not run is reported as "no change". */

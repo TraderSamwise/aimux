@@ -222,6 +222,14 @@ export function getHostedPrincipalsPath(): string {
   return join(getHostedDir(), "principals.json");
 }
 
+export function getHostedAuditPath(): string {
+  return join(getHostedDir(), "audit.jsonl");
+}
+
+export function getHostedDevicesPath(): string {
+  return join(getHostedDir(), "devices.json");
+}
+
 export function getDaemonStatePath(): string {
   return join(getDaemonDir(), "state.json");
 }

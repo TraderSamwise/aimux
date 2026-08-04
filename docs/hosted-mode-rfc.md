@@ -172,9 +172,23 @@ strips any `hosted` key that arrives from the project layer.
   "maxResponseBytes": 1048576,
   "auditPromptBodies": true,
   "webhookUrl": null,
-  "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET"
+  "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
+  "trustedForwardedHeader": null,
+  "retentionDays": 30
 }
 ```
+
+`webhookSecretEnv` must name an `AIMUX_*` variable. Without that rule, pointing it at `PATH` or a
+cloud credential turns the webhook into a signing oracle over an unrelated secret.
+
+`trustedForwardedHeader` is how device fingerprints stay meaningful. Behind a tunnel every request
+arrives from loopback, so the socket address alone would make every client look identical — a "new
+device" alert that fires on browser updates and misses real ones. It is honoured only when the
+immediate peer is loopback, and the **rightmost** value is taken, because proxies append and the
+leftmost entry is whatever the client typed. Behind Cloudflare, prefer **`cf-connecting-ip`**: it is
+single-valued and overwritten at the edge, so it does not depend on the shape of the forwarding
+chain. With no header configured the address is reported as unknown rather than guessed
+(`addressKnown: false`).
 
 ## CLI
 

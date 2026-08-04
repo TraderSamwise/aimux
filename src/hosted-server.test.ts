@@ -1,14 +1,15 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { atomicWrite } from "./atomic-write.js";
+import { hashPrompt } from "./hosted-audit.js";
 import { DEFAULT_HOSTED_CONFIG, type HostedConfig } from "./hosted-config.js";
 import { createHostedPrincipal, loadHostedPrincipals, revokeHostedPrincipal } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
-import { getHostedPrincipalsPath } from "./paths.js";
+import { getHostedAuditPath, getHostedPrincipalsPath } from "./paths.js";
 import type { RemoteActor } from "./remote-access.js";
 
 let previousAimuxHome: string | undefined;
@@ -288,6 +289,61 @@ describe("hosted listener", () => {
     });
     expect(rebound.port).toBe(port);
     await rebound.close();
+  });
+
+  it("audits a request off the response path", async () => {
+    const { token, principal } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "assistant", text: "hello" }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const written = readFileSync(getHostedAuditPath(), "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    // The request record, not the device-sighting record written alongside it.
+    const entry = written.find((line) => !line.event)!;
+    expect(entry.principalId).toBe(principal.id);
+    expect(entry.sessionId).toBe("assistant");
+    expect(entry.status).toBe(200);
+    expect(entry.promptHash).toBe(hashPrompt("hello"));
+
+    // The first sighting of a principal is recorded even if no webhook exists.
+    expect(written.some((line) => line.event === "hosted_token_first_use")).toBe(true);
+  });
+
+  it("omits prompt text from the audit when bodies are not audited", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ auditPromptBodies: false });
+
+    await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "assistant", text: "commercially sensitive" }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const raw = readFileSync(getHostedAuditPath(), "utf-8");
+    expect(raw).not.toContain("commercially sensitive");
+    expect(raw).toContain(hashPrompt("commercially sensitive"));
+  });
+
+  it("audits a failed authentication without ever recording the token", async () => {
+    const handle = await start();
+    await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: "Bearer amx_supersecret" },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const raw = readFileSync(getHostedAuditPath(), "utf-8");
+    expect(raw).toContain("hosted_auth_failed");
+    expect(raw).not.toContain("amx_supersecret");
   });
 
   it("sets no CORS headers", async () => {

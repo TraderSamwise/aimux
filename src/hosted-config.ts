@@ -32,6 +32,15 @@ export interface HostedConfig {
   webhookUrl: string | null;
   /** Env var holding the HMAC secret; the secret itself is never stored in config. */
   webhookSecretEnv: string;
+  /**
+   * Header carrying the real client address, honoured ONLY when the request
+   * arrives from loopback (i.e. from a tunnel or reverse proxy we run).
+   * Null means the client address is simply unknown, which is reported
+   * honestly rather than guessed.
+   */
+  trustedForwardedHeader: string | null;
+  /** How long audit records and device records are kept. */
+  retentionDays: number;
 }
 
 export const DEFAULT_HOSTED_CONFIG: HostedConfig = {
@@ -47,7 +56,17 @@ export const DEFAULT_HOSTED_CONFIG: HostedConfig = {
   auditPromptBodies: true,
   webhookUrl: null,
   webhookSecretEnv: "AIMUX_HOSTED_WEBHOOK_SECRET",
+  trustedForwardedHeader: null,
+  retentionDays: 30,
 };
+
+/**
+ * Only aimux-owned env vars may name the signing secret.
+ *
+ * Without this, pointing `webhookSecretEnv` at PATH or a cloud credential turns
+ * the webhook into a signing oracle over an unrelated secret.
+ */
+const SECRET_ENV_PREFIX = "AIMUX_";
 
 function boundedInt(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -104,6 +123,11 @@ export function normalizeHostedConfig(raw: unknown): HostedConfig {
     auditPromptBodies: boolOr(value.auditPromptBodies, DEFAULT_HOSTED_CONFIG.auditPromptBodies),
     webhookUrl,
     webhookSecretEnv: nonEmptyString(value.webhookSecretEnv, DEFAULT_HOSTED_CONFIG.webhookSecretEnv),
+    trustedForwardedHeader:
+      typeof value.trustedForwardedHeader === "string" && value.trustedForwardedHeader.trim()
+        ? value.trustedForwardedHeader.trim().toLowerCase()
+        : null,
+    retentionDays: boundedInt(value.retentionDays, DEFAULT_HOSTED_CONFIG.retentionDays, 1, 3_650),
   };
 }
 
@@ -137,6 +161,13 @@ export function validateHostedStartup(config: HostedConfig, activePrincipalCount
     return {
       ok: false,
       error: `hosted mode refuses to bind ${config.bindAddress} with no principals — run "aimux hosted token create" first`,
+    };
+  }
+
+  if (!config.webhookSecretEnv.startsWith(SECRET_ENV_PREFIX)) {
+    return {
+      ok: false,
+      error: `hosted webhookSecretEnv must name an ${SECRET_ENV_PREFIX}* variable, not ${config.webhookSecretEnv}`,
     };
   }
 
