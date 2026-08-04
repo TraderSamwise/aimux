@@ -1,0 +1,301 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { atomicWrite } from "./atomic-write.js";
+import { DEFAULT_HOSTED_CONFIG, type HostedConfig } from "./hosted-config.js";
+import { createHostedPrincipal, loadHostedPrincipals, revokeHostedPrincipal } from "./hosted-principals.js";
+import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
+import { getHostedPrincipalsPath } from "./paths.js";
+import type { RemoteActor } from "./remote-access.js";
+
+let previousAimuxHome: string | undefined;
+let aimuxHome = "";
+let server: HostedServerHandle | null = null;
+let seen: Array<{ actor: RemoteActor; method: string; path: string; body?: unknown }> = [];
+
+const config: HostedConfig = { ...DEFAULT_HOSTED_CONFIG, enabled: true, port: 0, maxPromptBytes: 256 };
+
+async function start(overrides: Partial<HostedConfig> = {}, response?: () => { status: number; body: unknown }) {
+  server = await startHostedServer({
+    config: { ...config, ...overrides },
+    routeHostedRequest: async (actor, method, path, body) => {
+      seen.push({ actor, method, path, body });
+      return response ? response() : { status: 200, body: { ok: true, echoed: body ?? null } };
+    },
+  });
+  return server;
+}
+
+function url(handle: HostedServerHandle, path: string): string {
+  return `http://127.0.0.1:${handle.port}${path}`;
+}
+
+beforeEach(() => {
+  previousAimuxHome = process.env.AIMUX_HOME;
+  aimuxHome = mkdtempSync(join(tmpdir(), "aimux-hosted-server-"));
+  process.env.AIMUX_HOME = aimuxHome;
+  seen = [];
+});
+
+afterEach(async () => {
+  await server?.close();
+  server = null;
+  if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+  else process.env.AIMUX_HOME = previousAimuxHome;
+  rmSync(aimuxHome, { recursive: true, force: true });
+});
+
+describe("hosted listener", () => {
+  it("serves health without a credential and without reaching the daemon", async () => {
+    const handle = await start();
+    const res = await fetch(url(handle, "/health"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, mode: "hosted" });
+    expect(seen).toHaveLength(0);
+  });
+
+  it("rejects an unauthenticated request identically to an unknown token", async () => {
+    const handle = await start();
+    const anonymous = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"));
+    const wrong = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: "Bearer amx_nope" },
+    });
+
+    expect(anonymous.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    // Identical bodies: a prober must not learn whether a token was recognised.
+    expect(await anonymous.json()).toEqual(await wrong.json());
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses a forged actor header outright", async () => {
+    const handle = await start();
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { "x-aimux-actor-role": "owner", "x-aimux-actor-user-id": "attacker" },
+    });
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("forwards an authenticated request with a server-minted operator actor", async () => {
+    const { token, principal } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.actor.role).toBe("operator");
+    expect(seen[0]!.actor.principal?.id).toBe(principal.id);
+    expect(seen[0]!.path).toBe("/proxy/127.0.0.1/43210/agents/output?sessionId=s");
+  });
+
+  it("stops honouring a token once it is revoked", async () => {
+    const { token, principal } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+    revokeHostedPrincipal(principal.id);
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("404s any path that is not the proxy form", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    for (const path of ["/agents/output", "/core/commands", "/projects/stop", "/proxy/127.0.0.1/43210"]) {
+      const res = await fetch(url(handle, path), { headers: { authorization: `Bearer ${token}` } });
+      expect(res.status, path).toBe(404);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses a body over the prompt cap", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ maxPromptBytes: 64 });
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "s", text: "x".repeat(500) }),
+    });
+
+    expect(res.status).toBe(413);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses a malformed json body", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: "{ not json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("passes a parsed body through to the daemon", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "s", text: "hello" }),
+    });
+
+    expect(seen[0]!.body).toEqual({ sessionId: "s", text: "hello" });
+  });
+
+  it("refuses an upstream response over the response cap", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ maxResponseBytes: 4_096 }, () => ({
+      status: 200,
+      body: { output: "x".repeat(10_000) },
+    }));
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(502);
+  });
+
+  it("rate limits per principal", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ rateLimit: { requestsPerMinute: 2, maxConcurrent: 4 } });
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      statuses.push(res.status);
+    }
+    expect(statuses).toEqual([200, 200, 429]);
+  });
+
+  it("caps concurrency per principal and releases the slot afterwards", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+
+    server = await startHostedServer({
+      config: { ...config, rateLimit: { requestsPerMinute: 100, maxConcurrent: 1 } },
+      routeHostedRequest: async () => {
+        await gate;
+        return { status: 200, body: { ok: true } };
+      },
+    });
+    const handle = server;
+
+    const first = fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // Give the first request time to occupy the only slot.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(second.status).toBe(429);
+
+    release!();
+    expect((await first).status).toBe(200);
+
+    // Slot freed: a later request succeeds.
+    const third = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(third.status).toBe(200);
+  });
+
+  it("releases the slot when the daemon call throws", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    server = await startHostedServer({
+      config: { ...config, rateLimit: { requestsPerMinute: 100, maxConcurrent: 1 } },
+      routeHostedRequest: async () => {
+        throw new Error("boom");
+      },
+    });
+    const handle = server;
+
+    const first = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(first.status).toBe(500);
+
+    // A leaked slot would make this 429 forever.
+    const second = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(second.status).toBe(500);
+  });
+
+  it("404s traversal and other odd request targets rather than reaching the daemon", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    for (const path of ["/proxy/127.0.0.1/43210/../../core/commands", "/..%2f..%2fhealth", "/proxy//43210/agents"]) {
+      const res = await fetch(url(handle, path), { headers: { authorization: `Bearer ${token}` } });
+      expect(res.status, path).toBe(404);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it("does not serve a revoked token from a cached store", async () => {
+    const { token, principal } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+
+    const before = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(before.status).toBe(200);
+
+    // Written the way another process would — bypassing saveHostedPrincipals,
+    // so only the stat-keyed cache invalidation can catch it. An in-process
+    // revoke would pass on the cache-clear alone and prove nothing.
+    const state = loadHostedPrincipals();
+    const target = state.principals.find((entry) => entry.id === principal.id)!;
+    target.revokedAt = new Date().toISOString();
+    atomicWrite(getHostedPrincipalsPath(), `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+
+    const after = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(after.status).toBe(401);
+  });
+
+  it("frees the port on close", async () => {
+    const handle = await start({ port: 0 });
+    const port = handle.port;
+    await handle.close();
+    server = null;
+
+    const rebound = await startHostedServer({
+      config: { ...config, port },
+      routeHostedRequest: async () => ({ status: 200, body: { ok: true } }),
+    });
+    expect(rebound.port).toBe(port);
+    await rebound.close();
+  });
+
+  it("sets no CORS headers", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}`, origin: "http://evil.example" },
+    });
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});

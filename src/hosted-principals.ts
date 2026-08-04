@@ -84,9 +84,34 @@ function normalizePrincipal(raw: unknown): HostedPrincipal | null {
   };
 }
 
+/**
+ * Parsed-store cache, keyed by identity+mtime+size.
+ *
+ * Authentication reads this file on every hosted request, and that read is
+ * synchronous — an unauthenticated flood would otherwise stall the event loop
+ * the whole daemon shares with local projects. Callers get a clone so nobody
+ * can mutate the cached copy out from under the next reader.
+ */
+let principalsCache: { key: string; state: HostedPrincipalsState } | null = null;
+
+function storeCacheKey(path: string): string | null {
+  try {
+    const stats = statSync(path);
+    return `${path}:${stats.mtimeMs}:${stats.size}:${stats.ino}`;
+  } catch {
+    return null;
+  }
+}
+
 export function loadHostedPrincipals(): HostedPrincipalsState {
   const path = getHostedPrincipalsPath();
-  if (!existsSync(path)) return emptyState();
+  if (!existsSync(path)) {
+    principalsCache = null;
+    return emptyState();
+  }
+
+  const cacheKey = storeCacheKey(path);
+  if (cacheKey && principalsCache?.key === cacheKey) return structuredClone(principalsCache.state);
 
   let raw: string;
   try {
@@ -104,8 +129,11 @@ export function loadHostedPrincipals(): HostedPrincipalsState {
     const principals = Array.isArray(parsed?.principals)
       ? parsed.principals.map(normalizePrincipal).filter((p): p is HostedPrincipal => p !== null)
       : [];
-    return { version: 1, principals };
+    const state: HostedPrincipalsState = { version: 1, principals };
+    if (cacheKey) principalsCache = { key: cacheKey, state: structuredClone(state) };
+    return state;
   } catch {
+    principalsCache = null;
     quarantineCorruptFile(path);
     return emptyState();
   }
@@ -115,6 +143,9 @@ function saveHostedPrincipals(state: HostedPrincipalsState): void {
   // 0700/0600: this file is the sole authority on who may drive a session.
   mkdirSync(getHostedDir(), { recursive: true, mode: 0o700 });
   atomicWrite(getHostedPrincipalsPath(), `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  // Never serve a revocation-stale copy: same-millisecond writes could
+  // otherwise produce an identical cache key.
+  principalsCache = null;
 }
 
 const LOCK_RETRY_MS = 25;
@@ -129,7 +160,8 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function acquireLock(): { fd: number; token: string } {
+function acquireLock(options: { wait?: boolean } = {}): { fd: number; token: string } | null {
+  const wait = options.wait !== false;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   mkdirSync(getHostedDir(), { recursive: true, mode: 0o700 });
   for (;;) {
@@ -147,6 +179,9 @@ function acquireLock(): { fd: number; token: string } {
       } catch {
         // The holder released it between our open and stat; just retry.
       }
+      // Callers on a request path pass wait:false — blocking the event loop in
+      // sleepSync would stall every other request the process is serving.
+      if (!wait) return null;
       if (Date.now() > deadline) throw new Error("hosted principal store is locked", { cause: error });
       sleepSync(LOCK_RETRY_MS);
     }
@@ -160,8 +195,10 @@ function acquireLock(): { fd: number; token: string } {
  * revoke land underneath it, then write its stale copy back — silently
  * un-revoking a token. That is an authentication bypass, not a lost write.
  */
-function mutate<T>(fn: (state: HostedPrincipalsState) => T): T {
-  const { fd, token } = acquireLock();
+function mutate<T>(fn: (state: HostedPrincipalsState) => T, options: { wait?: boolean } = {}): T | null {
+  const held = acquireLock(options);
+  if (!held) return null;
+  const { fd, token } = held;
   try {
     const state = loadHostedPrincipals();
     const result = fn(state);
@@ -175,6 +212,11 @@ function mutate<T>(fn: (state: HostedPrincipalsState) => T): T {
       // Already gone, or now someone else's — either way not ours to remove.
     }
   }
+}
+
+/** Waits for the lock; a mutation that could not run is reported as "no change". */
+function mutateOrFalse(fn: (state: HostedPrincipalsState) => boolean): boolean {
+  return mutate(fn) ?? false;
 }
 
 export function listHostedPrincipals(): HostedPrincipal[] {
@@ -198,7 +240,7 @@ export function createHostedPrincipal(input: { label: string }): { principal: Ho
 }
 
 export function revokeHostedPrincipal(id: string): boolean {
-  return mutate((state) => {
+  return mutateOrFalse((state) => {
     const principal = state.principals.find((entry) => entry.id === id);
     if (!principal || principal.revokedAt) return false;
     principal.revokedAt = new Date().toISOString();
@@ -209,7 +251,7 @@ export function revokeHostedPrincipal(id: string): boolean {
 export function grantHostedSession(id: string, grant: HostedGrant): boolean {
   const normalized = normalizeGrant(grant);
   if (!normalized) return false;
-  return mutate((state) => {
+  return mutateOrFalse((state) => {
     const principal = state.principals.find((entry) => entry.id === id && !entry.revokedAt);
     if (!principal) return false;
     const exists = principal.grants.some(
@@ -223,7 +265,7 @@ export function grantHostedSession(id: string, grant: HostedGrant): boolean {
 export function ungrantHostedSession(id: string, grant: HostedGrant): boolean {
   const normalized = normalizeGrant(grant);
   if (!normalized) return false;
-  return mutate((state) => {
+  return mutateOrFalse((state) => {
     const principal = state.principals.find((entry) => entry.id === id);
     if (!principal) return false;
     const before = principal.grants.length;
@@ -283,8 +325,13 @@ export function markPrincipalSeen(id: string): void {
   const last = current.lastSeenAt ? Date.parse(current.lastSeenAt) : Number.NaN;
   if (Number.isFinite(last) && Date.now() - last < SEEN_THROTTLE_MS) return;
 
-  mutate((state) => {
-    const principal = state.principals.find((entry) => entry.id === id);
-    if (principal) principal.lastSeenAt = new Date().toISOString();
-  });
+  // Never waits for the lock: a contended stamp is worth skipping, not worth
+  // stalling the process that is serving requests.
+  mutate(
+    (state) => {
+      const principal = state.principals.find((entry) => entry.id === id);
+      if (principal) principal.lastSeenAt = new Date().toISOString();
+    },
+    { wait: false },
+  );
 }
