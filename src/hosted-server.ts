@@ -18,7 +18,7 @@ import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { parseProxyTarget } from "./proxy-project-binding.js";
 import { isHostedLockedDown } from "./hosted-lockdown.js";
 import { drainHostedOutbox } from "./hosted-outbox.js";
-import { markPrincipalSeen, type HostedPrincipal } from "./hosted-principals.js";
+import { findPrincipalById, markPrincipalSeen, principalHasGrant, type HostedPrincipal } from "./hosted-principals.js";
 import { HostedRateLimiter } from "./hosted-rate-limit.js";
 import type { RemoteActor } from "./remote-access.js";
 
@@ -54,7 +54,7 @@ export interface HostedServerOptions {
     actor: RemoteActor,
     method: string,
     path: string,
-  ) => { ok: true; url: string } | { ok: false; status: number; error: string };
+  ) => { ok: true; url: string; projectRoot: string } | { ok: false; status: number; error: string };
   /** Overrides for the stream bounds. Tests need them small; nothing else sets them. */
   streamLimits?: Partial<StreamLimits>;
 }
@@ -64,6 +64,7 @@ export interface StreamLimits {
   maxLifetimeMs: number;
   idleTimeoutMs: number;
   maxBytes: number;
+  reauthIntervalMs: number;
 }
 
 export interface HostedServerHandle {
@@ -110,6 +111,15 @@ const STREAM_MAX_LIFETIME_MS = 600_000;
 const STREAM_IDLE_TIMEOUT_MS = 120_000;
 /** `maxResponseBytes` is meaningless on a stream; this ends one instead. */
 const STREAM_MAX_BYTES = 64 * 1024 * 1024;
+/**
+ * How often an open stream re-checks that its principal is still allowed.
+ *
+ * A stream authenticates once, at open. Without this a revoked token would keep
+ * reading a session until the stream's own lifetime ran out — which is the one
+ * moment revocation most needs to work, and the idle timeout cannot help
+ * because the project service sends a keepalive every poll.
+ */
+const STREAM_REAUTH_INTERVAL_MS = 5_000;
 
 function boundedField<T extends string | null>(value: T): T {
   if (typeof value !== "string" || value.length <= MAX_AUDIT_FIELD_CHARS) return value;
@@ -239,6 +249,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     maxLifetimeMs: STREAM_MAX_LIFETIME_MS,
     idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
     maxBytes: STREAM_MAX_BYTES,
+    reauthIntervalMs: STREAM_REAUTH_INTERVAL_MS,
     ...options.streamLimits,
   };
   const limiter = new HostedRateLimiter({
@@ -439,6 +450,28 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
 
     const lifetime = setTimeout(() => finish("lifetime"), streamLimits.maxLifetimeMs);
     lifetime.unref?.();
+
+    const grantedSessionId = url.searchParams.get("sessionId")?.trim() ?? "";
+    const reauth = setInterval(() => {
+      // Every other caller of the principal store sits behind the request
+      // handler's catch; a timer callback does not, and `loadHostedPrincipals`
+      // rethrows a store it cannot read. An unhandled throw here would take the
+      // whole daemon down — every local project with it — so a store we cannot
+      // consult ends this stream rather than the process.
+      let allowed = false;
+      try {
+        const current = findPrincipalById(principal.id);
+        allowed =
+          current !== null &&
+          principalHasGrant(current, { projectRoot: resolved.projectRoot, sessionId: grantedSessionId });
+      } catch (error) {
+        log.warn("hosted stream re-authorization failed", "hosted", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (!allowed) finish("revoked");
+    }, streamLimits.reauthIntervalMs);
+    reauth.unref?.();
     let idle = setTimeout(() => finish("idle"), streamLimits.idleTimeoutMs);
     idle.unref?.();
 
@@ -494,6 +527,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     } finally {
       clearTimeout(lifetime);
       clearTimeout(idle);
+      clearInterval(reauth);
       releaseStream(principal.id);
       const durationMs = Date.now() - startedAt;
       auditStream(principal, url, auditStatus, `closed:${closeReason}`, bytes, durationMs, streamRef);

@@ -3000,11 +3000,12 @@ export class AimuxDaemon {
     actor: RemoteActor,
     method: string,
     path: string,
-  ): { ok: true; url: string } | { ok: false; status: number; error: string } {
+  ): { ok: true; url: string; projectRoot: string } | { ok: false; status: number; error: string } {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
+    const projectRoot = this.resolveProxyProjectRoot(routeUrl.pathname);
     const access = assertOperatorStreamAllowed(actor, method, routeUrl.pathname, routeUrl.searchParams, {
-      projectRoot: this.resolveProxyProjectRoot(routeUrl.pathname),
+      projectRoot,
     });
     if (!access.ok) {
       return { ok: false, status: access.status ?? 403, error: access.error ?? "remote access denied" };
@@ -3018,7 +3019,13 @@ export class AimuxDaemon {
     // Same parsed target the grant was checked against — resolving from one
     // source and forwarding to another would authorize one service and talk to
     // another. See proxy-project-binding.ts.
-    return { ok: true, url: `http://${target.host}:${target.port}${target.subPath}${routeUrl.search}` };
+    // The root comes back so the listener can re-check the grant against the
+    // SAME root while the stream is open, rather than re-deriving it.
+    return {
+      ok: true,
+      url: `http://${target.host}:${target.port}${target.subPath}${routeUrl.search}`,
+      projectRoot: projectRoot!,
+    };
   }
 
   async routeRequest(

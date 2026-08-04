@@ -56,6 +56,13 @@ on polling `capture-pane` for a client that has gone. A record is written when t
 well as when it closes, since a stream can outlive the daemon and a close-only record would leave
 no trace of one that never closed.
 
+**Revocation reaches a stream already in flight**, within a few seconds. A stream authenticates once,
+at open, so without a live re-check `aimux hosted token revoke` would leave the holder reading for
+up to the full ten-minute lifetime — and the idle timeout could not help, because the project
+service sends a keepalive on every poll. That is the moment revocation most needs to work, so the
+grant is re-checked on a timer and the stream ends as `closed:revoked`. A principal store that
+cannot be read counts as revoked.
+
 Note that `startLine` is a tmux scrollback offset, not a cursor, and the upstream re-sends the whole
 pane whenever it changes — so a client reconnecting after a drop must expect overlap and dedupe.
 
