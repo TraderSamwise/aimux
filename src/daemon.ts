@@ -16,6 +16,7 @@ import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentia
 import { loadConfig } from "./config.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
 import { serializeFastControlItem } from "./fast-control.js";
 import {
   CORE_API_ROUTES,
@@ -2896,6 +2897,20 @@ export class AimuxDaemon {
     }
   }
 
+  /**
+   * Which project owns the service port a `/proxy/<host>/<port>/…` path targets.
+   *
+   * Hosted grants name a project root and a session id together, because
+   * session ids are unique only within a project. Resolving the port back to a
+   * root is what stops a grant in one project from authorizing the same session
+   * name in another. Returns null when the port matches no live service, which
+   * denies the operator rather than falling back to an unbound check.
+   */
+  private resolveProxyProjectRoot(pathname: string): string | null {
+    const root = resolveProjectRootForServiceTarget(this.listProjectsForRoute(), parseProxyTarget(pathname));
+    return root === null ? null : pathResolve(root);
+  }
+
   async routeRequest(
     method: string,
     path: string,
@@ -2906,7 +2921,12 @@ export class AimuxDaemon {
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
     const actor = parseRemoteActor(headers);
-    const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams);
+    const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams, {
+      body,
+      // Only operators are bound to a project, and resolving costs a registry
+      // read per request — keep it off the owner/local polling path.
+      projectRoot: actor?.role === "operator" ? this.resolveProxyProjectRoot(pathname) : null,
+    });
     if (!access.ok) {
       return { status: access.status ?? 403, body: { ok: false, error: access.error ?? "remote access denied" } };
     }
