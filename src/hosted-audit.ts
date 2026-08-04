@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { atomicWrite } from "./atomic-write.js";
 import { log } from "./debug.js";
+import { withHostedLock } from "./hosted-lock.js";
 import { getHostedAuditPath, getHostedDir } from "./paths.js";
 
 /**
@@ -71,14 +72,48 @@ export function appendHostedAudit(record: HostedAuditRecord): void {
   const path = getHostedAuditPath();
   try {
     mkdirSync(getHostedDir(), { recursive: true, mode: 0o700 });
-    rotateIfNeeded(path);
-    appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    const write = () => {
+      rotateIfNeeded(path);
+      appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    };
+    // Guarded against the whole-file rewrites that rotation and pruning do,
+    // which could otherwise drop a record written between their read and their
+    // rename. Non-blocking, and it writes anyway if the lock is held: losing an
+    // audit record is worse than a rare interleave.
+    if (withHostedLock(path, write, { wait: false }) === null) write();
   } catch (error) {
     // An audit failure must never fail the request it describes; it is loud in
     // the daemon log instead.
     log.warn("hosted audit append failed", "hosted", {
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+/**
+ * The most recent records, newest last.
+ *
+ * Unparseable lines are skipped rather than reported: the daemon appends to
+ * this file while we read it, so a torn trailing line is expected rather than
+ * evidence of corruption.
+ */
+export function tailHostedAudit(count: number): HostedAuditRecord[] {
+  const path = getHostedAuditPath();
+  if (!existsSync(path)) return [];
+  try {
+    return readFileSync(path, "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .slice(-count)
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line) as HostedAuditRecord];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
   }
 }
 
@@ -93,7 +128,10 @@ export function appendHostedAudit(record: HostedAuditRecord): void {
 export function pruneHostedAudit(retentionDays: number, now = Date.now()): void {
   const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
   const path = getHostedAuditPath();
+  withHostedLock(path, () => pruneUnlocked(path, cutoff), { wait: false });
+}
 
+function pruneUnlocked(path: string, cutoff: number): void {
   for (let index = MAX_FILES; index >= 1; index -= 1) {
     const rotated = `${path}.${index}`;
     try {

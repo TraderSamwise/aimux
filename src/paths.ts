@@ -230,6 +230,15 @@ export function getHostedDevicesPath(): string {
   return join(getHostedDir(), "devices.json");
 }
 
+export function getHostedLockdownPath(): string {
+  return join(getHostedDir(), "lockdown.json");
+}
+
+/** Events raised by the CLI, delivered by whichever daemon picks them up. */
+export function getHostedOutboxPath(): string {
+  return join(getHostedDir(), "outbox.jsonl");
+}
+
 export function getDaemonStatePath(): string {
   return join(getDaemonDir(), "state.json");
 }

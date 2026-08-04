@@ -49,6 +49,18 @@ import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest 
 import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.js";
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { listRegisteredDesktopProjects } from "./project-scanner.js";
+import { tailHostedAudit } from "./hosted-audit.js";
+import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
+import { hostedLockdownState, setHostedLockdown } from "./hosted-lockdown.js";
+import { raiseHostedCliEvent } from "./hosted-outbox.js";
+import {
+  createHostedPrincipal,
+  grantHostedSession,
+  listHostedPrincipals,
+  revokeHostedPrincipal,
+  ungrantHostedSession,
+} from "./hosted-principals.js";
 import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
 import {
   buildDesktopNotifierDoctorReport,
@@ -1525,6 +1537,188 @@ program
 
 const remoteCmd = program.command("remote").description("Manage remote access via the relay");
 const securityCmd = program.command("security").description("Manage aimux security controls");
+const hostedCmd = program.command("hosted").description("Manage hosted mode: principals, grants, audit, lockdown");
+
+/**
+ * The project root a grant must be stored under.
+ *
+ * NOT a bare resolve of `--project`. The daemon checks grants against the
+ * registry's repo root, which is normalized (a subdirectory or a worktree
+ * resolves to the main repo). Storing the raw argument would produce a grant
+ * the daemon never matches, and every request would 403 with nothing to show
+ * why. The global preAction hook has already initPaths'd `--project`, so this
+ * is exactly the value the registry holds.
+ */
+function hostedGrantProjectRoot(): string {
+  const root = getRepoRoot();
+  // Checked against the SAME list the daemon resolves ports through, not the
+  // raw registry: the preAction hook has already registered whatever was
+  // passed, so a registry lookup would always succeed — including for a typo'd
+  // or temporary path the daemon filters out and could therefore never match.
+  if (!listRegisteredDesktopProjects().some((project) => project.path === root)) {
+    console.error(
+      `Project ${root} is not one the daemon can resolve, so a grant on it could never match.\n` +
+        `Open it in aimux once, and check it is a real repository outside a temporary directory.`,
+    );
+    process.exit(1);
+  }
+  return root;
+}
+
+hostedCmd
+  .command("status")
+  .description("Show hosted mode configuration and principals")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const config = loadHostedConfig();
+    const principals = listHostedPrincipals();
+    const active = principals.filter((principal) => !principal.revokedAt);
+    // Surfaced here because a refused start is otherwise only visible in the
+    // daemon log, and "enabled: true" alone would be misleading.
+    const validation = validateHostedStartup(config, active.length);
+    const lockdown = hostedLockdownState();
+
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            enabled: config.enabled,
+            bindAddress: config.bindAddress,
+            port: config.port,
+            webhookConfigured: Boolean(config.webhookUrl),
+            trustedForwardedHeader: config.trustedForwardedHeader,
+            retentionDays: config.retentionDays,
+            principals: { total: principals.length, active: active.length },
+            lockdown,
+            startup: validation,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    console.log(`Hosted mode: ${config.enabled ? "enabled" : "disabled"}`);
+    console.log(`Listener:    ${config.bindAddress}:${config.port}`);
+    console.log(`Principals:  ${active.length} active, ${principals.length} total`);
+    console.log(`Webhook:     ${config.webhookUrl ? `configured (${config.webhookSecretEnv})` : "not configured"}`);
+    console.log(`Lockdown:    ${lockdown.active ? `ON since ${lockdown.since ?? "unknown"}` : "off"}`);
+    if (!validation.ok) console.log(`\nWill not start: ${validation.error}`);
+  });
+
+const hostedTokenCmd = hostedCmd.command("token").description("Manage hosted bearer tokens");
+
+hostedTokenCmd
+  .command("create")
+  .description("Create a principal and print its token once")
+  .requiredOption("--label <label>", "Who this token is for (an opaque identifier, shown in audit records)")
+  .action((opts: { label: string }) => {
+    const { principal, token } = createHostedPrincipal({ label: opts.label });
+    // Printed once, to stdout only. Nothing stores the plaintext, so a lost
+    // token is replaced rather than recovered.
+    console.log(`\nPrincipal: ${principal.id}  (${principal.label})`);
+    console.log(`Token:     ${token}`);
+    console.log(`\nStore it now — only its hash is kept, so it cannot be shown again.`);
+    console.log(`Grant it a session with:\n  aimux hosted grant ${principal.id} --project <root> --session <id>\n`);
+  });
+
+hostedTokenCmd
+  .command("list")
+  .description("List principals")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const principals = listHostedPrincipals();
+    if (opts.json) {
+      console.log(JSON.stringify(principals, null, 2));
+      return;
+    }
+    if (principals.length === 0) {
+      console.log("No principals. Create one with: aimux hosted token create --label <label>");
+      return;
+    }
+    for (const principal of principals) {
+      const state = principal.revokedAt ? `revoked ${principal.revokedAt}` : "active";
+      console.log(`${principal.id}  ${principal.label}  [${state}]`);
+      for (const grant of principal.grants) console.log(`    ${grant.sessionId}  ${grant.projectRoot}`);
+      if (principal.grants.length === 0) console.log("    (no grants)");
+    }
+  });
+
+hostedTokenCmd
+  .command("revoke <principalId>")
+  .description("Revoke a principal's token")
+  .action((principalId: string) => {
+    if (!revokeHostedPrincipal(principalId)) {
+      console.error(`No active principal ${principalId}`);
+      process.exit(1);
+    }
+    raiseHostedCliEvent("hosted_token_revoked", principalId, `revoked via CLI`);
+    console.log(`Revoked ${principalId}`);
+  });
+
+hostedCmd
+  .command("grant <principalId>")
+  .description("Allow a principal to converse with one session")
+  .requiredOption("--project <root>", "Project root the session belongs to")
+  .requiredOption("--session <id>", "Session id")
+  .action((principalId: string, opts: { project: string; session: string }) => {
+    const projectRoot = hostedGrantProjectRoot();
+    if (!grantHostedSession(principalId, { projectRoot, sessionId: opts.session })) {
+      console.error(`Could not grant — no active principal ${principalId}, or an invalid project/session`);
+      process.exit(1);
+    }
+    raiseHostedCliEvent("hosted_grant_changed", principalId, `granted ${opts.session}`);
+    console.log(`Granted ${principalId} -> ${opts.session} in ${projectRoot}`);
+  });
+
+hostedCmd
+  .command("ungrant <principalId>")
+  .description("Remove a principal's access to one session")
+  .requiredOption("--project <root>", "Project root the session belongs to")
+  .requiredOption("--session <id>", "Session id")
+  .action((principalId: string, opts: { project: string; session: string }) => {
+    const projectRoot = hostedGrantProjectRoot();
+    if (!ungrantHostedSession(principalId, { projectRoot, sessionId: opts.session })) {
+      console.error(`No such grant on ${principalId}`);
+      process.exit(1);
+    }
+    raiseHostedCliEvent("hosted_grant_changed", principalId, `ungranted ${opts.session}`);
+    console.log(`Removed ${opts.session} from ${principalId}`);
+  });
+
+hostedCmd
+  .command("lockdown <state>")
+  .description('Close or reopen the hosted listener ("on" or "off")')
+  .action((state: string) => {
+    if (state !== "on" && state !== "off") {
+      console.error("Usage: aimux hosted lockdown on|off");
+      process.exit(1);
+    }
+    const result = setHostedLockdown(state === "on");
+    raiseHostedCliEvent("hosted_lockdown", null, state === "on" ? "engaged" : "cleared");
+    console.log(result.active ? `Hosted mode locked down at ${result.since}` : "Hosted lockdown cleared");
+  });
+
+const hostedAuditCmd = hostedCmd.command("audit").description("Inspect the hosted audit log");
+
+hostedAuditCmd
+  .command("tail")
+  .description("Show the most recent audit records")
+  .option("-n, --lines <count>", "How many records", "20")
+  .option("--json", "Emit JSON")
+  .action((opts: { lines?: string; json?: boolean }) => {
+    const count = Math.max(1, Number.parseInt(opts.lines ?? "20", 10) || 20);
+    const records = tailHostedAudit(count);
+    if (opts.json) {
+      console.log(JSON.stringify(records, null, 2));
+      return;
+    }
+    for (const record of records) {
+      const what = record.event ? `${record.event} ${record.detail ?? ""}`.trim() : `${record.method} ${record.path}`;
+      console.log(`${record.ts}  ${record.label}  ${record.status || "-"}  ${record.sessionId ?? "-"}  ${what}`);
+    }
+  });
 
 remoteCmd
   .command("status")

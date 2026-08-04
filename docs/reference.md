@@ -782,6 +782,10 @@ aimux init
 
 This creates `.aimux/config.json`. You can also create a global config at `~/.aimux/config.json`. Project config overrides global, which overrides defaults.
 
+One exception: the `hosted` block is read from the **global** config only. Project config is
+committed in repos, so a `hosted` block there would let anyone who clones a repo open a network
+listener; it is stripped on load. See [hosted mode](hosted-mode.md).
+
 ```json
 {
   "defaultTool": "claude",
