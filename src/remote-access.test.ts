@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { HostedPrincipal } from "./hosted-principals.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
-import { assertRemoteAccessAllowed, parseRemoteActor, type RemoteActor } from "./remote-access.js";
+import {
+  assertOperatorStreamAllowed,
+  assertRemoteAccessAllowed,
+  parseRemoteActor,
+  type RemoteActor,
+} from "./remote-access.js";
 
 const PROJECT_ROOT = "/srv/grand";
 const SESSION = "assistant";
@@ -54,6 +59,9 @@ describe("operator route allowlist", () => {
   });
 
   it("denies every route not on the allowlist", () => {
+    // outputStream stays denied HERE even though operators may stream: this
+    // gate governs the buffered proxy, which reads the whole response before
+    // replying, and an SSE body never ends. Streaming has its own entry point.
     const denied = [
       PROJECT_API_ROUTES.agents.list,
       PROJECT_API_ROUTES.agents.outputStream,
@@ -228,5 +236,70 @@ describe("existing roles are unaffected", () => {
 
   it("still denies an unknown role", () => {
     expect(allow({ role: "nonsense" } as unknown as RemoteActor, "GET", PORT_PATH("/health")).ok).toBe(false);
+  });
+});
+
+describe("operator stream allowlist", () => {
+  const streamPath = PORT_PATH(PROJECT_API_ROUTES.agents.outputStream);
+
+  function allowStream(
+    actor: RemoteActor | null,
+    method: string,
+    path: string,
+    options: { projectRoot?: string | null; query?: string } = {},
+  ) {
+    const url = new URL(`http://127.0.0.1${path}${options.query ?? ""}`);
+    return assertOperatorStreamAllowed(actor, method, url.pathname, url.searchParams, {
+      projectRoot: "projectRoot" in options ? options.projectRoot : PROJECT_ROOT,
+    });
+  }
+
+  it("allows a granted session to stream its own output", () => {
+    expect(allowStream(operator(), "GET", streamPath, { query: `?sessionId=${SESSION}` })).toEqual({ ok: true });
+  });
+
+  it("refuses a session the principal was not granted", () => {
+    expect(allowStream(operator(), "GET", streamPath, { query: "?sessionId=someone-else" }).ok).toBe(false);
+  });
+
+  it("refuses the same session name granted in a different project", () => {
+    const result = allowStream(operator([{ projectRoot: "/srv/other", sessionId: SESSION }]), "GET", streamPath, {
+      query: `?sessionId=${SESSION}`,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("refuses when the port could not be bound to a project", () => {
+    expect(allowStream(operator(), "GET", streamPath, { query: `?sessionId=${SESSION}`, projectRoot: null }).ok).toBe(
+      false,
+    );
+  });
+
+  it("streams nothing but the output stream — /events stays denied", () => {
+    for (const route of [
+      PROJECT_API_ROUTES.events,
+      PROJECT_API_ROUTES.agents.output,
+      PROJECT_API_ROUTES.agents.interactionStream,
+      PROJECT_API_ROUTES.agents.list,
+    ]) {
+      const result = allowStream(operator(), "GET", PORT_PATH(route), { query: `?sessionId=${SESSION}` });
+      expect(result.ok, route).toBe(false);
+    }
+  });
+
+  it("refuses a non-GET and a non-operator", () => {
+    expect(allowStream(operator(), "POST", streamPath, { query: `?sessionId=${SESSION}` }).ok).toBe(false);
+    expect(
+      allowStream({ role: "guest" } as RemoteActor, "GET", streamPath, { query: `?sessionId=${SESSION}` }).ok,
+    ).toBe(false);
+    expect(allowStream(null, "GET", streamPath, { query: `?sessionId=${SESSION}` }).ok).toBe(false);
+  });
+
+  it("refuses a daemon route outside the proxy form", () => {
+    expect(allowStream(operator(), "GET", "/events", { query: `?sessionId=${SESSION}` }).ok).toBe(false);
+  });
+
+  it("requires a session id", () => {
+    expect(allowStream(operator(), "GET", streamPath).ok).toBe(false);
   });
 });

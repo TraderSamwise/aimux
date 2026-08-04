@@ -54,14 +54,27 @@ const PROXY_PATH_PATTERN = /^\/proxy\/[^/]+\/\d+(\/.*)$/;
  * Deny-by-default: a route added elsewhere in the codebase is unreachable to
  * operators until someone deliberately lists it here. `/agents` (list) is
  * absent on purpose — it returns every session in the project, which would leak
- * other principals' session ids. So are `/agents/output/stream` and `/events`,
- * which need a streaming path this gate does not yet cover.
+ * other principals' session ids. `/agents/output/stream` is absent because it
+ * belongs to `OPERATOR_STREAM_ROUTES` below and must never appear here, and
+ * `/events` because it is project-wide rather than per-session.
  */
 const OPERATOR_ROUTE_METHODS = new Map<string, "GET" | "POST">([
   [PROJECT_API_ROUTES.agents.output, "GET"],
   [PROJECT_API_ROUTES.agents.input, "POST"],
   [PROJECT_API_ROUTES.agents.interrupt, "POST"],
 ]);
+
+/**
+ * Streaming routes, kept in a SEPARATE gate reached by a separate function.
+ *
+ * They must never appear in `OPERATOR_ROUTE_METHODS`: that allowlist governs
+ * the buffered proxy, which reads the whole response before replying, and an
+ * SSE body never ends. A stream arriving there would hang the request forever.
+ *
+ * `/events` is absent on purpose — it is project-wide rather than per-session,
+ * so it would carry other operators' sessions to whoever subscribed.
+ */
+const OPERATOR_STREAM_ROUTES = new Set<string>([PROJECT_API_ROUTES.agents.outputStream]);
 
 function trimmedString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -98,32 +111,43 @@ function authorizedSessionId(
   return { ok: true, sessionId: authoritative };
 }
 
-function assertOperatorAllowed(
+/**
+ * The proxied sub-path an operator is asking for, or a refusal.
+ *
+ * `denied` rather than an `ok` flag: `RemoteAccessDecision` is not a
+ * discriminated union, so a success-shaped value returned here would type-check
+ * as a decision and skip the grant check entirely.
+ */
+function operatorSubPath(
   actor: RemoteActor,
-  method: string,
   pathname: string,
+): { denied: RemoteAccessDecision } | { denied?: undefined; principal: HostedPrincipal; subPath: string } {
+  const principal = actor.principal;
+  if (!principal) {
+    return { denied: { ok: false, status: 403, error: "operator actor is missing its principal" } };
+  }
+
+  const proxyMatch = pathname.match(PROXY_PATH_PATTERN);
+  if (!proxyMatch) {
+    return { denied: { ok: false, status: 403, error: "operators cannot access daemon routes" } };
+  }
+
+  return { principal, subPath: proxyMatch[1] || "/" };
+}
+
+/** The grant check both gates share: a session id, bound to a project root. */
+function assertGrantedSession(
+  principal: HostedPrincipal,
+  method: "GET" | "POST",
   searchParams: URLSearchParams,
   context: RemoteAccessContext,
 ): RemoteAccessDecision {
-  const principal = actor.principal;
-  if (!principal) return { ok: false, status: 403, error: "operator actor is missing its principal" };
-
-  const proxyMatch = pathname.match(PROXY_PATH_PATTERN);
-  if (!proxyMatch) return { ok: false, status: 403, error: "operators cannot access daemon routes" };
-
-  const subPath = proxyMatch[1] || "/";
-  const allowedMethod = OPERATOR_ROUTE_METHODS.get(subPath);
-  if (!allowedMethod) return { ok: false, status: 403, error: "route is not available to operators" };
-  if (method.toUpperCase() !== allowedMethod) {
-    return { ok: false, status: 403, error: "method not allowed for this route" };
-  }
-
   // Without a project root the grant check would compare session ids alone, and
   // a grant in one project would authorize the same name in another.
   const projectRoot = context.projectRoot;
   if (!projectRoot) return { ok: false, status: 403, error: "operator request could not be bound to a project" };
 
-  const session = authorizedSessionId(allowedMethod, searchParams, context.body);
+  const session = authorizedSessionId(method, searchParams, context.body);
   if (!session.ok) return { ok: false, status: 403, error: session.error };
 
   if (!principalHasGrant(principal, { projectRoot, sessionId: session.sessionId })) {
@@ -131,6 +155,55 @@ function assertOperatorAllowed(
   }
 
   return { ok: true };
+}
+
+function assertOperatorAllowed(
+  actor: RemoteActor,
+  method: string,
+  pathname: string,
+  searchParams: URLSearchParams,
+  context: RemoteAccessContext,
+): RemoteAccessDecision {
+  const resolved = operatorSubPath(actor, pathname);
+  if (resolved.denied) return resolved.denied;
+
+  const allowedMethod = OPERATOR_ROUTE_METHODS.get(resolved.subPath);
+  if (!allowedMethod) return { ok: false, status: 403, error: "route is not available to operators" };
+  if (method.toUpperCase() !== allowedMethod) {
+    return { ok: false, status: 403, error: "method not allowed for this route" };
+  }
+
+  return assertGrantedSession(resolved.principal, allowedMethod, searchParams, context);
+}
+
+/**
+ * The streaming gate, deliberately a separate entry point.
+ *
+ * A boolean on the shared context would fail open: a caller that forgot to set
+ * it would silently get the other allowlist. Streams and buffered requests are
+ * served by different machinery and must be asked for by name.
+ */
+export function assertOperatorStreamAllowed(
+  actor: RemoteActor | null,
+  method: string,
+  pathname: string,
+  searchParams: URLSearchParams,
+  context: RemoteAccessContext = {},
+): RemoteAccessDecision {
+  // Null denies rather than throwing, and unlike the buffered gate it does NOT
+  // mean "local, allow everything": nothing reaches this without a verified
+  // token, so a null actor here is a bug, and a bug must fail closed.
+  if (actor?.role !== "operator") return { ok: false, status: 403, error: "streaming requires an operator" };
+  if (method.toUpperCase() !== "GET") return { ok: false, status: 403, error: "streams are GET only" };
+
+  const resolved = operatorSubPath(actor, pathname);
+  if (resolved.denied) return resolved.denied;
+
+  if (!OPERATOR_STREAM_ROUTES.has(resolved.subPath)) {
+    return { ok: false, status: 403, error: "route is not available to operators" };
+  }
+
+  return assertGrantedSession(resolved.principal, "GET", searchParams, context);
 }
 
 function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {

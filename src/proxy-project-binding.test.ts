@@ -14,7 +14,11 @@ function candidate(path: string, port: number | null, serviceAlive = true, host:
 
 describe("parseProxyTarget", () => {
   it("reads host and port out of a proxy path", () => {
-    expect(parseProxyTarget("/proxy/127.0.0.1/43210/agents/output")).toEqual({ host: "127.0.0.1", port: 43210 });
+    expect(parseProxyTarget("/proxy/127.0.0.1/43210/agents/output")).toEqual({
+      host: "127.0.0.1",
+      port: 43210,
+      subPath: "/agents/output",
+    });
   });
 
   it("returns null for anything that is not a proxy path", () => {

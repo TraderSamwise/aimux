@@ -16,6 +16,8 @@ export interface ProxyBindingCandidate {
 export interface ProxyTarget {
   host: string;
   port: number;
+  /** The route beneath the proxy prefix, parsed once so callers cannot disagree. */
+  subPath: string;
 }
 
 /**
@@ -56,5 +58,5 @@ export function parseProxyTarget(pathname: string): ProxyTarget | null {
   if (!match) return null;
   const port = Number.parseInt(match[2]!, 10);
   if (!Number.isInteger(port) || port <= 0) return null;
-  return { host: match[1]!, port };
+  return { host: match[1]!, port, subPath: match[3]! };
 }

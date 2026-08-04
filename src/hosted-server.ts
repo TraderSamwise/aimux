@@ -14,6 +14,8 @@ import {
   type HostedAuditRecord,
 } from "./hosted-audit.js";
 import { clientAddress, HostedEventDelivery, pruneHostedDevices, recordDeviceSighting } from "./hosted-events.js";
+import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { parseProxyTarget } from "./proxy-project-binding.js";
 import { isHostedLockedDown } from "./hosted-lockdown.js";
 import { drainHostedOutbox } from "./hosted-outbox.js";
 import { markPrincipalSeen, type HostedPrincipal } from "./hosted-principals.js";
@@ -47,6 +49,21 @@ export interface HostedServerOptions {
     path: string,
     body?: unknown,
   ) => Promise<HostedRouteResponse>;
+  /** Absent means streaming is unavailable and the route 404s. */
+  resolveHostedStream?: (
+    actor: RemoteActor,
+    method: string,
+    path: string,
+  ) => { ok: true; url: string } | { ok: false; status: number; error: string };
+  /** Overrides for the stream bounds. Tests need them small; nothing else sets them. */
+  streamLimits?: Partial<StreamLimits>;
+}
+
+export interface StreamLimits {
+  maxPerPrincipal: number;
+  maxLifetimeMs: number;
+  idleTimeoutMs: number;
+  maxBytes: number;
 }
 
 export interface HostedServerHandle {
@@ -85,6 +102,14 @@ const MAX_AUDIT_PROMPT_CHARS = 1_024;
  * unbounded.
  */
 const MAX_AUDIT_FIELD_CHARS = 256;
+/** Concurrent streams one principal may hold. */
+const MAX_STREAMS_PER_PRINCIPAL = 2;
+/** Hard stop, so a forgotten tab cannot hold a connection indefinitely. */
+const STREAM_MAX_LIFETIME_MS = 600_000;
+/** The upstream sends a keepalive comment every poll, so silence means trouble. */
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
+/** `maxResponseBytes` is meaningless on a stream; this ends one instead. */
+const STREAM_MAX_BYTES = 64 * 1024 * 1024;
 
 function boundedField<T extends string | null>(value: T): T {
   if (typeof value !== "string" || value.length <= MAX_AUDIT_FIELD_CHARS) return value;
@@ -148,6 +173,48 @@ function isProxyPath(pathname: string): boolean {
 }
 
 /**
+ * Wait for backpressure to clear, for the socket to die, or for the stream to
+ * be given up on.
+ *
+ * Waiting on `drain` alone deadlocks two different ways, and both leak the
+ * stream slot permanently: a socket that dies while we are suspended emits
+ * `close`/`error` and never `drain`; and a client that simply stops reading
+ * fills the window, so the idle and lifetime timers fire into a `res.end()`
+ * that can only queue — emitting nothing at all. The abort signal is the one
+ * thing every teardown path raises, so it is what makes this always resolve.
+ */
+function drainOrDie(res: ServerResponse, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (res.writableEnded || res.destroyed || signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = (): void => {
+      res.off("drain", done);
+      res.off("close", done);
+      res.off("error", done);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    res.on("drain", done);
+    res.on("close", done);
+    res.on("error", done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * Routed to the streaming path purely on shape — authorization still happens in
+ * `resolveHostedStream`. Getting this wrong sends a stream to the buffered
+ * proxy (which waits for a body that never ends) or a buffered call to the
+ * pipe; it can never grant access.
+ */
+function isStreamPath(pathname: string): boolean {
+  const target = parseProxyTarget(pathname);
+  return target?.subPath === PROJECT_API_ROUTES.agents.outputStream;
+}
+
+/**
  * The session a record is about, read the same way the access gate read it —
  * body on POST, query on GET — so the audit names the session that was actually
  * authorized rather than whichever id happened to appear somewhere.
@@ -166,7 +233,14 @@ function promptTextOf(body: unknown): string | null {
 }
 
 export async function startHostedServer(options: HostedServerOptions): Promise<HostedServerHandle> {
-  const { config, routeHostedRequest } = options;
+  const { config, routeHostedRequest, resolveHostedStream } = options;
+  const streamLimits: StreamLimits = {
+    maxPerPrincipal: MAX_STREAMS_PER_PRINCIPAL,
+    maxLifetimeMs: STREAM_MAX_LIFETIME_MS,
+    idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS,
+    maxBytes: STREAM_MAX_BYTES,
+    ...options.streamLimits,
+  };
   const limiter = new HostedRateLimiter({
     requestsPerMinute: config.rateLimit.requestsPerMinute,
     maxConcurrent: config.rateLimit.maxConcurrent,
@@ -267,6 +341,209 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     });
   }
 
+  /**
+   * Concurrency for streams, counted separately from the token bucket.
+   *
+   * `HostedRateLimiter` spends a token AND a slot per request, which is the
+   * wrong shape for one request that lives ten minutes: it would either consume
+   * a single token and then run unmetered, or hold a bucket slot for the
+   * duration and starve the principal's ordinary calls.
+   */
+  const streamsByPrincipal = new Map<string, number>();
+
+  function acquireStream(principalId: string): boolean {
+    const open = streamsByPrincipal.get(principalId) ?? 0;
+    if (open >= streamLimits.maxPerPrincipal) return false;
+    streamsByPrincipal.set(principalId, open + 1);
+    return true;
+  }
+
+  function releaseStream(principalId: string): void {
+    const open = (streamsByPrincipal.get(principalId) ?? 1) - 1;
+    if (open <= 0) streamsByPrincipal.delete(principalId);
+    else streamsByPrincipal.set(principalId, open);
+  }
+
+  async function handleStream(
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    url: URL,
+    actor: RemoteActor,
+    principal: HostedPrincipal,
+    headers: Record<string, string>,
+    releasePeer: () => void,
+  ): Promise<void> {
+    // Opening a stream is metered like any other request. The concurrency
+    // counter below bounds how many run at once; without this a token holder
+    // could still hammer open/refuse cycles unmetered, each one writing a
+    // record. The bucket's own concurrency slot is released immediately —
+    // streams are counted by `streamsByPrincipal`, which understands that one
+    // of these lives for minutes.
+    const openSlot = limiter.acquire(principal.id);
+    if (!openSlot.ok) {
+      send(res, 429, { ok: false, error: openSlot.reason === "rate" ? "rate limit exceeded" : "too many requests" });
+      return;
+    }
+    openSlot.release();
+
+    if (!resolveHostedStream) {
+      send(res, 404, { ok: false, error: "not found" });
+      return;
+    }
+
+    const address = clientAddress(req.socket.remoteAddress, headers, config);
+    const resolved = resolveHostedStream(actor, method, `${url.pathname}${url.search}`);
+    if (!resolved.ok) {
+      send(res, resolved.status, { ok: false, error: resolved.error });
+      auditStream(principal, url, resolved.status, "denied", 0, 0);
+      return;
+    }
+
+    if (!acquireStream(principal.id)) {
+      send(res, 429, { ok: false, error: "too many concurrent streams" });
+      return;
+    }
+
+    // Everything below runs inside the try/finally that releases the slot.
+    const streamRef = randomUUID();
+    const startedAt = Date.now();
+    let bytes = 0;
+    let closeReason = "open";
+    let auditStatus = 200;
+    // Recorded at OPEN as well as close: a stream can outlive the daemon, and a
+    // record written only on close would leave no trace of one that never got
+    // to close.
+    auditStream(principal, url, 200, "open", 0, 0, streamRef);
+
+    const controller = new AbortController();
+    let settled = false;
+    const finish = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      // First reason wins: a client that hung up mid-write must not be
+      // relabelled by the teardown that hangup itself triggers.
+      closeReason = reason;
+      controller.abort();
+      if (!res.writableEnded) res.end();
+      // A client that stopped reading leaves `end()` queued behind a full
+      // window, so the socket would linger until the OS gave up on it. Anything
+      // other than a clean finish gets the socket taken away.
+      if (reason !== "eof" && reason !== "client" && !res.destroyed) res.destroy();
+    };
+
+    // Without this the upstream capture-pane poll keeps running after the
+    // client is gone — the project service only stops when its socket closes.
+    res.once("close", () => finish("client"));
+    res.once("error", () => finish("error"));
+
+    const lifetime = setTimeout(() => finish("lifetime"), streamLimits.maxLifetimeMs);
+    lifetime.unref?.();
+    let idle = setTimeout(() => finish("idle"), streamLimits.idleTimeoutMs);
+    idle.unref?.();
+
+    try {
+      const upstream = await fetch(resolved.url, {
+        headers: { accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+      if (!upstream.ok || !upstream.body) {
+        // Answered BEFORE finish(): finish ends the response, which flushes a
+        // 200, and the 502 would then die on ERR_HTTP_HEADERS_SENT leaving the
+        // client an empty success.
+        auditStatus = 502;
+        send(res, 502, { ok: false, error: "upstream stream unavailable" });
+        finish("upstream");
+        return;
+      }
+
+      // Synthesized, never forwarded: the project service sets
+      // `access-control-allow-origin: *` on this route, and copying that onto an
+      // authenticated cross-origin surface is a hole. No `connection: close`
+      // either — that would end the stream at the first chunk.
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/event-stream");
+      res.setHeader("cache-control", "no-store");
+      res.setHeader("x-accel-buffering", "no");
+      res.flushHeaders?.();
+      releasePeer();
+
+      for await (const chunk of upstream.body) {
+        if (settled) break;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += buffer.byteLength;
+        if (bytes > streamLimits.maxBytes) {
+          finish("budget");
+          break;
+        }
+        clearTimeout(idle);
+        idle = setTimeout(() => finish("idle"), streamLimits.idleTimeoutMs);
+        idle.unref?.();
+        if (!res.write(buffer)) {
+          await drainOrDie(res, controller.signal);
+          if (settled) break;
+        }
+      }
+      finish("eof");
+    } catch (error) {
+      if (!settled && !res.headersSent) {
+        auditStatus = 502;
+        send(res, 502, { ok: false, error: error instanceof Error ? error.message : "stream failed" });
+      }
+      finish("error");
+    } finally {
+      clearTimeout(lifetime);
+      clearTimeout(idle);
+      releaseStream(principal.id);
+      const durationMs = Date.now() - startedAt;
+      auditStream(principal, url, auditStatus, `closed:${closeReason}`, bytes, durationMs, streamRef);
+      setImmediate(() => {
+        try {
+          markPrincipalSeen(principal.id);
+          const sighting = recordDeviceSighting({
+            principalId: principal.id,
+            label: principal.label,
+            address,
+            userAgent: headers["user-agent"] ?? null,
+          });
+          if (sighting) delivery.enqueue(sighting);
+        } catch {
+          // Bookkeeping must never fail a stream that already ended.
+        }
+      });
+    }
+  }
+
+  function auditStream(
+    principal: HostedPrincipal,
+    url: URL,
+    status: number,
+    event: string,
+    bytes: number,
+    durationMs: number,
+    streamRef?: string,
+  ): void {
+    setImmediate(() => {
+      try {
+        appendHostedAudit({
+          ts: new Date().toISOString(),
+          principalId: principal.id,
+          label: boundedField(principal.label),
+          method: "GET",
+          path: boundedField(url.pathname),
+          sessionId: boundedField(url.searchParams.get("sessionId")?.trim() || null),
+          status,
+          requestBytes: 0,
+          responseBytes: bytes,
+          event: `hosted_stream_${event}`,
+          detail: streamRef ? `${streamRef} ${durationMs}ms` : undefined,
+        });
+      } catch {
+        // An audit failure must never fail the stream it describes.
+      }
+    });
+  }
+
   const server = createServer((req, res) => {
     void handle(req, res).catch((error) => {
       log.warn("hosted request failed", "hosted", {
@@ -314,10 +591,21 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
       return;
     }
 
-    try {
-      await handleAuthenticated(req, res, method, url);
-    } finally {
+    // Released early by a long-lived request. Behind a tunnel every request
+    // keys to the same loopback address, so a handful of ten-minute streams
+    // holding peer slots would block everyone else's ordinary calls. Streams
+    // are bounded by their own concurrency counter instead.
+    let peerReleased = false;
+    const releasePeer = () => {
+      if (peerReleased) return;
+      peerReleased = true;
       peerSlot.release();
+    };
+
+    try {
+      await handleAuthenticated(req, res, method, url, releasePeer);
+    } finally {
+      releasePeer();
     }
   }
 
@@ -326,6 +614,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     res: ServerResponse,
     method: string,
     url: URL,
+    releasePeer: () => void,
   ): Promise<void> {
     const headers = stripTrustedHeaders(req.headers);
     const auth = authenticateHosted(headers);
@@ -339,6 +628,15 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
 
     if (!isProxyPath(url.pathname)) {
       send(res, 404, { ok: false, error: "not found" });
+      return;
+    }
+
+    // Streams take a different path entirely: no body to read, no token bucket
+    // (one request lives for minutes), and a response synthesized rather than
+    // forwarded. Handled before the buffered machinery so a never-ending body
+    // can never reach code that waits for one to finish.
+    if (isStreamPath(url.pathname)) {
+      await handleStream(req, res, method, url, auth.actor, auth.principal, headers, releasePeer);
       return;
     }
 
