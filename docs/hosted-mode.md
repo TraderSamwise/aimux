@@ -96,12 +96,22 @@ in one project can never authorize the same session name in another.
 ## Audit
 
 Every request appends a JSONL record to `~/.aimux/hosted/audit.jsonl`: who, when, which session,
-status, byte counts, and the prompt's hash. The prompt text itself is kept only when
-`auditPromptBodies` is true — it will contain whatever a person typed about their business, so
-decide deliberately.
+status, byte counts, and the prompt's hash.
+
+Prompt **bodies** live in a separate file, `~/.aimux/hosted/audit-prompts.jsonl`, joined to their
+record by `promptRef`. They are kept only when `auditPromptBodies` is true **and the request
+succeeded**, and only the first 1024 characters are retained. Three deliberate choices:
+
+- **Separate file**, because rotation is size-driven: sharing one file let anyone who could
+  authenticate push every other operator's records out of it with large bodies.
+- **Successful requests only**, because a refused request is the cheapest to generate — a token
+  with no grants at all gets a 403 on everything, and storing those bodies is the same flood.
+- **Truncated**, so one large prompt cannot displace many small ones. The hash covers the whole
+  body, so it identifies but cannot verify the retained prefix.
 
 ```bash
 aimux hosted audit tail -n 50
+aimux hosted audit tail --prompts
 aimux hosted audit tail --json
 ```
 
@@ -133,6 +143,12 @@ browser updates while missing real ones. The header is honoured only when the im
 loopback, and the rightmost value is taken because proxies append. Behind Cloudflare, use
 `cf-connecting-ip`.
 
+Only `cf-connecting-ip`, `x-forwarded-for` and `true-client-ip` are accepted; anything else is
+ignored with a warning rather than refused at startup, because a startup failure skips hosted mode
+entirely and would take a running listener down over a field it can ignore. A name your proxy does
+**not** set is one the client sets, which would let anyone forge device identity at will and rotate
+the value to slip past the per-address throttles.
+
 ## Lockdown
 
 ```bash
@@ -150,8 +166,13 @@ owner keeps theirs.
 
 ## Operational notes
 
-- The listener is bounded: 64 connections, a 30s request timeout, a 10s headers timeout, per-peer
-  limits applied before authentication, and per-principal limits after it.
+- **Put an authenticating front door in front of the tunnel** — Cloudflare Access with a service
+  token, or mTLS. The hostname is public DNS, so without one the whole internet reaches the
+  pre-authentication path with a single bearer token as the only gate. The listener's own bounds
+  (512 connections, a 30s request timeout, a 3s headers timeout, per-peer limits before
+  authentication and per-principal limits after) keep an anonymous flood from exhausting memory;
+  they do not keep it from denying service, and behind a tunnel every request shares one peer
+  address, so the pre-auth budget is effectively global.
 - No CORS headers are set. The daemon's own surface allows any localhost origin, which is fine on
   loopback and a DNS-rebinding hole behind a tunnel.
 - `~/.aimux/hosted/` holds principals, devices, the audit log, the outbox and the lockdown marker,

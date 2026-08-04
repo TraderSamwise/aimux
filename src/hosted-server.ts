@@ -6,7 +6,13 @@ import { randomUUID } from "node:crypto";
 import { log } from "./debug.js";
 import type { HostedConfig } from "./hosted-config.js";
 import { authenticateHosted, stripTrustedHeaders } from "./hosted-auth.js";
-import { appendHostedAudit, hashPrompt, pruneHostedAudit, type HostedAuditRecord } from "./hosted-audit.js";
+import {
+  appendHostedAudit,
+  appendHostedPrompt,
+  hashPrompt,
+  pruneHostedAudit,
+  type HostedAuditRecord,
+} from "./hosted-audit.js";
 import { clientAddress, HostedEventDelivery, pruneHostedDevices, recordDeviceSighting } from "./hosted-events.js";
 import { isHostedLockedDown } from "./hosted-lockdown.js";
 import { drainHostedOutbox } from "./hosted-outbox.js";
@@ -50,9 +56,40 @@ export interface HostedServerHandle {
 }
 
 const CLOSE_GRACE_MS = 3_000;
-const MAX_CONNECTIONS = 64;
+/**
+ * Generous, because this is not where a flood is stopped.
+ *
+ * A low ceiling is itself the denial of service: anyone who can reach the
+ * listener holds every slot with silent sockets and no operator connects. The
+ * control that actually works is an authenticating front door (Cloudflare
+ * Access, mTLS) — see docs/hosted-mode.md. This only bounds memory.
+ */
+const MAX_CONNECTIONS = 512;
 const REQUEST_TIMEOUT_MS = 30_000;
-const HEADERS_TIMEOUT_MS = 10_000;
+/** Short, so a socket that never sends headers cannot occupy a slot for long. */
+const HEADERS_TIMEOUT_MS = 3_000;
+/**
+ * Prompt bodies are retained as a prefix.
+ *
+ * The hash covers the WHOLE body, so a retained prefix cannot be verified
+ * against it — the hash is for correlating records, not for proving content.
+ */
+const MAX_AUDIT_PROMPT_CHARS = 1_024;
+/**
+ * Every other caller-chosen string that reaches a record.
+ *
+ * A record must have a bounded size, because rotation is size-driven: anyone
+ * who can make records arbitrarily large pushes everyone else's out of the
+ * ring. The body was only the most obvious of these — the request path, the
+ * session id and the principal's label are all chosen elsewhere and were all
+ * unbounded.
+ */
+const MAX_AUDIT_FIELD_CHARS = 256;
+
+function boundedField<T extends string | null>(value: T): T {
+  if (typeof value !== "string" || value.length <= MAX_AUDIT_FIELD_CHARS) return value;
+  return `${value.slice(0, MAX_AUDIT_FIELD_CHARS)}…` as T;
+}
 /** Headroom over the per-principal budget: one peer may carry several tokens. */
 const PEER_BUDGET_MULTIPLIER = 4;
 const PRUNE_INTERVAL_MS = 300_000;
@@ -162,6 +199,33 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
    */
   const authFailureThrottle = new Map<string, number>();
   const AUTH_FAILURE_WINDOW_MS = 60_000;
+  /**
+   * A ceiling across all keys, applied to DELIVERY only.
+   *
+   * The per-key throttle is keyed on the client address, which behind a tunnel
+   * comes from a forwarded header — a client that rotates it gets a fresh key
+   * every request and slips past. Bounding the webhook stops that being an
+   * amplifier pointed at whoever receives it.
+   *
+   * It deliberately does not gate the audit record. Suppressing those would let
+   * an attacker go quiet in the log simply by making enough noise first, and
+   * every field of such a record is bounded; the peer rate limiter bounds how
+   * fast they can arrive.
+   */
+  const AUTH_FAILURE_DELIVERY_MAX = 10;
+  let authFailureWindowStart = 0;
+  let authFailureWindowCount = 0;
+
+  function deliverAuthFailure(): boolean {
+    const now = Date.now();
+    if (now - authFailureWindowStart >= AUTH_FAILURE_WINDOW_MS) {
+      authFailureWindowStart = now;
+      authFailureWindowCount = 0;
+    }
+    if (authFailureWindowCount >= AUTH_FAILURE_DELIVERY_MAX) return false;
+    authFailureWindowCount += 1;
+    return true;
+  }
 
   function reportAuthFailure(req: IncomingMessage, headers: Record<string, string>, reason: string): void {
     const address = clientAddress(req.socket.remoteAddress, headers, config);
@@ -196,7 +260,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
           event: event.kind,
           detail: reason,
         });
-        delivery.enqueue(event);
+        if (deliverAuthFailure()) delivery.enqueue(event);
       } catch {
         // Never let reporting a failed login fail anything else.
       }
@@ -335,23 +399,39 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
           const record: HostedAuditRecord = {
             ts: new Date().toISOString(),
             principalId: principal.id,
-            label: principal.label,
+            label: boundedField(principal.label),
             method,
-            path: url.pathname,
-            sessionId: auditedSessionId(method, url, body),
+            path: boundedField(url.pathname),
+            sessionId: boundedField(auditedSessionId(method, url, body)),
             status,
             requestBytes,
             responseBytes,
           };
           if (promptText !== null) {
             record.promptHash = hashPrompt(promptText);
-            if (config.auditPromptBodies) record.promptText = promptText;
+            // Bodies are kept only for requests that were actually carried out.
+            // A refused request still gets a record and a hash, but storing its
+            // body would let anyone holding a token — including one with no
+            // grants at all, whose every request is a 403 — push every other
+            // operator's history out of a size-rotated file.
+            if (config.auditPromptBodies && status >= 200 && status < 300) {
+              const kept = promptText.slice(0, MAX_AUDIT_PROMPT_CHARS);
+              record.promptRef = randomUUID();
+              appendHostedPrompt({
+                ts: record.ts,
+                promptRef: record.promptRef,
+                principalId: principal.id,
+                promptHash: record.promptHash,
+                promptText: kept,
+                truncated: kept.length < promptText.length ? true : undefined,
+              });
+            }
           }
           appendHostedAudit(record);
 
           const sighting = recordDeviceSighting({
             principalId: principal.id,
-            label: principal.label,
+            label: boundedField(principal.label),
             address,
             userAgent: headers["user-agent"] ?? null,
           });
@@ -363,7 +443,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
             appendHostedAudit({
               ts: sighting.ts,
               principalId: principal.id,
-              label: principal.label,
+              label: boundedField(principal.label),
               method: "-",
               path: "-",
               sessionId: null,

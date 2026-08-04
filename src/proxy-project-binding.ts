@@ -24,6 +24,12 @@ export interface ProxyTarget {
  * that the OS recycles. Matching on a recorded port alone could therefore hand
  * back a dead project whose old port now belongs to a live one, so a candidate
  * must still be alive, and an ambiguous match resolves to nothing at all.
+ *
+ * INVARIANT: the caller must forward to the same `host:port` it passed in here.
+ * This answers "which project owns that target", not "where should the request
+ * go" — resolving one from the endpoint record and forwarding to the other
+ * would authorize against one service and talk to another, which is a
+ * request-controlled loopback fetch with an operator's authorization attached.
  */
 export function resolveProjectRootForServiceTarget(
   candidates: readonly ProxyBindingCandidate[],

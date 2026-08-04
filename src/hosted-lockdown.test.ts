@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,6 +58,31 @@ describe("hosted lockdown", () => {
     // Someone put it there; fail closed rather than reopening the door.
     expect(hostedLockdownState().active).toBe(true);
     expect(isHostedLockedDown()).toBe(true);
+  });
+
+  it("stays locked down when the marker cannot be observed", () => {
+    // existsSync() answers false for EVERY failure, so an unreadable directory
+    // used to read as "no marker" and silently reopen the door. Only ENOENT is
+    // an answer; anything else is a failure to observe and must fail closed.
+    mkdirSync(getHostedDir(), { recursive: true });
+    writeFileSync(getHostedLockdownPath(), "{}");
+    chmodSync(getHostedDir(), 0o000);
+    try {
+      let denied = false;
+      try {
+        statSync(getHostedLockdownPath());
+      } catch {
+        denied = true;
+      }
+      // Running as root defeats the premise; there is nothing to assert then.
+      if (denied) {
+        resetHostedLockdownCache();
+        expect(isHostedLockedDown()).toBe(true);
+        expect(hostedLockdownState().active).toBe(true);
+      }
+    } finally {
+      chmodSync(getHostedDir(), 0o700);
+    }
   });
 
   it("caches for a second but sees a change after it expires", () => {

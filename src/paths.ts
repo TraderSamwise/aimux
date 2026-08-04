@@ -226,6 +226,16 @@ export function getHostedAuditPath(): string {
   return join(getHostedDir(), "audit.jsonl");
 }
 
+/**
+ * Prompt bodies, kept apart from the request records.
+ *
+ * Rotation is size-driven, so sharing one file lets anyone who can reach the
+ * listener push every other operator's history out of it with large bodies.
+ */
+export function getHostedAuditPromptsPath(): string {
+  return join(getHostedDir(), "audit-prompts.jsonl");
+}
+
 export function getHostedDevicesPath(): string {
   return join(getHostedDir(), "devices.json");
 }

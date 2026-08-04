@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import { quarantineCorruptFile } from "./atomic-write.js";
+import { log } from "./debug.js";
 import { getGlobalConfigPath } from "./paths.js";
 
 /**
@@ -96,6 +97,29 @@ function isLoopbackHostname(hostname: string): boolean {
   return isLoopbackBindAddress(hostname);
 }
 
+/**
+ * Headers a proxy sets that a client cannot.
+ *
+ * The value is trusted whenever the peer is loopback — which, behind a tunnel,
+ * is every request. A name outside this set is one the tunnel does not set, so
+ * the client supplies it: it would forge device identity at will and defeat the
+ * per-address throttles by rotating it. Refused here rather than at startup,
+ * because a startup failure skips hosted mode entirely and would take an
+ * already-running listener down over a field it can safely ignore.
+ */
+const ALLOWED_FORWARDED_HEADERS = new Set(["cf-connecting-ip", "x-forwarded-for", "true-client-ip"]);
+
+function normalizeForwardedHeader(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const name = raw.trim().toLowerCase();
+  if (ALLOWED_FORWARDED_HEADERS.has(name)) return name;
+  log.warn("hosted trustedForwardedHeader ignored", "hosted", {
+    header: name,
+    allowed: [...ALLOWED_FORWARDED_HEADERS].join(", "),
+  });
+  return null;
+}
+
 /** Coerce a user-authored `hosted` block into a complete, in-range config. */
 export function normalizeHostedConfig(raw: unknown): HostedConfig {
   if (!raw || typeof raw !== "object")
@@ -123,10 +147,7 @@ export function normalizeHostedConfig(raw: unknown): HostedConfig {
     auditPromptBodies: boolOr(value.auditPromptBodies, DEFAULT_HOSTED_CONFIG.auditPromptBodies),
     webhookUrl,
     webhookSecretEnv: nonEmptyString(value.webhookSecretEnv, DEFAULT_HOSTED_CONFIG.webhookSecretEnv),
-    trustedForwardedHeader:
-      typeof value.trustedForwardedHeader === "string" && value.trustedForwardedHeader.trim()
-        ? value.trustedForwardedHeader.trim().toLowerCase()
-        : null,
+    trustedForwardedHeader: normalizeForwardedHeader(value.trustedForwardedHeader),
     retentionDays: boundedInt(value.retentionDays, DEFAULT_HOSTED_CONFIG.retentionDays, 1, 3_650),
   };
 }

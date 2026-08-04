@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 
 import { atomicWrite } from "./atomic-write.js";
 import { getHostedDir, getHostedLockdownPath } from "./paths.js";
@@ -25,7 +25,10 @@ export function setHostedLockdown(active: boolean): HostedLockdownState {
   const path = getHostedLockdownPath();
   cache = null;
   if (!active) {
-    rmSync(path, { force: true });
+    // Recursive because anything at this path counts as locked, a directory
+    // included — without it `lockdown off` would throw EISDIR and the door
+    // could never be reopened from the CLI.
+    rmSync(path, { force: true, recursive: true });
     return { active: false, since: null };
   }
   const state: HostedLockdownState = { active: true, since: new Date().toISOString() };
@@ -37,14 +40,39 @@ export function setHostedLockdown(active: boolean): HostedLockdownState {
   return state;
 }
 
-export function hostedLockdownState(): HostedLockdownState {
-  const path = getHostedLockdownPath();
-  if (!existsSync(path)) return { active: false, since: null };
+/**
+ * Absent means absent — everything else means locked.
+ *
+ * `existsSync` cannot express this: it swallows every error and returns false,
+ * so a directory that became unreadable reads as "no marker" and silently
+ * reopens a door someone shut. Only ENOENT is an answer; the rest is a failure
+ * to observe, and this fails closed on it.
+ */
+function markerPresent(): boolean {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<HostedLockdownState>;
+    // Anything at the path counts, not just a regular file: a directory there
+    // would make hostedLockdownState() report locked (readFileSync throws
+    // EISDIR) while this served traffic, and the two must never disagree.
+    statSync(getHostedLockdownPath());
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+export function hostedLockdownState(): HostedLockdownState {
+  let raw: string;
+  try {
+    raw = readFileSync(getHostedLockdownPath(), "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { active: false, since: null };
+    return { active: true, since: null };
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<HostedLockdownState>;
     return { active: true, since: typeof parsed?.since === "string" ? parsed.since : null };
   } catch {
-    // A file we cannot read still means someone put it there: fail closed.
+    // A file we cannot parse still means someone put it there: fail closed.
     return { active: true, since: null };
   }
 }
@@ -52,12 +80,7 @@ export function hostedLockdownState(): HostedLockdownState {
 /** Cached for a second — this runs on every hosted request. */
 export function isHostedLockedDown(now = Date.now()): boolean {
   if (cache && now - cache.at < CACHE_MS) return cache.state.active;
-  let active = false;
-  try {
-    active = existsSync(getHostedLockdownPath()) && statSync(getHostedLockdownPath()).isFile();
-  } catch {
-    active = false;
-  }
+  const active = markerPresent();
   cache = { at: now, state: { active, since: null } };
   return active;
 }
