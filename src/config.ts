@@ -333,6 +333,11 @@ export function loadConfig(opts: { includeGlobal?: boolean; projectRoot?: string
   if (existsSync(projectPath)) {
     try {
       const projectRaw = JSON.parse(readFileSync(projectPath, "utf-8"));
+      // Hosted mode is global-only (see hosted-config.ts): project config is
+      // committed in repos, so a `hosted` block here is repo-controlled input
+      // that could otherwise open a listener for anyone who clones. Stripped
+      // pre-merge so a legitimate global block still survives load→save.
+      delete projectRaw?.hosted;
       config = deepMerge(config, projectRaw) as AimuxConfig;
     } catch {
       quarantineCorruptFile(projectPath);
