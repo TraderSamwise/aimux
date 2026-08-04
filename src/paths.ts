@@ -213,6 +213,15 @@ export function getDaemonInfoPath(): string {
   return join(getDaemonDir(), "daemon.json");
 }
 
+/** Hosted-mode state: principals, audit log, event queue. Never project-local. */
+export function getHostedDir(): string {
+  return join(getGlobalAimuxDir(), "hosted");
+}
+
+export function getHostedPrincipalsPath(): string {
+  return join(getHostedDir(), "principals.json");
+}
+
 export function getDaemonStatePath(): string {
   return join(getDaemonDir(), "state.json");
 }
