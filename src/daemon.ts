@@ -14,9 +14,12 @@ import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } fro
 import { MobilePushThrottle } from "./mobile-push-throttle.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { loadConfig } from "./config.js";
-import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
+import { assertRemoteAccessAllowed, parseRemoteActor, type RemoteActor } from "./remote-access.js";
 import { PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
+import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
+import { countActiveHostedPrincipals } from "./hosted-principals.js";
+import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { serializeFastControlItem } from "./fast-control.js";
 import {
   CORE_API_ROUTES,
@@ -368,6 +371,7 @@ function rejectCors(res: ServerResponse): void {
 export class AimuxDaemon {
   private server: Server | null = null;
   private relayClient: RelayClient | null = null;
+  private hostedServer: HostedServerHandle | null = null;
   private readonly serverSockets = new Set<Socket>();
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly projectActors = new Map<string, CoreProjectActor>();
@@ -417,7 +421,40 @@ export class AimuxDaemon {
     this.refreshState();
     this.scheduleGlobalExposeHotSnapshotRefresh(GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS);
     log.info("daemon started", "daemon", { pid: process.pid, host, port });
+    await this.startHostedListenerIfConfigured();
     this.connectRelayIfConfigured();
+  }
+
+  /**
+   * Bring up the hosted listener when the global config asks for it.
+   *
+   * A failure here never takes the daemon down: hosted mode is an addition to a
+   * working local install, so a bad hosted config should cost you hosted mode
+   * and nothing else. It is loud in the log either way.
+   */
+  private async startHostedListenerIfConfigured(): Promise<void> {
+    const config = loadHostedConfig();
+    if (!config.enabled) return;
+
+    const validation = validateHostedStartup(config, countActiveHostedPrincipals());
+    if (!validation.ok) {
+      log.warn("hosted listener refused to start", "hosted", { error: validation.error });
+      return;
+    }
+
+    try {
+      this.hostedServer = await startHostedServer({
+        config,
+        routeHostedRequest: (actor, method, path, body) => this.routeHostedRequest(actor, method, path, body),
+      });
+    } catch (error) {
+      log.warn("hosted listener failed to bind", "hosted", {
+        host: config.bindAddress,
+        port: config.port,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.hostedServer = null;
+    }
   }
 
   // Resolve relay config from stored credentials (`aimux login`), with env-var
@@ -484,6 +521,11 @@ export class AimuxDaemon {
     this.globalExposeHotSnapshotRefreshing = false;
     this.globalExposeHotSnapshotWorker?.terminate().catch(() => {});
     this.globalExposeHotSnapshotWorker = null;
+    // Close the outside door first, so nothing new arrives while the project
+    // actors below are being torn down.
+    const hosted = this.hostedServer;
+    this.hostedServer = null;
+    if (hosted) await hosted.close().catch(() => {});
     this.relayClient?.disconnect();
     this.relayClient = null;
     const serverClose = this.closeServer();
@@ -2911,7 +2953,40 @@ export class AimuxDaemon {
     return root === null ? null : pathResolve(root);
   }
 
+  /**
+   * The hosted listener's way in.
+   *
+   * Separate from `routeRequest` on purpose. The actor is a required argument
+   * rather than an optional override, because `assertRemoteAccessAllowed`
+   * treats a null actor as local and grants it everything — so an optional
+   * parameter that went missing through a refactor would silently promote a
+   * hosted request to owner. The type system now forbids that call.
+   *
+   * Headers are deliberately NOT forwarded. The caller's Authorization header
+   * carries a live bearer token that has no business reaching a project service
+   * or its logs, and a client-supplied content-length or accept-encoding would
+   * corrupt the proxied request.
+   */
+  async routeHostedRequest(
+    actor: RemoteActor,
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<DaemonRouteResponse> {
+    return this.routeWithActor(actor, method, path, body, {});
+  }
+
   async routeRequest(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+  ): Promise<DaemonRouteResponse> {
+    return this.routeWithActor(parseRemoteActor(headers), method, path, body, headers);
+  }
+
+  private async routeWithActor(
+    actor: RemoteActor | null,
     method: string,
     path: string,
     body?: unknown,
@@ -2920,7 +2995,6 @@ export class AimuxDaemon {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
-    const actor = parseRemoteActor(headers);
     const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams, {
       body,
       // Only operators are bound to a project, and resolving costs a registry
