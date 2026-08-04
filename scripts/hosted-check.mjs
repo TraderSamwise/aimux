@@ -105,6 +105,9 @@ async function main() {
     execFileSync(cli, args, { env, cwd: project, encoding: "utf8", ...options });
 
   let sessionId = null;
+  // Hoisted for the teardown: the project service is its OWN process and
+  // outlives `daemon stop`, so the home cannot be removed until it is gone too.
+  let servicePort = null;
 
   try {
     execFileSync("git", ["init", "-q", "-b", "master", "."], { cwd: project, stdio: "ignore" });
@@ -146,7 +149,6 @@ async function main() {
 
     // Spawning is queued: the tmux window does not exist when the call returns.
     const projects = () => JSON.parse(run(["daemon", "projects", "--json"]));
-    let servicePort = null;
     await poll("the project service to publish its port", 40, 250, () => {
       const entry = projects().projects?.find((candidate) => candidate.serviceEndpoint?.port);
       servicePort = entry?.serviceEndpoint?.port ?? null;
@@ -172,6 +174,9 @@ async function main() {
       });
     const proxy = (subPath) => `/proxy/127.0.0.1/${servicePort}${subPath}`;
     const readOutput = () => hosted(proxy(`/agents/output?sessionId=${encodeURIComponent(sessionId)}`));
+    // Every denial below carries a GRANTED session id, so a 403 can only come
+    // from the route allowlist rather than from naming no session at all.
+    const granted = `sessionId=${encodeURIComponent(sessionId)}`;
 
     console.log("\nthe session responds");
     await poll("the session's pane to come up", 60, 500, async () => (await readOutput()).status === 200);
@@ -191,6 +196,57 @@ async function main() {
       return JSON.stringify(body).includes(`${nonce}-42`);
     });
     expect(echoed, "the session executed the operator's command and returned its output");
+
+    console.log("\nthe stream carries what the session does");
+    {
+      const streamNonce = `hosted-stream-${Date.now()}`;
+      const controller = new AbortController();
+      // Bounded: this body never ends on its own, so without an abort a
+      // regression would hang CI instead of failing it.
+      const guard = setTimeout(() => controller.abort(), 20_000);
+      try {
+        const stream = await hosted(proxy(`/agents/output/stream?${granted}&intervalMs=250`), {
+          signal: controller.signal,
+        });
+        await expectStatus("opening a stream on a granted session", stream, 200);
+        expect(
+          (stream.headers.get("content-type") ?? "").includes("text/event-stream"),
+          "the stream is served as text/event-stream",
+        );
+        // The project service sets a wildcard CORS header on this route; the
+        // listener must synthesize its own rather than forward it.
+        expect(
+          stream.headers.get("access-control-allow-origin") === null,
+          "the stream does not carry the upstream's wildcard CORS header",
+        );
+
+        await hosted(proxy("/agents/input"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId, text: `echo ${streamNonce}-$((6*7))` }),
+        });
+
+        // Same standard as above: the typed line echoes either way, so only the
+        // arithmetic result proves the stream carried real execution.
+        const decoder = new TextDecoder();
+        const reader = stream.body.getReader();
+        let seen = "";
+        let carried = false;
+        while (!carried) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          seen += decoder.decode(value, { stream: true });
+          carried = seen.includes(`${streamNonce}-42`);
+        }
+        await reader.cancel();
+        expect(carried, "the stream delivered the command's output live");
+      } catch (error) {
+        fail(`streaming: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        clearTimeout(guard);
+        controller.abort();
+      }
+    }
 
     console.log("\nthe allowlist holds");
     await expectStatus("no token", await fetch(`http://127.0.0.1:${hostedPort}${proxy("/agents/output")}`), 401);
@@ -216,10 +272,25 @@ async function main() {
     // Every denied route carries a GRANTED session id, so a 403 can only come
     // from the route allowlist. Without one they would 403 for the unrelated
     // reason that no session was named, and prove nothing.
-    const granted = `sessionId=${encodeURIComponent(sessionId)}`;
     await expectStatus("session list", await hosted(proxy(`/agents?${granted}`)), 403);
-    await expectStatus("output stream", await hosted(proxy(`/agents/output/stream?${granted}`)), 403);
+    // The stream is allowed for a GRANTED session, so the denial worth proving
+    // is the ungranted one. `/events` stays refused outright: it is
+    // project-wide, so it would carry other operators' sessions.
+    await expectStatus(
+      "output stream for an ungranted session",
+      await hosted(proxy("/agents/output/stream?sessionId=someone-elses-session")),
+      403,
+    );
     await expectStatus("events", await hosted(proxy(`/events?${granted}`)), 403);
+    await expectStatus(
+      "conflicting session ids across body and query",
+      await hosted(proxy(`/agents/input?sessionId=someone-elses-session`), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, text: "echo hi\n" }),
+      }),
+      403,
+    );
     await expectStatus(
       "spawn",
       await hosted(proxy("/agents/spawn"), {
@@ -267,8 +338,64 @@ async function main() {
     console.log("\nthe audit log");
     const audit = readFileSync(join(home, "hosted", "audit.jsonl"), "utf8");
     expect(audit.includes(principalId), "audit recorded the principal");
-    expect(audit.includes(nonce), "audit recorded the prompt");
     expect(!audit.includes(token), "audit never recorded the token");
+    // Bodies live in their own file so a flood of refused requests cannot push
+    // everyone else's records out of a size-rotated one.
+    const prompts = readFileSync(join(home, "hosted", "audit-prompts.jsonl"), "utf8");
+    expect(prompts.includes(nonce), "the prompt body was kept, in the prompts file");
+    expect(!audit.includes(nonce), "the prompt body is not in the record file");
+    expect(!prompts.includes(token), "the prompts file never recorded the token");
+    expect(
+      audit.includes("hosted_stream_open") && audit.includes("hosted_stream_closed"),
+      "audit recorded the stream opening and closing",
+    );
+
+    console.log("\nrevocation");
+    {
+      // The case the live re-check exists for: a stream authenticates once, at
+      // open, so without it a revoked operator keeps reading until the stream's
+      // own lifetime runs out — and the idle timeout cannot help, because the
+      // project service sends a keepalive on every poll. Asserting only that a
+      // NEW stream is refused would pass with the re-check deleted.
+      const controller = new AbortController();
+      let timedOut = false;
+      const guard = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 30_000);
+      try {
+        const live = await hosted(proxy(`/agents/output/stream?${granted}&intervalMs=250`), {
+          signal: controller.signal,
+        });
+        await expectStatus("a stream open before revocation", live, 200);
+        const reader = live.body.getReader();
+        await reader.read();
+
+        run(["hosted", "token", "revoke", principalId]);
+
+        for (;;) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+        expect(!timedOut, "revoking the token ended the stream already in flight");
+      } catch (error) {
+        fail(`mid-flight revocation: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        clearTimeout(guard);
+        controller.abort();
+      }
+    }
+
+    await expectStatus("granted route after revocation", await readOutput(), 401);
+    await expectStatus(
+      "opening a stream after revocation",
+      await hosted(proxy(`/agents/output/stream?${granted}`)),
+      401,
+    );
+    expect(
+      readFileSync(join(home, "hosted", "audit.jsonl"), "utf8").includes("hosted_stream_closed:revoked"),
+      "the audit says the stream ended because the token was revoked",
+    );
     // One, not three: failed-auth events are throttled per peer so a
     // credential-stuffing run cannot amplify into a webhook flood.
     expect(audit.includes("hosted_auth_failed"), "audit recorded the failed authentication");
@@ -305,30 +432,38 @@ async function main() {
       // No tmux server running: nothing to clean.
     }
 
-    // Wait for the daemon to actually exit before removing its home — it
-    // rewrites state on the way down and would otherwise recreate the
-    // directory we just deleted.
-    await poll("the daemon to exit", 40, 250, async () => {
+    // Wait for the daemon AND the project service to exit before removing the
+    // home. Both rewrite state on the way down and would otherwise recreate the
+    // directory just deleted — and the service is a SEPARATE process, so
+    // `daemon stop` does not settle it. Waiting only on the daemon leaked a
+    // home directory on every single run.
+    const gone = async (port) => {
       try {
-        await fetch(`http://127.0.0.1:${daemonPort}/health`, { signal: AbortSignal.timeout(200) });
+        await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(200) });
         return false;
       } catch {
         return true;
       }
-    });
+    };
+    await poll("the daemon to exit", 40, 250, () => gone(daemonPort));
+    if (servicePort) await poll("the project service to exit", 60, 250, () => gone(servicePort));
 
-    // Retried: a daemon on its way out can write into the tree while rmSync is
-    // walking it, which surfaces as ENOTEMPTY rather than as anything worth
-    // failing the run over.
+    // Removed until it STAYS removed. A daemon writes its state on the way
+    // down, and it stops answering /health before it finishes doing so — so a
+    // successful rmSync is not evidence the tree is gone, only that it was
+    // gone for an instant. Checking afterwards is what makes this reliable;
+    // without it every run left a home directory behind.
     for (const directory of [home, project]) {
-      for (let attempt = 0; attempt < 10; attempt += 1) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
         try {
           rmSync(directory, { recursive: true, force: true });
-          break;
         } catch {
-          await sleep(200);
+          // Mid-write: ENOTEMPTY here is expected, not worth failing the run.
         }
+        await sleep(200);
+        if (!existsSync(directory)) break;
       }
+      if (existsSync(directory)) fail(`leaked ${directory}`);
     }
   }
 

@@ -490,7 +490,11 @@ describe("hosted streaming", () => {
     return start({}, undefined, (actor, method, path) => {
       if (!granted) return { ok: false as const, status: 403, error: "operator is not granted this session" };
       const query = path.slice(path.indexOf("?"));
-      return { ok: true as const, url: `http://127.0.0.1:${upstreamPort}/agents/output/stream${query}` };
+      return {
+        ok: true as const,
+        url: `http://127.0.0.1:${upstreamPort}/agents/output/stream${query}`,
+        projectRoot: "/srv/grand",
+      };
     });
   }
 
@@ -669,6 +673,7 @@ describe("hosted stream teardown", () => {
     const handle = await start({}, undefined, (_actor, _method, path) => ({
       ok: true as const,
       url: `http://127.0.0.1:${upstreamPort}/agents/output/stream${path.slice(path.indexOf("?"))}`,
+      projectRoot: "/srv/grand",
     }));
     const target = url(handle, `/proxy/127.0.0.1/${upstreamPort}/agents/output/stream?sessionId=assistant`);
 
@@ -707,6 +712,7 @@ describe("hosted stream teardown", () => {
     const handle = await start({}, undefined, () => ({
       ok: true as const,
       url: `http://127.0.0.1:${upstreamPort}/agents/output/stream?sessionId=assistant`,
+      projectRoot: "/srv/grand",
     }));
 
     const res = await fetch(url(handle, `/proxy/127.0.0.1/${upstreamPort}/agents/output/stream?sessionId=assistant`), {
@@ -751,6 +757,7 @@ describe("hosted stream bounds", () => {
       (_actor, _method, path) => ({
         ok: true as const,
         url: `http://127.0.0.1:${upstreamPort}/agents/output/stream${path.slice(path.indexOf("?"))}`,
+        projectRoot: "/srv/grand",
       }),
       limits,
     );
@@ -846,5 +853,76 @@ describe("hosted stream bounds", () => {
     const second = await fetch(target, { headers: { authorization: `Bearer ${token}` } });
     expect(second.status).toBe(200);
     await second.body!.cancel();
+  });
+});
+
+describe("hosted stream revocation", () => {
+  let upstream: import("node:http").Server | null = null;
+  let upstreamPort = 0;
+  const sockets = new Set<import("node:net").Socket>();
+
+  afterEach(async () => {
+    await server?.close();
+    server = null;
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+    if (upstream) await new Promise<void>((resolve) => upstream!.close(() => resolve()));
+    upstream = null;
+  });
+
+  it("cuts off a stream whose token is revoked mid-flight", async () => {
+    // A stream authenticates once, at open. Without a live re-check a revoked
+    // operator would keep reading the pane until the ten-minute lifetime ran
+    // out — and the idle timeout cannot save it, because the project service
+    // sends a keepalive on every poll.
+    const { createServer } = await import("node:http");
+    upstream = createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/event-stream");
+      res.write("event: ready\ndata: {}\n\n");
+      const timer = setInterval(() => {
+        if (res.writableEnded) clearInterval(timer);
+        else res.write(": keepalive\n\n");
+      }, 30);
+      timer.unref?.();
+    });
+    upstream.on("connection", (socket) => sockets.add(socket));
+    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    const address = upstream!.address();
+    upstreamPort = typeof address === "object" && address ? address.port : 0;
+
+    const { token, principal } = createHostedPrincipal({ label: "grand" });
+    const handle = await start(
+      {},
+      undefined,
+      () => ({
+        ok: true as const,
+        url: `http://127.0.0.1:${upstreamPort}/agents/output/stream?sessionId=assistant`,
+        projectRoot: "/srv/grand",
+      }),
+      { reauthIntervalMs: 50 },
+    );
+
+    const res = await fetch(url(handle, `/proxy/127.0.0.1/${upstreamPort}/agents/output/stream?sessionId=assistant`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    await reader.read();
+
+    revokeHostedPrincipal(principal.id);
+
+    // Drains to completion once the re-check notices; a hang here is the bug.
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const reasons = readFileSync(getHostedAuditPath(), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => (JSON.parse(line) as { event?: string }).event ?? "");
+    expect(reasons).toContain("hosted_stream_closed:revoked");
   });
 });

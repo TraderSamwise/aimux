@@ -252,6 +252,18 @@ export function findPrincipalByToken(token: string): HostedPrincipal | null {
   return null;
 }
 
+/**
+ * Re-read a principal by id, live.
+ *
+ * Long-lived connections authenticate once, so without this a revocation would
+ * not reach a stream already in flight — the holder would keep reading until
+ * the stream's own lifetime expired. The store is mtime-cached, so calling this
+ * on a timer costs nothing until something actually changes.
+ */
+export function findPrincipalById(id: string): HostedPrincipal | null {
+  return loadHostedPrincipals().principals.find((principal) => principal.id === id) ?? null;
+}
+
 /** Live principals only — a revoked one must not hold a listener open. */
 export function countActiveHostedPrincipals(): number {
   return loadHostedPrincipals().principals.filter((principal) => !principal.revokedAt).length;
