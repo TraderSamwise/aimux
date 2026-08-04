@@ -98,11 +98,15 @@ Third value on `RemoteActorRole`. Rules, enforced in `assertRemoteAccessAllowed`
 
 - Only reachable through the `/proxy/<host>/<port>/<subpath>` form, as guests already are — daemon
   routes are refused outright.
-- Allowed subpaths: `/agents/input`, `/agents/output`, `/agents/interrupt`, and `/agents` (response
-  filtered to granted sessions). Everything else — spawn, fork, stop, kill, migrate, worktrees,
-  services, graveyard, threads, tasks, shell state, plugin runtime — is denied by default. The
-  allowlist is a `Set`, so a new route added elsewhere in the codebase is denied until someone
-  deliberately adds it here.
+- Allowed subpaths: `/agents/input`, `/agents/output`, `/agents/interrupt`. Everything else — spawn,
+  fork, stop, kill, migrate, worktrees, services, graveyard, threads, tasks, shell state, plugin
+  runtime — is denied by default. The allowlist is a map of route to permitted method, so a new
+  route added elsewhere in the codebase is denied until someone deliberately adds it here.
+- `/agents` (list) is **denied**: it returns every session in the project, which would leak other
+  principals' session ids, tools and tasks. A filtered listing needs its own route.
+- The proxied service port is resolved back to a project root, and a grant is checked against that
+  root — not against the session id alone. Resolution requires a *live* service and refuses an
+  ambiguous match, because endpoint records outlive their process and ephemeral ports get recycled.
 - Every allowed request must carry a `sessionId`, and it must appear in the principal's grants.
   Missing session id is a 403, not a fallthrough. This mirrors the existing `shareSessionId` check
   and should share its test shape.
