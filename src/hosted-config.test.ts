@@ -222,6 +222,26 @@ describe("hosted config additions", () => {
     expect(normalizeHostedConfig({ trustedForwardedHeader: 42 }).trustedForwardedHeader).toBeNull();
   });
 
+  it("ignores a forwarded header the tunnel does not set", () => {
+    // The value is trusted whenever the peer is loopback — which behind a tunnel
+    // is every request. A header cloudflared never sets is one the CLIENT sets,
+    // so honouring it would let anyone forge device identity and rotate past the
+    // per-address throttles.
+    for (const header of ["x-real-ip", "forwarded", "x-client-ip"]) {
+      expect(normalizeHostedConfig({ trustedForwardedHeader: header }).trustedForwardedHeader).toBeNull();
+    }
+    for (const header of ["cf-connecting-ip", "x-forwarded-for", "true-client-ip"]) {
+      expect(normalizeHostedConfig({ trustedForwardedHeader: header }).trustedForwardedHeader).toBe(header);
+    }
+  });
+
+  it("does not refuse startup over an unusable forwarded header", () => {
+    // Rejecting at startup would skip hosted mode entirely, taking a running
+    // listener down over a field it can safely ignore.
+    const config = normalizeHostedConfig({ enabled: true, trustedForwardedHeader: "x-real-ip" });
+    expect(validateHostedStartup(config, 1).ok).toBe(true);
+  });
+
   it("clamps retentionDays", () => {
     expect(normalizeHostedConfig({}).retentionDays).toBe(30);
     expect(normalizeHostedConfig({ retentionDays: 7 }).retentionDays).toBe(7);

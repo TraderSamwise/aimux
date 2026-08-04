@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,7 +10,7 @@ import { DEFAULT_HOSTED_CONFIG, type HostedConfig } from "./hosted-config.js";
 import { resetHostedLockdownCache, setHostedLockdown } from "./hosted-lockdown.js";
 import { createHostedPrincipal, loadHostedPrincipals, revokeHostedPrincipal } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
-import { getHostedAuditPath, getHostedPrincipalsPath } from "./paths.js";
+import { getHostedAuditPath, getHostedAuditPromptsPath, getHostedPrincipalsPath } from "./paths.js";
 import type { RemoteActor } from "./remote-access.js";
 
 let previousAimuxHome: string | undefined;
@@ -333,6 +333,53 @@ describe("hosted listener", () => {
     const raw = readFileSync(getHostedAuditPath(), "utf-8");
     expect(raw).not.toContain("commercially sensitive");
     expect(raw).toContain(hashPrompt("commercially sensitive"));
+  });
+
+  it("never stores the body of a refused request", async () => {
+    // The bug this closes: a 403 stored its full body, so a token with NO grants
+    // could flood large refused requests and rotate every other operator's
+    // history out of a size-rotated file.
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ auditPromptBodies: true }, () => ({
+      status: 403,
+      body: { ok: false, error: "operator is not granted this session" },
+    }));
+
+    const response = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "not-granted", text: "refused but sensitive" }),
+    });
+    expect(response.status).toBe(403);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(readFileSync(getHostedAuditPath(), "utf-8")).not.toContain("refused but sensitive");
+    expect(existsSync(getHostedAuditPromptsPath())).toBe(false);
+  });
+
+  it("bounds every caller-controlled field so one record cannot be huge", async () => {
+    // Rotation is size-driven, so a caller who can make records arbitrarily
+    // large pushes everyone else's out of the ring. The body is not the only
+    // field they choose: the session id and the request path are theirs too.
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ maxPromptBytes: 65_536 }, () => ({ status: 403, body: { ok: false } }));
+
+    await fetch(url(handle, `/proxy/127.0.0.1/43210/agents/${"p".repeat(4_000)}`), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "s".repeat(4_000), text: "x" }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const record = readFileSync(getHostedAuditPath(), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { path: string; sessionId: string | null })
+      .find((entry) => entry.path.includes("ppp"));
+
+    expect(record).toBeDefined();
+    expect(record!.path.length).toBeLessThan(300);
+    expect(record!.sessionId!.length).toBeLessThan(300);
   });
 
   it("audits a failed authentication without ever recording the token", async () => {

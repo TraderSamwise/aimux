@@ -50,7 +50,7 @@ import { type MessageKind, type ThreadKind, type ThreadStatus } from "./threads.
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
-import { tailHostedAudit } from "./hosted-audit.js";
+import { tailHostedAudit, tailHostedPrompts } from "./hosted-audit.js";
 import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { hostedLockdownState, setHostedLockdown } from "./hosted-lockdown.js";
 import { raiseHostedCliEvent } from "./hosted-outbox.js";
@@ -1707,16 +1707,36 @@ hostedAuditCmd
   .description("Show the most recent audit records")
   .option("-n, --lines <count>", "How many records", "20")
   .option("--json", "Emit JSON")
-  .action((opts: { lines?: string; json?: boolean }) => {
+  .option("--prompts", "Include the prompt bodies that were kept")
+  .action((opts: { lines?: string; json?: boolean; prompts?: boolean }) => {
     const count = Math.max(1, Number.parseInt(opts.lines ?? "20", 10) || 20);
     const records = tailHostedAudit(count);
+    const bodies = opts.prompts
+      ? tailHostedPrompts(records.flatMap((record) => (record.promptRef ? [record.promptRef] : [])))
+      : new Map();
     if (opts.json) {
-      console.log(JSON.stringify(records, null, 2));
+      console.log(
+        JSON.stringify(
+          opts.prompts
+            ? records.map((record) => ({
+                ...record,
+                prompt: record.promptRef ? (bodies.get(record.promptRef) ?? null) : null,
+              }))
+            : records,
+          null,
+          2,
+        ),
+      );
       return;
     }
     for (const record of records) {
       const what = record.event ? `${record.event} ${record.detail ?? ""}`.trim() : `${record.method} ${record.path}`;
       console.log(`${record.ts}  ${record.label}  ${record.status || "-"}  ${record.sessionId ?? "-"}  ${what}`);
+      const body = record.promptRef ? bodies.get(record.promptRef) : undefined;
+      if (body) {
+        const suffix = body.truncated ? " […]" : "";
+        console.log(`    ${body.promptText.replace(/\n/g, "\n    ")}${suffix}`);
+      }
     }
   });
 
