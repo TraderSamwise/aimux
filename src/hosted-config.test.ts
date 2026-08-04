@@ -188,4 +188,44 @@ describe("validateHostedStartup", () => {
     const config = { ...DEFAULT_HOSTED_CONFIG, enabled: true, webhookUrl: "not-a-url" };
     expect(validateHostedStartup(config, 1).ok).toBe(false);
   });
+
+  it("refuses to sign with a secret from a non-aimux env var", () => {
+    // Otherwise pointing this at PATH or a cloud credential turns the webhook
+    // into a signing oracle over an unrelated secret.
+    for (const name of ["PATH", "AWS_SECRET_ACCESS_KEY", "HOME"]) {
+      const config = { ...DEFAULT_HOSTED_CONFIG, enabled: true, webhookSecretEnv: name };
+      const result = validateHostedStartup(config, 1);
+      expect(result.ok, name).toBe(false);
+      expect(result.ok === false && result.error).toContain("AIMUX_");
+    }
+
+    expect(validateHostedStartup({ ...DEFAULT_HOSTED_CONFIG, enabled: true }, 1)).toEqual({ ok: true });
+    expect(
+      validateHostedStartup({ ...DEFAULT_HOSTED_CONFIG, enabled: true, webhookSecretEnv: "AIMUX_OTHER" }, 1),
+    ).toEqual({ ok: true });
+  });
+
+  it("never echoes the webhook url in an error", () => {
+    const config = { ...DEFAULT_HOSTED_CONFIG, enabled: true, webhookUrl: "not-a-url-secret-token" };
+    const result = validateHostedStartup(config, 1);
+    expect(result.ok === false && result.error).not.toContain("secret-token");
+  });
+});
+
+describe("hosted config additions", () => {
+  it("normalizes trustedForwardedHeader to lower case, defaulting to null", () => {
+    expect(normalizeHostedConfig({}).trustedForwardedHeader).toBeNull();
+    expect(normalizeHostedConfig({ trustedForwardedHeader: "  X-Forwarded-For " }).trustedForwardedHeader).toBe(
+      "x-forwarded-for",
+    );
+    expect(normalizeHostedConfig({ trustedForwardedHeader: "   " }).trustedForwardedHeader).toBeNull();
+    expect(normalizeHostedConfig({ trustedForwardedHeader: 42 }).trustedForwardedHeader).toBeNull();
+  });
+
+  it("clamps retentionDays", () => {
+    expect(normalizeHostedConfig({}).retentionDays).toBe(30);
+    expect(normalizeHostedConfig({ retentionDays: 7 }).retentionDays).toBe(7);
+    expect(normalizeHostedConfig({ retentionDays: 0 }).retentionDays).toBe(30);
+    expect(normalizeHostedConfig({ retentionDays: 99_999 }).retentionDays).toBe(30);
+  });
 });

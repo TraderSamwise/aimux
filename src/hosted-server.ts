@@ -1,9 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 
+import { randomUUID } from "node:crypto";
+
 import { log } from "./debug.js";
 import type { HostedConfig } from "./hosted-config.js";
 import { authenticateHosted, stripTrustedHeaders } from "./hosted-auth.js";
+import { appendHostedAudit, hashPrompt, pruneHostedAudit, type HostedAuditRecord } from "./hosted-audit.js";
+import { clientAddress, HostedEventDelivery, pruneHostedDevices, recordDeviceSighting } from "./hosted-events.js";
 import { markPrincipalSeen, type HostedPrincipal } from "./hosted-principals.js";
 import { HostedRateLimiter } from "./hosted-rate-limit.js";
 import type { RemoteActor } from "./remote-access.js";
@@ -102,6 +106,24 @@ function isProxyPath(pathname: string): boolean {
   return /^\/proxy\/[^/]+\/\d+\/.+/.test(pathname);
 }
 
+/**
+ * The session a record is about, read the same way the access gate read it —
+ * body on POST, query on GET — so the audit names the session that was actually
+ * authorized rather than whichever id happened to appear somewhere.
+ */
+function auditedSessionId(method: string, url: URL, body: unknown): string | null {
+  if (method === "GET") return url.searchParams.get("sessionId")?.trim() || null;
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>).sessionId;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function promptTextOf(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const text = (body as Record<string, unknown>).text;
+  return typeof text === "string" ? text : null;
+}
+
 export async function startHostedServer(options: HostedServerOptions): Promise<HostedServerHandle> {
   const { config, routeHostedRequest } = options;
   const limiter = new HostedRateLimiter({
@@ -126,6 +148,56 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     maxConcurrent: config.rateLimit.maxConcurrent * PEER_BUDGET_MULTIPLIER,
   });
   const sockets = new Set<Socket>();
+  const delivery = new HostedEventDelivery(config);
+  /**
+   * Failed-auth events are throttled per peer.
+   *
+   * A credential-stuffing run is one event worth knowing about, not thousands —
+   * and without this an attacker could turn the daemon into a webhook flood
+   * against whoever receives them.
+   */
+  const authFailureThrottle = new Map<string, number>();
+  const AUTH_FAILURE_WINDOW_MS = 60_000;
+
+  function reportAuthFailure(req: IncomingMessage, headers: Record<string, string>, reason: string): void {
+    const address = clientAddress(req.socket.remoteAddress, headers, config);
+    const key = address ?? "unknown";
+    const last = authFailureThrottle.get(key) ?? 0;
+    if (Date.now() - last < AUTH_FAILURE_WINDOW_MS) return;
+    authFailureThrottle.set(key, Date.now());
+
+    setImmediate(() => {
+      try {
+        const event = {
+          id: randomUUID(),
+          kind: "hosted_auth_failed" as const,
+          ts: new Date().toISOString(),
+          principalId: null,
+          label: null,
+          fingerprint: null,
+          addressKnown: address !== null,
+          userAgent: headers["user-agent"] ?? null,
+          detail: reason,
+        };
+        appendHostedAudit({
+          ts: event.ts,
+          principalId: "-",
+          label: "-",
+          method: req.method ?? "GET",
+          path: "-",
+          sessionId: null,
+          status: 401,
+          requestBytes: 0,
+          responseBytes: 0,
+          event: event.kind,
+          detail: reason,
+        });
+        delivery.enqueue(event);
+      } catch {
+        // Never let reporting a failed login fail anything else.
+      }
+    });
+  }
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((error) => {
@@ -182,6 +254,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
       // Identical response either way: distinguishing "no token" from "wrong
       // token" tells a prober whether a token was recognised.
       send(res, 401, { ok: false, error: "unauthorized" });
+      reportAuthFailure(req, headers, auth.reason);
       return;
     }
 
@@ -196,14 +269,23 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
       return;
     }
 
+    let status = 500;
+    let requestBytes = 0;
+    let responseBytes = 0;
+    let body: unknown;
+    // Captured NOW, not in the deferred block: by the time that runs the socket
+    // may be destroyed and remoteAddress undefined, which would silently change
+    // the device fingerprint and fire a spurious "new device" alert.
+    const address = clientAddress(req.socket.remoteAddress, headers, config);
+
     try {
-      let body: unknown;
       if (method !== "GET" && method !== "HEAD") {
         const read = await readCappedJson(req, config.maxPromptBytes);
         if (!read.ok) {
           const oversized = read.reason === "too_large";
           if (oversized) res.once("finish", () => req.destroy());
-          send(res, oversized ? 413 : 400, {
+          status = oversized ? 413 : 400;
+          send(res, status, {
             ok: false,
             error: oversized ? "request body too large" : "invalid json body",
           });
@@ -214,20 +296,74 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
 
       const result = await routeHostedRequest(auth.actor, method, `${url.pathname}${url.search}`, body);
       const payload = JSON.stringify(result.body ?? null);
-      if (Buffer.byteLength(payload) > config.maxResponseBytes) {
+      responseBytes = Buffer.byteLength(payload);
+      if (responseBytes > config.maxResponseBytes) {
+        status = 502;
         send(res, 502, { ok: false, error: "upstream response too large" });
         return;
       }
+      status = result.status;
       send(res, result.status, result.body);
     } finally {
       slot.release();
-      // After the response, and never blocking on the store lock: a last-seen
-      // stamp is not worth stalling the process that serves every request.
+      // Everything below is bookkeeping: synchronous file writes and a webhook
+      // enqueue have no business on the path that answers the request.
+      const principal = (auth as { principal: HostedPrincipal }).principal;
+      const promptText = promptTextOf(body);
       setImmediate(() => {
         try {
-          markPrincipalSeen((auth as { principal: HostedPrincipal }).principal.id);
-        } catch {
-          // Best effort only.
+          markPrincipalSeen(principal.id);
+          // Re-serializing the body is bookkeeping, so it belongs here rather
+          // than on the path that answers the request.
+          requestBytes = body === undefined ? 0 : Buffer.byteLength(JSON.stringify(body ?? null));
+
+          const record: HostedAuditRecord = {
+            ts: new Date().toISOString(),
+            principalId: principal.id,
+            label: principal.label,
+            method,
+            path: url.pathname,
+            sessionId: auditedSessionId(method, url, body),
+            status,
+            requestBytes,
+            responseBytes,
+          };
+          if (promptText !== null) {
+            record.promptHash = hashPrompt(promptText);
+            if (config.auditPromptBodies) record.promptText = promptText;
+          }
+          appendHostedAudit(record);
+
+          const sighting = recordDeviceSighting({
+            principalId: principal.id,
+            label: principal.label,
+            address,
+            userAgent: headers["user-agent"] ?? null,
+          });
+          if (sighting) {
+            // Audited as well as delivered, so a webhook outage costs
+            // timeliness rather than the record itself.
+            // No method/path/status: an event row is not a request row, and a
+            // consumer counting requests must not double-count it.
+            appendHostedAudit({
+              ts: sighting.ts,
+              principalId: principal.id,
+              label: principal.label,
+              method: "-",
+              path: "-",
+              sessionId: null,
+              status: 0,
+              requestBytes: 0,
+              responseBytes: 0,
+              event: sighting.kind,
+              detail: sighting.fingerprint ?? undefined,
+            });
+            delivery.enqueue(sighting);
+          }
+        } catch (error) {
+          log.warn("hosted post-request bookkeeping failed", "hosted", {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       });
     }
@@ -247,6 +383,17 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
   const pruneTimer = setInterval(() => {
     limiter.prune();
     peerLimiter.prune();
+    for (const [key, at] of authFailureThrottle) {
+      if (Date.now() - at > AUTH_FAILURE_WINDOW_MS) authFailureThrottle.delete(key);
+    }
+    try {
+      pruneHostedAudit(config.retentionDays);
+      pruneHostedDevices(config.retentionDays);
+    } catch (error) {
+      log.warn("hosted retention prune failed", "hosted", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }, PRUNE_INTERVAL_MS);
   pruneTimer.unref?.();
 
@@ -274,6 +421,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     close: () =>
       new Promise<void>((resolve) => {
         clearInterval(pruneTimer);
+        delivery.stop();
         const timer = setTimeout(() => {
           for (const socket of sockets) socket.destroy();
           resolve();
