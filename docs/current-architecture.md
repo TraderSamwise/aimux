@@ -32,6 +32,15 @@ The global daemon owns:
 `AIMUX_DAEMON_PORT` overrides are available for rare sandboxes, but they are not
 a second named CLI workflow.
 
+### Hosted listener (opt-in)
+
+When global config enables it, the daemon also runs a second listener on `43195` for **hosted
+mode** — a bearer-authenticated door for `operator` principals, each pinned to explicitly granted
+sessions. It authenticates, applies limits, and forwards to the same `routeRequest` machinery via a
+separate `routeHostedRequest` entry point that takes a verified actor as a required argument, so a
+hosted request can never be mistaken for a local one. Off by default; see
+[hosted-mode.md](./hosted-mode.md).
+
 Useful commands:
 
 ```bash

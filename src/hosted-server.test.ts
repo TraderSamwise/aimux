@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { atomicWrite } from "./atomic-write.js";
 import { hashPrompt } from "./hosted-audit.js";
 import { DEFAULT_HOSTED_CONFIG, type HostedConfig } from "./hosted-config.js";
+import { resetHostedLockdownCache, setHostedLockdown } from "./hosted-lockdown.js";
 import { createHostedPrincipal, loadHostedPrincipals, revokeHostedPrincipal } from "./hosted-principals.js";
 import { startHostedServer, type HostedServerHandle } from "./hosted-server.js";
 import { getHostedAuditPath, getHostedPrincipalsPath } from "./paths.js";
@@ -54,7 +55,7 @@ describe("hosted listener", () => {
     const handle = await start();
     const res = await fetch(url(handle, "/health"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, mode: "hosted" });
+    expect(await res.json()).toEqual({ ok: true, mode: "hosted", lockdown: false });
     expect(seen).toHaveLength(0);
   });
 
@@ -344,6 +345,40 @@ describe("hosted listener", () => {
     const raw = readFileSync(getHostedAuditPath(), "utf-8");
     expect(raw).toContain("hosted_auth_failed");
     expect(raw).not.toContain("amx_supersecret");
+  });
+
+  it("refuses every route under lockdown but keeps health answering", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start();
+    setHostedLockdown(true);
+    resetHostedLockdownCache();
+
+    try {
+      const refused = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(refused.status).toBe(503);
+      expect(seen).toHaveLength(0);
+
+      // A closed door is not a dead box: the tunnel must still see a healthy
+      // origin, or we lose the ability to observe it at all.
+      const health = await fetch(url(handle, "/health"));
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ ok: true, mode: "hosted", lockdown: true });
+
+      // Unauthenticated requests get the same refusal — lockdown must not
+      // become an oracle for which tokens are real.
+      const anonymous = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"));
+      expect(anonymous.status).toBe(503);
+    } finally {
+      setHostedLockdown(false);
+      resetHostedLockdownCache();
+    }
+
+    const allowed = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/output?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(allowed.status).toBe(200);
   });
 
   it("sets no CORS headers", async () => {

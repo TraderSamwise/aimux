@@ -105,6 +105,7 @@ No commands currently live in this category.
 | `aimux notifications test`                                              | `INTERNAL`  | desktop notifier        | Desktop delivery diagnostic; not a normal project-state command.                    |
 | `aimux logs ...`                                                        | `CUT`       | daemon/filesystem      | Healthy installed diagnostic log access uses `/core/logs/*-text`.                    |
 | `aimux metadata ...`                                                    | `CUT`       | daemon/project service | Agent/runtime integration plumbing uses `/core/metadata-text` to avoid one-shot Node. |
+| `aimux hosted ...`                                                      | `INTERNAL`  | hosted state files     | Operator administration of hosted principals, grants, audit and lockdown. Deliberately not core-routable: it must work while the daemon is down, and lockdown in particular has to be usable when the daemon is what you are shutting the door on. Events it raises are spooled for the daemon to deliver. |
 
 ## Enforcement Rules
 

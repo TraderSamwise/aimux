@@ -8,6 +8,8 @@ import type { HostedConfig } from "./hosted-config.js";
 import { authenticateHosted, stripTrustedHeaders } from "./hosted-auth.js";
 import { appendHostedAudit, hashPrompt, pruneHostedAudit, type HostedAuditRecord } from "./hosted-audit.js";
 import { clientAddress, HostedEventDelivery, pruneHostedDevices, recordDeviceSighting } from "./hosted-events.js";
+import { isHostedLockedDown } from "./hosted-lockdown.js";
+import { drainHostedOutbox } from "./hosted-outbox.js";
 import { markPrincipalSeen, type HostedPrincipal } from "./hosted-principals.js";
 import { HostedRateLimiter } from "./hosted-rate-limit.js";
 import type { RemoteActor } from "./remote-access.js";
@@ -54,6 +56,8 @@ const HEADERS_TIMEOUT_MS = 10_000;
 /** Headroom over the per-principal budget: one peer may carry several tokens. */
 const PEER_BUDGET_MULTIPLIER = 4;
 const PRUNE_INTERVAL_MS = 300_000;
+/** A security alert should not wait five minutes for the next prune tick. */
+const OUTBOX_INTERVAL_MS = 5_000;
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -221,11 +225,22 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
       return;
     }
 
+    const lockedDown = isHostedLockedDown();
+
     // Answered before the limiter and without a credential. It touches no
     // store, so throttling it would only let a flood convince the tunnel that
-    // a healthy daemon is dead.
+    // a healthy daemon is dead — and for the same reason it stays 200 under
+    // lockdown, which is a closed door rather than a dead box.
     if (method === "GET" && url.pathname === "/health") {
-      send(res, 200, { ok: true, mode: "hosted" });
+      send(res, 200, { ok: true, mode: "hosted", lockdown: lockedDown });
+      return;
+    }
+
+    // Checked before authentication: under lockdown nothing should reach the
+    // principal store at all, and a uniform refusal leaks nothing about which
+    // tokens are real.
+    if (lockedDown) {
+      send(res, 503, { ok: false, error: "hosted mode is locked down" });
       return;
     }
 
@@ -380,6 +395,19 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
   server.requestTimeout = REQUEST_TIMEOUT_MS;
   server.headersTimeout = HEADERS_TIMEOUT_MS;
 
+  // Events raised by the CLI live in a spool file; this process holds the
+  // webhook secret and the retry budget, so it is the one that delivers them.
+  const outboxTimer = setInterval(() => {
+    try {
+      for (const event of drainHostedOutbox()) delivery.enqueue(event);
+    } catch (error) {
+      log.warn("hosted outbox drain failed", "hosted", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, OUTBOX_INTERVAL_MS);
+  outboxTimer.unref?.();
+
   const pruneTimer = setInterval(() => {
     limiter.prune();
     peerLimiter.prune();
@@ -421,6 +449,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     close: () =>
       new Promise<void>((resolve) => {
         clearInterval(pruneTimer);
+        clearInterval(outboxTimer);
         delivery.stop();
         const timer = setTimeout(() => {
           for (const socket of sockets) socket.destroy();

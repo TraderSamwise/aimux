@@ -32,6 +32,8 @@ and development.
 ## Operations
 
 - [Deployment](deployment.md)
+- [Hosted mode](hosted-mode.md)
+- [Hosted mode RFC](hosted-mode-rfc.md)
 - [Release readiness gate](release-readiness-gate.md)
 - [Security notifications](security-notifications.md)
 - [Notification system](notification-system.md)

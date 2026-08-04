@@ -179,6 +179,22 @@ User's machine                    Cloud                        User's phone/lapt
             Daemon: HS256 minted by relay     App: Clerk session JWT
 ```
 
+## Hosted Mode (multi-operator, opt-in)
+
+The relay gives one owner remote access to their own machine. **Hosted mode** is the other shape:
+one machine, several principals, each pinned to the sessions they were granted, authenticated by
+bearer token rather than Clerk. It is off by default and configured in the global config only.
+
+```bash
+aimux hosted status
+aimux hosted token create --label "someone@example.com"
+aimux hosted grant prn_a1b2c3 --project /srv/project --session assistant
+aimux hosted lockdown on
+```
+
+Keep the listener on loopback and put a tunnel in front of it — there is no TLS here, and binding
+off-loopback with no active principals is refused. Full guide: [hosted mode](hosted-mode.md).
+
 ## Security Notes
 
 - The relay verifies tokens by shape: app connections present a Clerk session
