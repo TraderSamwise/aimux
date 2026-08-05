@@ -19,6 +19,15 @@ export interface HostedRateLimitConfig {
   requestsPerMinute: number;
   /** Per-principal in-flight request ceiling. */
   maxConcurrent: number;
+  /**
+   * Per-principal upload volume ceiling.
+   *
+   * Counting requests is not enough once one request may carry megabytes: the
+   * grant check runs after the body has been read, so a token holding NO
+   * grants can still make the listener buffer an attachment-sized body 60
+   * times a minute. This bounds the bytes rather than the attempts.
+   */
+  bytesPerMinute: number;
 }
 
 export interface HostedConfig {
@@ -28,6 +37,20 @@ export interface HostedConfig {
   rateLimit: HostedRateLimitConfig;
   maxPromptBytes: number;
   maxResponseBytes: number;
+  /**
+   * Body ceiling for the attachment routes only, in ENCODED bytes.
+   *
+   * Separate from `maxPromptBytes` because 16 KB is a good limit on a prompt
+   * and a useless one on an image, and raising it globally would let an
+   * operator push megabyte prompts into an append-only audit sink.
+   *
+   * Encoded, not decoded, and that distinction is the whole point of the name:
+   * an upload arrives as base64 inside JSON, which is 4/3 the size of the
+   * image plus an envelope. Set below ~14 MB and the project service's own
+   * 10 MB image limit stops being the binding one — uploads would fail here
+   * first, with a transport error instead of a useful message.
+   */
+  maxAttachmentBytes: number;
   /** Persist prompt text in the audit log, not just its hash. */
   auditPromptBodies: boolean;
   webhookUrl: string | null;
@@ -51,9 +74,13 @@ export const DEFAULT_HOSTED_CONFIG: HostedConfig = {
   rateLimit: {
     requestsPerMinute: 60,
     maxConcurrent: 4,
+    // Roughly three full-size attachments a minute.
+    bytesPerMinute: 48 * 1024 * 1024,
   },
   maxPromptBytes: 16_384,
   maxResponseBytes: 1_048_576,
+  // 10 MB of image, base64'd, plus room for the JSON envelope.
+  maxAttachmentBytes: 14 * 1024 * 1024,
   auditPromptBodies: true,
   webhookUrl: null,
   webhookSecretEnv: "AIMUX_HOSTED_WEBHOOK_SECRET",
@@ -140,8 +167,24 @@ export function normalizeHostedConfig(raw: unknown): HostedConfig {
         100_000,
       ),
       maxConcurrent: boundedInt(rateLimitRaw.maxConcurrent, DEFAULT_HOSTED_CONFIG.rateLimit.maxConcurrent, 1, 1_000),
+      bytesPerMinute: boundedInt(
+        rateLimitRaw.bytesPerMinute,
+        DEFAULT_HOSTED_CONFIG.rateLimit.bytesPerMinute,
+        64 * 1024,
+        1_073_741_824,
+      ),
     },
     maxPromptBytes: boundedInt(value.maxPromptBytes, DEFAULT_HOSTED_CONFIG.maxPromptBytes, 1, 10_485_760),
+    // Floored at the default prompt cap rather than the configured one, so
+    // this stays a pure function of its own field. Setting it below a raised
+    // maxPromptBytes is merely odd — the attachment routes would be stricter
+    // than ordinary ones — not unsafe.
+    maxAttachmentBytes: boundedInt(
+      value.maxAttachmentBytes,
+      DEFAULT_HOSTED_CONFIG.maxAttachmentBytes,
+      16_384,
+      104_857_600,
+    ),
     // Floored: a tiny response cap truncates every reply and reads as an outage.
     maxResponseBytes: boundedInt(value.maxResponseBytes, DEFAULT_HOSTED_CONFIG.maxResponseBytes, 4_096, 104_857_600),
     auditPromptBodies: boolOr(value.auditPromptBodies, DEFAULT_HOSTED_CONFIG.auditPromptBodies),

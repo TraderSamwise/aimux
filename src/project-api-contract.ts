@@ -1254,3 +1254,15 @@ export interface GraveyardCleanupResponse extends ProjectApiOk {
   dryRun?: boolean;
   [k: string]: unknown;
 }
+
+/**
+ * Does this project-service route answer with raw bytes instead of JSON?
+ *
+ * Lives here, beside the route table, because every layer that proxies a
+ * project service has to agree on it: a route treated as JSON when it is not
+ * arrives at the client as a mangled object, and one treated as bytes when it
+ * is JSON loses its parse. The daemon proxy is the only caller today.
+ */
+export function isBinaryProjectRoute(subPath: string): boolean {
+  return /^\/attachments\/[^/]+\/content$/.test(subPath);
+}

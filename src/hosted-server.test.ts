@@ -22,7 +22,7 @@ const config: HostedConfig = { ...DEFAULT_HOSTED_CONFIG, enabled: true, port: 0,
 
 async function start(
   overrides: Partial<HostedConfig> = {},
-  response?: () => { status: number; body: unknown },
+  response?: () => { status: number; body: unknown; contentType?: string },
   resolveHostedStream?: (
     actor: RemoteActor,
     method: string,
@@ -185,9 +185,134 @@ describe("hosted listener", () => {
     expect(res.status).toBe(502);
   });
 
+  it("serves an image as bytes rather than a stringified Buffer", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const pixel = Buffer.from("89504e470d0a1a0a", "hex");
+    const handle = await start({}, () => ({ status: 200, body: pixel, contentType: "image/png" }));
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/attachments/att_x/content?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(Buffer.from(await res.arrayBuffer()).equals(pixel)).toBe(true);
+  });
+
+  /**
+   * A Buffer through JSON.stringify becomes `{"type":"Buffer","data":[…]}`,
+   * six times the size and useless to a client. Asserting the exact bytes
+   * above is what catches that; this covers the other half — what the listener
+   * agrees to serve at all.
+   */
+  it("refuses to serve an upstream content type outside its allowlist", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    for (const contentType of ["image/svg+xml", "text/html", "application/octet-stream", undefined]) {
+      const handle = await start({}, () => ({ status: 200, body: Buffer.from("x"), contentType }));
+      const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/attachments/att_x/content?sessionId=s"), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.status, String(contentType)).toBe(502);
+      await server?.close();
+      server = null;
+    }
+  });
+
+  it("gives the attachment routes their own body ceiling", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    // maxPromptBytes is 256 in this suite's config; an attachment may exceed it.
+    const handle = await start({ maxAttachmentBytes: 8_192 });
+    const payload = JSON.stringify({ sessionId: "s", dataBase64: "A".repeat(2_000) });
+
+    const attachment = await fetch(url(handle, "/proxy/127.0.0.1/43210/attachments"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: payload,
+    });
+    expect(attachment.status).toBe(200);
+
+    // The same body on an ordinary route is still refused by the prompt cap.
+    const prompt = await fetch(url(handle, "/proxy/127.0.0.1/43210/agents/input"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: payload,
+    });
+    expect(prompt.status).toBe(413);
+  });
+
+  /**
+   * The grant check runs after the body is read, so counting requests alone
+   * leaves a token with no grants able to make the listener buffer a full
+   * attachment on every attempt. This bounds the bytes instead.
+   */
+  /**
+   * A refused request has already been read and buffered in full, so refusing
+   * for free would leave the budget bounding nothing: a client that ignores
+   * the 429 would cost exactly as much as one that respects it.
+   */
+  it("does not hand out free retries once the byte budget is spent", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({
+      maxAttachmentBytes: 8_192,
+      rateLimit: { requestsPerMinute: 60, maxConcurrent: 4, bytesPerMinute: 4_096 },
+    });
+    const big = JSON.stringify({ sessionId: "s", dataBase64: "A".repeat(3_000) });
+    const small = JSON.stringify({ sessionId: "s", dataBase64: "A" });
+
+    const post = (payload: string) =>
+      fetch(url(handle, "/proxy/127.0.0.1/43210/attachments"), {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: payload,
+      });
+
+    expect((await post(big)).status).toBe(200);
+    expect((await post(big)).status).toBe(429);
+    // The refusal emptied the bucket, so even a tiny body is now refused.
+    expect((await post(small)).status).toBe(429);
+  });
+
+  it("forwards an upstream JSON error on a binary route with its real status", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({}, () => ({
+      status: 404,
+      body: { ok: false, error: "attachment not found" },
+    }));
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/attachments/att_x/content?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    // Not 502: "no such attachment" and "the box is broken" must not look the
+    // same to a client deciding whether to retry.
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ ok: false, error: "attachment not found" });
+  });
+
+  it("charges uploads against a per-principal byte budget", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({
+      maxAttachmentBytes: 8_192,
+      rateLimit: { requestsPerMinute: 60, maxConcurrent: 4, bytesPerMinute: 4_096 },
+    });
+    const payload = JSON.stringify({ sessionId: "s", dataBase64: "A".repeat(3_000) });
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/attachments"), {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: payload,
+      });
+      statuses.push(res.status);
+    }
+    expect(statuses).toEqual([200, 429]);
+  });
+
   it("rate limits per principal", async () => {
     const { token } = createHostedPrincipal({ label: "grand" });
-    const handle = await start({ rateLimit: { requestsPerMinute: 2, maxConcurrent: 4 } });
+    const handle = await start({ rateLimit: { requestsPerMinute: 2, maxConcurrent: 4, bytesPerMinute: 1_048_576 } });
 
     const statuses: number[] = [];
     for (let i = 0; i < 3; i += 1) {
@@ -328,6 +453,33 @@ describe("hosted listener", () => {
 
     // The first sighting of a principal is recorded even if no webhook exists.
     expect(written.some((line) => line.event === "hosted_token_first_use")).toBe(true);
+  });
+
+  /**
+   * The refusal happens inside sendBytes, after the caller has the upstream's
+   * status in hand. Recording that one would give a log that disagrees with
+   * what the client received — worse than no log at all.
+   */
+  it("audits the status it actually sent when it refuses a content type", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({}, () => ({
+      status: 200,
+      body: Buffer.from("<svg/>"),
+      contentType: "image/svg+xml",
+    }));
+
+    const res = await fetch(url(handle, "/proxy/127.0.0.1/43210/attachments/att_x/content?sessionId=s"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(502);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const entry = readFileSync(getHostedAuditPath(), "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((line) => !line.event)!;
+    expect(entry.status).toBe(502);
   });
 
   it("omits prompt text from the audit when bodies are not audited", async () => {

@@ -19,13 +19,15 @@ access. It is off by default, and its own page argues about when not to use it.
 
 ## What an operator can do
 
-Exactly three routes, on sessions explicitly granted to them:
+Exactly five routes, on sessions explicitly granted to them:
 
 | | |
 |---|---|
 | `GET /agents/output` | read the session's pane |
 | `POST /agents/input` | send it text |
 | `POST /agents/interrupt` | interrupt a running turn |
+| `POST /attachments` | upload an image to the session |
+| `GET /attachments/<id>/content` | read one back |
 
 Plus one streaming route:
 
@@ -38,6 +40,31 @@ graveyard, threads, tasks, shell state — is refused, as are all daemon-level r
 session list) is refused too: it returns every session in the project, which would leak other
 operators' session ids. So is `/events`: it is project-wide rather than per-session, so it would
 carry other operators' sessions to whoever subscribed.
+
+### Attachments
+
+Attachments are bound to a session at upload, and every route that can reach one checks that
+binding. An operator's grant is a session, so without the binding there would be nothing to check a
+claim against — the store was project-scoped while grants are session-scoped.
+
+Three things make this hold:
+
+- `/attachments/<id>/content` is matched by **pattern** rather than by name, because the id is in
+  the path. The character class admits no `.`, `/`, `%`, `;` or `?`, so a traversal, an encoded
+  slash or a matrix parameter cannot ride inside the id and land on another route. The path has
+  already been through `new URL()` by then, so this is the second defence, not the only one.
+- The reply is **bytes**, on the one proxied route that is not JSON. `JSON.stringify` on a Buffer
+  yields `{"type":"Buffer","data":[…]}` — six times the size and no longer an image. The content
+  type comes from a fixed allowlist (png, jpeg, webp, gif) and is never echoed from upstream; SVG
+  is excluded deliberately, being a script-execution vector wearing an image's name.
+- `POST /agents/input` refuses an `attachmentIds` entry that belongs to another session. This is
+  the one that matters most: the agent reads attachments off local disk, so those bytes never cross
+  the transport where any of the above could see them.
+
+Uploads get their own body ceiling (`maxAttachmentBytes`) rather than the prompt one, and are
+charged against a per-principal **byte** budget as well as the request budget — the grant check runs
+after the body has been read, so counting requests alone would let a token with no grants make the
+listener buffer a full attachment on every attempt.
 
 ### Streaming
 
@@ -82,9 +109,10 @@ is stripped on load.
     "enabled": true,
     "bindAddress": "127.0.0.1",
     "port": 43195,
-    "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4 },
+    "rateLimit": { "requestsPerMinute": 60, "maxConcurrent": 4, "bytesPerMinute": 50331648 },
     "maxPromptBytes": 16384,
     "maxResponseBytes": 1048576,
+    "maxAttachmentBytes": 14680064,
     "auditPromptBodies": true,
     "webhookUrl": "https://example.com/api/webhooks/aimux",
     "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",

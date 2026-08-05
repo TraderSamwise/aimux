@@ -22,6 +22,78 @@ export function isHttpTimeoutError(error: unknown): boolean {
   return code === "ETIMEDOUT";
 }
 
+export interface HttpBytesResponse {
+  status: number;
+  body: Buffer;
+  contentType: string | null;
+}
+
+export class HttpBodyTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`response exceeded ${maxBytes} bytes`);
+    this.name = "HttpBodyTooLargeError";
+  }
+}
+
+/**
+ * Fetch a response as raw bytes.
+ *
+ * The binary twin of `requestJson`, for routes that answer with an image
+ * rather than an object. It exists because running those through the JSON path
+ * does not merely lose the content type — `JSON.stringify` on a Buffer yields
+ * `{"type":"Buffer","data":[…]}`, roughly six times the size, which then trips
+ * whatever response ceiling is in force at a fraction of the real limit.
+ *
+ * `maxBytes` is enforced mid-stream rather than after buffering, for the same
+ * reason the request side does it: a cap applied to something already held in
+ * memory has not capped anything.
+ */
+export async function requestBinary(
+  urlString: string,
+  options: { method?: string; headers?: Record<string, string>; timeoutMs?: number; maxBytes?: number } = {},
+): Promise<HttpBytesResponse> {
+  const url = new URL(urlString);
+  const logUrl = `${url.origin}${url.pathname}`;
+  const transport = url.protocol === "https:" ? https : http;
+  const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
+
+  return await new Promise<HttpBytesResponse>((resolve, reject) => {
+    const method = options.method ?? "GET";
+    const req = transport.request(url, { method, headers: options.headers ?? {}, agent: false }, (res) => {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      res.on("data", (chunk) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buffer.byteLength;
+        if (total > maxBytes) {
+          req.destroy(new HttpBodyTooLargeError(maxBytes));
+          return;
+        }
+        chunks.push(buffer);
+      });
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode ?? 0,
+          body: Buffer.concat(chunks),
+          contentType: res.headers["content-type"] ?? null,
+        });
+      });
+    });
+    req.on("error", (error) => {
+      log.warn("http binary request failed", "http", {
+        method,
+        url: logUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      reject(error);
+    });
+    req.setTimeout(options.timeoutMs ?? 0, () => {
+      req.destroy(new HttpTimeoutError(options.timeoutMs ?? 0));
+    });
+    req.end();
+  });
+}
+
 export async function requestJson<T = any>(
   urlString: string,
   options: {
