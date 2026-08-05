@@ -12,6 +12,11 @@ export const PROJECT_SERVICE_CAPABILITIES = {
   parsedAgentOutput: true,
   attachmentRead: true,
   chatEventStream: true,
+  // The pane projected into messages, server-side. Additive: a client that
+  // does not know the field still gets `parsed` and can map it itself, which
+  // is why this is a capability and not an apiVersion bump — that number
+  // decides whether a running service is killed and respawned.
+  agentTranscriptMessages: true,
 } as const;
 
 export interface ProjectServiceManifest {

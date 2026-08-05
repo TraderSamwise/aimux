@@ -1,3 +1,5 @@
+import type { AgentTranscriptMessage } from "./agent-transcript.js";
+
 export const PROJECT_API_ROUTES = {
   events: "/events",
   health: "/health",
@@ -379,6 +381,15 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
   output: string;
   startLine?: number;
   parsed?: unknown;
+  /**
+   * The pane as a conversation, projected server-side.
+   *
+   * Present when the service reports the `agentTranscriptMessages` capability.
+   * Clients should prefer it to mapping `parsed` themselves: the mapping reads
+   * block shapes this service produces, and a client that owns its own copy
+   * falls behind the parser without knowing.
+   */
+  messages?: AgentTranscriptMessage[];
 }
 
 export interface AgentOutputStreamInput extends LivePaneOutputInput {
