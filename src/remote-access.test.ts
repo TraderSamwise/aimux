@@ -84,6 +84,68 @@ describe("operator route allowlist", () => {
     }
   });
 
+  it("allows the attachment routes an operator needs", () => {
+    expect(
+      allow(operator(), "GET", PORT_PATH("/attachments/att_abc123/content"), {
+        query: `?sessionId=${SESSION}`,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      allow(operator(), "POST", PORT_PATH(PROJECT_API_ROUTES.attachments), { body: { sessionId: SESSION } }),
+    ).toEqual({ ok: true });
+  });
+
+  it("binds attachment content to the granted session like every other route", () => {
+    expect(
+      allow(operator(), "GET", PORT_PATH("/attachments/att_abc123/content"), {
+        query: "?sessionId=someone-else",
+      }).ok,
+    ).toBe(false);
+    // No session named at all: the gate refuses before the service is reached,
+    // which is what lets the service treat "names a session" as "is remote".
+    expect(allow(operator(), "GET", PORT_PATH("/attachments/att_abc123/content")).ok).toBe(false);
+  });
+
+  /**
+   * The id sits inside the path, so the pattern is the only thing standing
+   * between a well-formed request and a different route. Each of these is a
+   * way of writing something other than an attachment id and having it read as
+   * one.
+   */
+  it("refuses every attempt to smuggle another route through the attachment pattern", () => {
+    const smuggled = [
+      // Traversal, raw and percent-encoded. new URL() resolves the first into
+      // a different path entirely; the character class stops the second.
+      "/attachments/att_x/content/../../agents/spawn",
+      "/attachments/..%2f..%2fagents%2fspawn/content",
+      "/attachments/%2e%2e/%2e%2e/agents/spawn/content",
+      // An encoded slash trying to make one segment look like two.
+      "/attachments/att%2fx/content",
+      // Matrix parameter, empty id, extra segment, trailing slash.
+      "/attachments/att_x;a=b/content",
+      "/attachments//content",
+      "/attachments/att_x/content/extra",
+      "/attachments/att_x/content/",
+      // The metadata route, deliberately not exposed.
+      "/attachments/att_x",
+      // A path that merely starts the same way.
+      "/attachments/att_x/contentious",
+    ];
+    for (const path of smuggled) {
+      const result = allow(operator(), "GET", PORT_PATH(path), { query: `?sessionId=${SESSION}` });
+      expect(result.ok, `GET ${path}`).toBe(false);
+    }
+  });
+
+  it("enforces the method on the pattern-matched route too", () => {
+    expect(
+      allow(operator(), "POST", PORT_PATH("/attachments/att_abc123/content"), { body: { sessionId: SESSION } }).ok,
+    ).toBe(false);
+    expect(
+      allow(operator(), "GET", PORT_PATH(PROJECT_API_ROUTES.attachments), { query: `?sessionId=${SESSION}` }).ok,
+    ).toBe(false);
+  });
+
   it("denies daemon routes outside the proxy form", () => {
     expect(allow(operator(), "GET", "/health").ok).toBe(false);
     expect(allow(operator(), "GET", PROJECT_API_ROUTES.agents.output).ok).toBe(false);

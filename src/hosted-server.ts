@@ -142,6 +142,49 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
+ * Content types this listener will serve as bytes.
+ *
+ * A fixed list, and the upstream's own header is never echoed into it. Two
+ * reasons: the project service sets `access-control-allow-origin: *` on its
+ * routes, so copying its headers onto an authenticated surface is a hole; and
+ * a content type chosen by whatever produced the file is how a stored upload
+ * gets served back as something executable. SVG is absent on purpose — it is a
+ * script-execution vector wearing an image's name.
+ */
+const SERVABLE_BINARY_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+/**
+ * Returns what was ACTUALLY sent, because it may refuse and answer 502 itself.
+ * The caller records the result in the audit log, and a log that reports the
+ * status the upstream wanted rather than the one the client received is worse
+ * than no log — it is a log that disagrees with reality.
+ */
+function sendBytes(
+  res: ServerResponse,
+  status: number,
+  body: Buffer,
+  contentType: string | undefined,
+): { status: number; bytes: number } {
+  const declared = (contentType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!SERVABLE_BINARY_TYPES.has(declared)) {
+    const payload = { ok: false, error: "upstream returned an unsupported content type" };
+    send(res, 502, payload);
+    return { status: 502, bytes: Buffer.byteLength(JSON.stringify(payload)) };
+  }
+  res.statusCode = status;
+  res.setHeader("content-type", declared);
+  res.setHeader("content-length", body.byteLength);
+  res.setHeader("cache-control", "no-store");
+  // The type is from our allowlist, so sniffing can only ever disagree with a
+  // correct answer.
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("content-disposition", "inline");
+  res.setHeader("connection", "close");
+  res.end(body);
+  return { status, bytes: body.byteLength };
+}
+
+/**
  * Read a JSON body, refusing anything over the cap mid-stream.
  *
  * Buffering first and checking afterwards would make the size limit useless
@@ -151,7 +194,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 async function readCappedJson(
   req: IncomingMessage,
   maxBytes: number,
-): Promise<{ ok: true; body: unknown } | { ok: false; reason: "too_large" | "invalid_json" }> {
+): Promise<{ ok: true; body: unknown; bytes: number } | { ok: false; reason: "too_large" | "invalid_json" }> {
   const chunks: Buffer[] = [];
   let total = 0;
 
@@ -170,9 +213,12 @@ async function readCappedJson(
   }
 
   const raw = Buffer.concat(chunks).toString("utf8").trim();
-  if (!raw) return { ok: true, body: {} };
+  // The size is returned rather than recomputed later: the audit record needs
+  // it, and re-serializing the parsed body to measure it would make a second
+  // full copy of an attachment-sized upload on the shared event loop.
+  if (!raw) return { ok: true, body: {}, bytes: total };
   try {
-    return { ok: true, body: JSON.parse(raw) };
+    return { ok: true, body: JSON.parse(raw), bytes: total };
   } catch {
     return { ok: false, reason: "invalid_json" };
   }
@@ -180,6 +226,19 @@ async function readCappedJson(
 
 function isProxyPath(pathname: string): boolean {
   return /^\/proxy\/[^/]+\/\d+\/.+/.test(pathname);
+}
+
+/**
+ * Which requests get the larger body ceiling.
+ *
+ * Matched loosely on purpose: it decides only how many bytes may be BUFFERED,
+ * never who may reach anything. A path that looks like an attachment route but
+ * is not still faces the same allowlist and the same grant check a moment
+ * later, so the worst a false positive can do is let an authenticated
+ * principal spend its own byte budget faster.
+ */
+function isAttachmentProxyPath(pathname: string): boolean {
+  return isProxyPath(pathname) && /\/attachments(\/|$)/.test(pathname);
 }
 
 /**
@@ -255,6 +314,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
   const limiter = new HostedRateLimiter({
     requestsPerMinute: config.rateLimit.requestsPerMinute,
     maxConcurrent: config.rateLimit.maxConcurrent,
+    bytesPerMinute: config.rateLimit.bytesPerMinute,
   });
   /**
    * Applied before authentication, keyed by peer address.
@@ -272,6 +332,9 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
   const peerLimiter = new HostedRateLimiter({
     requestsPerMinute: config.rateLimit.requestsPerMinute * PEER_BUDGET_MULTIPLIER,
     maxConcurrent: config.rateLimit.maxConcurrent * PEER_BUDGET_MULTIPLIER,
+    // Never charged — see the note at the `limiter.charge` call. Present only
+    // because the option is required; it bounds nothing here.
+    bytesPerMinute: config.rateLimit.bytesPerMinute * PEER_BUDGET_MULTIPLIER,
   });
   const sockets = new Set<Socket>();
   const delivery = new HostedEventDelivery(config);
@@ -689,9 +752,15 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     // the device fingerprint and fire a spurious "new device" alert.
     const address = clientAddress(req.socket.remoteAddress, headers, config);
 
+    // 16 KB is the right ceiling on a prompt and a useless one on an image, so
+    // the attachment routes get their own. Raising the prompt cap instead
+    // would let an operator push megabytes into an append-only audit sink.
+    const attachmentRoute = isAttachmentProxyPath(url.pathname);
+    const bodyCap = attachmentRoute ? config.maxAttachmentBytes : config.maxPromptBytes;
+
     try {
       if (method !== "GET" && method !== "HEAD") {
-        const read = await readCappedJson(req, config.maxPromptBytes);
+        const read = await readCappedJson(req, bodyCap);
         if (!read.ok) {
           const oversized = read.reason === "too_large";
           if (oversized) res.once("finish", () => req.destroy());
@@ -702,10 +771,38 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
           });
           return;
         }
+        requestBytes = read.bytes;
+        // Charged before routing, because routing is where authorization
+        // happens and the bytes have already been spent by then. Without this
+        // a token holding no grants at all could still make the listener
+        // buffer a full attachment on every one of its 60 requests a minute.
+        //
+        // The peer budget is deliberately not charged: behind a tunnel every
+        // request shares one peer address, so a byte ceiling there would let
+        // one admin's upload refuse everyone else's.
+        if (!limiter.charge(auth.principal.id, read.bytes)) {
+          status = 429;
+          send(res, 429, { ok: false, error: "upload volume limit exceeded" });
+          return;
+        }
         body = read.body;
       }
 
       const result = await routeHostedRequest(auth.actor, method, `${url.pathname}${url.search}`, body);
+
+      if (Buffer.isBuffer(result.body)) {
+        if (result.body.byteLength > config.maxAttachmentBytes) {
+          status = 502;
+          responseBytes = result.body.byteLength;
+          send(res, 502, { ok: false, error: "upstream response too large" });
+          return;
+        }
+        const sent = sendBytes(res, result.status, result.body, result.contentType);
+        status = sent.status;
+        responseBytes = sent.bytes;
+        return;
+      }
+
       const payload = JSON.stringify(result.body ?? null);
       responseBytes = Buffer.byteLength(payload);
       if (responseBytes > config.maxResponseBytes) {
@@ -724,9 +821,10 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
       setImmediate(() => {
         try {
           markPrincipalSeen(principal.id);
-          // Re-serializing the body is bookkeeping, so it belongs here rather
-          // than on the path that answers the request.
-          requestBytes = body === undefined ? 0 : Buffer.byteLength(JSON.stringify(body ?? null));
+          // `requestBytes` was measured as the body streamed in. Re-serializing
+          // the parsed body to measure it here would make a second full copy of
+          // an attachment-sized upload, on the event loop every other request
+          // shares.
 
           const record: HostedAuditRecord = {
             ts: new Date().toISOString(),

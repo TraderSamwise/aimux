@@ -6,7 +6,7 @@ import type { Worker } from "node:worker_threads";
 import { ensureProjectPaths, getProjectIdFor, getProjectStateDirById, initPaths } from "./paths.js";
 import { listRegisteredDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpointByProjectId, removeMetadataEndpoint } from "./metadata-store.js";
-import { requestJson } from "./http-client.js";
+import { requestBinary, requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 import { listAllProjectsExposeItems } from "./expose-control.js";
 import { getExposePreviewSnapshot, trackExposePreviewItems } from "./expose-preview-cache.js";
@@ -20,7 +20,7 @@ import {
   parseRemoteActor,
   type RemoteActor,
 } from "./remote-access.js";
-import { PROJECT_API_ROUTES } from "./project-api-contract.js";
+import { isBinaryProjectRoute, PROJECT_API_ROUTES } from "./project-api-contract.js";
 import { parseProxyTarget, resolveProjectRootForServiceTarget } from "./proxy-project-binding.js";
 import { loadHostedConfig, validateHostedStartup } from "./hosted-config.js";
 import { countActiveHostedPrincipals } from "./hosted-principals.js";
@@ -189,6 +189,15 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
+/**
+ * Ceiling on a proxied binary reply, so the daemon cannot be made to buffer an
+ * unbounded response from a project service.
+ *
+ * Above the hosted listener's own attachment cap on purpose: this is the outer
+ * limit of what the daemon will hold, not the policy on what an operator may
+ * fetch. The listener refuses first, with a message that means something.
+ */
+const PROXY_MAX_BINARY_BYTES = 16 * 1024 * 1024;
 const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_SERVER_CLOSE_GRACE_MS = 500;
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 3500;
@@ -336,7 +345,10 @@ function requestHeaders(req: IncomingMessage): Record<string, string> {
 
 function send(res: ServerResponse, status: number, body: unknown, contentType = "application/json"): void {
   if (res.headersSent || res.writableEnded) return;
-  const payload = contentType.startsWith("text/") ? String(body) : JSON.stringify(body);
+  // A Buffer must go out untouched. Falling through to JSON.stringify turns it
+  // into {"type":"Buffer","data":[…]} — six times the size, served under an
+  // image content type, and no longer an image.
+  const payload = Buffer.isBuffer(body) ? body : contentType.startsWith("text/") ? String(body) : JSON.stringify(body);
   res.statusCode = status;
   res.setHeader("content-type", contentType);
   res.setHeader("content-length", Buffer.byteLength(payload));
@@ -3630,7 +3642,33 @@ export class AimuxDaemon {
         return { status: 403, body: { ok: false, error: "proxy host not allowed" } };
       }
       try {
-        const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}${routeUrl.search}`, {
+        const target = `http://${host}:${portStr}${subPath}${routeUrl.search}`;
+        if (method === "GET" && isBinaryProjectRoute(subPath)) {
+          const binary = await requestBinary(target, {
+            method,
+            headers,
+            timeoutMs: PROXY_TIMEOUT_MS,
+            maxBytes: PROXY_MAX_BINARY_BYTES,
+          });
+          const upstreamType = binary.contentType ?? "";
+          // A binary ROUTE does not guarantee a binary REPLY: the service
+          // answers JSON for a missing attachment and for one belonging to
+          // another session, which is the most common outcome a client sees.
+          // Forwarding those as bytes would strip the status down to a generic
+          // failure and turn "no such attachment" into "the box is broken".
+          if (!upstreamType.startsWith("image/")) {
+            const text = binary.body.toString("utf8").trim();
+            try {
+              return { status: binary.status, body: text ? JSON.parse(text) : null };
+            } catch {
+              return { status: 502, body: { ok: false, error: "upstream returned an unreadable response" } };
+            }
+          }
+          // The type is reported, never trusted: the listener picks what it is
+          // willing to serve from its own allowlist.
+          return { status: binary.status, body: binary.body, contentType: upstreamType };
+        }
+        const { status, json } = await requestJson(target, {
           method,
           headers,
           body: body !== undefined ? body : undefined,

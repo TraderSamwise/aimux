@@ -75,7 +75,11 @@ describe("normalizeHostedConfig", () => {
     expect(normalized.enabled).toBe(false);
     expect(normalized.bindAddress).toBe("127.0.0.1");
     expect(normalized.port).toBe(43195);
-    expect(normalized.rateLimit).toEqual({ requestsPerMinute: 60, maxConcurrent: 4 });
+    expect(normalized.rateLimit).toEqual({
+      requestsPerMinute: 60,
+      maxConcurrent: 4,
+      bytesPerMinute: 48 * 1024 * 1024,
+    });
     expect(normalized.maxPromptBytes).toBe(16_384);
     expect(normalized.maxResponseBytes).toBe(1_048_576);
     expect(normalized.auditPromptBodies).toBe(true);

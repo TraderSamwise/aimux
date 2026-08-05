@@ -246,6 +246,11 @@ vi.mock("./http-client.js", () => ({
     status: 200,
     json: { ok: true },
   })),
+  requestBinary: vi.fn(async () => ({
+    status: 200,
+    body: Buffer.from("89504e470d0a1a0a", "hex"),
+    contentType: "image/png",
+  })),
 }));
 
 function writeMetadataEndpointFor(pid: number, port = 44291) {
@@ -4094,6 +4099,58 @@ describe("daemon routing (relay + proxy)", () => {
     expect(unscopedSessionRead.status).toBe(403);
     expect(attachmentRead.status).toBe(403);
     expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Attachment content is the one proxied route that does not answer with
+   * JSON. Sending it through `requestJson` would not merely lose the content
+   * type — the body would arrive parsed-and-restringified and no longer be an
+   * image at all.
+   */
+  it("proxies attachment content as bytes rather than JSON", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const { requestBinary } = await import("./http-client.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/attachments/att_abc/content?sessionId=claude-1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(Buffer.isBuffer(res.body)).toBe(true);
+    expect(res.contentType).toBe("image/png");
+    expect(vi.mocked(requestBinary)).toHaveBeenCalledWith(
+      "http://127.0.0.1:4321/attachments/att_abc/content?sessionId=claude-1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A binary ROUTE does not promise a binary REPLY. The service answers JSON
+   * for a missing attachment and for one owned by another session — the two
+   * most common outcomes — and forwarding those as bytes would collapse a
+   * meaningful 404 into a generic transport failure.
+   */
+  it("forwards a JSON reply on a binary route with its real status", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const { requestBinary } = await import("./http-client.js");
+    vi.mocked(requestBinary).mockResolvedValueOnce({
+      status: 404,
+      body: Buffer.from(JSON.stringify({ ok: false, error: "attachment not found" })),
+      contentType: "application/json",
+    });
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/attachments/att_missing/content?sessionId=claude-1",
+    );
+
+    expect(res.status).toBe(404);
+    expect(Buffer.isBuffer(res.body)).toBe(false);
+    expect(res.body).toEqual({ ok: false, error: "attachment not found" });
   });
 
   it("allows shared guest relay requests to read the authorized session output", async () => {

@@ -62,7 +62,29 @@ const OPERATOR_ROUTE_METHODS = new Map<string, "GET" | "POST">([
   [PROJECT_API_ROUTES.agents.output, "GET"],
   [PROJECT_API_ROUTES.agents.input, "POST"],
   [PROJECT_API_ROUTES.agents.interrupt, "POST"],
+  [PROJECT_API_ROUTES.attachments, "POST"],
 ]);
+
+/**
+ * Routes whose path carries an id, and so cannot be a Map key.
+ *
+ * Consulted only after the exact allowlist misses, and deliberately tiny: a
+ * pattern is a weaker statement than a literal, so anything expressible as a
+ * literal stays one. `/attachments/<id>` (metadata) is absent — the client
+ * gets everything it needs from the transcript and the upload reply, so there
+ * is no reason to widen the surface for it.
+ *
+ * The character class is doing real work. It admits no `.`, `/`, `%`, `;` or
+ * `?`, which is what stops a traversal, an encoded slash, a matrix parameter
+ * or a query fragment from riding inside the id and landing on a different
+ * route. Ids are `att_` plus 32 hex characters, comfortably inside it. The
+ * path reaching here has already been through `new URL()`, so `.` and `..`
+ * segments — and their percent-encoded spellings — are gone before matching;
+ * the class is the second of the two defences, not the only one.
+ */
+const OPERATOR_ROUTE_PATTERNS: ReadonlyArray<{ pattern: RegExp; method: "GET" | "POST" }> = [
+  { pattern: /^\/attachments\/[A-Za-z0-9_-]{1,128}\/content$/, method: "GET" },
+];
 
 /**
  * Streaming routes, kept in a SEPARATE gate reached by a separate function.
@@ -167,7 +189,9 @@ function assertOperatorAllowed(
   const resolved = operatorSubPath(actor, pathname);
   if (resolved.denied) return resolved.denied;
 
-  const allowedMethod = OPERATOR_ROUTE_METHODS.get(resolved.subPath);
+  const allowedMethod =
+    OPERATOR_ROUTE_METHODS.get(resolved.subPath) ??
+    OPERATOR_ROUTE_PATTERNS.find((route) => route.pattern.test(resolved.subPath))?.method;
   if (!allowedMethod) return { ok: false, status: 403, error: "route is not available to operators" };
   if (method.toUpperCase() !== allowedMethod) {
     return { ok: false, status: 403, error: "method not allowed for this route" };

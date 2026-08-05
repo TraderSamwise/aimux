@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const PROJECT_SERVICE_API_VERSION = 4;
+/**
+ * 5: attachments are bound to a session. `POST /attachments` requires a
+ * `sessionId`, and the read routes honour one — a breaking change for any
+ * client that uploaded without naming a session.
+ */
+export const PROJECT_SERVICE_API_VERSION = 5;
 export const PROJECT_SERVICE_CAPABILITIES = {
   parsedAgentOutput: true,
   attachmentRead: true,
