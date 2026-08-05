@@ -13,6 +13,10 @@ Design rationale and the threat model live in [hosted-mode-rfc.md](./hosted-mode
 operator who can send text to a session is talking to a tool with a shell, so the boundary that
 carries weight is the machine and its credentials, not this route allowlist.
 
+A host that wants that boundary drawn can install the optional
+[egress sandbox](./egress-sandbox.md), which default-denies the runtime uid's outbound network
+access. It is off by default, and its own page argues about when not to use it.
+
 ## What an operator can do
 
 Exactly three routes, on sessions explicitly granted to them:

@@ -1,0 +1,62 @@
+# Hostnames the agent runtime uid may reach. Extended regular expressions,
+# matched against the CONNECT target, with FilterDefaultDeny Yes.
+#
+# ANCHOR EVERY LINE. An unanchored `openai\.com` also matches
+# openai.com.exfiltrate.example, which is a hostname an attacker controls.
+#
+# Residual, and worth being honest about: a model API is itself a channel out of
+# here. An agent that wants to leak can put data in a prompt. This bounds where
+# it can go, not whether a determined injection can say anything at all.
+#
+# Only the entries a given host actually needs should be here. Every line is a
+# capability, and the reason to keep the file short is that the file IS the
+# policy.
+
+# ---------------------------------------------------------------------------
+# Codex / OpenAI. Verified end-to-end from a sandboxed uid.
+# ---------------------------------------------------------------------------
+
+# Codex on a ChatGPT plan talks to chatgpt.com, NOT api.openai.com. Omitting it
+# gives you a login that succeeds and an agent that silently has no model.
+^chatgpt\.com$
+
+# Device-authorization login: the code request and the token poll.
+^auth\.openai\.com$
+
+# API-key sessions and the responses API.
+^api\.openai\.com$
+
+# ---------------------------------------------------------------------------
+# Claude Code / Anthropic. Taken from published endpoints, NOT verified against
+# a live sandboxed box the way the OpenAI set above was. Run `verify.sh` on the
+# host before believing it — a missing name here shows up as an agent that
+# starts fine and then hangs on its first turn.
+# ---------------------------------------------------------------------------
+
+^api\.anthropic\.com$
+
+# OAuth login for a Claude subscription. Drop both if the host uses an API key.
+^claude\.ai$
+^console\.anthropic\.com$
+
+# ---------------------------------------------------------------------------
+# Optional groups. Commented out because each one is a real widening, and a
+# sandbox whose allowlist grew by default is not a sandbox. Uncomment what the
+# work genuinely needs.
+# ---------------------------------------------------------------------------
+
+# Package registries. An agent that cannot install a dependency cannot run most
+# repositories' test suites. It also cannot be told to publish one.
+#^registry\.npmjs\.org$
+#^pypi\.org$
+#^files\.pythonhosted\.org$
+#^crates\.io$
+#^static\.crates\.io$
+
+# Git forges. Enabling these is what lets an agent clone, fetch, and push — and
+# `git push` to a repo it can reach is an unmetered way for anything in the
+# working tree to leave the box. Weigh that against needing it.
+#^github\.com$
+#^api\.github\.com$
+#^codeload\.github\.com$
+#^objects\.githubusercontent\.com$
