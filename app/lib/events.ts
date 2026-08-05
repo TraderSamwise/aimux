@@ -1,8 +1,11 @@
 // SSE event taxonomy for the aimux project metadata server (`/events` endpoint).
 
 import type { ProjectUpdateEvent } from "../../src/project-api-contract";
+// `import type` on purpose: the module it lives in imports node:crypto, and a
+// value import would drag that into the Metro bundle.
+import type { AgentTranscriptMessage } from "../../src/agent-transcript";
 
-export type { ProjectUpdateEvent };
+export type { ProjectUpdateEvent, AgentTranscriptMessage };
 
 export type AlertKind =
   | "notification"
@@ -69,6 +72,7 @@ export interface AgentOutputEvent {
   output: string;
   startLine: number;
   parsed?: ParsedAgentOutput;
+  messages?: AgentTranscriptMessage[];
 }
 
 export interface StreamErrorEvent {
