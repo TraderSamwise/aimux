@@ -1,12 +1,19 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai/utils";
-import type { ParsedAgentOutput, StreamEvent } from "@/lib/events";
+import type { AgentTranscriptMessage, StreamEvent } from "@/lib/events";
 
 // ─── Per-session base families ─────────────────────────────────────────────
 
 export const outputBufferFamily = atomFamily((_sessionId: string) => atom<string>(""));
-export const parsedOutputFamily = atomFamily((_sessionId: string) =>
-  atom<ParsedAgentOutput | null>(null),
+/**
+ * The conversation, as the service projected it.
+ *
+ * Not derived from `parsed` any more: the mapping from blocks to messages
+ * lives beside the parser that produces the blocks, so both this app and any
+ * other client read the same one instead of each keeping a copy that drifts.
+ */
+export const transcriptFamily = atomFamily((_sessionId: string) =>
+  atom<AgentTranscriptMessage[]>([]),
 );
 export const streamingFamily = atomFamily((_sessionId: string) => atom<boolean>(false));
 // Kept for future stream-token dedup; not wired up yet — see Task 3 deviation #6.
@@ -18,10 +25,14 @@ export const applyOutputSnapshotAtom = atom(
   (
     _get,
     set,
-    snapshot: { sessionId: string; output: string; parsed?: ParsedAgentOutput | null },
+    snapshot: {
+      sessionId: string;
+      output: string;
+      messages?: AgentTranscriptMessage[];
+    },
   ) => {
     set(outputBufferFamily(snapshot.sessionId), snapshot.output);
-    set(parsedOutputFamily(snapshot.sessionId), snapshot.parsed ?? null);
+    set(transcriptFamily(snapshot.sessionId), snapshot.messages ?? []);
     set(lastErrorFamily(snapshot.sessionId), null);
   },
 );
@@ -38,7 +49,7 @@ export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
       return;
     case "agent_output":
       set(outputBufferFamily(event.sessionId), event.output);
-      set(parsedOutputFamily(event.sessionId), event.parsed ?? null);
+      set(transcriptFamily(event.sessionId), event.messages ?? []);
       set(streamingFamily(event.sessionId), true);
       return;
     case "alert":
