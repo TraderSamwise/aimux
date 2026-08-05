@@ -5,6 +5,8 @@ import {
   transcriptMessageText,
   type ParsedAgentOutputLike,
 } from "./agent-transcript.js";
+import { parseAgentOutput } from "./agent-output-parser.js";
+import { getParserFixture } from "./agent-output-parser-test-utils.js";
 
 const parsed = (blocks: Array<{ type: string; text: string }>): ParsedAgentOutputLike => ({
   blocks,
@@ -176,5 +178,91 @@ describe("a block mangled by a wrap", () => {
 
     expect(message!.parts.filter((p) => p.type === "image_reference")).toHaveLength(0);
     expect(message!.text).toContain("found none");
+  });
+});
+
+/**
+ * Real captures, run through the real parser.
+ *
+ * These are the cases worth keeping honest: the projection is only as good as
+ * the block classification it sits on, and every one of these is a screenful
+ * of tool furniture that must not become somebody's conversation.
+ */
+describe("against captured panes", () => {
+  const fromFixture = (name: string) => {
+    const fixture = getParserFixture(name);
+    return messagesFromParsedAgentOutput(
+      parseAgentOutput(fixture.raw, { tool: fixture.tool }) as ParsedAgentOutputLike,
+    );
+  };
+
+  it("renders nothing from a codex startup suggestion loop", () => {
+    expect(fromFixture("codex-live-startup-suggestion-loop")).toEqual([]);
+  });
+
+  it("renders nothing from a codex startup banner and warnings", () => {
+    const raw = [
+      "⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this",
+      "  invocation.",
+      "",
+      "╭──────────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.144.1)                   │",
+      "│                                              │",
+      "│ model:       gpt-5.5 high   /model to change │",
+      "│ directory:   ~/cs/tealstreet-mobile          │",
+      "│ permissions: YOLO mode                       │",
+      "╰──────────────────────────────────────────────╯",
+      "",
+      "  Tip: New Use /fast to enable our fastest inference with increased plan usage.",
+      "",
+      "• You have 3 usage limit resets available. Run /usage to use one.",
+      "",
+      "› Implement {feature}",
+      "",
+      "  gpt-5.5 high · ~/cs/tealstreet-mobile",
+    ].join("\n");
+
+    expect(messagesFromParsedAgentOutput(parseAgentOutput(raw, { tool: "codex" }) as ParsedAgentOutputLike)).toEqual(
+      [],
+    );
+  });
+
+  it("keeps the prompt and its image, and not the suggestion after it", () => {
+    const messages = fromFixture("codex-active-image-input-followed-by-suggestion");
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.role).toBe("user");
+    expect(messages[0]!.parts).toEqual([
+      { type: "text", text: "can you see this?" },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_example",
+        filename: "Screenshot.png",
+        mimeType: "image/png",
+      },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("Explain this codebase");
+  });
+
+  it("keeps claude's words and drops its tool action rows", () => {
+    const messages = fromFixture("claude-live-tool-action-rows");
+
+    expect(messages.map((m) => m.text)).toEqual([
+      "Good question. Let me check the relay status.",
+      "All checks are green. I can merge now.",
+    ]);
+    const json = JSON.stringify(messages);
+    expect(json).not.toContain("Bash(cd");
+    expect(json).not.toContain("Read 2 files");
+    expect(json).not.toContain("Update(src/relay.ts)");
+  });
+
+  it("renders nothing from a malformed claude animation capture", () => {
+    expect(fromFixture("claude-malformed-animation-status")).toEqual([]);
+  });
+
+  it("renders nothing from a collapsed claude approval capture", () => {
+    expect(fromFixture("claude-collapsed-approval-status")).toEqual([]);
   });
 });
