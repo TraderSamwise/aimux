@@ -266,3 +266,25 @@ describe("against captured panes", () => {
     expect(fromFixture("claude-collapsed-approval-status")).toEqual([]);
   });
 });
+
+describe("a mangled attachment path", () => {
+  it("never survives into the message text", () => {
+    const messages = messagesFromParsedAgentOutput(
+      parsed([
+        {
+          type: "prompt",
+          text:
+            "please look at the seat map Attached image files: - shot.png (image/png, 9 bytes): " +
+            "/srv/grand-console/.aimux/attach\nments/att_mangled.png",
+        },
+      ]),
+    );
+
+    const text = messages[0]!.text;
+    expect(text).toContain("please look at the seat map");
+    expect(text).not.toContain("att_mangled");
+    expect(text).not.toContain(".aimux");
+    expect(text).not.toContain("/srv/grand-console");
+    expect(messages[0]!.parts.filter((p) => p.type === "image_reference")).toHaveLength(1);
+  });
+});

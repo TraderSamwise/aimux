@@ -151,18 +151,44 @@ function partsFromFlattened(text: string, labels: ImageLabels): AgentTranscriptP
   // itself — `.aimux/attach ments/att_…` matches nothing. Observed on a live
   // box. The id survives with the spaces removed entirely; the filename and
   // type do not, and are better dropped than guessed at.
-  //
-  // The tail is kept verbatim rather than tidied. The text has already been
-  // mangled by the wrap, so there is no reliable way to excise the path from
-  // it — and showing a path the pane really did contain is a smaller failure
-  // than silently eating the message it was attached to.
   if (!matched) {
-    const recovered: AgentTranscriptImagePart[] = [];
-    for (const match of tail.replace(/\s+/g, "").matchAll(/\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)/g)) {
-      if (match[1]) recovered.push(imagePart(labels, match[1]));
+    // Squash to find the ids, but keep a map back to the original so the path
+    // can be *removed* exactly rather than guessed at. Leaving it in would put
+    // `/srv/…/.aimux/attachments/att_….png` in somebody's chat; dropping the
+    // whole tail would eat any words that came after it.
+    let squashed = "";
+    const sourceIndex: number[] = [];
+    for (let i = 0; i < tail.length; i += 1) {
+      if (/\s/.test(tail[i]!)) continue;
+      squashed += tail[i];
+      sourceIndex.push(i);
     }
+
+    const recovered: AgentTranscriptImagePart[] = [];
+    const drop = new Set<number>();
+    const PATH_CHAR = /[A-Za-z0-9_\-./~]/;
+
+    for (const match of squashed.matchAll(/\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)(?:\.[A-Za-z0-9]{1,8})?/g)) {
+      if (!match[1] || match.index === undefined) continue;
+      recovered.push(imagePart(labels, match[1]));
+      // Walk back over the directories that led here, so the whole path goes.
+      let from = match.index;
+      while (from > 0 && PATH_CHAR.test(squashed[from - 1]!)) from -= 1;
+      for (let i = from; i < match.index + match[0].length; i += 1) {
+        drop.add(sourceIndex[i]!);
+      }
+    }
+
     if (recovered.length === 0) return null;
-    const prose = tail.trim();
+
+    const prose = tail
+      .split("")
+      .filter((_, index) => !drop.has(index))
+      .join("")
+      // What is left of a list item once its path is gone.
+      .replace(/[-•]\s*(?=\s|$)/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
     if (prose) parts.push({ type: "text", text: prose });
     parts.push(...recovered);
     return parts;
