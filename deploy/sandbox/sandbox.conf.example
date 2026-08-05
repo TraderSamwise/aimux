@@ -1,0 +1,20 @@
+# Copy to sandbox.conf next to install.sh and edit. Sourced by install.sh,
+# verify.sh and uninstall.sh — it is shell, so keep it to plain assignments.
+
+# The account the aimux daemon runs agent sessions as. Everything in this
+# profile is scoped to its uid; every other account on the box is unaffected.
+#
+# This must be an account that is NOT the one you administer the box with. The
+# policy cannot tell an agent apart from the human sharing its uid.
+SANDBOX_USER=aimux
+
+# The systemd unit that runs the aimux daemon. The host owns this unit — aimux
+# does not ship one — and install.sh writes a drop-in beside it.
+SANDBOX_AIMUX_UNIT=aimux.service
+
+# Upstream nameservers for the box, written into a static /etc/resolv.conf when
+# systemd-resolved is masked. Leave empty to reuse whatever resolved is already
+# using, read from /run/systemd/resolve/resolv.conf — which is the right answer
+# on a normally-configured host and avoids inventing a public resolver you did
+# not choose.
+SANDBOX_UPSTREAM_DNS=""

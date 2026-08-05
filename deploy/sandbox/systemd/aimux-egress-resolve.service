@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-resolve the endpoints the aimux runtime may reach directly
+After=aimux-egress.service
+Requires=aimux-egress.service
+
+[Service]
+Type=oneshot
+# NOT prefixed with `-`, unlike the copy in aimux-egress.service. Here the exit
+# code is the whole point: an endpoint that stops resolving has to become a
+# failed unit, because the alternative is the agent losing its database days
+# later with nothing to point at.
+ExecStart=/usr/local/lib/aimux-sandbox/resolve-pinned-hosts.sh

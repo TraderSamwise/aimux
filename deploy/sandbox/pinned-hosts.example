@@ -1,0 +1,17 @@
+# Endpoints the runtime may reach directly, one `hostname port` pair per line.
+#
+# This file is for protocols the HTTP proxy cannot carry. Postgres, MySQL,
+# Redis, a broker. Anything speaking HTTP belongs in allowlist.txt instead,
+# where the rule is a name that stays true rather than an address that drifts.
+#
+# The known weak point of the design, stated plainly: these become IP rules, and
+# a managed endpoint's addresses are usually not contractually stable. Two
+# things are built for that — set entries expire unless re-confirmed, and the
+# resolver unit exits non-zero when a name stops resolving, so a stale rule
+# surfaces as a failed unit rather than as an agent that mysteriously loses its
+# database days later.
+#
+# Each line opens exactly that port on the addresses that name resolves to.
+
+# ep-example-12345.us-east-1.aws.neon.tech 5432
+# cache.internal.example 6379

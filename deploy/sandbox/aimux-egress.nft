@@ -1,0 +1,91 @@
+# Outbound policy for the uid that runs agent sessions.
+#
+# Hosted mode's own boundary stops at the HTTP route allowlist: an operator who
+# can send text to a session is talking to a tool with a shell, so nothing above
+# this layer bounds where that shell can connect. This table is the layer that
+# does.
+#
+# Its own table, so `nft flush ruleset` from ufw or docker cannot silently take
+# it along, and `nft list table inet aimux_egress` shows the whole policy.
+
+# The runtime uid, written by install.sh. Numeric rather than a username on
+# purpose: nft resolves a name at load time, and this table loads before
+# network-pre.target, when name resolution is not something to depend on.
+include "/etc/nftables.d/aimux-egress-vars.nft"
+
+# Replace rather than append. Without this, loading the file twice stacks a
+# second copy of every rule, and the accept rules of the first copy answer
+# before the drop rules of the second ever run.
+#
+# The bare `table` line creates it when it does not exist, so `delete` cannot
+# fail on a fresh boot.
+table inet aimux_egress
+delete table inet aimux_egress
+
+table inet aimux_egress {
+    # Address-and-port pairs the runtime may reach directly, populated by
+    # aimux-egress-resolve.service from /etc/aimux/sandbox/pinned-hosts. This
+    # exists for protocols an HTTP proxy cannot carry — Postgres, MySQL, Redis,
+    # a message broker. Anything that speaks HTTP belongs in the allowlist
+    # instead, where the rule is a name rather than an address.
+    #
+    # Concatenated so a pinned host opens one port and not the host. Without the
+    # port in the set, pinning a database would also permit ssh to it.
+    #
+    # The timeout is the point: an address that stops being re-confirmed ages out
+    # rather than lingering as a permanent hole after the endpoint moves. It is
+    # longer than the refresh interval by enough to survive a couple of misses.
+    set pinned_v4 {
+        type ipv4_addr . inet_service
+        flags timeout
+        timeout 2h
+    }
+
+    set pinned_v6 {
+        type ipv6_addr . inet_service
+        flags timeout
+        timeout 2h
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+
+        # Everyone else is unfiltered. This bounds what the AGENT reaches; it is
+        # not host hardening. Root still runs apt, the tunnel client still dials
+        # its edge, and a human with a shell is unaffected.
+        meta skuid != $aimux_uid accept
+
+        # No DNS. Blocked before the loopback accept below, because the stub
+        # resolver at 127.0.0.53 is on loopback and forwards upstream as root —
+        # which the rule above accepts. Left open it is an arbitrary-rate covert
+        # channel out of the box, wearing the one uid this table exists to
+        # contain.
+        #
+        # This is only real because install.sh MASKS systemd-resolved and sets
+        # /etc/nsswitch.conf to `files dns`. Two separate paths had to close: the
+        # `resolve` NSS module reaches resolved over a UNIX socket, and
+        # `resolvectl query` reaches it over D-Bus — and in both cases resolved
+        # makes the lookup as ITS uid, which the rule above accepts. No packet
+        # filter can see either one. This was verified the wrong way round first:
+        # with UDP 53 dropped and resolved still running, `resolvectl query` from
+        # the runtime user demonstrably sent a name upstream.
+        #
+        # Nothing legitimate here needs it. The proxy resolves on the agent's
+        # behalf, and pinned endpoints are written into /etc/hosts.
+        udp dport 53 log prefix "aimux-egress dns " drop
+        tcp dport 53 log prefix "aimux-egress dns " drop
+
+        # Loopback: the proxy on 8888, the aimux daemon, the project service.
+        oif "lo" accept
+
+        ct state established,related accept
+
+        ip daddr . tcp dport @pinned_v4 accept
+        ip6 daddr . tcp dport @pinned_v6 accept
+
+        # Everything else, loudly. A silent drop here reads as "the model is
+        # slow" from a chat window, which is the worst possible way to find out.
+        limit rate 10/minute burst 20 packets log prefix "aimux-egress drop " level warn
+        drop
+    }
+}

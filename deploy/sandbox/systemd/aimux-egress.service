@@ -1,0 +1,27 @@
+[Unit]
+Description=Outbound policy for the aimux agent runtime uid
+Documentation=https://github.com/TraderSamwise/aimux/blob/master/docs/egress-sandbox.md
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/aimux-egress.nft
+# No ExecStartPost resolving the pinned addresses. DefaultDependencies=no puts
+# this before any network exists, so at boot that call could only ever fail, and
+# a `-` prefix hiding a guaranteed failure is worse than not making the call.
+# The timer repopulates the sets shortly after boot, and a reload does it
+# explicitly below because loading the table empties them.
+ExecReload=/usr/sbin/nft -f /etc/nftables.d/aimux-egress.nft
+ExecReload=-/usr/local/lib/aimux-sandbox/resolve-pinned-hosts.sh
+# Deliberately NOT flushing on stop. Stopping this unit while the daemon runs
+# would silently unfilter the agent; leaving the table in place means removing
+# the policy is an explicit `nft delete table inet aimux_egress`.
+ExecStop=/bin/true
+
+[Install]
+WantedBy=multi-user.target
