@@ -22,6 +22,17 @@ const ALLOWED_ENV_KEYS = new Set([
   "GOROOT",
   "GPG_TTY",
   "HOME",
+  // Both cases: Node reads the upper-case spelling, Rust's reqwest (which is
+  // what codex uses) reads either, and curl reads the lower-case one. A host
+  // that forces agent traffic through an allowlisting proxy has to be able to
+  // tell the agent where that proxy is, or the setting reaches the daemon and
+  // stops there.
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
   "JAVA_HOME",
   "LANG",
   "LOGNAME",
