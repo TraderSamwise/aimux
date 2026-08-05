@@ -649,6 +649,8 @@ export interface MetadataServerOptions {
           startLine?: number;
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
+          activity?: AgentActivityState;
+          attention?: AgentAttentionState;
         }>
       | {
           sessionId: string;
@@ -656,6 +658,8 @@ export interface MetadataServerOptions {
           startLine?: number;
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
+          activity?: AgentActivityState;
+          attention?: AgentAttentionState;
         };
   };
   exposePreviewCache?: ExposePreviewCacheLike | false;
@@ -2441,6 +2445,10 @@ export class MetadataServer {
       let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
       let outputPollTimer: ReturnType<typeof setInterval> | null = null;
       let lastOutput: string | undefined;
+      // Activity changes without the pane changing — an agent finishing
+      // leaves the last frame on screen — so a text-only gate would hold a
+      // stream at "running" indefinitely.
+      let lastLiveness: string | undefined;
       const unsubscribe = this.eventBus.subscribe((event) => {
         if (closed) return;
         if (sessionFilter && event.sessionId && event.sessionId !== sessionFilter) return;
@@ -2468,8 +2476,10 @@ export class MetadataServer {
         try {
           const result = await this.options.lifecycle.readAgentOutput({ sessionId: sessionFilter, startLine });
           if (closed) return;
-          if (result.output !== lastOutput) {
+          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
+          if (result.output !== lastOutput || liveness !== lastLiveness) {
             lastOutput = result.output;
+            lastLiveness = liveness;
             sendSseEvent(res, PROJECT_API_EVENT_NAMES.agentOutput, {
               sessionId: result.sessionId,
               output: result.output,
@@ -2478,6 +2488,8 @@ export class MetadataServer {
               // Forwarded explicitly: this payload is hand-picked, so a field
               // added to readAgentOutput does not reach a stream by itself.
               messages: result.messages,
+              activity: result.activity,
+              attention: result.attention,
             });
           }
         } catch (error) {
@@ -2831,6 +2843,10 @@ export class MetadataServer {
 
       let closed = false;
       let lastOutput: string | undefined;
+      // Activity changes without the pane changing — an agent finishing
+      // leaves the last frame on screen — so a text-only gate would hold a
+      // stream at "running" indefinitely.
+      let lastLiveness: string | undefined;
       let pollTimer: ReturnType<typeof setInterval> | null = null;
 
       const cleanup = () => {
@@ -2850,8 +2866,10 @@ export class MetadataServer {
         try {
           const result = await this.options.lifecycle!.readAgentOutput!({ sessionId, startLine });
           if (closed) return;
-          if (result.output !== lastOutput) {
+          const liveness = `${result.activity ?? ""}:${result.attention ?? ""}`;
+          if (result.output !== lastOutput || liveness !== lastLiveness) {
             lastOutput = result.output;
+            lastLiveness = liveness;
             sendSseEvent(res, outputEventName, {
               sessionId: result.sessionId,
               output: result.output,
@@ -2860,6 +2878,8 @@ export class MetadataServer {
               // Forwarded explicitly: this payload is hand-picked, so a field
               // added to readAgentOutput does not reach a stream by itself.
               messages: result.messages,
+              activity: result.activity,
+              attention: result.attention,
             });
           } else {
             res.write(": keepalive\n\n");

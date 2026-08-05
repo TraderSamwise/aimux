@@ -1,4 +1,5 @@
 import type { AgentTranscriptMessage } from "./agent-transcript.js";
+import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
 
 export const PROJECT_API_ROUTES = {
   events: "/events",
@@ -390,6 +391,20 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    * falls behind the parser without knowing.
    */
   messages?: AgentTranscriptMessage[];
+  /**
+   * What the session is doing, as the runtime understands it.
+   *
+   * Reported by services with the `agentActivityState` capability — and even
+   * there, absent for a session the runtime has no derived state for, so
+   * absence is not idleness. Driven by the tool's own hooks, so it moves
+   * without the pane moving: that is the point, because a client diffing pane
+   * text cannot tell a finished agent from a quiet one.
+   *
+   * `attention` is only meaningfully driven for tools that report it; codex
+   * leaves it at `normal`, so do not read absence as "nothing needed".
+   */
+  activity?: AgentActivityState;
+  attention?: AgentAttentionState;
 }
 
 export interface AgentOutputStreamInput extends LivePaneOutputInput {

@@ -17,6 +17,11 @@ export const PROJECT_SERVICE_CAPABILITIES = {
   // is why this is a capability and not an apiVersion bump — that number
   // decides whether a running service is killed and respawned.
   agentTranscriptMessages: true,
+  // Its own flag rather than folded into the one above. The build stamp forces
+  // a stale service to respawn, but only one this process manages — a hosted
+  // peer talks to a service it does not control, and for that client two
+  // fields shipped in one release are still two things to ask about.
+  agentActivityState: true,
 } as const;
 
 export interface ProjectServiceManifest {

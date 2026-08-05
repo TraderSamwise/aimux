@@ -5493,6 +5493,42 @@ describe("MetadataServer threads API", () => {
     );
   });
 
+  it("streams an activity change even though the pane has not moved", async () => {
+    // The gate used to be pane text alone, so an agent finishing — which
+    // leaves its last frame on screen — never reached a stream at all.
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: "a pane that never changes",
+            parsed: { blocks: [{ type: "response", text: "a pane that never changes" }] },
+            activity: reads >= 2 ? ("done" as const) : ("running" as const),
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+    const res = await fetch(`${base}/agents/output/stream?sessionId=codex-1&intervalMs=100`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+
+    const text = await readSseUntil(res.body!, (value) => value.includes('"activity":"done"'));
+    controller.abort();
+
+    expect(text).toContain('"activity":"running"');
+    expect(text).toContain('"activity":"done"');
+  });
+
   it("preserves mined parser blocks in agent output SSE events", async () => {
     const fixture = getParserFixture("claude-live-tool-action-rows");
     server?.stop();

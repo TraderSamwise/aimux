@@ -15,6 +15,7 @@ import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../agent-transcript.js";
+import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
@@ -290,6 +291,8 @@ export async function readAgentOutput(
   startLine?: number;
   parsed: any;
   messages: AgentTranscriptMessage[];
+  activity?: AgentActivityState;
+  attention?: AgentAttentionState;
 }> {
   resolveRunningSession(host, sessionId);
   const target = resolveLiveSessionTmuxTarget(host, sessionId);
@@ -300,10 +303,23 @@ export async function readAgentOutput(
     startLine: startLine ?? -120,
   });
 
+  // Read every time rather than cached with the transcript below: activity
+  // moves independently of the pane — an agent finishing leaves the last frame
+  // on screen — so a value cached behind a text comparison would stick.
+  const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
+  const liveness = { activity: derived?.activity, attention: derived?.attention };
+
   const cacheKey = `${sessionId}:${startLine ?? -120}`;
   const cached = transcriptCache.get(cacheKey);
   if (cached && cached.output === output) {
-    return { sessionId, output, startLine: startLine ?? -120, parsed: cached.parsed, messages: cached.messages };
+    return {
+      sessionId,
+      output,
+      startLine: startLine ?? -120,
+      parsed: cached.parsed,
+      messages: cached.messages,
+      ...liveness,
+    };
   }
 
   const parsed = parseAgentOutput(output, {
@@ -314,7 +330,7 @@ export async function readAgentOutput(
   const messages = messagesFromParsedAgentOutput(parsed);
   transcriptCache.set(cacheKey, { output, parsed, messages });
 
-  return { sessionId, output, startLine: startLine ?? -120, parsed, messages };
+  return { sessionId, output, startLine: startLine ?? -120, parsed, messages, ...liveness };
 }
 
 /** Called from session teardown; the cache is keyed per startLine window. */
