@@ -14,6 +14,7 @@ import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
+import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../agent-transcript.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import { PROJECT_API_ROUTES } from "../project-api-contract.js";
@@ -266,11 +267,30 @@ export async function sendAgentInput(
   return { sessionId, accepted: true };
 }
 
+/**
+ * One entry per session, keyed on the pane text that produced it.
+ *
+ * Every attached client polls, and each poll parsed and projected the same
+ * unchanged pane again. A still pane is the common case, so the whole cost
+ * collapses to a string comparison.
+ *
+ * Keyed by startLine as well as session: two clients watching the same pane
+ * through different windows produce different text, and one key between them
+ * would mean each eviscerating the other\'s entry on every poll.
+ */
+const transcriptCache = new Map<string, { output: string; parsed: any; messages: AgentTranscriptMessage[] }>();
+
 export async function readAgentOutput(
   host: SessionRuntimeHost,
   sessionId: string,
   startLine?: number,
-): Promise<{ sessionId: string; output: string; startLine?: number; parsed: any }> {
+): Promise<{
+  sessionId: string;
+  output: string;
+  startLine?: number;
+  parsed: any;
+  messages: AgentTranscriptMessage[];
+}> {
   resolveRunningSession(host, sessionId);
   const target = resolveLiveSessionTmuxTarget(host, sessionId);
   if (!target) {
@@ -279,14 +299,29 @@ export async function readAgentOutput(
   const output = host.tmuxRuntimeManager.captureTarget(target, {
     startLine: startLine ?? -120,
   });
-  return {
-    sessionId,
-    output,
-    startLine: startLine ?? -120,
-    parsed: parseAgentOutput(output, {
-      tool: host.sessionToolKeys.get(sessionId),
-    }),
-  };
+
+  const cacheKey = `${sessionId}:${startLine ?? -120}`;
+  const cached = transcriptCache.get(cacheKey);
+  if (cached && cached.output === output) {
+    return { sessionId, output, startLine: startLine ?? -120, parsed: cached.parsed, messages: cached.messages };
+  }
+
+  const parsed = parseAgentOutput(output, {
+    tool: host.sessionToolKeys.get(sessionId),
+  });
+  // Projected here rather than in each client. Two of them had grown their own
+  // copy of this mapping and the copies had already drifted.
+  const messages = messagesFromParsedAgentOutput(parsed);
+  transcriptCache.set(cacheKey, { output, parsed, messages });
+
+  return { sessionId, output, startLine: startLine ?? -120, parsed, messages };
+}
+
+/** Called from session teardown; the cache is keyed per startLine window. */
+export function forgetAgentTranscript(sessionId: string): void {
+  for (const key of transcriptCache.keys()) {
+    if (key === sessionId || key.startsWith(`${sessionId}:`)) transcriptCache.delete(key);
+  }
 }
 
 export function registerManagedSession(

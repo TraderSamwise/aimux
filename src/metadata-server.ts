@@ -105,6 +105,7 @@ import { getWorktreeCreatePath } from "./worktree.js";
 import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import type { AgentTranscriptMessage } from "./agent-transcript.js";
 import type { PluginRuntimePluginStatus } from "./plugin-runtime.js";
 import {
   createUploadedAttachment,
@@ -641,12 +642,21 @@ export interface MetadataServerOptions {
       // tmux submit in the background (output arrives via SSE, not this response).
       waitForSubmit?: boolean;
     }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
-    readAgentOutput?: (input: {
-      sessionId: string;
-      startLine?: number;
-    }) =>
-      | Promise<{ sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput }>
-      | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
+    readAgentOutput?: (input: { sessionId: string; startLine?: number }) =>
+      | Promise<{
+          sessionId: string;
+          output: string;
+          startLine?: number;
+          parsed?: ParsedAgentOutput;
+          messages?: AgentTranscriptMessage[];
+        }>
+      | {
+          sessionId: string;
+          output: string;
+          startLine?: number;
+          parsed?: ParsedAgentOutput;
+          messages?: AgentTranscriptMessage[];
+        };
   };
   exposePreviewCache?: ExposePreviewCacheLike | false;
   exposePaneOutputTap?: ExposePaneOutputTapLike | false;
@@ -2465,6 +2475,9 @@ export class MetadataServer {
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
               parsed: result.parsed,
+              // Forwarded explicitly: this payload is hand-picked, so a field
+              // added to readAgentOutput does not reach a stream by itself.
+              messages: result.messages,
             });
           }
         } catch (error) {
@@ -2844,6 +2857,9 @@ export class MetadataServer {
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
               parsed: result.parsed,
+              // Forwarded explicitly: this payload is hand-picked, so a field
+              // added to readAgentOutput does not reach a stream by itself.
+              messages: result.messages,
             });
           } else {
             res.write(": keepalive\n\n");

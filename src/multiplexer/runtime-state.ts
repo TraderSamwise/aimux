@@ -3,6 +3,7 @@ import { resolve as pathResolve } from "node:path";
 import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { getRepoRoot } from "../paths.js";
+import { forgetAgentTranscript } from "./session-runtime-core.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -107,6 +108,7 @@ function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
   }
   host.stoppingSessionIds?.delete?.(runtime.id);
   host.sessionTmuxTargets.delete(runtime.id);
+  forgetAgentTranscript(runtime.id);
   host.sessionToolKeys?.delete?.(runtime.id);
   host.sessionOriginalArgs?.delete?.(runtime.id);
   host.sessionWorktreePaths?.delete?.(runtime.id);
@@ -640,6 +642,7 @@ export function evictZombieSession(host: RuntimeStateHost, runtime: any): void {
   }
   host.stoppingSessionIds.delete(runtime.id);
   host.sessionTmuxTargets.delete(runtime.id);
+  forgetAgentTranscript(runtime.id);
   host.updateContextWatcherSessions();
   host.saveState();
 }
