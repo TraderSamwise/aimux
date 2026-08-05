@@ -201,7 +201,10 @@ export default function ChatScreen() {
     sessionId,
   ]);
 
-  const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
+  const parsedMessages = useMemo(
+    () => messagesFromParsedAgentOutput(parsedOutput, sessionKey),
+    [parsedOutput, sessionKey],
+  );
   const visibleLastError = lastError && !isTransientRequestError(lastError) ? lastError : null;
 
   const allMessages = useMemo<ChatMessage[]>(() => {
@@ -338,6 +341,7 @@ export default function ChatScreen() {
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             dataBase64: attachment.dataBase64,
+            sessionId: sessionKey,
           },
           { token },
         );

@@ -4211,6 +4211,7 @@ describe("MetadataServer threads API", () => {
         filename: "../shot.png",
         mimeType: "image/png",
         dataBase64: imageBytes.toString("base64"),
+        sessionId: "codex-1",
       }),
     });
     const uploaded = (await uploadRes.json()) as {
@@ -4243,6 +4244,7 @@ describe("MetadataServer threads API", () => {
         filename: "bad.png",
         mimeType: "image/png",
         dataBase64: "not-base64",
+        sessionId: "codex-1",
       }),
     });
     const uploaded = (await uploadRes.json()) as { ok: boolean; error: string };
@@ -4275,6 +4277,7 @@ describe("MetadataServer threads API", () => {
         filename: "chart.webp",
         mimeType: "image/webp",
         dataBase64: Buffer.from("webp-bytes").toString("base64"),
+        sessionId: "codex-1",
       }),
     });
     const uploaded = (await uploadRes.json()) as { attachment: { id: string } };
@@ -4321,6 +4324,7 @@ describe("MetadataServer threads API", () => {
         filename: "chart.png",
         mimeType: "image/png",
         dataBase64: Buffer.from("png-bytes").toString("base64"),
+        sessionId: "codex-1",
       }),
     });
     const uploaded = (await uploadRes.json()) as { attachment: { id: string } };
@@ -4390,6 +4394,217 @@ describe("MetadataServer threads API", () => {
     expect(inputRes.status).toBe(400);
     expect(inputJson).toEqual({ ok: false, error: "attachment not found: ../secrets" });
     expect(sent).toEqual([]);
+  });
+
+  it("refuses an upload that names no session", async () => {
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "chart.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("png-bytes").toString("base64"),
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "sessionId is required" });
+  });
+
+  /**
+   * The exfiltration path: naming another session's attachment id would have
+   * the agent read those bytes off local disk and describe them, without any
+   * of it crossing the transport where a gate could see it.
+   */
+  it("refuses agent input that names another session's attachment", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "private.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("someone-elses-bytes").toString("base64"),
+        sessionId: "codex-victim",
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as { attachment: { id: string } };
+    expect(uploaded.attachment.id).toBeTruthy();
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-attacker",
+        text: "describe this",
+        attachmentIds: [uploaded.attachment.id],
+      }),
+    });
+
+    expect(inputRes.status).toBe(400);
+    // The same message a bogus id gets, so ids cannot be probed.
+    expect(await inputRes.json()).toEqual({
+      ok: false,
+      error: `attachment not found: ${uploaded.attachment.id}`,
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it("serves attachment content to its own session and hides it from another", async () => {
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "chart.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("png-bytes").toString("base64"),
+        sessionId: "codex-owner",
+      }),
+    });
+    const { attachment } = (await uploadRes.json()) as { attachment: { id: string } };
+
+    const mine = await fetch(`${base}/attachments/${attachment.id}/content?sessionId=codex-owner`);
+    expect(mine.status).toBe(200);
+
+    const theirs = await fetch(`${base}/attachments/${attachment.id}/content?sessionId=codex-other`);
+    expect(theirs.status).toBe(404);
+
+    const meta = await fetch(`${base}/attachments/${attachment.id}?sessionId=codex-other`);
+    expect(meta.status).toBe(404);
+  });
+
+  /**
+   * Records written before attachments were bound cannot prove an owner, so a
+   * request that names a session must not reach them — that request is the
+   * shape a remote operator's always takes. A request naming no session is the
+   * local owner and still works, which is what keeps the desktop app whole.
+   */
+  it("hides an unowned legacy attachment from any named session", async () => {
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const attachmentsDir = join(repoRoot, ".aimux", "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
+    const attachmentId = "att_legacyunowned";
+    const imagePath = join(attachmentsDir, `${attachmentId}.png`);
+    writeFileSync(imagePath, Buffer.from("legacy-bytes"));
+    writeFileSync(
+      join(attachmentsDir, `${attachmentId}.json`),
+      JSON.stringify({
+        id: attachmentId,
+        kind: "image",
+        filename: "legacy.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        sha256: "test-sha",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        source: "path",
+        contentPath: imagePath,
+      }),
+      "utf8",
+    );
+
+    // Displaying an unowned record is allowed: it is already on screen in the
+    // pane of whoever is asking, and every new record has an owner.
+    const named = await fetch(`${base}/attachments/${attachmentId}/content?sessionId=codex-1`);
+    expect(named.status).toBe(200);
+
+    const unnamed = await fetch(`${base}/attachments/${attachmentId}/content`);
+    expect(unnamed.status).toBe(200);
+  });
+
+  /**
+   * The other half of the split: display tolerates an unowned record, but the
+   * input path — where the agent is told to open the file — never does.
+   */
+  it("refuses agent input naming an unowned legacy attachment", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const attachmentsDir = join(repoRoot, ".aimux", "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
+    const attachmentId = "att_legacyforinput";
+    const imagePath = join(attachmentsDir, `${attachmentId}.png`);
+    writeFileSync(imagePath, Buffer.from("legacy-bytes"));
+    writeFileSync(
+      join(attachmentsDir, `${attachmentId}.json`),
+      JSON.stringify({
+        id: attachmentId,
+        kind: "image",
+        filename: "legacy.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        sha256: "test-sha",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        source: "path",
+        contentPath: imagePath,
+      }),
+      "utf8",
+    );
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "read it", attachmentIds: [attachmentId] }),
+    });
+
+    expect(inputRes.status).toBe(400);
+    expect(sent).toEqual([]);
+  });
+
+  it("refuses an empty sessionId on an attachment read instead of widening access", async () => {
+    const endpoint = server?.getAddress();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "chart.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("png-bytes").toString("base64"),
+        sessionId: "codex-owner",
+      }),
+    });
+    const { attachment } = (await uploadRes.json()) as { attachment: { id: string } };
+
+    const empty = await fetch(`${base}/attachments/${attachment.id}/content?sessionId=`);
+    expect(empty.status).toBe(400);
+
+    const owner = await fetch(`${base}/attachments/${attachment.id}?sessionId=codex-owner`);
+    expect(owner.status).toBe(200);
+    const shown = (await owner.json()) as { ok: boolean; attachment: { id: string; contentUrl: string } };
+    expect(shown.attachment.id).toBe(attachment.id);
+    expect(shown.attachment.contentUrl).toContain("sessionId=codex-owner");
   });
 
   it("streams alert events over SSE", async () => {
