@@ -367,6 +367,7 @@ describe("api relay routing", () => {
       filename: "shot.png",
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
+      sessionId: "agent-1",
     });
     await markThreadSeen(endpoint, { threadId: "thread-1", session: "agent-1" });
     await openThread(endpoint, {
@@ -562,6 +563,7 @@ describe("api relay routing", () => {
       filename: "shot.png",
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
+      sessionId: "agent-1",
     });
     expect(request).toHaveBeenNthCalledWith(
       25,
@@ -877,6 +879,7 @@ describe("api relay routing", () => {
         filename: "shot.png",
         mimeType: "image/png",
         dataBase64: "aGVsbG8=",
+        sessionId: "agent-1",
       },
       { token: "local-token" },
     );
@@ -890,6 +893,7 @@ describe("api relay routing", () => {
       filename: "shot.png",
       mimeType: "image/png",
       dataBase64: "aGVsbG8=",
+      sessionId: "agent-1",
     });
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
   });

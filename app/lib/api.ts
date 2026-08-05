@@ -868,6 +868,8 @@ export interface UploadImageAttachmentInput {
   filename: string;
   mimeType: string;
   dataBase64: string;
+  /** The session that will own it; the service refuses an unowned upload. */
+  sessionId: string;
 }
 
 export interface UploadImageAttachmentResponse {
@@ -900,6 +902,7 @@ export async function uploadImageAttachment(
       filename: input.filename,
       mimeType: input.mimeType,
       dataBase64: input.dataBase64,
+      sessionId: input.sessionId,
     },
   );
 }

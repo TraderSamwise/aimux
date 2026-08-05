@@ -4941,7 +4941,13 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "text is required" });
           return;
         }
-        const attachments = attachmentIds.map((id) => getAttachmentRecord(id));
+        // Bound to THIS session, not merely existing. Without the second
+        // argument a caller could name another session's attachment id here
+        // and have the agent read those bytes off local disk and describe
+        // them — an exfiltration path that no HTTP gate can see, because the
+        // bytes never cross the transport. The refusal is deliberately the
+        // same "not found" as a bogus id, so ids cannot be probed.
+        const attachments = attachmentIds.map((id) => getAttachmentRecord(id, sessionId));
         const missingAttachmentId = attachmentIds.find((_, index) => attachments[index] === null);
         if (missingAttachmentId) {
           send(res, 400, { ok: false, error: `attachment not found: ${missingAttachmentId}` });
@@ -5007,7 +5013,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.attachments) {
-        const body = (await readJson(req)) as { filename?: unknown; mimeType?: unknown; dataBase64?: unknown };
+        const body = (await readJson(req)) as {
+          filename?: unknown;
+          mimeType?: unknown;
+          dataBase64?: unknown;
+          sessionId?: unknown;
+        };
         if (
           typeof body.filename !== "string" ||
           typeof body.mimeType !== "string" ||
@@ -5016,11 +5027,25 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "filename, mimeType, and dataBase64 are required" });
           return;
         }
+        // Every attachment is owned from the moment it exists. Uploading first
+        // and binding later would leave a window in which the record is
+        // reachable by any session that guessed its id.
+        const rawUploadSession = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+        if (!rawUploadSession) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        const uploadSession = validateSessionId(rawUploadSession);
+        if (!uploadSession.ok) {
+          send(res, 400, { ok: false, error: "sessionId is invalid" });
+          return;
+        }
         try {
           const attachment = createUploadedAttachment({
             filename: body.filename,
             mimeType: body.mimeType,
             dataBase64: body.dataBase64,
+            sessionId: uploadSession.value,
           });
           send(res, 200, { ok: true, attachment });
         } catch (error) {
@@ -5029,9 +5054,25 @@ export class MetadataServer {
         return;
       }
 
+      // Omitting `sessionId` on a read is the local path and stays
+      // unrestricted. Sending an EMPTY one is refused rather than treated as
+      // omitted: `?sessionId=` should never be the way to widen access, even
+      // though the operator gate already rejects it upstream. Relying on that
+      // alone would make this fail open by construction rather than by check.
+      const rawReadSession = url.searchParams.get("sessionId");
+      const attachmentReadSession = rawReadSession === null ? undefined : rawReadSession.trim();
+      const attachmentPathMatched = /^\/attachments\/[^/]+(\/content)?$/.test(url.pathname);
+      if (req.method === "GET" && attachmentPathMatched && attachmentReadSession === "") {
+        send(res, 400, { ok: false, error: "sessionId is invalid" });
+        return;
+      }
+
       const attachmentContentMatch = url.pathname.match(/^\/attachments\/([^/]+)\/content$/);
       if (req.method === "GET" && attachmentContentMatch) {
-        const content = getAttachmentContent(decodeURIComponent(attachmentContentMatch[1] || ""));
+        const content = getAttachmentContent(
+          decodeURIComponent(attachmentContentMatch[1] || ""),
+          attachmentReadSession,
+        );
         if (!content) {
           send(res, 404, { ok: false, error: "attachment not found" });
           return;
@@ -5042,7 +5083,7 @@ export class MetadataServer {
 
       const attachmentMatch = url.pathname.match(/^\/attachments\/([^/]+)$/);
       if (req.method === "GET" && attachmentMatch) {
-        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""));
+        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""), attachmentReadSession);
         if (!attachment) {
           send(res, 404, { ok: false, error: "attachment not found" });
           return;

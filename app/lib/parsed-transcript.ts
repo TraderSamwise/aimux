@@ -5,9 +5,19 @@ import type {
   ParsedAgentOutput,
 } from "@/lib/events";
 
-type ImageLabelState = {
+/**
+ * Per-render state for image references: stable labels, and the session whose
+ * attachments these are.
+ *
+ * The session rides along here rather than being threaded through five
+ * functions that only pass it on. It ends up in every `contentUrl` because the
+ * service now binds attachments to a session and refuses a read that names the
+ * wrong one.
+ */
+type ImageRefState = {
   labelsByKey: Map<string, string>;
   nextIndex: number;
+  sessionId?: string;
 };
 
 const ATTACHED_IMAGE_LINE =
@@ -28,7 +38,7 @@ function normalizeText(text: string): string {
   return text.replace(/\r/g, "").trim();
 }
 
-function imageLabelFor(state: ImageLabelState, key: string): string {
+function imageLabelFor(state: ImageRefState, key: string): string {
   const existing = state.labelsByKey.get(key);
   if (existing) return existing;
   const label = `[image #${state.nextIndex}]`;
@@ -38,17 +48,18 @@ function imageLabelFor(state: ImageLabelState, key: string): string {
 }
 
 function imageReferenceFor(
-  state: ImageLabelState,
+  state: ImageRefState,
   attachmentId: string,
   opts: { filename?: string; mimeType?: string } = {},
 ): HistoryImageReferencePart {
+  const query = state.sessionId ? `?sessionId=${encodeURIComponent(state.sessionId)}` : "";
   return {
     type: "image_reference",
     label: imageLabelFor(state, attachmentId),
     attachmentId,
     filename: opts.filename,
     mimeType: opts.mimeType,
-    contentUrl: `/attachments/${attachmentId}/content`,
+    contentUrl: `/attachments/${attachmentId}/content${query}`,
   };
 }
 
@@ -60,7 +71,7 @@ function flushTextPart(parts: HistoryPart[], lines: string[]) {
 
 function partsFromFlattenedAttachmentText(
   text: string,
-  imageLabels: ImageLabelState,
+  imageLabels: ImageRefState,
 ): HistoryPart[] | null {
   if (!text.includes("Attached image files:")) return null;
 
@@ -96,7 +107,7 @@ function partsFromFlattenedAttachmentText(
   return parts;
 }
 
-function partsFromTranscriptText(text: string, imageLabels: ImageLabelState): HistoryPart[] {
+function partsFromTranscriptText(text: string, imageLabels: ImageRefState): HistoryPart[] {
   const flattenedAttachmentParts = partsFromFlattenedAttachmentText(text, imageLabels);
   if (flattenedAttachmentParts) return flattenedAttachmentParts;
 
@@ -173,10 +184,13 @@ export function messageText(message: Pick<ChatMessage, "parts" | "text">): strin
   return String(message.text ?? "").trim();
 }
 
-export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutput | null): ChatMessage[] {
+export function messagesFromParsedAgentOutput(
+  parsed?: ParsedAgentOutput | null,
+  sessionId?: string,
+): ChatMessage[] {
   const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
   const messages: ChatMessage[] = [];
-  const imageLabels: ImageLabelState = { labelsByKey: new Map(), nextIndex: 1 };
+  const imageLabels: ImageRefState = { labelsByKey: new Map(), nextIndex: 1, sessionId };
 
   blocks.forEach((block, index) => {
     const type = blockType(block);
