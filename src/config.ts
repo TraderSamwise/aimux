@@ -9,6 +9,7 @@ import {
   getReadOnlyProjectPathsFor,
 } from "./paths.js";
 import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
+import type { StartupInterstitial } from "./tmux/startup-interstitials.js";
 
 export interface NotificationConfig {
   enabled: boolean;
@@ -152,6 +153,8 @@ export interface ToolConfig {
   turnPatterns?: string[];
   /** Command to use for LLM compaction (default: "claude --print --output-format text") */
   compactCommand?: string;
+  /** Modal prompts this tool shows at startup, and the option that dismisses each. */
+  startupInterstitials?: StartupInterstitial[];
 }
 
 const DEFAULT_CONFIG: AimuxConfig = {
@@ -236,6 +239,17 @@ const DEFAULT_CONFIG: AimuxConfig = {
       developerInstructionsConfigKey: "developer_instructions",
       promptPatterns: ["^> $"],
       turnPatterns: ["^[>❯]\\s*(.+)"],
+      startupInterstitials: [
+        // Plain "Skip", not "Skip until next version": the latter is remembered
+        // for the whole machine, which would silence the update notice in the
+        // user's own terminal too.
+        {
+          id: "codex-update-available",
+          when: ["Update available!", "Press enter to continue"],
+          // The selected option is prefixed "› ", the rest with spaces.
+          choose: "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$",
+        },
+      ],
     },
     aider: {
       command: "aider",
