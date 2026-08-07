@@ -242,6 +242,18 @@ function isAttachmentProxyPath(pathname: string): boolean {
 }
 
 /**
+ * Which requests get the smaller one.
+ *
+ * The context is the one body a client may rewrite on every navigation, so it
+ * is the cheapest way to flood the audit sink at prompt-sized bodies. Matched
+ * as loosely as the attachment check above, and safe for the same reason: it
+ * decides buffer size, never access.
+ */
+function isPromptContextProxyPath(pathname: string): boolean {
+  return isProxyPath(pathname) && /\/agents\/prompt-context$/.test(pathname);
+}
+
+/**
  * Wait for backpressure to clear, for the socket to die, or for the stream to
  * be given up on.
  *
@@ -756,7 +768,11 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     // the attachment routes get their own. Raising the prompt cap instead
     // would let an operator push megabytes into an append-only audit sink.
     const attachmentRoute = isAttachmentProxyPath(url.pathname);
-    const bodyCap = attachmentRoute ? config.maxAttachmentBytes : config.maxPromptBytes;
+    const bodyCap = attachmentRoute
+      ? config.maxAttachmentBytes
+      : isPromptContextProxyPath(url.pathname)
+        ? config.maxContextBytes
+        : config.maxPromptBytes;
 
     try {
       if (method !== "GET" && method !== "HEAD") {

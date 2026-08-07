@@ -54,8 +54,29 @@ describe("operator route allowlist", () => {
       }),
     ).toEqual({ ok: true });
     expect(
+      allow(operator(), "POST", PORT_PATH(PROJECT_API_ROUTES.agents.promptContext), {
+        body: { sessionId: SESSION, text: "page=/admin" },
+      }),
+    ).toEqual({ ok: true });
+    expect(
       allow(operator(), "POST", PORT_PATH(PROJECT_API_ROUTES.agents.interrupt), { body: { sessionId: SESSION } }),
     ).toEqual({ ok: true });
+  });
+
+  it("refuses to let an operator set context on a session it was not granted", () => {
+    expect(
+      allow(operator(), "POST", PORT_PATH(PROJECT_API_ROUTES.agents.promptContext), {
+        body: { sessionId: "someone-elses-session", text: "steer" },
+      }),
+    ).not.toEqual({ ok: true });
+  });
+
+  it("gives the context route no way to be read back", () => {
+    expect(
+      allow(operator(), "GET", PORT_PATH(PROJECT_API_ROUTES.agents.promptContext), {
+        query: `?sessionId=${SESSION}`,
+      }),
+    ).not.toEqual({ ok: true });
   });
 
   it("denies every route not on the allowlist", () => {
