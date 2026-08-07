@@ -8,7 +8,7 @@ import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
 import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
-import { findMainRepo } from "../worktree.js";
+import { findMainRepo, withWorktreeMemo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { NOTIFICATION_TAG, summarizeUnreadNotificationsBySession } from "../notifications.js";
@@ -1091,7 +1091,15 @@ export function readTmuxProcessInfo(
   };
 }
 
+// Wrapped in the worktree memo because this build asks git for the same worktree
+// listing several times over — directly, once per computeDashboardSessions pass, once
+// while sorting, and once per offline session. The body is fully synchronous, so the
+// memo cannot outlive it or be observed elsewhere.
 export function buildDesktopStateSnapshot(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
+  return withWorktreeMemo(() => buildDesktopStateSnapshotUnmemoized(host, options));
+}
+
+function buildDesktopStateSnapshotUnmemoized(host: DashboardModelHost, options: DashboardStateSnapshotOptions = {}) {
   if (options.includeRuntimeInfo !== false) host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
   let managedWindows =

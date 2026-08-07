@@ -101,27 +101,85 @@ export function resetWorktreeGitCallCount(): void {
 }
 
 /**
+ * Memoize `git worktree list --porcelain` for the duration of one synchronous scope.
+ *
+ * Building a desktop-state snapshot asks for the same worktree listing several times
+ * over — once directly, once per `computeDashboardSessions` pass, once while sorting,
+ * and once per offline session — at ~18ms a subprocess.
+ *
+ * Only safe because the wrapped scope must be fully synchronous: the event loop cannot
+ * interleave, so the memo cannot outlive the call or be seen by anything else, and a
+ * snapshot is a point-in-time view anyway. Do NOT wrap a scope that creates or removes
+ * worktrees, or one containing an `await`.
+ */
+interface WorktreeMemo {
+  // The raw subprocess result, shared by findMainRepo and listWorktrees because they
+  // run the identical command. Failures are memoized as well as successes so each
+  // function can keep its own reaction to them: listWorktrees swallows, findMainRepo
+  // throws.
+  output: Map<string, { ok: true; text: string } | { ok: false; error: unknown }>;
+  main: Map<string, string>;
+  list: Map<string, WorktreeInfo[]>;
+}
+
+let worktreeMemo: WorktreeMemo | null = null;
+
+export function withWorktreeMemo<T>(fn: () => T): T {
+  if (worktreeMemo) return fn(); // Already inside a memoized scope; inherit it.
+  worktreeMemo = { output: new Map(), main: new Map(), list: new Map() };
+  try {
+    return fn();
+  } finally {
+    worktreeMemo = null;
+  }
+}
+
+function readWorktreeList(effectiveCwd: string): string {
+  const memoized = worktreeMemo?.output.get(effectiveCwd);
+  if (memoized) {
+    if (memoized.ok) return memoized.text;
+    throw memoized.error;
+  }
+  try {
+    const text = execSync("git worktree list --porcelain", {
+      cwd: effectiveCwd,
+      env: gitEnv(),
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    gitCallCount += 1;
+    worktreeMemo?.output.set(effectiveCwd, { ok: true, text });
+    return text;
+  } catch (error) {
+    gitCallCount += 1;
+    worktreeMemo?.output.set(effectiveCwd, { ok: false, error });
+    throw error;
+  }
+}
+
+/**
  * Find the main repository path (the primary worktree, not a linked one).
  * Uses `git worktree list --porcelain` — the first entry is always the main worktree.
  */
 export function findMainRepo(cwd?: string): string {
-  gitCallCount += 1;
-  const output = execSync("git worktree list --porcelain", {
-    cwd: cwd ?? process.cwd(),
-    env: gitEnv(),
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const effectiveCwd = cwd ?? process.cwd();
+  const memoized = worktreeMemo?.main.get(effectiveCwd);
+  if (memoized !== undefined) return memoized;
+  const output = readWorktreeList(effectiveCwd);
   const firstLine = output.split("\n")[0];
   const match = firstLine.match(/^worktree\s+(.+)$/);
   if (!match) {
-    return execSync("git rev-parse --show-toplevel", {
+    gitCallCount += 1;
+    const fallback = execSync("git rev-parse --show-toplevel", {
       cwd: cwd ?? process.cwd(),
       env: gitEnv(),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
+    worktreeMemo?.main.set(effectiveCwd, fallback);
+    return fallback;
   }
+  worktreeMemo?.main.set(effectiveCwd, match[1]);
   return match[1];
 }
 
@@ -131,21 +189,23 @@ export function findMainRepo(cwd?: string): string {
  */
 export function listWorktrees(cwd?: string): WorktreeInfo[] {
   const effectiveCwd = cwd ?? process.cwd();
+  const memoized = worktreeMemo?.list.get(effectiveCwd);
+  if (memoized !== undefined) return memoized;
   let output: string;
-  gitCallCount += 1;
   try {
-    output = execSync("git worktree list --porcelain", {
-      cwd: effectiveCwd,
-      env: gitEnv(),
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    output = readWorktreeList(effectiveCwd);
   } catch {
-    return [];
+    // A cwd that is not a repo stays not-a-repo for the scope; readWorktreeList has
+    // already memoized the failure so no caller re-pays the subprocess.
+    const empty: WorktreeInfo[] = [];
+    worktreeMemo?.list.set(effectiveCwd, empty);
+    return empty;
   }
-  return parseWorktreeList(output)
+  const worktrees = parseWorktreeList(output)
     .filter((worktree) => worktree.isBare || existsSync(worktree.path))
     .map(withWorktreeCreatedAt);
+  worktreeMemo?.list.set(effectiveCwd, worktrees);
+  return worktrees;
 }
 
 export async function listWorktreesAsync(cwd?: string): Promise<WorktreeInfo[]> {

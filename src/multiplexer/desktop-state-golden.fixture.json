@@ -1182,6 +1182,6 @@
     "exchangeReads": 136,
     "topologyReads": 7,
     "topologyParses": 1,
-    "gitCalls": 6
+    "gitCalls": 2
   }
 }
