@@ -52,6 +52,14 @@ describe("normalizeHostedConfig", () => {
     expect(normalizeHostedConfig("nope")).toEqual(DEFAULT_HOSTED_CONFIG);
   });
 
+  it("floors the context cap at the envelope a full-size context needs", () => {
+    // Below this the project service's own 4 KB text limit stops being the
+    // binding one, and a legal context is refused by the transport instead of
+    // by the layer that could say why.
+    expect(normalizeHostedConfig({ maxContextBytes: 512 }).maxContextBytes).toBe(8_192);
+    expect(normalizeHostedConfig({ maxContextBytes: 16_384 }).maxContextBytes).toBe(16_384);
+  });
+
   it("does not share nested state with the default object", () => {
     const normalized = normalizeHostedConfig(undefined);
     normalized.rateLimit.requestsPerMinute = 1;

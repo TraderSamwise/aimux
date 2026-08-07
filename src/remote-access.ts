@@ -61,6 +61,10 @@ const PROXY_PATH_PATTERN = /^\/proxy\/[^/]+\/\d+(\/.*)$/;
 const OPERATOR_ROUTE_METHODS = new Map<string, "GET" | "POST">([
   [PROJECT_API_ROUTES.agents.output, "GET"],
   [PROJECT_API_ROUTES.agents.input, "POST"],
+  // Write-only by construction: the route replaces or clears, and there is no
+  // GET, so a principal can steer its own granted session's prompts and cannot
+  // read back what any other client put there.
+  [PROJECT_API_ROUTES.agents.promptContext, "POST"],
   [PROJECT_API_ROUTES.agents.interrupt, "POST"],
   [PROJECT_API_ROUTES.attachments, "POST"],
 ]);

@@ -241,6 +241,37 @@ describe("hosted listener", () => {
     expect(prompt.status).toBe(413);
   });
 
+  it("gives the context route its own body ceiling, tighter than an attachment", async () => {
+    const { token } = createHostedPrincipal({ label: "grand" });
+    const handle = await start({ maxAttachmentBytes: 1_048_576, maxContextBytes: 4_096 });
+    const contextUrl = url(handle, "/proxy/127.0.0.1/43210/agents/prompt-context");
+
+    // Comfortably inside the context ceiling, and far past the 256-byte prompt
+    // cap this suite configures — so this passing proves the route has its own.
+    const withinContextCap = await fetch(contextUrl, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "s", text: "x".repeat(2_000) }),
+    });
+    expect(withinContextCap.status).toBe(200);
+    // 200 alone would also be what a request refused before routing returns
+    // from this stub, so assert the body actually arrived downstream intact.
+    expect(seen.at(-1)).toMatchObject({
+      path: "/proxy/127.0.0.1/43210/agents/prompt-context",
+      body: { sessionId: "s", text: "x".repeat(2_000) },
+    });
+
+    // And that ceiling is a real one: the attachment allowance does not apply.
+    const pastContextCap = await fetch(contextUrl, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "s", text: "x".repeat(8_000) }),
+    });
+    expect(pastContextCap.status).toBe(413);
+    // Refused at the door: the oversized body never reached the router.
+    expect(seen).toHaveLength(1);
+  });
+
   /**
    * The grant check runs after the body is read, so counting requests alone
    * leaves a token with no grants able to make the listener buffer a full

@@ -19,15 +19,28 @@ access. It is off by default, and its own page argues about when not to use it.
 
 ## What an operator can do
 
-Exactly five routes, on sessions explicitly granted to them:
+Exactly six routes, on sessions explicitly granted to them:
 
 | | |
 |---|---|
 | `GET /agents/output` | read the session's pane |
 | `POST /agents/input` | send it text |
+| `POST /agents/prompt-context` | set or clear the context attached to its prompts |
 | `POST /agents/interrupt` | interrupt a running turn |
 | `POST /attachments` | upload an image to the session |
 | `GET /attachments/<id>/content` | read one back |
+
+The context route holds a line of text — what page the person is on, which
+record they are editing — and aimux prepends it to every message that session
+is sent until it is replaced or cleared. Sending `text: ""` clears it, and it
+expires by itself after thirty minutes so a closed tab cannot leave a context
+steering the agent.
+
+The route itself is write-only, but do not read that as secrecy: the context is
+composed into the prompt, so it lands in the pane and anyone granted
+`GET /agents/output` on that session reads it there. Treat a context as visible
+to every principal holding the session, and put nothing in one that the pane
+should not carry.
 
 Plus one streaming route:
 
@@ -65,6 +78,10 @@ Uploads get their own body ceiling (`maxAttachmentBytes`) rather than the prompt
 charged against a per-principal **byte** budget as well as the request budget — the grant check runs
 after the body has been read, so counting requests alone would let a token with no grants make the
 listener buffer a full attachment on every attempt.
+
+`POST /agents/prompt-context` gets its own ceiling too (`maxContextBytes`), for the opposite reason:
+it is the one body a client may rewrite on every navigation, so it is the cheapest way to keep the
+listener buffering. It is charged against the same byte budget.
 
 ### Streaming
 
@@ -113,6 +130,7 @@ is stripped on load.
     "maxPromptBytes": 16384,
     "maxResponseBytes": 1048576,
     "maxAttachmentBytes": 14680064,
+    "maxContextBytes": 8192,
     "auditPromptBodies": true,
     "webhookUrl": "https://example.com/api/webhooks/aimux",
     "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
