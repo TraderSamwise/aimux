@@ -5,6 +5,60 @@ import { describe, expect, it } from "vitest";
 import { RuntimeTopologyStore, emptyRuntimeTopology } from "./topology-store.js";
 
 describe("RuntimeTopologyStore", () => {
+  // `team` is the only session field typed `unknown`, so it is the only one the coercer
+  // cannot rebuild structurally. It is cloned instead, on both the read and the write
+  // path (write coerces too), so no reference is shared with the caller in either
+  // direction. Everything else is rebuilt field by field.
+  it("does not share the team object with its caller in either direction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
+    try {
+      const store = new RuntimeTopologyStore(join(dir, "runtime-topology.yaml"));
+      const now = "2026-05-25T00:00:00.000Z";
+      const team = { name: "reviewers", role: "reviewer", members: ["codex-1"] };
+      const written = store.write({
+        ...emptyRuntimeTopology(now),
+        rigs: [{ id: "rig-main", name: "aimux", projectRoot: "/repo", createdAt: now, updatedAt: now }],
+        nodes: [
+          {
+            id: "node-codex-1",
+            rigId: "rig-main",
+            logicalId: "codex-1",
+            runtime: "codex",
+            toolConfigKey: "codex",
+            cwd: "/repo",
+            createdAt: now,
+          },
+        ],
+        sessions: [
+          {
+            id: "codex-1",
+            nodeId: "node-codex-1",
+            status: "running",
+            tool: "codex",
+            command: "codex",
+            args: [],
+            team,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
+
+      expect(written.sessions[0].team).toEqual(team);
+      expect(written.sessions[0].team).not.toBe(team);
+
+      const first = store.read();
+      expect(first.sessions[0].team).toEqual(team);
+
+      (first.sessions[0].team as { name: string }).name = "clobbered";
+      (first.sessions[0].team as { members: string[] }).members.push("injected");
+
+      expect(store.read().sessions[0].team).toEqual(team);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("round-trips the OpenRig-style runtime topology YAML", () => {
     const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
     try {

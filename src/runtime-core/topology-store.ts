@@ -389,7 +389,12 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         freshRelaunchAllowed: asOptionalBoolean(row.freshRelaunchAllowed),
         restoreBlockedReason: asOptionalString(row.restoreBlockedReason),
         graveyardReason: asOptionalString(row.graveyardReason),
-        team: row.team,
+        // The one field typed `unknown`, so it is the one field this coercer cannot
+        // rebuild structurally. Cloning keeps the "no reference escapes the input"
+        // invariant that every other field satisfies by construction — which is what
+        // lets a caller mutate a coerced topology without reaching back into whatever
+        // produced it.
+        team: structuredClone(row.team),
         createdAt: asString(row.createdAt, `sessions[${index}].createdAt`),
         updatedAt: asString(row.updatedAt, `sessions[${index}].updatedAt`),
         lastSeenAt: asOptionalString(row.lastSeenAt),
