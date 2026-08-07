@@ -499,13 +499,15 @@ export const dashboardInteractionMethods = {
     this.clearDashboardQuickJump();
     const digit = Number.parseInt(key, 10);
 
-    // Second half of a `<worktree><entry>` pair: the first digit already focused the
-    // worktree, so this is the same job as a digit pressed at session level. An
-    // out-of-range digit leaves the pointer on the worktree root.
-    if (hadPendingWorktreeDigit || this.dashboardState.level === "sessions") {
+    // Second half of a `<worktree><entry>` pair. An out-of-range digit leaves the
+    // pointer on the worktree root.
+    if (hadPendingWorktreeDigit) {
       activateDashboardWorktreeEntryDigit(this, digit);
       return true;
     }
+
+    // A first digit always addresses a worktree, at either level. Digits are the one
+    // gesture that has to work without knowing where the pointer currently sits.
 
     const worktrees = buildDashboardQuickJumpWorktrees({
       sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
@@ -539,10 +541,12 @@ export const dashboardInteractionMethods = {
         const beforeMode = this.mode;
         const beforeOverlay = this.dashboardOverlayState?.kind ?? "none";
         const key = commandKey(event);
-        const activatesVisibleDashboardEntry =
+        // A digit that completes a `<worktree><entry>` pair ends the gesture; a first
+        // digit only moves the pointer, so the run must keep going to reach its partner.
+        const completesQuickJumpPair =
           this.isDashboardScreen("dashboard") &&
           this.dashboardState?.hasWorktrees?.() &&
-          this.dashboardState.level === "sessions" &&
+          Boolean(this.dashboardState.quickJumpDigits) &&
           key >= "1" &&
           key <= "9";
         dashboardInteractionMethods.handleDashboardKey.call(this, Buffer.from(event.raw));
@@ -550,7 +554,7 @@ export const dashboardInteractionMethods = {
         if (
           this.mode !== beforeMode ||
           afterOverlay !== beforeOverlay ||
-          activatesVisibleDashboardEntry ||
+          completesQuickJumpPair ||
           key === "enter" ||
           key === "right" ||
           key === "l" ||
@@ -581,9 +585,8 @@ export const dashboardInteractionMethods = {
       for (const digit of event.char) {
         const beforeMode = this.mode;
         const completesQuickJumpPair = Boolean(this.dashboardState.quickJumpDigits);
-        const activatesVisibleEntry = this.dashboardState.level === "sessions";
         dashboardInteractionMethods.handleDashboardKey.call(this, Buffer.from(digit));
-        if (this.mode !== beforeMode || completesQuickJumpPair || activatesVisibleEntry) break;
+        if (this.mode !== beforeMode || completesQuickJumpPair) break;
       }
       return;
     }
