@@ -324,6 +324,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     (this as any).tuiApiRecoveryDueAt = undefined;
     (this as any).tuiApiRecoveryPending = false;
     (this as any).tuiApiRecoveryInFlight = false;
+    (this as any).tuiApiRecoveryFailureStreak = 0;
     clearTuiRuntimeMutationQueue(this);
     (this as any).tuiApiRuntime?.dispose?.();
     (this as any).tuiApiRuntime = null;

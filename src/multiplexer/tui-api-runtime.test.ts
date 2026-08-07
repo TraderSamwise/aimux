@@ -7,6 +7,7 @@ import {
   scheduleTuiApiRecovery,
   TuiApiMutationBlockedError,
   TuiApiRuntime,
+  TUI_API_RECOVERY_BACKOFF_MAX_MS,
   TUI_API_RECOVERY_COOLDOWN_MS,
   TUI_API_RECOVERY_DEBOUNCE_MS,
 } from "./tui-api-runtime.js";
@@ -696,6 +697,109 @@ describe("TuiApiRuntime", () => {
       expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("escalates the recovery cooldown while the service keeps failing", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+      };
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+
+      // The first self-requeue keeps the fast cooldown so a one-off blip still
+      // retries promptly.
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+
+      // The second has doubled, so one more cooldown is not yet enough.
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps the recovery backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+        tuiApiRecoveryFailureStreak: 99,
+        tuiApiLastRecoveryAt: Date.now(),
+      };
+
+      scheduleTuiApiRecovery(host);
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_BACKOFF_MAX_MS - 1);
+      expect(host.refreshRuntimeGuard).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(host.refreshRuntimeGuard).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A congested service still answers most requests. If an individual success
+  // retired the backoff, the escalation would never engage in the very scenario
+  // it exists for, so only a fully verified recovery may clear it.
+  it("keeps escalating while a congested service intermittently succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const request = vi.fn(async () => ({ ok: true }));
+      const host: any = { mode: "dashboard", getFromProjectService: request };
+      const runtime = getOrCreateTuiApiRuntime(host);
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host.tuiApiRecoveryFailureStreak).toBe(1);
+
+      // Interleave a successful request, which flips the connection back to ready.
+      await runtime.requestJson("/health", (value) => value);
+      expect(host.tuiApiConnectionState).toBe("ready");
+      expect(host.tuiApiRecoveryFailureStreak).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(TUI_API_RECOVERY_COOLDOWN_MS);
+      expect(host.tuiApiRecoveryFailureStreak).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the recovery backoff after a verified recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = {
+        mode: "dashboard",
+        tuiApiRecoveryFailureStreak: 4,
+        runtimeGuardState: { kind: "ok" },
+        refreshRuntimeGuard: vi.fn(async () => undefined),
+        tuiApiRuntime: {
+          beginRecovery: vi.fn(),
+          finishRecovery: vi.fn(),
+          refreshCriticalResources: vi.fn(async () => ({
+            attemptedResources: ["desktop-state"],
+            missingResources: [],
+            failedResources: [],
+          })),
+          getConnectionSnapshot: () => ({ state: "ready", failedCriticalResources: [] }),
+        },
+      };
+
+      scheduleTuiApiRecovery(host, { immediate: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(host.tuiApiRecoveryFailureStreak).toBe(0);
+      expect(host.tuiApiRecoveryPending).toBe(false);
     } finally {
       vi.useRealTimers();
     }
