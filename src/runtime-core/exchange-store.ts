@@ -547,6 +547,28 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Parsed-store cache keyed on the file's exact contents.
+ *
+ * One dashboard rebuild reads this store ~136 times, because `readMessages` re-reads
+ * and re-parses the whole file per thread. At ~4ms a parse that was ~90% of the
+ * `/desktop-state` response time, and since every project service shares one event
+ * loop it starved unrelated projects' health checks.
+ *
+ * Keyed on content, not on `(ino, mtime, size)`: inodes are recycled after the rename
+ * in `atomicWrite`, Linux mtimes are only tick-granular, and timestamp-only writes are
+ * byte-length identical — so a stat key can collide. `read()` feeds `update()`'s
+ * read-modify-write, so a stale hit would silently clobber another process's records
+ * rather than merely show stale data. Reading the file is ~1% of a parse, so comparing
+ * contents buys that correctness for almost nothing.
+ */
+const RAW_CACHE_MAX = 32;
+const rawCache = new Map<string, { text: string; raw: unknown }>();
+
+// Errnos for which the `existsSync` guard this replaced returned false, so they must
+// keep degrading to an empty exchange instead of failing the whole read.
+const MISSING_FILE_ERROR_CODES = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"]);
+
 // Instrumentation for tests that assert how many times one operation parses this store.
 let readCount = 0;
 let parseCount = 0;
@@ -565,12 +587,45 @@ export class RuntimeExchangeStore {
 
   read(): RuntimeExchange {
     readCount += 1;
-    if (!existsSync(this.path)) return emptyRuntimeExchange();
+    let text: string;
+    try {
+      text = readFileSync(this.path, "utf-8");
+    } catch (error) {
+      // This replaced an `existsSync` guard, so the errnos for which `existsSync`
+      // returned false must still degrade to an empty exchange rather than throw.
+      // EACCES deliberately still throws: it did before too, when the file existed
+      // but could not be opened.
+      if (MISSING_FILE_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? "")) {
+        rawCache.delete(this.path);
+        return emptyRuntimeExchange();
+      }
+      throw error;
+    }
+    const cached = rawCache.get(this.path);
+    if (cached && cached.text === text) {
+      rawCache.delete(this.path);
+      rawCache.set(this.path, cached);
+      // Re-coerce rather than hand back a shared object: every field is rebuilt, so
+      // each caller gets its own graph and can mutate it without touching the cache.
+      return coerceRuntimeExchange(cached.raw);
+    }
     parseCount += 1;
-    const parsed = parse(readFileSync(this.path, "utf-8"));
-    return coerceRuntimeExchange(parsed);
+    const raw = parse(text);
+    // Delete before set so re-inserting an existing path moves it to the tail; without
+    // it, a path whose contents change often would drift toward eviction while hottest.
+    rawCache.delete(this.path);
+    rawCache.set(this.path, { text, raw });
+    if (rawCache.size > RAW_CACHE_MAX) {
+      const oldest = rawCache.keys().next().value;
+      if (oldest !== undefined) rawCache.delete(oldest);
+    }
+    return coerceRuntimeExchange(raw);
   }
 
+  // Deliberately does not seed the cache: `normalized` is handed back to the caller, so
+  // storing it would alias caller-owned state, and seeding safely would mean re-parsing
+  // what we just serialized. The content key makes invalidation here unnecessary anyway —
+  // the next read compares bytes.
   write(exchange: RuntimeExchange): RuntimeExchange {
     const normalized = coerceRuntimeExchange(exchange);
     atomicWrite(this.path, stringify(normalized, { lineWidth: 120, sortMapEntries: false }));

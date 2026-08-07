@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -145,6 +145,165 @@ describe("RuntimeExchangeStore", () => {
         continuityRefs: [{ id: "history-1", kind: "history" }],
         attachmentRefs: [{ id: "attachment-1", messageId: "msg-1" }],
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The read cache stores the raw parse and re-coerces per read, which is only safe
+  // while coerceRuntimeExchange rebuilds every nested value. If someone later adds a
+  // passthrough field, a caller mutating it would poison every later read process-wide.
+  // This is the test that turns that invariant from "true today" into "stays true".
+  it("never lets a caller's mutation leak into a later read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+      store.write({
+        ...emptyRuntimeExchange(now),
+        threads: [
+          {
+            id: "thread-1",
+            title: "Thread",
+            kind: "task",
+            status: "open",
+            createdAt: now,
+            updatedAt: now,
+            createdBy: "user",
+            participants: ["user", "codex-1"],
+            waitingOn: ["codex-1"],
+            unreadBy: ["codex-1"],
+          },
+        ],
+        messages: [
+          {
+            id: "msg-1",
+            threadId: "thread-1",
+            ts: now,
+            from: "user",
+            to: ["codex-1"],
+            kind: "request",
+            body: "hello",
+            metadata: { attempt: 1 },
+            deliveredTo: ["codex-1"],
+          },
+        ],
+        // Every record type is seeded: a passthrough added to any one of them must
+        // trip this, not just the three the dashboard path happens to read.
+        tasks: [
+          {
+            id: "task-1",
+            status: "pending",
+            assignedBy: "user",
+            assignedTo: "codex-1",
+            threadId: "thread-1",
+            description: "d",
+            prompt: "p",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        handoffs: [
+          {
+            id: "handoff-1",
+            threadId: "thread-1",
+            status: "waiting",
+            from: "user",
+            to: ["codex-1"],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        reviews: [{ id: "review-1", taskId: "task-1", status: "pending", createdAt: now, updatedAt: now }],
+        waits: [
+          {
+            id: "wait-1",
+            status: "waiting",
+            subjectKind: "thread",
+            subjectId: "thread-1",
+            waitingOn: ["codex-1"],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        planRefs: [
+          { id: "plan-1", path: "/p.md", threadId: "thread-1", taskId: "task-1", createdAt: now, updatedAt: now },
+        ],
+        continuityRefs: [
+          { id: "hist-1", kind: "history", path: "/h.jsonl", threadId: "thread-1", createdAt: now, updatedAt: now },
+        ],
+        attachmentRefs: [
+          { id: "att-1", path: "/a.json", threadId: "thread-1", messageId: "msg-1", createdAt: now, updatedAt: now },
+        ],
+      });
+
+      // Deep-copied on purpose: if a passthrough field aliased the cache, this handle
+      // would be poisoned by the mutations below too, and the comparison would pass
+      // while both sides were corrupt.
+      const pristine = structuredClone(store.read());
+      const mutated = store.read();
+      mutated.threads.push({ ...mutated.threads[0], id: "injected" });
+      mutated.threads[0].participants.push("injected");
+      mutated.threads[0].title = "clobbered";
+      mutated.threads[0].waitingOn?.push("injected");
+      mutated.messages[0].to?.push("injected");
+      mutated.messages[0].body = "clobbered";
+      if (mutated.messages[0].metadata) mutated.messages[0].metadata.attempt = 99;
+      mutated.tasks[0].description = "clobbered";
+      mutated.handoffs[0].to.push("injected");
+      mutated.reviews[0].status = "approved";
+      mutated.waits[0].waitingOn.push("injected");
+      mutated.planRefs[0].path = "/clobbered";
+      mutated.continuityRefs[0].path = "/clobbered";
+      mutated.attachmentRefs[0].path = "/clobbered";
+      mutated.inbox.push({
+        id: "injected",
+        participantId: "user",
+        subjectKind: "thread",
+        subjectId: "thread-1",
+        state: "unread",
+        urgency: 1,
+        updatedAt: now,
+      });
+
+      expect(store.read()).toEqual(pristine);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("serves a rewritten file rather than a cached parse", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const store = new RuntimeExchangeStore(path);
+      const now = "2026-05-25T00:00:00.000Z";
+      const thread = {
+        id: "thread-1",
+        title: "Thread",
+        kind: "task" as const,
+        status: "open" as const,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: "user",
+        participants: ["user"],
+      };
+      store.write({ ...emptyRuntimeExchange(now), threads: [thread] });
+      expect(store.read().threads[0].title).toBe("Thread");
+
+      // Written outside the store, mimicking another process, and byte-length identical
+      // so neither a size-based nor a stat-based cache key would notice the change.
+      const before = readFileSync(path, "utf-8");
+      const after = before.replace("title: Thread", "title: Thredz");
+      expect(after).not.toBe(before);
+      expect(after.length).toBe(before.length);
+      writeFileSync(path, after);
+      expect(store.read().threads[0].title).toBe("Thredz");
+
+      // Deleting must not leave the previous parse reachable.
+      rmSync(path, { force: true });
+      expect(store.read().threads).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

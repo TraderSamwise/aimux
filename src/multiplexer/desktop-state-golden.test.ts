@@ -33,7 +33,12 @@ import { buildDesktopStateSnapshot } from "./dashboard-model.js";
 const GOLDEN = JSON.parse(readFileSync(join(import.meta.dirname, "desktop-state-golden.fixture.json"), "utf-8")) as {
   runtimeLight: unknown;
   runtimeFull: unknown;
-  costModel: { exchangeParses: number; topologyParses: number; gitCalls: number };
+  costModel: {
+    exchangeReads: number;
+    topologyReads: number;
+    topologyParses: number;
+    gitCalls: number;
+  };
 };
 
 const THREAD_COUNT = 16;
@@ -274,8 +279,9 @@ describe("desktop-state golden snapshot", () => {
     expect((GOLDEN.runtimeLight as any).sessions[0].pid).toBeUndefined();
   });
 
-  // This pins the cost model the performance work targets. It is expected to change as
-  // each phase lands — the goldens above are what must not.
+  // Pins the cost model the performance work targets. Reads are asserted exactly: they
+  // must NOT drop, because a change there would mean the call graph moved rather than
+  // the work getting cheaper. Parses are the thing being driven down.
   it("pins how much redundant work one snapshot build performs", () => {
     resetExchangeStoreStats();
     resetTopologyStoreStats();
@@ -284,9 +290,14 @@ describe("desktop-state golden snapshot", () => {
     buildDesktopStateSnapshot(buildHost(), { includeRuntimeInfo: false, hydrateLiveAgentWindows: false });
 
     expect({
-      exchangeParses: getExchangeStoreStats().parses,
-      topologyParses: getTopologyStoreStats().parses,
-      gitCalls: getWorktreeGitCallCount(),
-    }).toEqual(GOLDEN.costModel);
+      exchangeReads: getExchangeStoreStats().reads,
+      topologyReads: getTopologyStoreStats().reads,
+    }).toEqual({ exchangeReads: GOLDEN.costModel.exchangeReads, topologyReads: GOLDEN.costModel.topologyReads });
+
+    // One build must never parse the same file more than once, however many times it
+    // asks for it. `readMessages` alone asks once per thread.
+    expect(getExchangeStoreStats().parses).toBeLessThanOrEqual(1);
+    expect(getTopologyStoreStats().parses).toBeLessThanOrEqual(GOLDEN.costModel.topologyParses);
+    expect(getWorktreeGitCallCount()).toBeLessThanOrEqual(GOLDEN.costModel.gitCalls);
   });
 });
