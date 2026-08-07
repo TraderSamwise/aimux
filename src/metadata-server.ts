@@ -168,6 +168,13 @@ import { pruneExpiredHotExposeSnapshots } from "./tmux/expose-hot-snapshot.js";
 import { runTmuxExpose } from "./tmux/expose.js";
 import { buildGraveyardViewModel } from "./multiplexer/graveyard-view-model.js";
 import {
+  PROMPT_CONTEXT_MAX_BYTES,
+  PromptContextStore,
+  composeWithPromptContext,
+  normalizePromptContext,
+  promptContextByteLength,
+} from "./prompt-context.js";
+import {
   permissionRequestHookOutput,
   summarizeClaudeNotification,
   summarizeClaudePermissionRequest,
@@ -1405,6 +1412,7 @@ export class MetadataServer {
   private exposeHotSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private exposeHotSnapshotRefreshing = false;
   private exposeHotSnapshotWorker: Worker | null = null;
+  private readonly promptContexts = new PromptContextStore();
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.projectRoot = options.projectRoot?.trim() || metadataProjectRoot();
@@ -4702,6 +4710,7 @@ export class MetadataServer {
               sessionId: resolved.teammate.id,
             }),
         );
+        this.promptContexts.clear(resolved.teammate.id);
         notifyCurrentRouteChange();
         send(
           res,
@@ -4943,6 +4952,10 @@ export class MetadataServer {
           { operation: "agent.kill", targetKind: "agent", targetId: body.sessionId },
           () => this.options.lifecycle!.killAgent!({ sessionId: body.sessionId }),
         );
+        // A resurrected session comes back under the same id, so a context left
+        // here would attach itself to a conversation that never asked for it.
+        // Trimmed to match how `set` stored it, or a padded id misses.
+        this.promptContexts.clear(body.sessionId?.trim() ?? "");
         notifyCurrentRouteChange();
         send(
           res,
@@ -4953,6 +4966,41 @@ export class MetadataServer {
             targetId: body.sessionId,
           }),
         );
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === PROJECT_API_ROUTES.agents.promptContext) {
+        const body = (await readJson(req)) as { sessionId?: string; text?: unknown };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        // Absent, null and empty all mean the same thing on purpose: a client
+        // clearing has one call to make, and a client whose state went empty
+        // does not have to notice that it did.
+        const raw = typeof body.text === "string" ? body.text : "";
+        const normalized = normalizePromptContext(raw);
+        const bytes = promptContextByteLength(normalized);
+        if (bytes > PROMPT_CONTEXT_MAX_BYTES) {
+          // Refused whole rather than truncated. Half a context is worse than
+          // none: the agent cannot tell it was cut and answers confidently from
+          // a sentence that stops mid-fact.
+          send(res, 413, {
+            ok: false,
+            error: `prompt context too large: ${bytes} bytes exceeds ${PROMPT_CONTEXT_MAX_BYTES}`,
+          });
+          return;
+        }
+        const entry = this.promptContexts.set(sessionId, normalized);
+        // Echoed back so a second client can see it clobbered the first.
+        send(res, 200, {
+          ok: true,
+          sessionId,
+          context: entry?.text ?? null,
+          bytes: entry ? bytes : 0,
+          expiresAt: entry?.expiresAt ?? null,
+        });
         return;
       }
 
@@ -4993,9 +5041,17 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent input not supported by this service" });
           return;
         }
-        const formattedText = formatAgentInputWithAttachments(
-          text,
-          attachments.filter((entry): entry is AttachmentRecord => !!entry),
+        // Both spellings of this route, deliberately. `/live-pane/input` is not
+        // a raw terminal — it is this same submit-a-prompt operation under an
+        // older name, and it is what the app's own chat screen calls. Keying
+        // the context off the path would have left aimux's chat the one client
+        // that never carried it. Raw pane work is attach/output/resize.
+        const formattedText = composeWithPromptContext(
+          formatAgentInputWithAttachments(
+            text,
+            attachments.filter((entry): entry is AttachmentRecord => !!entry),
+          ),
+          this.promptContexts.get(sessionId)?.text ?? null,
         );
         // Return as soon as the input is accepted; the tmux submit-confirmation
         // runs in the background. Agent output is delivered over /events (SSE),
