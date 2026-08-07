@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
-import { buildDashboardQuickJumpWorktrees } from "../dashboard/quick-jump.js";
+import { DASHBOARD_QUICK_JUMP_TIMEOUT_MS, buildDashboardQuickJumpWorktrees } from "../dashboard/quick-jump.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { commandKey, isShiftedLetterCommand, parseKeys, printableInputText, type KeyEvent } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
@@ -408,8 +408,33 @@ function teammatePickerVisibleCount(total: number): number {
   return Math.min(total, Math.max(3, (process.stdout.rows ?? 24) - 10));
 }
 
+/**
+ * Point at the digit-th entry of the focused worktree and enter it.
+ *
+ * Selection is committed before activation so stepping back out of the agent or
+ * service lands on that row instead of the worktree header. Indexes the rendered
+ * `worktreeEntries` order, not the quick-jump list, so a stale cache cannot shift rows.
+ */
+function activateDashboardWorktreeEntryDigit(host: any, digit: number): void {
+  host.updateWorktreeSessions();
+  const entryIndex = digit - 1;
+  if (entryIndex < 0 || entryIndex >= host.dashboardState.worktreeEntries.length) return;
+  host.dashboardState.level = "sessions";
+  host.dashboardState.sessionIndex = entryIndex;
+  const selectedEntry = host.dashboardState.worktreeEntries[entryIndex];
+  if (selectedEntry) {
+    host.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, host.dashboardState.focusedWorktreePath);
+    host.persistDashboardUiState();
+  }
+  host.activateSelectedDashboardWorktreeEntry();
+}
+
 export const dashboardInteractionMethods = {
   clearDashboardQuickJump(this: any): void {
+    if (this.dashboardQuickJumpTimeout) {
+      clearTimeout(this.dashboardQuickJumpTimeout);
+      this.dashboardQuickJumpTimeout = null;
+    }
     this.dashboardState.quickJumpDigits = "";
   },
 
@@ -470,24 +495,15 @@ export const dashboardInteractionMethods = {
 
   handleDashboardQuickJumpDigit(this: any, key: string): boolean {
     if (key < "1" || key > "9") return false;
+    const hadPendingWorktreeDigit = Boolean(this.dashboardState.quickJumpDigits);
     this.clearDashboardQuickJump();
     const digit = Number.parseInt(key, 10);
 
-    if (this.dashboardState.level === "sessions") {
-      this.updateWorktreeSessions();
-      const entryIndex = digit - 1;
-      if (entryIndex < 0 || entryIndex >= this.dashboardState.worktreeEntries.length) return true;
-      this.dashboardState.sessionIndex = entryIndex;
-      const selectedEntry = this.dashboardState.worktreeEntries[entryIndex];
-      if (selectedEntry) {
-        this.preferDashboardEntrySelection(
-          selectedEntry.kind,
-          selectedEntry.id,
-          this.dashboardState.focusedWorktreePath,
-        );
-        this.persistDashboardUiState();
-      }
-      this.activateSelectedDashboardWorktreeEntry();
+    // Second half of a `<worktree><entry>` pair: the first digit already focused the
+    // worktree, so this is the same job as a digit pressed at session level. An
+    // out-of-range digit leaves the pointer on the worktree root.
+    if (hadPendingWorktreeDigit || this.dashboardState.level === "sessions") {
+      activateDashboardWorktreeEntryDigit(this, digit);
       return true;
     }
 
@@ -505,6 +521,12 @@ export const dashboardInteractionMethods = {
       skipPersist: true,
     };
     this.focusDashboardQuickJumpWorktree(worktree.path);
+    // Arm the second digit. Nothing to commit on expiry: the worktree focus above is
+    // already the standalone outcome.
+    this.dashboardState.quickJumpDigits = key;
+    this.dashboardQuickJumpTimeout = setTimeout(() => {
+      this.clearDashboardQuickJump();
+    }, DASHBOARD_QUICK_JUMP_TIMEOUT_MS);
     return true;
   },
 
@@ -550,6 +572,22 @@ export const dashboardInteractionMethods = {
     }
 
     const event = events[0];
+
+    // parseKeys batches consecutive printables into one event, so a fast
+    // `<worktree><entry>` pair lands as a single "31"-style char. Digits on the dashboard
+    // grid are always separate commands, never text, so replay them one at a time and stop
+    // once the gesture has committed.
+    if (!event.name && /^[1-9]{2,}$/.test(event.char) && this.dashboardState.hasWorktrees()) {
+      for (const digit of event.char) {
+        const beforeMode = this.mode;
+        const completesQuickJumpPair = Boolean(this.dashboardState.quickJumpDigits);
+        const activatesVisibleEntry = this.dashboardState.level === "sessions";
+        dashboardInteractionMethods.handleDashboardKey.call(this, Buffer.from(digit));
+        if (this.mode !== beforeMode || completesQuickJumpPair || activatesVisibleEntry) break;
+      }
+      return;
+    }
+
     const key = commandKey(event);
     const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
@@ -557,6 +595,7 @@ export const dashboardInteractionMethods = {
     if (hasWorktrees && this.isDashboardScreen("dashboard") && this.handleDashboardQuickJumpDigit(key)) {
       return;
     }
+    if (this.dashboardState.quickJumpDigits) this.clearDashboardQuickJump();
 
     if (!hasWorktrees && key >= "1" && key <= "9") {
       const index = parseInt(key, 10) - 1;
