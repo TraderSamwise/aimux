@@ -60,6 +60,22 @@ async function refreshDashboardModelForWorktreeSettlement(host: WorktreeHost): P
   return (await refreshDashboardModelThroughApi(host, { force: true, allowInactive: true })).ok;
 }
 
+// Every settle poll is a forced refresh, which bypasses the project service's
+// desktop-state cache and runs a full synchronous model rebuild. At a fixed
+// fast cadence that keeps the rebuild running almost continuously for the whole
+// settle window, so hold the tight cadence only for the first attempts — enough
+// for a quick local settle — then decay.
+const WORKTREE_SETTLE_POLL_MAX_MS = 2_000;
+
+export function worktreeSettlePollDelay(
+  attempt: number,
+  baseMs: number,
+  maxMs: number = WORKTREE_SETTLE_POLL_MAX_MS,
+): number {
+  if (attempt <= 2) return baseMs;
+  return Math.min(Math.round(baseMs * 1.5 ** (attempt - 2)), Math.max(baseMs, maxMs));
+}
+
 function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
   const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
     ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => sameWorktreePath(entry.path, path))
@@ -137,7 +153,9 @@ async function waitForStableDashboardWorktreeAbsence(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   let missingSince: number | null = null;
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt += 1;
     const refreshed = await refreshDashboardModelForWorktreeSettlement(host);
     const group = findRawWorktreeForSettlement(host, path);
     if (group) {
@@ -146,7 +164,10 @@ async function waitForStableDashboardWorktreeAbsence(
       missingSince ??= Date.now();
       if (Date.now() - missingSince >= stableMs) return true;
     }
-    await sleep(100);
+    // This loop debounces on `stableMs` of continuous absence, so sleeping
+    // longer than that window would widen the gap in which a reappearing
+    // worktree goes unseen. Cap the backoff at the window it is guarding.
+    await sleep(worktreeSettlePollDelay(attempt, 100, stableMs));
   }
   return false;
 }
@@ -355,7 +376,9 @@ async function waitForRenderedDashboardWorktreeCreate(
   renderLifecycle?: DashboardLifecycleToken,
 ): Promise<DashboardWorktreeCreateSettleResult> {
   const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt += 1;
     const existingFailure = findDashboardWorktreeCreateFailure(host, path);
     if (existingFailure) {
       const message = typeof existingFailure.message === "string" ? existingFailure.message : "worktree create failed";
@@ -373,7 +396,7 @@ async function waitForRenderedDashboardWorktreeCreate(
       if (isDashboardWorktreeCreateSettled(findRenderedWorktreeForSettlement(host, path))) {
         return { status: "settled" };
       }
-      await sleep(250);
+      await sleep(worktreeSettlePollDelay(attempt, 250));
       continue;
     }
     const failure = findDashboardWorktreeCreateFailure(host, path);
@@ -389,7 +412,7 @@ async function waitForRenderedDashboardWorktreeCreate(
       refreshOptimisticDashboardWorktreeCreate(host);
       host.renderDashboard?.();
     }
-    await sleep(250);
+    await sleep(worktreeSettlePollDelay(attempt, 250));
   }
   return { status: "pending" };
 }

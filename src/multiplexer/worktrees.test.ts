@@ -19,7 +19,49 @@ vi.mock("../worktree.js", () => ({
   listWorktrees: () => [],
 }));
 
-import { beginWorktreeRemoval, handleWorktreeInputKey, handleWorktreeRemoveConfirmKey } from "./worktrees.js";
+import {
+  beginWorktreeRemoval,
+  handleWorktreeInputKey,
+  handleWorktreeRemoveConfirmKey,
+  worktreeSettlePollDelay,
+} from "./worktrees.js";
+
+describe("worktreeSettlePollDelay", () => {
+  // Each poll is a forced desktop-state rebuild, so a long settle must not keep
+  // the project service rebuilding continuously.
+  it("holds the tight cadence for the first attempts so a quick settle stays snappy", () => {
+    expect(worktreeSettlePollDelay(1, 250)).toBe(250);
+    expect(worktreeSettlePollDelay(2, 250)).toBe(250);
+    expect(worktreeSettlePollDelay(1, 100)).toBe(100);
+    expect(worktreeSettlePollDelay(2, 100)).toBe(100);
+  });
+
+  it("decays and caps once a settle drags on", () => {
+    expect(worktreeSettlePollDelay(3, 250)).toBe(375);
+    expect(worktreeSettlePollDelay(4, 250)).toBeGreaterThan(worktreeSettlePollDelay(3, 250));
+    expect(worktreeSettlePollDelay(50, 250)).toBe(2_000);
+    expect(worktreeSettlePollDelay(50, 100)).toBe(2_000);
+  });
+
+  it("never returns a delay that would busy-spin", () => {
+    for (let attempt = 1; attempt <= 40; attempt++) {
+      expect(worktreeSettlePollDelay(attempt, 100)).toBeGreaterThanOrEqual(100);
+    }
+  });
+
+  // The absence loop debounces on a stability window; sleeping longer than that
+  // window would widen the gap in which a reappearing worktree goes unseen.
+  it("honours a caller cap below the shared maximum", () => {
+    for (let attempt = 1; attempt <= 40; attempt++) {
+      expect(worktreeSettlePollDelay(attempt, 100, 350)).toBeLessThanOrEqual(350);
+    }
+    expect(worktreeSettlePollDelay(40, 100, 350)).toBe(350);
+  });
+
+  it("never caps below the base delay", () => {
+    expect(worktreeSettlePollDelay(40, 250, 100)).toBe(250);
+  });
+});
 
 function createPendingActionsStore() {
   const state = new Map<string, string | null>();
