@@ -51,6 +51,21 @@ export interface HostedConfig {
    * first, with a transport error instead of a useful message.
    */
   maxAttachmentBytes: number;
+  /**
+   * Body ceiling for the prompt-context route only, in ENVELOPE bytes.
+   *
+   * A held context is a sentence about a page, not a document, so it wants a
+   * far tighter ceiling than a prompt — and it is the one body a client may
+   * rewrite on every navigation, which makes it the cheapest thing to flood an
+   * audit sink with.
+   *
+   * Deliberately well above the 4 KB the project service allows the context
+   * text itself. This caps the JSON around it, and `{"sessionId":…,"text":…}`
+   * plus escaping is always larger than the text — set it to the text limit
+   * and a legal maximum-length context would be refused out here, as a
+   * transport error, instead of by the service that could explain it.
+   */
+  maxContextBytes: number;
   /** Persist prompt text in the audit log, not just its hash. */
   auditPromptBodies: boolean;
   webhookUrl: string | null;
@@ -81,6 +96,9 @@ export const DEFAULT_HOSTED_CONFIG: HostedConfig = {
   maxResponseBytes: 1_048_576,
   // 10 MB of image, base64'd, plus room for the JSON envelope.
   maxAttachmentBytes: 14 * 1024 * 1024,
+  // Twice the 4 KB of context the service will store, so the envelope is never
+  // the thing that refuses a legal one.
+  maxContextBytes: 8_192,
   auditPromptBodies: true,
   webhookUrl: null,
   webhookSecretEnv: "AIMUX_HOSTED_WEBHOOK_SECRET",
@@ -185,6 +203,11 @@ export function normalizeHostedConfig(raw: unknown): HostedConfig {
       16_384,
       104_857_600,
     ),
+    // Floored at the envelope a maximum-length context needs. Below that the
+    // service's own 4 KB limit stops being the binding one and a legal context
+    // is refused by the transport, which cannot say why. Same reasoning as the
+    // attachment floor above, and same refusal to read another field.
+    maxContextBytes: boundedInt(value.maxContextBytes, DEFAULT_HOSTED_CONFIG.maxContextBytes, 8_192, 1_048_576),
     // Floored: a tiny response cap truncates every reply and reads as an outage.
     maxResponseBytes: boundedInt(value.maxResponseBytes, DEFAULT_HOSTED_CONFIG.maxResponseBytes, 4_096, 104_857_600),
     auditPromptBodies: boolOr(value.auditPromptBodies, DEFAULT_HOSTED_CONFIG.auditPromptBodies),
