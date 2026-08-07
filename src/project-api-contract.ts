@@ -38,6 +38,7 @@ export const PROJECT_API_ROUTES = {
     outputStream: "/agents/output/stream",
     history: "/agents/history",
     input: "/agents/input",
+    promptContext: "/agents/prompt-context",
     spawn: "/agents/spawn",
     fork: "/agents/fork",
     stop: "/agents/stop",
@@ -326,6 +327,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.agents.interactionRequest:
     case PROJECT_API_ROUTES.agents.interactionRespond:
     case PROJECT_API_ROUTES.agents.input:
+    case PROJECT_API_ROUTES.agents.promptContext:
     case PROJECT_API_ROUTES.livePane.input:
       return [...PROJECT_API_VIEW_INVALIDATIONS.runtime];
 
@@ -444,6 +446,25 @@ export interface LivePaneInputRequest extends LivePaneSessionInput {
 export interface LivePaneInputResponse extends ProjectApiOk {
   sessionId: string;
   accepted: true;
+}
+
+/**
+ * Set or clear the context the service attaches to this session's prompts.
+ *
+ * Replaces wholesale rather than merging: a client that owns the context owns
+ * all of it, and a merge would leave no way to remove one fact. Empty, null or
+ * absent `text` clears.
+ */
+export interface AgentPromptContextRequest extends LivePaneSessionInput {
+  text?: string | null;
+}
+
+export interface AgentPromptContextResponse extends ProjectApiOk {
+  sessionId: string;
+  /** What is now stored, after normalization — null when cleared. */
+  context: string | null;
+  bytes: number;
+  expiresAt: number | null;
 }
 
 export interface LivePaneInterruptResponse extends ProjectLifecycleTransitionResponse {
