@@ -89,11 +89,23 @@ function parseWorktreeList(output: string): WorktreeInfo[] {
   return worktrees;
 }
 
+// Instrumentation for tests that assert how many git subprocesses one operation spawns.
+let gitCallCount = 0;
+
+export function getWorktreeGitCallCount(): number {
+  return gitCallCount;
+}
+
+export function resetWorktreeGitCallCount(): void {
+  gitCallCount = 0;
+}
+
 /**
  * Find the main repository path (the primary worktree, not a linked one).
  * Uses `git worktree list --porcelain` — the first entry is always the main worktree.
  */
 export function findMainRepo(cwd?: string): string {
+  gitCallCount += 1;
   const output = execSync("git worktree list --porcelain", {
     cwd: cwd ?? process.cwd(),
     env: gitEnv(),
@@ -120,6 +132,7 @@ export function findMainRepo(cwd?: string): string {
 export function listWorktrees(cwd?: string): WorktreeInfo[] {
   const effectiveCwd = cwd ?? process.cwd();
   let output: string;
+  gitCallCount += 1;
   try {
     output = execSync("git worktree list --porcelain", {
       cwd: effectiveCwd,

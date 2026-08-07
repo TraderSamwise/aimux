@@ -652,11 +652,26 @@ function reclaimIfStale(lockPath: string): boolean {
   return true;
 }
 
+// Instrumentation for tests that assert how many times one operation parses this store.
+let readCount = 0;
+let parseCount = 0;
+
+export function getTopologyStoreStats(): { reads: number; parses: number } {
+  return { reads: readCount, parses: parseCount };
+}
+
+export function resetTopologyStoreStats(): void {
+  readCount = 0;
+  parseCount = 0;
+}
+
 export class RuntimeTopologyStore {
   constructor(readonly path = getRuntimeTopologyPath()) {}
 
   read(): RuntimeTopology {
+    readCount += 1;
     if (!existsSync(this.path)) return emptyRuntimeTopology();
+    parseCount += 1;
     const parsed = parse(readFileSync(this.path, "utf-8"));
     return coerceRuntimeTopology(parsed);
   }
