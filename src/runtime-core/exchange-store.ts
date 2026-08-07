@@ -547,11 +547,26 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// Instrumentation for tests that assert how many times one operation parses this store.
+let readCount = 0;
+let parseCount = 0;
+
+export function getExchangeStoreStats(): { reads: number; parses: number } {
+  return { reads: readCount, parses: parseCount };
+}
+
+export function resetExchangeStoreStats(): void {
+  readCount = 0;
+  parseCount = 0;
+}
+
 export class RuntimeExchangeStore {
   constructor(readonly path = getRuntimeExchangePath()) {}
 
   read(): RuntimeExchange {
+    readCount += 1;
     if (!existsSync(this.path)) return emptyRuntimeExchange();
+    parseCount += 1;
     const parsed = parse(readFileSync(this.path, "utf-8"));
     return coerceRuntimeExchange(parsed);
   }
