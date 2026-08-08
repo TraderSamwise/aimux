@@ -25,6 +25,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "lint:staged": "eslint --fix",
     "check:env": "./scripts/check-release-env.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
