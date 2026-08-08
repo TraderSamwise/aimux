@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -25,6 +26,31 @@ describe("getDashboardCommandSpec", () => {
     expect(spec.dashboardCommand.args[0]).toBe("-lc");
     expect(spec.dashboardCommand.args[1]).toContain("--tmux-dashboard-internal");
     expect(spec.dashboardCommand.args[1]).toContain(spec.scriptPath);
+  });
+
+  it("emits a shell-parseable command", () => {
+    const command = getDashboardCommandSpec("/tmp/repo").dashboardCommand.args[1] ?? "";
+    const parsed = spawnSync("bash", ["-n", "-c", command], { encoding: "utf-8" });
+    expect(parsed.status).toBe(0);
+  });
+
+  it("quotes printf format strings so the failure UI emits real newlines", () => {
+    const command = getDashboardCommandSpec("/tmp/repo").dashboardCommand.args[1] ?? "";
+    // Unquoted %s\n reaches printf as %sn, printing a literal "n" instead of a newline.
+    expect(command).not.toMatch(/printf +%s\\n/);
+    expect(command).toContain(`printf '%s\\n'`);
+  });
+
+  it("removes its temp file when the pane is torn down by a signal", () => {
+    const command = getDashboardCommandSpec("/tmp/repo").dashboardCommand.args[1] ?? "";
+    expect(command).toContain(`trap 'rm -f "$output_file"' EXIT`);
+    expect(command).toContain(`trap 'rm -f "$output_file"; exit 130' INT TERM HUP`);
+  });
+
+  it("never appends dashboard output to a shared unrotated log", () => {
+    const command = getDashboardCommandSpec("/tmp/repo").dashboardCommand.args[1] ?? "";
+    expect(command).not.toContain("/tmp/aimux-debug.log");
+    expect(command).not.toContain("tee -a");
   });
 
   it("prints an immediate startup frame before launching Node", () => {
