@@ -101,13 +101,64 @@ describe("a rule with a caption in it", () => {
     expect(text).not.toContain("Bash command");
   });
 
-  it("keeps a line with a rule on only one end", () => {
-    // Chrome is rule-caption-rule. A rule on one side is somebody's content, and
-    // requiring both ends is what tells them apart.
-    const text = textOf(
-      ["\u23fa Answer.", "", "\u2500".repeat(8) + " and this trailing note is real content"].join("\n"),
+  it("keeps a one-ended rule in the body but not in the trailing chrome", () => {
+    // Both ends is what marks a captioned rule mid-transcript. The pane wraps
+    // that rule where it closes the composer, though, so down there only one end
+    // survives per half \u2014 measured as "\u2500\u2500\u2500\u2500 Review custom modules" followed by
+    // "and signing sandbox changes \u2500\u2500", which reached the chat as prose twice.
+    const body = textOf(
+      [
+        "\u23fa Answer.",
+        "",
+        "\u2500".repeat(8) + " and this trailing note is real content",
+        "\u23fa More answer.",
+      ].join("\n"),
     );
-    expect(text).toContain("this trailing note is real content");
+    expect(body).toContain("this trailing note is real content");
+
+    const trailing = textOf(
+      [
+        "\u23fa Answer.",
+        "",
+        "\u2500".repeat(40),
+        "\u2500".repeat(30) + " Review custom modules",
+        "and signing sandbox changes " + "\u2500".repeat(4),
+      ].join("\n"),
+    );
+    expect(trailing).toContain("Answer.");
+    expect(trailing).not.toContain("Review custom modules");
+    expect(trailing).not.toContain("signing sandbox changes");
+  });
+
+  it("drops the pinned todo panel in both the shapes Claude draws it", () => {
+    // Hanging off the status line as a tool result, which is the common case\u2026
+    const pinned = textOf(
+      [
+        "\u23fa Real answer text.",
+        "\u00b7 Hashing\u2026 (1m 53s \u00b7 \u2193 6.6k tokens)",
+        "  \u23bf  \u25fb Epic 2 remainder: mirror transport",
+        "     \u25fb Epic 3: hosted modules MCP server",
+        "      \u2026 +10 completed",
+      ].join("\n"),
+    );
+    expect(pinned).toContain("Real answer text.");
+    expect(pinned).not.toContain("Epic 2 remainder");
+    expect(pinned).not.toContain("+10 completed");
+
+    // \u2026and drawn bare between frames, with a header and no marker at all.
+    const bare = textOf(
+      [
+        "\u23fa Real answer text.",
+        "",
+        "15 tasks (10 done, 5 open)",
+        " \u25fb Epic 2 remainder: mirror transport",
+        " \u25fb Epic 4: module sharing",
+        "  \u2026 +10 completed",
+      ].join("\n"),
+    );
+    expect(bare).toContain("Real answer text.");
+    expect(bare).not.toContain("Epic 2 remainder");
+    expect(bare).not.toContain("15 tasks");
   });
 
   it("keeps two queued prompts as two messages", () => {

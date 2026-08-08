@@ -108,6 +108,36 @@ function isTitledDivider(line: string): boolean {
   return /^[\u2500-\u257f]{4,}[^\u2500-\u257f]+[\u2500-\u257f]{4,}$/.test(trimmed);
 }
 
+/**
+ * Claude's pinned todo panel, wherever it lands.
+ *
+ * Usually it hangs off the status line as a `\u23bf` result, but between frames it
+ * is drawn bare, with an `N tasks (\u2026)` header and no marker at all. U+25FB is
+ * the checkbox in all 180 sampled captures; the others are here because the
+ * glyph is a rendering detail, and prose does not open a line with any of them.
+ */
+function isTodoPanelLine(line: string): boolean {
+  const trimmed = line.trim();
+  return (
+    /^[\u23bf\u2514\s]*[\u25fb\u25a1\u2610\u2611\u2612]\s/.test(trimmed) ||
+    /^\u2026\s*\+\d+\s+completed\b/.test(trimmed) ||
+    /^\d+\s+tasks?\s*\(\d+\s+done\b/i.test(trimmed)
+  );
+}
+
+/**
+ * Half of a rule that the pane wrapped.
+ *
+ * The captioned rule closing the composer is wider than the pane, so it arrives
+ * as `\u2500\u2500\u2500\u2500\u2500\u2500 Review custom` then `modules changes \u2500\u2500`. Neither half is a titled
+ * divider, and both were reaching the transcript as prose.
+ */
+function isWrappedDividerFragment(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || /^[\u23fa\u2022\u23bf\u2514\u2570\u25a0\u203a>\u276f]/.test(trimmed)) return false;
+  return /^[\u2500-\u257f]{4,}\s*\S/.test(trimmed) || /\S\s*[\u2500-\u257f]{3,}$/.test(trimmed);
+}
+
 export function parseAgentOutput(raw: string, options: { tool?: string } = {}): ParsedAgentOutput {
   const requestedTool = (options.tool || "").trim();
   const tool = requestedTool && requestedTool !== "unknown" ? requestedTool : (inferAgentOutputTool(raw) ?? "unknown");
@@ -252,9 +282,40 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     return /^(?:Implement \{feature\}|Explain this codebase|Find and fix a bug in @filename)$/i.test(promptText.trim());
   };
 
-  for (const line of lines) {
-    const trimmed = line.trimEnd();
+  // The tool paints its composer, its captioned rules, its footer and its pinned
+  // todo panel as one block at the bottom of the pane. None of it is transcript,
+  // and cutting the whole block back to the last real line beats matching each
+  // piece where it sits — every leak so far has been a new piece of this block.
+  const isBottomChrome = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (/^[❯›>]$/.test(trimmed)) return true;
+    return (
+      isDivider(trimmed) ||
+      isTitledDivider(trimmed) ||
+      isWrappedDividerFragment(trimmed) ||
+      isTodoPanelLine(trimmed) ||
+      isFooterLine(trimmed)
+    );
+  };
+  let bodyEnd = lines.length;
+  while (bodyEnd > 0 && isBottomChrome(lines[bodyEnd - 1] ?? "")) bodyEnd -= 1;
 
+  for (const [index, rawLine] of lines.entries()) {
+    const trimmed = rawLine.trimEnd();
+
+    // Status, not dropped: `blocks` is the low-level view and keeps the chrome,
+    // while the chat projection is what discards it. Deleting here instead put
+    // the two views out of step.
+    if (index >= bodyEnd || isTodoPanelLine(trimmed)) {
+      lastLineWasDivider = false;
+      if (!trimmed.trim()) continue;
+      if (isDivider(trimmed) || isTitledDivider(trimmed) || isWrappedDividerFragment(trimmed)) {
+        continue;
+      }
+      pushLine("status", trimmed);
+      continue;
+    }
     if (isCodexUiLine(trimmed)) {
       lastLineWasDivider = false;
       pushLine(sawPrompt ? "status" : "meta", trimmed);
