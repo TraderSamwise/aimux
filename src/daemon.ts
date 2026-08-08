@@ -166,6 +166,7 @@ import {
 } from "./tmux/doctor.js";
 import { planInstallCleanup, runInstallCleanup } from "./install-cleanup.js";
 import { DEFAULT_INSTALLS_CONFIG, isPrimaryInstallLane, loadInstallsConfig } from "./install-config.js";
+import { planRecordingCleanup, runRecordingCleanup } from "./recording-cleanup.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
@@ -207,6 +208,7 @@ const GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 3500;
 const INSTALL_CLEANUP_INITIAL_DELAY_MS = 30 * 60_000;
 // One sweep stays bounded; a long backlog drains across days.
 const INSTALL_CLEANUP_MAX_PER_SWEEP = 50;
+const RECORDING_CLEANUP_MAX_PER_SWEEP = 200;
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
@@ -798,8 +800,10 @@ export class AimuxDaemon {
       }
       if (plan.remove.length === 0) {
         log.debug("install cleanup found nothing to remove", "daemon", { root: plan.root, kept: plan.keep.length });
+        await this.sweepStaleRecordings();
         return;
       }
+      await this.sweepStaleRecordings();
       const result = await runInstallCleanup(plan, {}, { dryRun: false, limit: INSTALL_CLEANUP_MAX_PER_SWEEP });
       const removed = result.results.filter((entry) => entry.status === "removed").length;
       log.info("install cleanup removed superseded installs", "daemon", {
@@ -816,6 +820,30 @@ export class AimuxDaemon {
     } finally {
       this.installCleanupRunning = false;
       this.scheduleInstallCleanup(intervalMs);
+    }
+  }
+
+  /**
+   * Recordings are removed by session id when an agent is graveyarded, so any
+   * session that left project state without being graveyarded stranded its file.
+   * Sweeping by age instead of identity is what reaches those.
+   */
+  private async sweepStaleRecordings(): Promise<void> {
+    try {
+      const plan = planRecordingCleanup();
+      if (plan.remove.length === 0) return;
+      const result = await runRecordingCleanup(plan, {}, { dryRun: false, limit: RECORDING_CLEANUP_MAX_PER_SWEEP });
+      log.info("recording cleanup removed stale recordings", "daemon", {
+        removed: result.removed,
+        failed: result.failed,
+        reclaimedBytes: result.reclaimedBytes,
+        remaining: plan.remove.length - result.removed,
+        retentionDays: plan.retentionDays,
+      });
+    } catch (error) {
+      log.warn("recording cleanup failed", "daemon", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
