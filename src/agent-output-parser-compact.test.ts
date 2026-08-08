@@ -177,3 +177,20 @@ describe("a rule with a caption in it", () => {
     expect(users.map((message) => message.text)).toEqual(["what about epic 2?"]);
   });
 });
+
+describe("codex chrome", () => {
+  it("keeps codex's account greeting out of the chat", () => {
+    // Captured from a live session: codex greets on the same bullet it uses for
+    // prose, so this arrived as the agent's opening message every time.
+    const pane = [
+      "• You have 1 usage limit reset available. Run /usage to use one.",
+      "› what model are you on?",
+      "• I'm Codex, running as a coding agent based on GPT-5.",
+    ].join("\n");
+    const text = messagesFromParsedAgentOutput(parseAgentOutput(pane, { tool: "codex" }))
+      .map((message) => message.text)
+      .join("\n");
+    expect(text).toContain("I'm Codex");
+    expect(text).not.toContain("usage limit reset");
+  });
+});

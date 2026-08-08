@@ -185,6 +185,16 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       (/context\)/.test(trimmed) && !sawPrompt)
     );
   };
+  // Codex greets with account notices on the same bullet it uses for prose, so
+  // they were reaching the chat as the agent's first message.
+  const isCodexStartupNoticeLine = (line: string) => {
+    const trimmed = line.trim().replace(/^[•*]\s+/, "");
+    return (
+      tool === "codex" &&
+      !sawPrompt &&
+      (/^You have \d+ usage limit resets? available\b/i.test(trimmed) || /^Tip:\s/i.test(trimmed))
+    );
+  };
   const isClaudeStartupStatusLine = (line: string) => {
     const trimmed = line.trim();
     return (
@@ -368,6 +378,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       continue;
     }
     lastLineWasDivider = false;
+    if (isCodexStartupNoticeLine(trimmed)) {
+      pushLine("status", trimmed);
+      expectingResponse = false;
+      continue;
+    }
     if (/^(•|⏺)\s?/.test(trimmed) && !isStatusLine(trimmed)) {
       pushLine("response", stripResponseMarker(trimmed));
       sawPrompt = true;
@@ -672,7 +687,9 @@ export function activityTextFromParsedAgentOutput(parsed?: { blocks?: AgentOutpu
       // of prose that happens to fit the progress shape would otherwise displace
       // the real verb and render as a paragraph in a one-line slot.
       if (line.length > 120) continue;
-      newest = line;
+      // Codex ends its line with a keybinding, which is advice about a keyboard
+      // the reader of a chat footer is not sitting at.
+      newest = line.replace(/\s*[·•]\s*(?:esc|ctrl\+c)\s+to\s+interrupt/i, "");
     }
   }
   return newest;

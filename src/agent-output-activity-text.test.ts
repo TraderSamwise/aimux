@@ -20,10 +20,17 @@ describe("the tool's own progress line", () => {
   });
 
   it("reads codex's line through the same path", () => {
-    expect(verbFor("• Working (4s • esc to interrupt)", "codex")).toBe("Working (4s • esc to interrupt)");
     expect(verbFor("* Indexing… (running stop hook · 11s · ↓ 16 tokens)", "codex")).toBe(
       "Indexing… (running stop hook · 11s · ↓ 16 tokens)",
     );
+  });
+
+  it("drops codex's keybinding, which is the only thing it adds beyond the timer", () => {
+    // Captured live: codex prints exactly this and publishes no token or context
+    // figure anywhere in its pane, so the elapsed timer is all there is to carry.
+    // "esc to interrupt" is advice about a keyboard the chat reader isn't at.
+    expect(verbFor("• Working (4s • esc to interrupt)", "codex")).toBe("Working (4s)");
+    expect(verbFor("• Working (12s • esc to interrupt)", "codex")).toBe("Working (12s)");
   });
 
   it("refuses a finished turn", () => {
