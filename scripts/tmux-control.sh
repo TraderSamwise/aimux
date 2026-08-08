@@ -142,17 +142,7 @@ hydrate_project_context || true
 
 [ -n "$project_state_dir" ] || exit 1
 
-debug_log_max_bytes=1048576
-
 debug_log_line() {
-  # Failure-path only, but nothing else ever trims this file.
-  if [ -f "$debug_log" ] && [ "$(wc -c <"$debug_log" 2>/dev/null || echo 0)" -gt "$debug_log_max_bytes" ]; then
-    if tail -n 200 "$debug_log" >"$debug_log.trim" 2>/dev/null; then
-      mv "$debug_log.trim" "$debug_log" 2>/dev/null || rm -f "$debug_log.trim" 2>/dev/null || true
-    else
-      rm -f "$debug_log.trim" 2>/dev/null || true
-    fi
-  fi
   printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
 }
 
