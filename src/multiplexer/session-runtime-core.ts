@@ -284,6 +284,26 @@ const transcriptCache = new Map<
   { output: string; parsed: any; messages: AgentTranscriptMessage[]; activityText: string }
 >();
 
+/**
+ * What the session is really doing, from the event enum and the pane together.
+ *
+ * The enum only moves when the tool emits an event, so an agent that keeps
+ * working after its response sits at "idle" while its pane spins — measured on
+ * two live sessions, wrong in both directions. A progress line is first-hand
+ * evidence of a turn in flight (the extractor takes only the in-progress form,
+ * never the past-tense "Verbed for 20s" a finished turn leaves behind), so it
+ * wins. waiting/error/interrupted come from explicit events and keep priority:
+ * those are the states where the operator, not the agent, is the blocker.
+ */
+export function reconcileAgentActivity(
+  reported: AgentActivityState | undefined,
+  activityText: string | undefined,
+): AgentActivityState | undefined {
+  if (!activityText) return reported;
+  if (reported === "waiting" || reported === "error" || reported === "interrupted") return reported;
+  return "running";
+}
+
 export async function readAgentOutput(
   host: SessionRuntimeHost,
   sessionId: string,
@@ -312,7 +332,11 @@ export async function readAgentOutput(
   // moves independently of the pane — an agent finishing leaves the last frame
   // on screen — so a value cached behind a text comparison would stick.
   const derived = loadMetadataState(projectRootFor(host)).sessions[sessionId]?.derived;
-  const liveness = { activity: derived?.activity, attention: derived?.attention };
+
+  const livenessFor = (activityText?: string) => ({
+    activity: reconcileAgentActivity(derived?.activity, activityText),
+    attention: derived?.attention,
+  });
 
   const cacheKey = `${sessionId}:${startLine ?? -120}`;
   const cached = transcriptCache.get(cacheKey);
@@ -324,7 +348,7 @@ export async function readAgentOutput(
       parsed: cached.parsed,
       messages: cached.messages,
       activityText: cached.activityText,
-      ...liveness,
+      ...livenessFor(cached.activityText),
     };
   }
 
@@ -341,7 +365,15 @@ export async function readAgentOutput(
   const activityText = activityTextFromParsedAgentOutput(parsed);
   transcriptCache.set(cacheKey, { output, parsed, messages, activityText });
 
-  return { sessionId, output, startLine: startLine ?? -120, parsed, messages, activityText, ...liveness };
+  return {
+    sessionId,
+    output,
+    startLine: startLine ?? -120,
+    parsed,
+    messages,
+    activityText,
+    ...livenessFor(activityText),
+  };
 }
 
 /** Called from session teardown; the cache is keyed per startLine window. */

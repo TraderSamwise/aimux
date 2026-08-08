@@ -10,6 +10,7 @@ import { loadOfflineTopologySessions } from "./runtime-state.js";
 import {
   buildTmuxWindowMetadata,
   handleSessionRuntimeEvent,
+  reconcileAgentActivity,
   registerManagedSession,
   resolveLiveSessionTmuxTarget,
   resizeAgentPane,
@@ -692,5 +693,32 @@ describe("session runtime prompt submission", () => {
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("reconcileAgentActivity", () => {
+  it("believes the pane over an enum that never got the memo", () => {
+    // Measured live: claude-lgir7g reported idle while its pane counted up
+    // through "Flambeing... (5m 37s)". Claude emits no event when it keeps
+    // working after a response, so the enum simply stops moving.
+    expect(reconcileAgentActivity("idle", "Flambeing... (5m 37s)")).toBe("running");
+    expect(reconcileAgentActivity("done", "Booting... (1s)")).toBe("running");
+    expect(reconcileAgentActivity(undefined, "Booting... (1s)")).toBe("running");
+  });
+
+  it("leaves the enum alone when the pane shows no progress line", () => {
+    // Absence is not evidence of finishing: a pane between frames, or a tool
+    // that prints no spinner at all, must not silently demote a live agent.
+    expect(reconcileAgentActivity("running", "")).toBe("running");
+    expect(reconcileAgentActivity("idle", "")).toBe("idle");
+    expect(reconcileAgentActivity(undefined, undefined)).toBeUndefined();
+  });
+
+  it("never talks over a session that is blocked on its operator", () => {
+    // An approval prompt can sit under a spinner. The operator needs to know
+    // they are the blocker, which "Frosting..." would hide.
+    expect(reconcileAgentActivity("waiting", "Frosting... (2s)")).toBe("waiting");
+    expect(reconcileAgentActivity("error", "Frosting... (2s)")).toBe("error");
+    expect(reconcileAgentActivity("interrupted", "Frosting... (2s)")).toBe("interrupted");
   });
 });
