@@ -147,6 +147,14 @@ export function injectCodexDeveloperInstructions(args: string[], key: string, in
   return [...args.slice(0, insertionIndex), "-c", codexConfigArg(key, instructions), ...args.slice(insertionIndex)];
 }
 
+/** Backend ids other agents already hold, so discovery cannot land on one. */
+function claimedBackendSessionIds(host: SessionLaunchHost, exceptSessionId: string): string[] {
+  const sessions: Array<{ id?: string; backendSessionId?: string }> = host.sessions ?? [];
+  return sessions
+    .filter((session) => session.id !== exceptSessionId && session.backendSessionId)
+    .map((session) => session.backendSessionId as string);
+}
+
 function scheduleCodexBackendSessionIdCapture(
   host: SessionLaunchHost,
   sessionId: string,
@@ -162,6 +170,7 @@ function scheduleCodexBackendSessionIdCapture(
     try {
       const backendSessionId = discoverCodexBackendSessionId(cwd, undefined, {
         sinceMs: Math.max(0, launchStartedAtMs - 1000),
+        excludeBackendSessionIds: claimedBackendSessionIds(host, sessionId),
       });
       if (backendSessionId) {
         host.recordSessionBackendSessionId(sessionId, backendSessionId);
@@ -606,6 +615,13 @@ export function createSession(
   suppressStartupPreamble = false,
   team?: SessionTeamMetadata,
   launchEnv?: Record<string, string>,
+  /**
+   * What to remember as this session's args, when that differs from how it was
+   * launched. A fork is launched with the source's id, and remembering that
+   * would make every later resume compose "--resume <mine> --resume <source>
+   * --fork-session" and branch the parent again instead of continuing.
+   */
+  persistArgs?: string[],
 ): any {
   const cols = process.stdout.columns ?? 80;
   const commandExecutable = basename(command) || command;
@@ -770,7 +786,15 @@ export function createSession(
   );
   host.sessionTmuxTargets.set(sessionId, target);
   const session = tmuxTransport;
-  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
+  host.registerManagedSession(
+    tmuxTransport,
+    persistArgs ?? args,
+    toolConfigKey,
+    worktreePath,
+    undefined,
+    sessionStartTime,
+    team,
+  );
   scheduleStartupInterstitialDismissal(host, sessionId, target, toolConfigKey);
 
   session.backendSessionId = backendSessionId;

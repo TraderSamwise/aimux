@@ -54,6 +54,8 @@ import { persistenceMethods, type PersistenceMethods } from "./persistence-metho
 import { dashboardTailMethods, type DashboardTailMethods } from "./dashboard-tail-methods.js";
 import { loadStateStatic, runtimeLifecycleMethods, type RuntimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { dashboardViewMethods, type DashboardViewMethods } from "./dashboard-view-methods.js";
+import { resolveBackendSessionId } from "../runtime-core/backend-session-ids.js";
+import { debug } from "../debug.js";
 import {
   buildTmuxWindowMetadata as buildTmuxWindowMetadataImpl,
   handleSessionRuntimeEvent as handleSessionRuntimeEventImpl,
@@ -490,6 +492,7 @@ export class Multiplexer {
     suppressStartupPreamble = false,
     team?: SessionTeamMetadata,
     launchEnv?: Record<string, string>,
+    persistArgs?: string[],
   ): SessionTransport {
     return createSessionImpl(
       this,
@@ -506,6 +509,7 @@ export class Multiplexer {
       suppressStartupPreamble,
       team,
       launchEnv,
+      persistArgs,
     );
   }
 
@@ -545,6 +549,36 @@ export class Multiplexer {
 
   private handleAction(action: HotkeyAction): void {
     handleActionImpl(this, action);
+  }
+
+  /**
+   * Launch args that branch the tool's own conversation, or null when this fork
+   * cannot be native and has to fall back to handing over a written summary.
+   */
+  private resolveNativeForkLaunch(
+    sourceSessionId: string,
+    targetToolConfigKey: string,
+    toolCfg: { command: string; args: string[]; forkArgs?: string[] },
+    launchOverride?: LaunchOverride,
+  ): string[] | null {
+    if (!toolCfg.forkArgs?.length) return null;
+    if (this.sessionToolKeys.get(sourceSessionId) !== targetToolConfigKey) return null;
+    // An override that swaps the binary is not running the tool we have flags for.
+    if (launchOverride?.command && launchOverride.command !== toolCfg.command) return null;
+
+    const resolved = resolveBackendSessionId({
+      projectRoot: this.projectRoot,
+      sessionId: sourceSessionId,
+    });
+    if (!resolved.ok) {
+      debug(`native fork unavailable for ${sourceSessionId}: ${resolved.reason}`, "session");
+      return null;
+    }
+    const forkArgs = toolCfg.forkArgs.map((arg) => arg.replace("{sessionId}", resolved.backendSessionId));
+    // The caller's own args still apply — a fork picked with "--model opus"
+    // should fork with it, and dropping them applied half of an override while
+    // still applying its env.
+    return this.sessionBootstrap.composeToolArgs(toolCfg, forkArgs, launchOverride?.args ?? []);
   }
 
   private async forkSessionFromSource(
@@ -597,26 +631,39 @@ export class Multiplexer {
       waitingOn: [targetSessionId],
     }));
     await this.contextWatcher.syncNow(sourceSessionId).catch(() => {});
-    const sourceSnapshot = this.sessionBootstrap.readForkSourceSnapshot(sourceSessionId);
-    this.sessionBootstrap.seedForkArtifacts(sourceSessionId, targetSessionId, targetToolConfigKey);
-    const codexContinuityPreamble = !toolCfg.preambleFlag
-      ? this.sessionBootstrap.buildCodexForkContinuityPreamble(
-          sourceSessionId,
-          targetSessionId,
-          sourceSnapshot,
-          instruction,
-        )
-      : undefined;
-    const extraPreamble = [
-      this.sessionBootstrap.buildForkPreamble(sourceSessionId, targetSessionId),
-      codexContinuityPreamble ? undefined : instruction?.trim(),
-      codexContinuityPreamble,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+
+    // Native only when the tool can actually branch its own conversation: it
+    // must be the same tool as the source, running the tool's own binary. A
+    // different tool cannot read the first one's history, so that stays a
+    // handoff — which is what the thread above has always called it.
+    const nativeFork = this.resolveNativeForkLaunch(sourceSessionId, targetToolConfigKey, toolCfg, launchOverride);
+
+    // Carried even when the history is native: the instruction is why this fork
+    // exists, and the thread message alone never reaches the agent — nothing
+    // tells a starting session to go read its threads.
+    let extraPreamble = nativeFork ? (instruction?.trim() ?? "") : "";
+    if (!nativeFork) {
+      const sourceSnapshot = this.sessionBootstrap.readForkSourceSnapshot(sourceSessionId);
+      this.sessionBootstrap.seedForkArtifacts(sourceSessionId, targetSessionId, targetToolConfigKey);
+      const codexContinuityPreamble = !toolCfg.preambleFlag
+        ? this.sessionBootstrap.buildCodexForkContinuityPreamble(
+            sourceSessionId,
+            targetSessionId,
+            sourceSnapshot,
+            instruction,
+          )
+        : undefined;
+      extraPreamble = [
+        this.sessionBootstrap.buildForkPreamble(sourceSessionId, targetSessionId),
+        codexContinuityPreamble ? undefined : instruction?.trim(),
+        codexContinuityPreamble,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
     const transport = this.createSession(
       launchOverride?.command ?? toolCfg.command,
-      launchOverride?.args ?? toolCfg.args,
+      nativeFork ?? launchOverride?.args ?? toolCfg.args,
       toolCfg.preambleFlag,
       targetToolConfigKey,
       extraPreamble,
@@ -628,6 +675,7 @@ export class Multiplexer {
       false,
       undefined,
       launchOverride?.env,
+      nativeFork ? (launchOverride?.args ?? toolCfg.args) : undefined,
     );
     this.agentTracker.emit(sourceSessionId, {
       kind: "status",

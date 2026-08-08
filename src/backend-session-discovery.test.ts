@@ -128,3 +128,38 @@ describe("discoverCodexBackendSessionId", () => {
     expect(discoverBackendSessionId("codex", cwd)).toBe(UUID_A);
   });
 });
+
+describe("discovering a codex id beside a live sibling", () => {
+  it("ignores an id another agent already holds", () => {
+    // A fork lands in the same worktree as its source, and the source keeps
+    // appending to its own transcript — so both fall inside the capture window
+    // and the ambiguity check refuses, leaving the fork with no id at all and
+    // permanently unresumable. The source's id is already spoken for.
+    const home = mkdtempSync(join(tmpdir(), "aimux-codex-sibling-"));
+    const cwd = mkdtempSync(join(tmpdir(), "aimux-codex-cwd-"));
+    const dir = join(home, "sessions", "2026", "08", "08");
+    mkdirSync(dir, { recursive: true });
+    const write = (id: string) =>
+      writeFileSync(
+        join(dir, `rollout-2026-08-08T00-00-00-${id}.jsonl`),
+        `${JSON.stringify({ type: "session_meta", payload: { id, cwd } })}\n`,
+      );
+    const source = "019fd6cb-68fc-7cd3-a3bf-7137b47ea6af";
+    const forked = "019fd6cb-68fc-7cd3-a3bf-7137b47ea6b0";
+    write(source);
+    write(forked);
+
+    const sessionsDir = join(home, "sessions");
+    expect(discoverCodexBackendSessionId(cwd, sessionsDir)).toBeNull();
+    expect(discoverCodexBackendSessionId(cwd, sessionsDir, { excludeBackendSessionIds: [source] })).toBe(forked);
+    // Excluding down to nothing still refuses rather than inventing one.
+    expect(
+      discoverCodexBackendSessionId(cwd, sessionsDir, {
+        excludeBackendSessionIds: [source, forked],
+      }),
+    ).toBeNull();
+
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});

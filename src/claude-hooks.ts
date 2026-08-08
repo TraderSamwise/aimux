@@ -30,7 +30,18 @@ function isUsableSessionIdArg(value: string | undefined): value is string {
   return Boolean(value?.trim() && !value.trim().startsWith("-"));
 }
 
+/**
+ * A fork resumes somebody else. `--resume <id> --fork-session` names the parent
+ * and asks claude to mint a fresh id for the child, so reading the id out of
+ * these args would record the child as its own parent — and every later resume
+ * of the child would land in the parent's conversation instead.
+ */
+export function isClaudeForkStyleLaunch(args: string[]): boolean {
+  return args.some((arg) => arg === "--fork-session");
+}
+
 export function extractClaudeBackendSessionIdFromArgs(args: string[]): string | undefined {
+  if (isClaudeForkStyleLaunch(args)) return undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--session-id" && isUsableSessionIdArg(args[i + 1])) {

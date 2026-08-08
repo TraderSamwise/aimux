@@ -92,6 +92,16 @@ function readFirstLine(path: string): string | null {
 
 export interface CodexBackendSessionDiscoveryOptions {
   sinceMs?: number;
+  /**
+   * Ids already spoken for by another agent.
+   *
+   * Several agents share a worktree, and a live one appends to its own
+   * transcript constantly — so a window that should hold only the new session's
+   * transcript picks up its neighbours' too, and the ambiguity check then
+   * refuses. Ruling out ids that already belong to somebody removes the
+   * neighbours without ever guessing between two unclaimed ones.
+   */
+  excludeBackendSessionIds?: Iterable<string>;
 }
 
 function collectCodexSessionIdsForCwd(
@@ -99,6 +109,7 @@ function collectCodexSessionIdsForCwd(
   cwd: string,
   ids: Set<string>,
   options: CodexBackendSessionDiscoveryOptions = {},
+  excluded: Set<string> = new Set(options.excludeBackendSessionIds ?? []),
 ): void {
   let entries: Dirent[];
   try {
@@ -110,7 +121,7 @@ function collectCodexSessionIdsForCwd(
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectCodexSessionIdsForCwd(path, cwd, ids, options);
+      collectCodexSessionIdsForCwd(path, cwd, ids, options, excluded);
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
@@ -132,7 +143,7 @@ function collectCodexSessionIdsForCwd(
       const id = record.payload?.id;
       const sessionCwd = record.payload?.cwd;
       if (record.type === "session_meta" && typeof id === "string" && UUID_RE.test(id) && sessionCwd === cwd) {
-        ids.add(id);
+        if (!options.excludeBackendSessionIds || !excluded.has(id)) ids.add(id);
       }
     } catch {
       // Ignore malformed or non-Codex jsonl records.

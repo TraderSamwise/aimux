@@ -18,6 +18,7 @@ import {
   updateSessionLabel,
 } from "./session-runtime-core.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
+import { SessionBootstrapService } from "../session-bootstrap.js";
 
 describe("session runtime prompt submission", () => {
   afterEach(() => {
@@ -720,5 +721,32 @@ describe("reconcileAgentActivity", () => {
     expect(reconcileAgentActivity("waiting", "Frosting... (2s)")).toBe("waiting");
     expect(reconcileAgentActivity("error", "Frosting... (2s)")).toBe("error");
     expect(reconcileAgentActivity("interrupted", "Frosting... (2s)")).toBe("interrupted");
+  });
+});
+
+describe("what a forked session remembers as its args", () => {
+  // The real composer, so this cannot pass against a drifted copy of it.
+  const compose = (base: string[], action: string[], saved: string[]) =>
+    SessionBootstrapService.prototype.composeToolArgs.call(null as never, { args: base }, action, saved);
+
+  it("resumes itself, not its parent, on the next launch", () => {
+    // Remembering the fork's own launch args would compose this on resume:
+    //   claude … --resume <child> --resume <parent> --fork-session
+    // which branches the parent again and throws the child's work away.
+    const base = ["--dangerously-skip-permissions"];
+    const parent = "0f0e2b1a-1111-2222-3333-444455556666";
+    const child = "0f0e2b1a-7777-8888-9999-aaaabbbbcccc";
+
+    const launchedWith = compose(base, ["--resume", parent, "--fork-session"], []);
+    expect(launchedWith).toEqual([...base, "--resume", parent, "--fork-session"]);
+
+    const remembered = base;
+    const resumed = compose(base, ["--resume", child], remembered);
+    expect(resumed).toEqual([...base, "--resume", child]);
+    expect(resumed).not.toContain(parent);
+    expect(resumed).not.toContain("--fork-session");
+
+    const ifWeHadRememberedTheLaunch = compose(base, ["--resume", child], launchedWith);
+    expect(ifWeHadRememberedTheLaunch).toContain("--fork-session");
   });
 });

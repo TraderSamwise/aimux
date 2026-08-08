@@ -3,6 +3,7 @@ import {
   buildClaudeHookSettings,
   extractClaudeBackendSessionIdFromArgs,
   injectClaudeHookArgs,
+  isClaudeForkStyleLaunch,
   permissionRequestHookOutput,
   shouldSkipClaudeSessionIdInjection,
   summarizeClaudePermissionRequest,
@@ -93,5 +94,28 @@ describe("claude-hooks", () => {
     expect(extractClaudeBackendSessionIdFromArgs(["--session-id", "backend-789"])).toBe("backend-789");
     expect(extractClaudeBackendSessionIdFromArgs(["--resume", "--dangerously-skip-permissions"])).toBeUndefined();
     expect(extractClaudeBackendSessionIdFromArgs(["--resume"])).toBeUndefined();
+  });
+});
+
+describe("forking does not steal the parent's id", () => {
+  it("reads no backend id out of fork args", () => {
+    // --resume names the SOURCE here; claude mints the child's own id. Reading
+    // it would record the fork as its parent, and every later resume of the
+    // fork would land in the parent's conversation.
+    expect(
+      extractClaudeBackendSessionIdFromArgs(["--resume", "0f0e2b1a-1111-2222-3333-444455556666", "--fork-session"]),
+    ).toBeUndefined();
+    expect(isClaudeForkStyleLaunch(["--resume", "abc", "--fork-session"])).toBe(true);
+  });
+
+  it("still reads it for a plain resume", () => {
+    expect(extractClaudeBackendSessionIdFromArgs(["--resume", "0f0e2b1a-1111-2222-3333-444455556666"])).toBe(
+      "0f0e2b1a-1111-2222-3333-444455556666",
+    );
+    expect(isClaudeForkStyleLaunch(["--resume", "abc"])).toBe(false);
+  });
+
+  it("still suppresses the session-id flag, since --resume is present either way", () => {
+    expect(shouldSkipClaudeSessionIdInjection(["--resume", "abc", "--fork-session"])).toBe(true);
   });
 });

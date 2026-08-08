@@ -135,6 +135,12 @@ export interface ToolConfig {
   /** Args to resume a specific session, with {sessionId} placeholder, e.g. ["--resume", "{sessionId}"] */
   resumeArgs?: string[];
   /**
+   * Args to branch a new session off an existing one, with {sessionId} naming
+   * the source. The tool mints the child's own id, so unlike resumeArgs the
+   * placeholder here is somebody else's session.
+   */
+  forkArgs?: string[];
+  /**
    * Whether backendSessionId values tracked by aimux are valid inputs for resumeArgs.
    * Some tools expose a session-id flag without guaranteeing that the same value is later resumable.
    */
@@ -223,6 +229,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       preambleFlag: ["--append-system-prompt"],
       sessionIdFlag: ["--session-id", "{sessionId}"],
       resumeArgs: ["--resume", "{sessionId}"],
+      forkArgs: ["--resume", "{sessionId}", "--fork-session"],
       resumeByBackendSessionId: true,
       resumeFallback: ["--continue"],
       promptPatterns: ["^> $", "\\$ $"],
@@ -234,6 +241,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       args: ["--dangerously-bypass-approvals-and-sandbox"],
       enabled: true,
       resumeArgs: ["resume", "{sessionId}"],
+      forkArgs: ["fork", "{sessionId}"],
       resumeByBackendSessionId: true,
       resumeFallback: ["resume", "--last"],
       developerInstructionsConfigKey: "developer_instructions",
