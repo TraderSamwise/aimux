@@ -9,6 +9,7 @@ import {
   Columns2,
   MessageSquare,
   Plus,
+  SlidersHorizontal,
   Square,
   SquareTerminal,
   UserPlus,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/api";
 import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
+import { cn } from "@/lib/utils";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { serviceProjectsTranscript, toChatMessages } from "@/lib/transcript-view";
@@ -100,9 +102,10 @@ export default function ChatScreen() {
   const { getToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const { width } = useWindowDimensions();
+  const { width, height: windowHeight } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  const [managePanelOpen, setManagePanelOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
@@ -618,6 +621,18 @@ export default function ChatScreen() {
                     <UserPlus size={15} color="#a1a1aa" />
                   </Pressable>
                   <Pressable
+                    onPress={() => setManagePanelOpen((open) => !open)}
+                    accessibilityLabel="Manage agent"
+                    accessibilityState={{ expanded: managePanelOpen }}
+                    className={cn(
+                      "h-8 flex-row items-center gap-1.5 rounded-md border px-2.5 mr-2",
+                      managePanelOpen ? "border-primary bg-accent" : "border-border",
+                    )}
+                  >
+                    <SlidersHorizontal size={14} color={managePanelOpen ? "#e4e4e7" : "#a1a1aa"} />
+                    <Text className="text-xs text-foreground">Manage</Text>
+                  </Pressable>
+                  <Pressable
                     onPress={() => setShowTerminalSplit((current) => !current)}
                     disabled={!canShowTerminal}
                     accessibilityLabel={terminalToggleLabel}
@@ -649,26 +664,33 @@ export default function ChatScreen() {
               ) : null}
             </View>
           </View>
-          {session ? (
-            <>
-              <AgentManagementPanel
-                key={`${session.id}:management`}
-                session={session}
-                endpoint={serviceEndpoint}
-                token={token}
-                projectPath={stateProjectPath}
-                groups={worktreeGroups}
-              />
-              {canManageTeammates ? (
-                <TeammatePanel
-                  key={`${session.id}:teammates`}
+          {/*
+            Closed by default. These are settings, and pinning them above every
+            conversation cost the chat ~250px on every screen for controls with
+            no recorded use.
+          */}
+          {session && managePanelOpen ? (
+            <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
+              <ScrollView>
+                <AgentManagementPanel
+                  key={`${session.id}:management`}
                   session={session}
                   endpoint={serviceEndpoint}
                   token={token}
                   projectPath={stateProjectPath}
+                  groups={worktreeGroups}
                 />
-              ) : null}
-            </>
+                {canManageTeammates ? (
+                  <TeammatePanel
+                    key={`${session.id}:teammates`}
+                    session={session}
+                    endpoint={serviceEndpoint}
+                    token={token}
+                    projectPath={stateProjectPath}
+                  />
+                ) : null}
+              </ScrollView>
+            </View>
           ) : null}
           {sharePanelOpen ? (
             <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
