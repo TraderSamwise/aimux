@@ -102,6 +102,7 @@ No commands currently live in this category.
 | `aimux host topology`                                                  | `INTERNAL`  | tmux/debug             | Debug topology file inspection; not a normal product-state command.                  |
 | `aimux doctor versions`, `aimux doctor tmux`                            | `CUT`       | daemon/project service | Healthy installed diagnostics use daemon text routes instead of local CLI recompute. |
 | `aimux doctor notifications`                                            | `INTERNAL`  | desktop notifier        | Desktop notification diagnostic remains local debug plumbing.                        |
+| `aimux doctor installs`                                                 | `INTERNAL`  | install root            | Reads the install root and tmux server state directly; must work while the daemon is down, since a wedged install is exactly when you reach for it. |
 | `aimux notifications test`                                              | `INTERNAL`  | desktop notifier        | Desktop delivery diagnostic; not a normal project-state command.                    |
 | `aimux logs ...`                                                        | `CUT`       | daemon/filesystem      | Healthy installed diagnostic log access uses `/core/logs/*-text`.                    |
 | `aimux metadata ...`                                                    | `CUT`       | daemon/project service | Agent/runtime integration plumbing uses `/core/metadata-text` to avoid one-shot Node. |

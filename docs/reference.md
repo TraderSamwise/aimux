@@ -209,8 +209,16 @@ Runtime lifecycle:
 aimux                         # open or attach to the current project runtime
 aimux restart                 # repair daemon/services/tmux contracts and reload known dashboards
 aimux doctor versions         # inspect daemon/service/dashboard build coherence
+aimux doctor installs         # report superseded installs; add --fix to remove them
 aimux stop                    # stop the current project runtime
 ```
+
+Every local build leaves an install under the aimux install root
+(`AIMUX_INSTALL_ROOT`, or `~/.aimux/native`), and nothing removes them on its own. `aimux doctor installs` reports which ones are safe to
+drop and how much space they hold. It removes nothing unless you pass `--fix`,
+and it keeps any install that is current, still referenced by a live process or
+by tmux server state, among the newest, or inside the retention window. If it
+cannot finish reading those references it keeps everything and says so.
 
 Orchestration commands:
 

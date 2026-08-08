@@ -27,6 +27,13 @@ import {
   repairTmuxRuntime,
 } from "./tmux/doctor.js";
 import {
+  DEFAULT_INSTALL_KEEP_RECENT,
+  DEFAULT_INSTALL_RETENTION_DAYS,
+  planInstallCleanup,
+  runInstallCleanup,
+} from "./install-cleanup.js";
+import { isInstallCleanupDryRun, renderInstallCleanupResult } from "./install-doctor.js";
+import {
   loadMetadataEndpoint,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   type MetadataTone,
@@ -3290,6 +3297,33 @@ doctorCmd
       return;
     }
     console.log(renderRuntimeCoherenceReport(report));
+  });
+
+/** Zero is a real answer here, so only unparseable input falls back to the default. */
+function parseCount(raw: string | undefined, fallback: number): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+doctorCmd
+  .command("installs")
+  .description("Report superseded installs under the aimux install root; removes nothing without --fix")
+  .option("--fix", "Remove the reported installs instead of only listing them")
+  .option("--retention-days <days>", "Keep installs newer than this many days")
+  .option("--keep-recent <count>", "Always keep this many newest installs")
+  .option("--json", "Emit JSON")
+  .action((opts: { fix?: boolean; retentionDays?: string; keepRecent?: string; json?: boolean }) => {
+    const plan = planInstallCleanup({
+      retentionDays: parseCount(opts.retentionDays, DEFAULT_INSTALL_RETENTION_DAYS),
+      keepRecent: parseCount(opts.keepRecent, DEFAULT_INSTALL_KEEP_RECENT),
+    });
+    const result = runInstallCleanup(plan, {}, { dryRun: isInstallCleanupDryRun(opts) });
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(renderInstallCleanupResult(result));
   });
 
 doctorCmd

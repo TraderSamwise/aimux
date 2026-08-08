@@ -266,7 +266,8 @@ export function runInstallCleanup(
   operations: InstallCleanupOperations = {},
   input?: { dryRun?: boolean },
 ): InstallCleanupRunResult {
-  const dryRun = input?.dryRun === true;
+  // Deleting is the opt-in: a caller that says nothing gets a dry run.
+  const dryRun = input?.dryRun !== false;
   const removeDir = operations.removeDir ?? ((path: string) => rmSync(path, { recursive: true, force: true }));
   const results: InstallCleanupItemResult[] = [];
   let reclaimedBytes = 0;

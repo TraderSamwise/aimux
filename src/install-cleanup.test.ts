@@ -134,7 +134,7 @@ describe("install cleanup", () => {
     makeInstall("old", 90);
     const removed: string[] = [];
 
-    const result = runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) });
+    const result = runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) }, { dryRun: false });
 
     expect(removed).toEqual([join(root, "old")]);
     expect(result.results.map((entry) => entry.status)).toEqual(["removed"]);
@@ -146,7 +146,7 @@ describe("install cleanup", () => {
     target.remove.push({ name: "escape", path: "/etc/passwd", ageDays: 999, sizeBytes: 0 });
     const removed: string[] = [];
 
-    const result = runInstallCleanup(target, { removeDir: (path) => removed.push(path) });
+    const result = runInstallCleanup(target, { removeDir: (path) => removed.push(path) }, { dryRun: false });
 
     expect(removed).toEqual([]);
     expect(result.results).toContainEqual(expect.objectContaining({ name: "escape", status: "failed" }));
@@ -156,11 +156,15 @@ describe("install cleanup", () => {
     makeInstall("bad", 90);
     makeInstall("good", 91);
 
-    const result = runInstallCleanup(plan(), {
-      removeDir: (path) => {
-        if (path.endsWith("bad")) throw new Error("permission denied");
+    const result = runInstallCleanup(
+      plan(),
+      {
+        removeDir: (path) => {
+          if (path.endsWith("bad")) throw new Error("permission denied");
+        },
       },
-    });
+      { dryRun: false },
+    );
 
     expect(result.results.filter((entry) => entry.status === "removed")).toHaveLength(1);
     expect(result.results.filter((entry) => entry.status === "failed")).toHaveLength(1);
@@ -231,6 +235,16 @@ describe("install cleanup", () => {
       if (previous === undefined) delete process.env.AIMUX_INSTALL_ROOT;
       else process.env.AIMUX_INSTALL_ROOT = previous;
     }
+  });
+
+  it("does not remove anything when the caller says nothing about dry run", () => {
+    makeInstall("old", 90);
+    const removed: string[] = [];
+
+    const result = runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) });
+
+    expect(removed).toEqual([]);
+    expect(result.dryRun).toBe(true);
   });
 
   it("exposes conservative defaults", () => {
