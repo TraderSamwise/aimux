@@ -657,6 +657,7 @@ export interface MetadataServerOptions {
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
           activity?: AgentActivityState;
+          activityText?: string;
           attention?: AgentAttentionState;
         }>
       | {
@@ -666,6 +667,7 @@ export interface MetadataServerOptions {
           parsed?: ParsedAgentOutput;
           messages?: AgentTranscriptMessage[];
           activity?: AgentActivityState;
+          activityText?: string;
           attention?: AgentAttentionState;
         };
   };
@@ -2497,6 +2499,7 @@ export class MetadataServer {
               // added to readAgentOutput does not reach a stream by itself.
               messages: result.messages,
               activity: result.activity,
+              activityText: result.activityText,
               attention: result.attention,
             });
           }
@@ -2887,6 +2890,7 @@ export class MetadataServer {
               // added to readAgentOutput does not reach a stream by itself.
               messages: result.messages,
               activity: result.activity,
+              activityText: result.activityText,
               attention: result.attention,
             });
           } else {

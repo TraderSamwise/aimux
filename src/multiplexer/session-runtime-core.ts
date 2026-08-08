@@ -13,7 +13,7 @@ import { loadLastUsedState } from "../last-used.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
-import { parseAgentOutput } from "../agent-output-parser.js";
+import { activityTextFromParsedAgentOutput, parseAgentOutput } from "../agent-output-parser.js";
 import { messagesFromParsedAgentOutput, type AgentTranscriptMessage } from "../agent-transcript.js";
 import type { AgentActivityState, AgentAttentionState } from "../agent-events.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
@@ -279,7 +279,10 @@ export async function sendAgentInput(
  * through different windows produce different text, and one key between them
  * would mean each eviscerating the other\'s entry on every poll.
  */
-const transcriptCache = new Map<string, { output: string; parsed: any; messages: AgentTranscriptMessage[] }>();
+const transcriptCache = new Map<
+  string,
+  { output: string; parsed: any; messages: AgentTranscriptMessage[]; activityText: string }
+>();
 
 export async function readAgentOutput(
   host: SessionRuntimeHost,
@@ -291,6 +294,8 @@ export async function readAgentOutput(
   startLine?: number;
   parsed: any;
   messages: AgentTranscriptMessage[];
+  /** The tool's own progress line, empty when the pane is not showing one. */
+  activityText?: string;
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
 }> {
@@ -318,6 +323,7 @@ export async function readAgentOutput(
       startLine: startLine ?? -120,
       parsed: cached.parsed,
       messages: cached.messages,
+      activityText: cached.activityText,
       ...liveness,
     };
   }
@@ -328,9 +334,14 @@ export async function readAgentOutput(
   // Projected here rather than in each client. Two of them had grown their own
   // copy of this mapping and the copies had already drifted.
   const messages = messagesFromParsedAgentOutput(parsed);
-  transcriptCache.set(cacheKey, { output, parsed, messages });
+  // Cached beside the transcript, not recomputed on the hit path: the verb lives
+  // in the pane text this cache is keyed on, so identical output means an
+  // identical verb — and recomputing only on a miss would blank it on every
+  // unchanged poll.
+  const activityText = activityTextFromParsedAgentOutput(parsed);
+  transcriptCache.set(cacheKey, { output, parsed, messages, activityText });
 
-  return { sessionId, output, startLine: startLine ?? -120, parsed, messages, ...liveness };
+  return { sessionId, output, startLine: startLine ?? -120, parsed, messages, activityText, ...liveness };
 }
 
 /** Called from session teardown; the cache is keyed per startLine window. */

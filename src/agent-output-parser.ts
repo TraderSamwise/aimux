@@ -192,7 +192,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const dotBulletText = trimmed.replace(/^•\s?/, "");
     const starBulletText = trimmed.replace(/^\*\s+/, "");
     const dashBulletText = trimmed.replace(/^-\s+/, "");
-    const spinnerText = trimmed.replace(/^[✻✽✶]\s+/, "");
+    const spinnerText = trimmed.replace(/^[✢✳✶✻✽·]\s+/, "");
     const conversationBulletText = trimmed.replace(/^(?:•|⏺)\s?/, "");
     return (
       /^■\s?/.test(trimmed) ||
@@ -214,7 +214,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^⏵⏵\s/.test(trimmed) ||
       (/^\*\s+/.test(trimmed) && looksLikeActivityProgressText(starBulletText)) ||
       (/^-\s+/.test(trimmed) && looksLikeActivityProgressText(dashBulletText)) ||
-      (/^[✻✽✶]\s+/.test(trimmed) && looksLikeActivityProgressText(spinnerText)) ||
+      (/^[✢✳✶✻✽·]\s+/.test(trimmed) && looksLikeActivityProgressText(spinnerText)) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
@@ -235,7 +235,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   const isToolResultLine = (line: string) => /^[⎿└]\s/.test(line.trimStart());
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
-  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✻✽✶]\s+)\s?/, "");
+  // Frame set matches the collapse check below; a partial set left half the
+  // spinner frames unclassified, so the same line was status or response
+  // depending on which frame the pane happened to be showing.
+  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✢✳✶✻✽·]\s+)\s?/, "");
   const isCodexPickerSelectionPrompt = (promptText: string) => {
     if (tool !== "codex" || sawPrompt || (current?.type !== "response" && current?.type !== "raw")) return false;
     const activeText = current.lines.join("\n");
@@ -566,4 +569,35 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
   }
 
   return merged;
+}
+
+/**
+ * The tool's own progress line — `Jitterbugging… (2m 23s · ↓ 8.1k tokens)`.
+ *
+ * Worth surfacing because it is the one part of the status chrome a person
+ * actually reads: it names what the agent is doing and how long it has been at
+ * it, in the tool's own words, where a client can otherwise only say "running".
+ *
+ * Scans lines rather than whole blocks: status blocks get merged, so the newest
+ * progress line usually sits inside a block that also absorbed the footer, and
+ * taking the last block's text would hand back a shell prompt.
+ *
+ * Past-tense leads are rejected. `Worked for 20m 16s` satisfies the same
+ * progress shape but reports a finished turn, and rendering it live would put a
+ * frozen timer next to an idle agent.
+ */
+export function activityTextFromParsedAgentOutput(parsed?: { blocks?: AgentOutputBlock[] } | null): string {
+  const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
+  let newest = "";
+  for (const block of blocks) {
+    if (block?.type !== "status") continue;
+    for (const raw of String(block.text ?? "").split("\n")) {
+      const line = raw.trim().replace(/^(■|[-*•✢✳✶✻✽·]\s+)\s?/, "");
+      if (!line || !looksLikeActivityProgressText(line)) continue;
+      const lead = line.match(activityLeadRegex)?.[0] ?? "";
+      if (!/ing$/i.test(lead)) continue;
+      newest = line;
+    }
+  }
+  return newest;
 }

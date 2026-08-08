@@ -83,6 +83,8 @@ export interface AgentOutputEvent {
    * `agentActivityState` capability, so absence is not idleness.
    */
   activity?: AgentActivityState;
+  /** The tool's own progress line, e.g. `Jitterbugging… (2m 23s · ↓ 8.1k tokens)`. */
+  activityText?: string;
   attention?: AgentAttentionState;
 }
 

@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { useAuth } from "@/lib/auth";
+import { agentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
@@ -47,6 +48,7 @@ import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
   activityFamily,
+  activityTextFamily,
   applyOutputSnapshotAtom,
   lastErrorFamily,
   outputBufferFamily,
@@ -89,6 +91,7 @@ export default function ChatScreen() {
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const transcript = useAtomValue(transcriptFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
+  const activityText = useAtomValue(activityTextFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const setLastError = useSetAtom(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
@@ -154,20 +157,10 @@ export default function ChatScreen() {
    * Undefined means the service does not report it — not that the agent is idle
    * — so nothing is claimed in that case.
    */
-  const activityLabel = useMemo(() => {
-    switch (activity) {
-      case "running":
-        return "Working…";
-      case "waiting":
-        return "Waiting for input";
-      case "error":
-        return "Stopped on an error";
-      case "interrupted":
-        return "Interrupted";
-      default:
-        return null;
-    }
-  }, [activity]);
+  const activityLabel = useMemo(
+    () => agentActivityLabel(activity, activityText),
+    [activity, activityText],
+  );
 
   const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
@@ -198,6 +191,7 @@ export default function ChatScreen() {
       output: result.output,
       messages: result.messages,
       activity: result.activity,
+      activityText: result.activityText,
       attention: result.attention,
     });
   }, [

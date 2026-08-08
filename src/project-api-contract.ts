@@ -406,6 +406,16 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    * leaves it at `normal`, so do not read absence as "nothing needed".
    */
   activity?: AgentActivityState;
+  /**
+   * The tool's own progress line, e.g. `Jitterbugging… (2m 23s · ↓ 8.1k tokens)`.
+   *
+   * What `activity` cannot say: the enum reports that a turn is running, this
+   * reports what the tool claims it is doing and for how long, in its own words.
+   * Empty when the pane is not showing one — which includes a finished turn,
+   * because a past-tense line would render as a frozen timer beside an idle
+   * agent.
+   */
+  activityText?: string;
   attention?: AgentAttentionState;
 }
 
