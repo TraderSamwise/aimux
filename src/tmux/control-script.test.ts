@@ -41,7 +41,12 @@ function out(value) { process.stdout.write(String(value)); }
 function listClients() {
   const format = args[2] || "";
   const rows = (state.clients || []).map((client) =>
-    format.replace("#{client_tty}", client.tty).replace("#{session_name}", client.sessionName).replace("#{window_id}", client.windowId),
+    format
+      .replace("#{client_tty}", client.tty)
+      .replace("#{session_name}", client.sessionName)
+      .replace("#{window_id}", client.windowId)
+      .replace("#{client_width}", String(client.width ?? 200))
+      .replace("#{client_height}", String(client.height ?? 60)),
   );
   out(rows.join("\\n"));
 }
@@ -2994,7 +2999,7 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("display-message -c /dev/live -p -F #{client_width}|#{client_height}");
+    expect(log).toContain("list-clients -F #{client_tty} #{client_width}|#{client_height}");
     expect(log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"))).toBe(true);
     expect(log.some((entry) => entry.includes("display-popup -c /dev/stale"))).toBe(false);
     expect(log.some((entry) => entry.includes("display-menu"))).toBe(false);
@@ -3063,7 +3068,7 @@ describe("tmux-control.sh", () => {
     );
 
     const log = readLog(envRoot);
-    expect(log).toContain("display-message -c /dev/live -p -F #{client_width}|#{client_height}");
+    expect(log).toContain("list-clients -F #{client_tty} #{client_width}|#{client_height}");
     const popupLaunches = log.filter((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé"));
     expect(popupLaunches).toHaveLength(2);
   });

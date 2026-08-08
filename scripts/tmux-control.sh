@@ -557,7 +557,10 @@ show_local_expose() {
     client_cols=""
     client_rows=""
     if [ -n "$popup_client_tty" ]; then
-      client_size=$(tmux display-message -c "$popup_client_tty" -p -F '#{client_width}|#{client_height}' 2>/dev/null || true)
+      # list-clients, not `display-message -c`: outside a client tmux ignores -c and
+      # answers for a sibling client, so the baseline never matches the one resized.
+      client_size=$(tmux list-clients -F '#{client_tty} #{client_width}|#{client_height}' 2>/dev/null |
+        awk -v tty="$popup_client_tty" '$1 == tty { print $2; exit }' || true)
       client_cols="${client_size%%|*}"
       client_rows="${client_size#*|}"
     fi

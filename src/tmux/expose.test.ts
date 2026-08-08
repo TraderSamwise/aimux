@@ -897,8 +897,8 @@ describe("runTmuxExpose", () => {
       tmuxPath,
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${tmuxLog}"
-if [ "$1" = "display-message" ]; then
-  printf '100x30'
+if [ "$1" = "list-clients" ]; then
+  printf '/dev/ttys999 80x24\\n/dev/ttys001 100x30\\n'
   exit 0
 fi
 exit 0
@@ -960,9 +960,7 @@ exit 0
           1500,
         ),
       ).resolves.toBe(75);
-      expect(readFileSync(tmuxLog, "utf8")).toContain(
-        "display-message -c /dev/ttys001 -p -F #{client_width}x#{client_height}",
-      );
+      expect(readFileSync(tmuxLog, "utf8")).toContain("list-clients -F #{client_tty} #{client_width}x#{client_height}");
     } finally {
       process.env.PATH = oldPath;
       server.close();
@@ -984,8 +982,8 @@ exit 0
       tmuxPath,
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${tmuxLog}"
-if [ "$1" = "display-message" ]; then
-  printf '100x30'
+if [ "$1" = "list-clients" ]; then
+  printf '/dev/ttys999 80x24\\n/dev/ttys001 100x30\\n'
   exit 0
 fi
 exit 0
@@ -1049,9 +1047,7 @@ exit 0
       inputTimer.unref?.();
 
       await expect(withTimeout(result, 2500)).resolves.toBe(75);
-      expect(readFileSync(tmuxLog, "utf8")).toContain(
-        "display-message -c /dev/ttys001 -p -F #{client_width}x#{client_height}",
-      );
+      expect(readFileSync(tmuxLog, "utf8")).toContain("list-clients -F #{client_tty} #{client_width}x#{client_height}");
     } finally {
       if (inputTimer) clearInterval(inputTimer);
       process.env.PATH = oldPath;
@@ -1074,8 +1070,8 @@ exit 0
       tmuxPath,
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${tmuxLog}"
-if [ "$1" = "display-message" ]; then
-  printf '80x24'
+if [ "$1" = "list-clients" ]; then
+  printf '/dev/ttys999 80x24\\n/dev/ttys001 80x24\\n'
   exit 0
 fi
 exit 0
@@ -1140,7 +1136,7 @@ exit 0
       await new Promise((resolve) => setTimeout(resolve, 700));
 
       const log = existsSync(tmuxLog) ? readFileSync(tmuxLog, "utf8") : "";
-      expect(log).not.toContain("display-message -c /dev/ttys001 -p -F #{client_width}x#{client_height}");
+      expect(log).not.toContain("list-clients -F #{client_tty} #{client_width}x#{client_height}");
       input.write("q");
       await expect(withTimeout(result, 1000)).resolves.toBe(0);
     } finally {
