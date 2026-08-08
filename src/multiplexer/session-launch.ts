@@ -28,7 +28,7 @@ import { queueTuiNotificationContext, queueTuiSessionSeen } from "./tui-runtime-
 import { resolveLiveSessionTmuxTarget } from "./session-runtime-core.js";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { getRuntimeOwnerId, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION } from "../runtime-owner.js";
-import { discoverCodexBackendSessionId } from "../backend-session-discovery.js";
+import { discoverCodexBackendSessionId, relocateClaudeTranscript } from "../backend-session-discovery.js";
 import { StartupInterstitialDismisser } from "../tmux/startup-interstitials.js";
 
 type SessionLaunchHost = any;
@@ -1105,6 +1105,9 @@ export async function migrateAgent(
       toolCfg!.resumeArgs!.map((arg: string) => arg.replace("{sessionId}", backendSessionId!)),
       originalArgs,
     );
+    // Its history is full of the old worktree's absolute paths, and it has no
+    // way to notice it was moved.
+    historyContext = `You have been moved from ${sourceCwd} to ${targetWorktreePath}. Work in the new path from now on; paths in your earlier messages point at the old one.`;
   } else if (sourceSnapshot.historyText) {
     historyContext =
       "\n\n=== Your previous session context ===\n" +
@@ -1138,13 +1141,27 @@ export async function migrateAgent(
   session.kill();
   await waitForExit().catch(() => {});
 
+  // After it exits, not before: claude keeps writing until then, and a copy
+  // taken earlier would leave those turns behind. claude finds a conversation
+  // only under the directory it started in and takes no flag pointing
+  // elsewhere, so without this the move reports no such conversation and loses
+  // the work. codex needs nothing — it keys transcripts by date and adopts the
+  // process cwd.
+  if (useBackendResume && toolConfigKey === "claude") {
+    relocateClaudeTranscript(sourceCwd, targetWorktreePath, backendSessionId!);
+  }
+
   if (!toolCfg?.preambleFlag) {
-    const continuityPreamble = host.sessionBootstrap.buildCodexMigrationContinuityPreamble(
-      sessionId,
-      sourceCwd,
-      targetWorktreePath,
-      sourceSnapshot,
-    );
+    // A real resume already carries the conversation, so the written handover
+    // would only ask it to re-read a summary of what it already remembers.
+    const continuityPreamble = useBackendResume
+      ? historyContext
+      : host.sessionBootstrap.buildCodexMigrationContinuityPreamble(
+          sessionId,
+          sourceCwd,
+          targetWorktreePath,
+          sourceSnapshot,
+        );
     createSession(
       host,
       session.command,
@@ -1159,6 +1176,8 @@ export async function migrateAgent(
       true,
       false,
       session.team,
+      undefined,
+      originalArgs,
     );
     return;
   }
@@ -1167,7 +1186,7 @@ export async function migrateAgent(
     host,
     session.command,
     migrateArgs,
-    useBackendResume ? undefined : toolCfg?.preambleFlag,
+    toolCfg?.preambleFlag,
     toolConfigKey,
     historyContext.trim() || undefined,
     useBackendResume ? undefined : toolCfg?.sessionIdFlag,
@@ -1177,6 +1196,8 @@ export async function migrateAgent(
     false,
     false,
     session.team,
+    undefined,
+    originalArgs,
   );
 }
 

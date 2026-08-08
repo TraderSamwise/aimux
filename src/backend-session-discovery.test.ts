@@ -1,12 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+import { SessionBootstrapService } from "./session-bootstrap.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  claudeTranscriptPath,
   discoverBackendSessionId,
   discoverClaudeBackendSessionId,
   discoverCodexBackendSessionId,
+  relocateClaudeTranscript,
 } from "./backend-session-discovery.js";
 
 const UUID_A = "0710a963-a473-430f-9f9a-e27dd4546328";
@@ -161,5 +165,60 @@ describe("discovering a codex id beside a live sibling", () => {
 
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
+describe("moving a claude conversation between worktrees", () => {
+  it("puts the transcript where the target worktree looks for it", () => {
+    // Verified against the real CLI: resuming from a foreign directory reports
+    // "No conversation found with session ID", and resumes with full history
+    // once the transcript is copied across.
+    const projects = mkdtempSync(join(tmpdir(), "aimux-claude-projects-"));
+    const source = "/Users/someone/cs/proj";
+    const target = "/Users/someone/cs/proj/.aimux/worktrees/feature";
+    const id = "4849a2ce-ea35-44f3-9206-d8054a5704bc";
+
+    const from = claudeTranscriptPath(source, id, projects);
+    mkdirSync(dirname(from), { recursive: true });
+    writeFileSync(from, '{"type":"user","message":{"content":"write me a poem"}}\n');
+
+    expect(existsSync(claudeTranscriptPath(target, id, projects))).toBe(false);
+    expect(relocateClaudeTranscript(source, target, id, projects)).toBe(true);
+    expect(readFileSync(claudeTranscriptPath(target, id, projects), "utf-8")).toContain("write me a poem");
+    // Left behind on purpose: the relaunch can fail and this is the only copy.
+    expect(existsSync(from)).toBe(true);
+
+    rmSync(projects, { recursive: true, force: true });
+  });
+
+  it("reports when there is nothing to move, and no-ops on a same-place move", () => {
+    const projects = mkdtempSync(join(tmpdir(), "aimux-claude-projects-empty-"));
+    const id = "4849a2ce-ea35-44f3-9206-d8054a5704bc";
+    expect(relocateClaudeTranscript("/a", "/b", id, projects)).toBe(false);
+    expect(relocateClaudeTranscript("/a", "/a", id, projects)).toBe(true);
+    rmSync(projects, { recursive: true, force: true });
+  });
+});
+
+describe("what a moved session remembers as its args", () => {
+  const compose = (base: string[], action: string[], saved: string[]) =>
+    SessionBootstrapService.prototype.composeToolArgs.call(null as never, { args: base }, action, saved);
+
+  it("survives being moved twice", () => {
+    // Remembering the move's own launch args accumulates a --resume per move:
+    // the second move would compose "--resume <new> --resume <old>", and for
+    // codex "resume <a> resume <b>" is not even a valid command line.
+    const base = ["--dangerously-skip-permissions"];
+    const first = "0f0e2b1a-1111-2222-3333-444455556666";
+
+    const firstMove = compose(base, ["--resume", first], base);
+    expect(firstMove).toEqual([...base, "--resume", first]);
+
+    const secondMove = compose(base, ["--resume", first], base);
+    expect(secondMove).toEqual([...base, "--resume", first]);
+    expect(secondMove.filter((arg) => arg === "--resume")).toHaveLength(1);
+
+    const ifWeHadRememberedTheLaunch = compose(base, ["--resume", first], firstMove);
+    expect(ifWeHadRememberedTheLaunch.filter((arg) => arg === "--resume")).toHaveLength(2);
   });
 });

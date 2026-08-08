@@ -1,6 +1,16 @@
-import { closeSync, existsSync, openSync, readSync, readdirSync, statSync, type Dirent } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  readdirSync,
+  statSync,
+  type Dirent,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_FIRST_LINE_BYTES = 1024 * 1024;
@@ -24,8 +34,8 @@ function encodeClaudeProjectPath(cwd: string): string {
 
 /** The on-disk Claude transcript path for a session's cwd + backend id. Single
  *  source of truth for the encoding so derivation can't drift across modules. */
-export function claudeTranscriptPath(cwd: string, backendSessionId: string): string {
-  return join(claudeProjectsDir(), encodeClaudeProjectPath(cwd), `${backendSessionId}.jsonl`);
+export function claudeTranscriptPath(cwd: string, backendSessionId: string, projectsDir = claudeProjectsDir()): string {
+  return join(projectsDir, encodeClaudeProjectPath(cwd), `${backendSessionId}.jsonl`);
 }
 
 /**
@@ -38,6 +48,32 @@ export function claudeTranscriptPath(cwd: string, backendSessionId: string): str
  * time), it refuses and returns null rather than guess the wrong session.
  * This preserves the "exact id only" safety of the original resume path.
  */
+/**
+ * Put a claude conversation where the target worktree can find it.
+ *
+ * claude keys its transcripts by the directory they were started in, and has no
+ * flag to look elsewhere, so resuming one from another worktree simply reports
+ * no such conversation. Copying the transcript across is all it takes — the
+ * paths inside are history, and the session loads and answers from it.
+ *
+ * Copied rather than moved: the relaunch can fail, and the original is the only
+ * copy of the work.
+ */
+export function relocateClaudeTranscript(
+  sourceCwd: string,
+  targetCwd: string,
+  backendSessionId: string,
+  projectsDir = claudeProjectsDir(),
+): boolean {
+  const from = claudeTranscriptPath(sourceCwd, backendSessionId, projectsDir);
+  const to = claudeTranscriptPath(targetCwd, backendSessionId, projectsDir);
+  if (from === to) return true;
+  if (!existsSync(from)) return false;
+  mkdirSync(dirname(to), { recursive: true });
+  copyFileSync(from, to);
+  return true;
+}
+
 export function discoverClaudeBackendSessionId(cwd: string, projectsDir = claudeProjectsDir()): string | null {
   const dir = join(projectsDir, encodeClaudeProjectPath(cwd));
   if (!existsSync(dir)) return null;
