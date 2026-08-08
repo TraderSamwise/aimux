@@ -4,8 +4,9 @@ import type { ProjectUpdateEvent } from "../../src/project-api-contract";
 // `import type` on purpose: the module it lives in imports node:crypto, and a
 // value import would drag that into the Metro bundle.
 import type { AgentTranscriptMessage } from "../../src/agent-transcript";
+import type { AgentActivityState, AgentAttentionState } from "../../src/agent-events";
 
-export type { ProjectUpdateEvent, AgentTranscriptMessage };
+export type { ProjectUpdateEvent, AgentTranscriptMessage, AgentActivityState, AgentAttentionState };
 
 export type AlertKind =
   | "notification"
@@ -73,6 +74,16 @@ export interface AgentOutputEvent {
   startLine: number;
   parsed?: ParsedAgentOutput;
   messages?: AgentTranscriptMessage[];
+  /**
+   * What the session is doing, per the tool's own hooks.
+   *
+   * Worth carrying rather than inferring: this moves without the pane moving,
+   * which is the whole point — arriving output cannot distinguish an agent that
+   * finished from one that is merely quiet. Absent for services without the
+   * `agentActivityState` capability, so absence is not idleness.
+   */
+  activity?: AgentActivityState;
+  attention?: AgentAttentionState;
 }
 
 export interface StreamErrorEvent {

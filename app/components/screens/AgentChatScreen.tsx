@@ -4,10 +4,12 @@ import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
+  ArrowUp,
   ChevronLeft,
   Columns2,
   MessageSquare,
-  Paperclip,
+  Plus,
+  Square,
   SquareTerminal,
   UserPlus,
   X,
@@ -19,6 +21,7 @@ import { TeammatePanel } from "@/components/teammate-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
+import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
@@ -28,6 +31,7 @@ import {
   leaveShare,
   listShares,
   removeShareParticipant,
+  interruptLivePane,
   sendLivePaneInput,
   uploadImageAttachment,
   type SharedSessionSummary,
@@ -42,6 +46,7 @@ import { useKeyboardInset } from "@/lib/use-keyboard-visible";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
+  activityFamily,
   applyOutputSnapshotAtom,
   lastErrorFamily,
   outputBufferFamily,
@@ -62,6 +67,9 @@ const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
 const CHAT_OUTPUT_SNAPSHOT_POLL_MS = 1500;
+// Icon inks, matching secondary-foreground / primary-foreground in the dark theme.
+const CONTROL_INK = "#fafafa";
+const CONTROL_ON_BRAND = "#18181b";
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
@@ -80,6 +88,7 @@ export default function ChatScreen() {
   const applyOutputSnapshot = useSetAtom(applyOutputSnapshotAtom);
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const transcript = useAtomValue(transcriptFamily(sessionKey));
+  const activity = useAtomValue(activityFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const setLastError = useSetAtom(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
@@ -99,6 +108,8 @@ export default function ChatScreen() {
   const [draft, setDraft] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingImageAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
+  const [interruptBusy, setInterruptBusy] = useState(false);
+  const [composerWidth, setComposerWidth] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
@@ -138,6 +149,27 @@ export default function ChatScreen() {
     };
   }, [getToken]);
 
+  /**
+   * Driven by the runtime's own activity state, not by whether bytes arrived.
+   * Undefined means the service does not report it — not that the agent is idle
+   * — so nothing is claimed in that case.
+   */
+  const activityLabel = useMemo(() => {
+    switch (activity) {
+      case "running":
+        return "Working…";
+      case "waiting":
+        return "Waiting for input";
+      case "error":
+        return "Stopped on an error";
+      case "interrupted":
+        return "Interrupted";
+      default:
+        return null;
+    }
+  }, [activity]);
+
+  const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
   const heartbeatReady = !relayConfigured || relayStatus === "connected";
   const endpointHost = serviceEndpoint?.host ?? null;
   const endpointPort = serviceEndpoint?.port ?? null;
@@ -165,6 +197,8 @@ export default function ChatScreen() {
       sessionId: result.sessionId,
       output: result.output,
       messages: result.messages,
+      activity: result.activity,
+      attention: result.attention,
     });
   }, [
     applyOutputSnapshot,
@@ -396,6 +430,25 @@ export default function ChatScreen() {
 
   function removePendingAttachment(id: string) {
     setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  /**
+   * Interrupt is offered unconditionally rather than only while we believe the
+   * agent is busy. It is a single ESC, which an idle tool ignores, so gating it
+   * on our guess about busy-ness only makes it unavailable exactly when the
+   * guess is wrong.
+   */
+  async function handleInterrupt() {
+    if (!endpointHost || !endpointPort || !sessionId || interruptBusy) return;
+    setInterruptBusy(true);
+    setSendError(null);
+    try {
+      await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not interrupt the agent.");
+    } finally {
+      setInterruptBusy(false);
+    }
   }
 
   function handleComposerKeyPress(event: {
@@ -835,33 +888,76 @@ export default function ChatScreen() {
                     </View>
                   </ScrollView>
                 ) : null}
-                <View className="flex-row items-end gap-2">
+                {/*
+                  One card holding the message and the controls that act on it, so
+                  the composer reads as a single object rather than a field with
+                  things parked either side of it. The controls sit under the text
+                  because that is where the width is: flanking them costs a third
+                  of a phone screen, and the text is the part that needs it.
+                */}
+                <View
+                  onLayout={(event: LayoutChangeEvent) =>
+                    setComposerWidth(event.nativeEvent.layout.width)
+                  }
+                  className="gap-2 rounded-2xl border border-border bg-card px-2.5 pb-2 pt-2.5"
+                >
                   <Input
                     nativeID={composerFieldId}
                     accessibilityLabel="Message the agent"
                     value={draft}
                     onChangeText={setDraft}
                     onKeyPress={handleComposerKeyPress}
-                    placeholder="Message the agent..."
+                    placeholder="Ask the agent…"
                     multiline
+                    // One row at rest. `multiline` alone renders a two-row textarea
+                    // on the web, so the card opens a line taller than it needs.
+                    numberOfLines={1}
                     editable={!sendBusy}
-                    className="min-h-11 max-h-32 flex-1 py-2 text-sm"
+                    // The card draws the border and the ground now, so the field
+                    // itself is only text.
+                    className="h-auto max-h-40 min-h-6 rounded-none border-0 bg-transparent px-1 py-0 text-sm"
                     textAlignVertical="top"
                   />
-                  <Pressable
-                    onPress={handleAttachImage}
-                    disabled={sendBusy}
-                    accessibilityLabel="Attach image"
-                    className="h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-40"
-                  >
-                    <Paperclip size={17} color="#a1a1aa" />
-                  </Pressable>
-                  <Button
-                    label={sendBusy ? "Sending..." : "Send"}
-                    disabled={!canSendMessage}
-                    onPress={handleSendMessage}
-                    className="h-11 px-4"
-                  />
+                  <View className="flex-row items-center gap-2">
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Attach"
+                      accessibilityLabel="Attach an image"
+                      icon={<Plus size={17} color={CONTROL_INK} />}
+                      disabled={sendBusy || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+                      onPress={handleAttachImage}
+                    />
+                    <View className="flex-1 px-1">
+                      {activityLabel ? (
+                        <Text className="text-xs text-muted-foreground">{activityLabel}</Text>
+                      ) : null}
+                    </View>
+                    {/*
+                      Always offered, never revealed only while we think the agent
+                      is busy. Interrupt is a single ESC, which an idle tool
+                      ignores, so gating it on that guess only makes it
+                      unavailable exactly when the guess is wrong.
+                    */}
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Stop"
+                      accessibilityLabel="Interrupt the agent"
+                      // Filled, because a stop is a stop and an outline reads as
+                      // a checkbox at this size.
+                      icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                      disabled={interruptBusy}
+                      onPress={handleInterrupt}
+                    />
+                    <ComposerControl
+                      wide={wideControls}
+                      brand
+                      label="Send"
+                      accessibilityLabel="Send the message"
+                      icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                      disabled={!canSendMessage}
+                      onPress={handleSendMessage}
+                    />
+                  </View>
                 </View>
               </View>
             </>
