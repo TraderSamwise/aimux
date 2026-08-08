@@ -214,7 +214,8 @@ aimux stop                    # stop the current project runtime
 ```
 
 Every local build leaves an install under the aimux install root
-(`AIMUX_INSTALL_ROOT`, or `~/.aimux/native`), and nothing removes them on its own. `aimux doctor installs` reports which ones are safe to
+(`AIMUX_INSTALL_ROOT`, or `~/.aimux/native`). The daemon sweeps superseded ones on a cadence — see
+the `installs` config above — and this command shows the same decision on demand. `aimux doctor installs` reports which ones are safe to
 drop and how much space they hold. It removes nothing unless you pass `--fix`,
 and it keeps any install that is current, still referenced by a live process or
 by tmux server state, among the newest, or inside the retention window. If it

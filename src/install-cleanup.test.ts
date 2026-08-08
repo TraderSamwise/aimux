@@ -1,10 +1,20 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_INSTALL_KEEP_RECENT,
   DEFAULT_INSTALL_RETENTION_DAYS,
+  REMOVING_SUFFIX,
   planInstallCleanup,
   runInstallCleanup,
 } from "./install-cleanup.js";
@@ -19,9 +29,13 @@ describe("install cleanup", () => {
   const makeInstall = (name: string, ageDays: number): string => {
     const path = join(root, name);
     mkdirSync(join(path, "dist"), { recursive: true });
+    mkdirSync(join(path, "bin"), { recursive: true });
     writeFileSync(join(path, "dist", "launcher-bin.js"), "x".repeat(1024));
+    // The installer writes bin/aimux last; without it an install reads as mid-install.
+    writeFileSync(join(path, "bin", "aimux"), "#!/bin/sh\n");
     // Age the directory and its children, since the install's age is the newest of them.
     const seconds = (NOW - ageDays * DAY) / 1000;
+    utimesSync(join(path, "bin"), seconds, seconds);
     utimesSync(join(path, "dist"), seconds, seconds);
     utimesSync(path, seconds, seconds);
     return path;
@@ -48,7 +62,7 @@ describe("install cleanup", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("removes only installs that are old, unreferenced, and not recent", () => {
+  it("removes only installs that are old, unreferenced, and not recent", async () => {
     makeInstall("old-a", 90);
     makeInstall("old-b", 45);
     makeInstall("fresh", 2);
@@ -71,7 +85,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "current", reason: "current-install" });
   });
 
-  it("never removes an install referenced by a live process or pane", () => {
+  it("never removes an install referenced by a live process or pane", async () => {
     makeInstall("busy", 200);
 
     const result = plan({
@@ -85,7 +99,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "busy", reason: "in-use" });
   });
 
-  it("never removes an install pinned only by a tmux key binding", () => {
+  it("never removes an install pinned only by a tmux key binding", async () => {
     makeInstall("bound", 300);
     makeInstall("unbound", 300);
 
@@ -101,7 +115,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "bound", reason: "in-use" });
   });
 
-  it("keeps the newest installs by mtime even when they are past retention", () => {
+  it("keeps the newest installs by mtime even when they are past retention", async () => {
     makeInstall("older", 300);
     makeInstall("newer", 200);
 
@@ -111,7 +125,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "newer", reason: "recent" });
   });
 
-  it("returns an empty plan when the install root is missing", () => {
+  it("returns an empty plan when the install root is missing", async () => {
     const result = plan({ root: join(root, "does-not-exist") });
 
     expect(result.remove).toEqual([]);
@@ -119,44 +133,44 @@ describe("install cleanup", () => {
     expect(result.reclaimableBytes).toBe(0);
   });
 
-  it("removes nothing on a dry run", () => {
+  it("removes nothing on a dry run", async () => {
     makeInstall("old", 90);
     const removed: string[] = [];
 
-    const result = runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) }, { dryRun: true });
+    const result = await runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) }, { dryRun: true });
 
     expect(removed).toEqual([]);
     expect(result.reclaimedBytes).toBe(0);
     expect(result.results.map((entry) => entry.status)).toEqual(["dry-run"]);
   });
 
-  it("removes the planned installs and reports what it reclaimed", () => {
+  it("removes the planned installs and reports what it reclaimed", async () => {
     makeInstall("old", 90);
     const removed: string[] = [];
 
-    const result = runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) }, { dryRun: false });
+    const result = await runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) }, { dryRun: false });
 
     expect(removed).toEqual([join(root, "old")]);
     expect(result.results.map((entry) => entry.status)).toEqual(["removed"]);
     expect(result.reclaimedBytes).toBeGreaterThan(0);
   });
 
-  it("refuses to remove a candidate whose path escapes the install root", () => {
+  it("refuses to remove a candidate whose path escapes the install root", async () => {
     const target = plan();
     target.remove.push({ name: "escape", path: "/etc/passwd", ageDays: 999, sizeBytes: 0 });
     const removed: string[] = [];
 
-    const result = runInstallCleanup(target, { removeDir: (path) => removed.push(path) }, { dryRun: false });
+    const result = await runInstallCleanup(target, { removeDir: (path) => removed.push(path) }, { dryRun: false });
 
     expect(removed).toEqual([]);
     expect(result.results).toContainEqual(expect.objectContaining({ name: "escape", status: "failed" }));
   });
 
-  it("reports a failed removal without aborting the sweep", () => {
+  it("reports a failed removal without aborting the sweep", async () => {
     makeInstall("bad", 90);
     makeInstall("good", 91);
 
-    const result = runInstallCleanup(
+    const result = await runInstallCleanup(
       plan(),
       {
         removeDir: (path) => {
@@ -182,7 +196,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "freshly-installed", reason: "within-retention" });
   });
 
-  it("removes nothing when a reference source could not be read", () => {
+  it("removes nothing when a reference source could not be read", async () => {
     makeInstall("old-a", 400);
     makeInstall("old-b", 400);
 
@@ -194,7 +208,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "old-a", reason: "references-unverified" });
   });
 
-  it("matches references written against the canonical form of the root", () => {
+  it("matches references written against the canonical form of the root", async () => {
     makeInstall("busy", 400);
     const canonicalRoot = realpathSync(root);
 
@@ -206,7 +220,7 @@ describe("install cleanup", () => {
     expect(result.keep).toContainEqual({ name: "busy", reason: "in-use" });
   });
 
-  it("tolerates a trailing slash on the configured install root", () => {
+  it("tolerates a trailing slash on the configured install root", async () => {
     makeInstall("busy", 400);
 
     const result = plan({
@@ -218,7 +232,7 @@ describe("install cleanup", () => {
     expect(result.remove).toEqual([]);
   });
 
-  it("reads the install root from AIMUX_INSTALL_ROOT when none is given", () => {
+  it("reads the install root from AIMUX_INSTALL_ROOT when none is given", async () => {
     makeInstall("old", 400);
     const previous = process.env.AIMUX_INSTALL_ROOT;
     process.env.AIMUX_INSTALL_ROOT = root;
@@ -237,14 +251,71 @@ describe("install cleanup", () => {
     }
   });
 
-  it("does not remove anything when the caller says nothing about dry run", () => {
+  it("does not remove anything when the caller says nothing about dry run", async () => {
     makeInstall("old", 90);
     const removed: string[] = [];
 
-    const result = runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) });
+    const result = await runInstallCleanup(plan(), { removeDir: (path) => removed.push(path) });
 
     expect(removed).toEqual([]);
     expect(result.dryRun).toBe(true);
+  });
+
+  it("never removes a half-written install, however old it looks", () => {
+    // Between the installer's mv and its bin/aimux write, the tree carries the
+    // tarball's mtimes, so a freshly installed old release looks ancient.
+    const path = makeInstall("mid-install", 400);
+    rmSync(join(path, "bin", "aimux"), { force: true });
+
+    const result = plan();
+
+    expect(result.remove).toEqual([]);
+    expect(result.keep).toContainEqual({ name: "mid-install", reason: "incomplete" });
+  });
+
+  it("offers the oldest installs first so a capped sweep drains predictably", () => {
+    makeInstall("middle", 100);
+    makeInstall("oldest", 300);
+    makeInstall("newest", 40);
+
+    expect(plan().remove.map((entry) => entry.name)).toEqual(["oldest", "middle", "newest"]);
+  });
+
+  it("removes at most the requested number of installs", async () => {
+    makeInstall("a", 300);
+    makeInstall("b", 200);
+    makeInstall("c", 100);
+    const removed: string[] = [];
+
+    const result = await runInstallCleanup(
+      plan(),
+      { removeDir: (path) => removed.push(path) },
+      { dryRun: false, limit: 2 },
+    );
+
+    expect(removed).toHaveLength(2);
+    expect(result.results.map((entry) => entry.name)).toEqual(["a", "b"]);
+  });
+
+  it("always reclaims debris left by an interrupted delete", () => {
+    // A half-deleted install loses bin/aimux first, so without the rename it
+    // would read as mid-install and be protected forever.
+    const stump = join(root, `abandoned${REMOVING_SUFFIX}`);
+    mkdirSync(join(stump, "dist"), { recursive: true });
+
+    const result = plan();
+
+    expect(result.remove.map((entry) => entry.name)).toContain(`abandoned${REMOVING_SUFFIX}`);
+    expect(result.keep.map((entry) => entry.name)).not.toContain(`abandoned${REMOVING_SUFFIX}`);
+  });
+
+  it("renames out of the way before deleting so a kill cannot strand a stump", async () => {
+    const path = makeInstall("doomed", 90);
+
+    await runInstallCleanup(plan(), {}, { dryRun: false });
+
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(`${path}${REMOVING_SUFFIX}`)).toBe(false);
   });
 
   it("exposes conservative defaults", () => {

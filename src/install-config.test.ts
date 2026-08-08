@@ -1,11 +1,12 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_INSTALLS_CONFIG,
   MIN_INSTALL_CLEANUP_INTERVAL_MS,
   MIN_INSTALL_RETENTION_DAYS,
+  isPrimaryInstallLane,
   loadInstallsConfig,
   normalizeInstallsConfig,
 } from "./install-config.js";
@@ -52,6 +53,27 @@ describe("loadInstallsConfig", () => {
 
     expect(loadInstallsConfig()).toEqual(DEFAULT_INSTALLS_CONFIG);
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe("isPrimaryInstallLane", () => {
+  const defaultHome = join(homedir(), ".aimux");
+
+  it("sweeps when AIMUX_HOME is the default home", () => {
+    // The launcher always sets AIMUX_HOME, so presence alone must not disqualify.
+    expect(isPrimaryInstallLane({ AIMUX_HOME: defaultHome })).toBe(true);
+    expect(isPrimaryInstallLane({ AIMUX_HOME: `${defaultHome}/` })).toBe(true);
+    expect(isPrimaryInstallLane({ AIMUX_HOME: "~/.aimux" })).toBe(true);
+  });
+
+  it("sweeps when AIMUX_HOME is unset or blank", () => {
+    expect(isPrimaryInstallLane({})).toBe(true);
+    expect(isPrimaryInstallLane({ AIMUX_HOME: "   " })).toBe(true);
+  });
+
+  it("does not sweep from a lane pointed at another home", () => {
+    expect(isPrimaryInstallLane({ AIMUX_HOME: "/tmp/aimux-lane" })).toBe(false);
+    expect(isPrimaryInstallLane({ AIMUX_HOME: join(homedir(), ".aimux-dev") })).toBe(false);
   });
 });
 

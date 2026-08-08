@@ -6,6 +6,7 @@ const KEEP_REASON_LABELS: Record<InstallKeepReason, string> = {
   recent: "among the newest",
   "within-retention": "inside retention",
   "references-unverified": "reference scan incomplete",
+  incomplete: "mid-install or broken",
 };
 
 /**

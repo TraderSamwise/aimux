@@ -164,6 +164,8 @@ import {
   renderTmuxRepairResult,
   repairTmuxRuntime,
 } from "./tmux/doctor.js";
+import { planInstallCleanup, runInstallCleanup } from "./install-cleanup.js";
+import { DEFAULT_INSTALLS_CONFIG, isPrimaryInstallLane, loadInstallsConfig } from "./install-config.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { startExposeHotSnapshotWorker } from "./expose-hot-snapshot-worker.js";
@@ -201,6 +203,10 @@ const PROXY_MAX_BINARY_BYTES = 16 * 1024 * 1024;
 const CLI_PROJECT_MUTATION_TIMEOUT_MS = 120_000;
 const DAEMON_SERVER_CLOSE_GRACE_MS = 500;
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS = 3500;
+// Boot is when installs are actively appearing, so the first sweep waits it out.
+const INSTALL_CLEANUP_INITIAL_DELAY_MS = 30 * 60_000;
+// One sweep stays bounded; a long backlog drains across days.
+const INSTALL_CLEANUP_MAX_PER_SWEEP = 50;
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS = 3000;
 const DAEMON_HEALTH_KIND = "aimux-daemon";
 const AUTH_FLOW_TTL_MS = 10 * 60 * 1000;
@@ -398,6 +404,8 @@ export class AimuxDaemon {
   private stopping = false;
   private stoppingPromise: Promise<void> | null = null;
   private globalExposeHotSnapshotTimer: NodeJS.Timeout | null = null;
+  private installCleanupTimer: NodeJS.Timeout | null = null;
+  private installCleanupRunning = false;
   private globalExposeHotSnapshotRefreshing = false;
   private globalExposeHotSnapshotWorker: Worker | null = null;
 
@@ -437,6 +445,7 @@ export class AimuxDaemon {
     });
     this.refreshState();
     this.scheduleGlobalExposeHotSnapshotRefresh(GLOBAL_EXPOSE_HOT_SNAPSHOT_INITIAL_MS);
+    this.scheduleInstallCleanup(INSTALL_CLEANUP_INITIAL_DELAY_MS);
     log.info("daemon started", "daemon", { pid: process.pid, host, port });
     await this.startHostedListenerIfConfigured();
     this.connectRelayIfConfigured();
@@ -536,6 +545,9 @@ export class AimuxDaemon {
     log.info("daemon stopping project actors", "daemon", { projectCount: Object.keys(this.state.projects).length });
     if (this.globalExposeHotSnapshotTimer) clearTimeout(this.globalExposeHotSnapshotTimer);
     this.globalExposeHotSnapshotTimer = null;
+    if (this.installCleanupTimer) clearTimeout(this.installCleanupTimer);
+    this.installCleanupTimer = null;
+    this.installCleanupRunning = false;
     this.globalExposeHotSnapshotRefreshing = false;
     this.globalExposeHotSnapshotWorker?.terminate().catch(() => {});
     this.globalExposeHotSnapshotWorker = null;
@@ -747,6 +759,64 @@ export class AimuxDaemon {
       this.refreshGlobalExposeHotSnapshots();
     }, delayMs);
     this.globalExposeHotSnapshotTimer.unref?.();
+  }
+
+  private scheduleInstallCleanup(delayMs: number): void {
+    if (!this.server || this.stopping) return;
+    if (this.installCleanupTimer) clearTimeout(this.installCleanupTimer);
+    this.installCleanupTimer = setTimeout(() => {
+      this.installCleanupTimer = null;
+      void this.sweepSupersededInstalls();
+    }, delayMs);
+    this.installCleanupTimer.unref?.();
+  }
+
+  /**
+   * The install root is keyed to the home directory, not to AIMUX_HOME, so every
+   * lane's daemon sees the same one. Only the default lane sweeps it, which keeps
+   * two daemons from removing the same directory underneath each other.
+   */
+  private async sweepSupersededInstalls(): Promise<void> {
+    if (this.stopping || this.installCleanupRunning) return;
+    this.installCleanupRunning = true;
+    // Falls back to the default cadence so a failed config read still reschedules.
+    let intervalMs = DEFAULT_INSTALLS_CONFIG.cleanupIntervalMs;
+    try {
+      // Re-read per run so enabling or disabling the sweep needs no daemon restart.
+      const config = loadInstallsConfig();
+      intervalMs = config.cleanupIntervalMs;
+      if (!config.cleanupEnabled || !isPrimaryInstallLane()) return;
+      const plan = planInstallCleanup({
+        retentionDays: config.retentionDays,
+        keepRecent: config.keepRecent,
+        // Sizes are for reporting and cost seconds of walking; the sweep never needs them.
+        measureSize: () => 0,
+      });
+      if (!plan.referencesComplete) {
+        log.warn("install cleanup skipped: could not read every install reference", "daemon", { root: plan.root });
+        return;
+      }
+      if (plan.remove.length === 0) {
+        log.debug("install cleanup found nothing to remove", "daemon", { root: plan.root, kept: plan.keep.length });
+        return;
+      }
+      const result = await runInstallCleanup(plan, {}, { dryRun: false, limit: INSTALL_CLEANUP_MAX_PER_SWEEP });
+      const removed = result.results.filter((entry) => entry.status === "removed").length;
+      log.info("install cleanup removed superseded installs", "daemon", {
+        root: plan.root,
+        removed,
+        failed: result.results.filter((entry) => entry.status === "failed").length,
+        // Anything not removed is still there, whether it was skipped or failed.
+        remaining: plan.remove.length - removed,
+        retentionDays: config.retentionDays,
+        keepRecent: config.keepRecent,
+      });
+    } catch (error) {
+      log.warn("install cleanup failed", "daemon", { error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      this.installCleanupRunning = false;
+      this.scheduleInstallCleanup(intervalMs);
+    }
   }
 
   private refreshGlobalExposeHotSnapshots(): void {

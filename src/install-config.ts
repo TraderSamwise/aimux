@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { quarantineCorruptFile } from "./atomic-write.js";
 import { log } from "./debug.js";
@@ -79,6 +81,25 @@ export function normalizeInstallsConfig(raw: unknown): InstallsConfig {
       30 * 86_400_000,
     ),
   };
+}
+
+/**
+ * The install root is keyed to the home directory, not to AIMUX_HOME, so every
+ * lane's daemon sees the same one and only the default lane may sweep it.
+ *
+ * The launcher sets AIMUX_HOME unconditionally (launcher-env.ts), so its presence
+ * says nothing — only its value does. This mirrors resolveAimuxHome's expansion.
+ */
+export function isPrimaryInstallLane(env: NodeJS.ProcessEnv = process.env): boolean {
+  const configured = env.AIMUX_HOME?.trim();
+  if (!configured) return true;
+  const expanded =
+    configured === "~"
+      ? homedir()
+      : configured.startsWith("~/")
+        ? resolve(homedir(), configured.slice(2))
+        : resolve(configured);
+  return expanded === join(homedir(), ".aimux");
 }
 
 /** Read the `installs` block from the global config file. */

@@ -1,4 +1,5 @@
-import { lstatSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAimuxStableShimPath } from "./cli-launcher.js";
@@ -10,8 +11,21 @@ export const DEFAULT_INSTALL_KEEP_RECENT = 10;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * Removal renames before deleting, so an interrupted delete leaves a directory
+ * that is obviously debris. Without it a half-deleted install loses bin/aimux
+ * first and would then be protected as "mid-install" forever.
+ */
+export const REMOVING_SUFFIX = ".aimux-removing";
+
 /** Why an install survived the sweep. Liveness reasons outrank age reasons. */
-export type InstallKeepReason = "current-install" | "in-use" | "recent" | "within-retention" | "references-unverified";
+export type InstallKeepReason =
+  | "current-install"
+  | "in-use"
+  | "recent"
+  | "within-retention"
+  | "references-unverified"
+  | "incomplete";
 
 export interface InstallCleanupCandidate {
   name: string;
@@ -68,7 +82,13 @@ export interface PlanInstallCleanupOptions {
 }
 
 export interface InstallCleanupOperations {
-  removeDir?: (path: string) => void;
+  removeDir?: (path: string) => void | Promise<void>;
+}
+
+export interface RunInstallCleanupInput {
+  dryRun?: boolean;
+  /** Bound one sweep, so a large backlog drains over several runs instead of one burst. */
+  limit?: number;
 }
 
 function installRootFrom(env: NodeJS.ProcessEnv = process.env): string {
@@ -164,6 +184,20 @@ function installMtime(path: string): number {
   return newest;
 }
 
+/**
+ * The installer writes bin/aimux after moving the extracted tree into place, so a
+ * directory without it is either mid-install or broken. Either way it is not ours
+ * to remove: the extracted tree carries the tarball's mtimes, so a freshly
+ * installed older release can look both ancient and unreferenced.
+ */
+function isCompleteInstall(path: string): boolean {
+  try {
+    return statSync(join(path, "bin", "aimux")).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function directorySize(path: string): number {
   let total = 0;
   const stack = [path];
@@ -223,7 +257,11 @@ export function planInstallCleanup(options: PlanInstallCleanupOptions = {}): Ins
   const references = (options.listReferenceText ?? defaultReferenceText)();
   const referenced = referencedInstalls(canonicalRoot ? [root, canonicalRoot] : [root], references.text);
 
-  const withMtime = names.map((name) => {
+  // Debris from an interrupted delete is not an install and has nothing to protect.
+  const debris = names.filter((name) => name.endsWith(REMOVING_SUFFIX));
+  const installNames = names.filter((name) => !name.endsWith(REMOVING_SUFFIX));
+
+  const withMtime = installNames.map((name) => {
     const path = join(root, name);
     return { name, path, mtimeMs: installMtime(path) };
   });
@@ -234,7 +272,12 @@ export function planInstallCleanup(options: PlanInstallCleanupOptions = {}): Ins
       .map((entry) => entry.name),
   );
 
-  const remove: InstallCleanupCandidate[] = [];
+  const remove: InstallCleanupCandidate[] = debris.map((name) => ({
+    name,
+    path: join(root, name),
+    ageDays: 0,
+    sizeBytes: measureSize(join(root, name)),
+  }));
   const keep: InstallCleanupKept[] = [];
   for (const entry of withMtime) {
     const ageDays = (now - entry.mtimeMs) / MS_PER_DAY;
@@ -243,11 +286,14 @@ export function planInstallCleanup(options: PlanInstallCleanupOptions = {}): Ins
     if (entry.name === current) keep.push({ name: entry.name, reason: "current-install" });
     // A partial reference scan cannot distinguish unreferenced from unread.
     else if (!references.complete) keep.push({ name: entry.name, reason: "references-unverified" });
+    else if (!isCompleteInstall(entry.path)) keep.push({ name: entry.name, reason: "incomplete" });
     else if (referenced.has(entry.name)) keep.push({ name: entry.name, reason: "in-use" });
     else if (newest.has(entry.name)) keep.push({ name: entry.name, reason: "recent" });
     else if (ageDays < retentionDays) keep.push({ name: entry.name, reason: "within-retention" });
     else remove.push({ name: entry.name, path: entry.path, ageDays, sizeBytes: measureSize(entry.path) });
   }
+
+  remove.sort((a, b) => b.ageDays - a.ageDays);
 
   return {
     root,
@@ -261,18 +307,39 @@ export function planInstallCleanup(options: PlanInstallCleanupOptions = {}): Ins
   };
 }
 
-export function runInstallCleanup(
+/**
+ * Rename first so a kill mid-delete leaves debris the next sweep will finish,
+ * rather than a stump that looks like an install in progress.
+ */
+async function defaultRemoveDir(path: string): Promise<void> {
+  const staged = path.endsWith(REMOVING_SUFFIX) ? path : `${path}${REMOVING_SUFFIX}`;
+  if (staged !== path) {
+    try {
+      await rename(path, staged);
+    } catch {
+      // Losing the rename means someone else moved it; delete whatever is left.
+      await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      return;
+    }
+  }
+  await rm(staged, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}
+
+export async function runInstallCleanup(
   plan: InstallCleanupPlan,
   operations: InstallCleanupOperations = {},
-  input?: { dryRun?: boolean },
-): InstallCleanupRunResult {
+  input?: RunInstallCleanupInput,
+): Promise<InstallCleanupRunResult> {
   // Deleting is the opt-in: a caller that says nothing gets a dry run.
   const dryRun = input?.dryRun !== false;
-  const removeDir = operations.removeDir ?? ((path: string) => rmSync(path, { recursive: true, force: true }));
+  // Awaited per directory so a long sweep yields instead of stalling its host.
+  const removeDir = operations.removeDir ?? defaultRemoveDir;
   const results: InstallCleanupItemResult[] = [];
   let reclaimedBytes = 0;
+  const limit = input?.limit;
+  const candidates = typeof limit === "number" && limit >= 0 && !dryRun ? plan.remove.slice(0, limit) : plan.remove;
 
-  for (const candidate of plan.remove) {
+  for (const candidate of candidates) {
     if (dryRun) {
       results.push({ name: candidate.name, status: "dry-run", sizeBytes: candidate.sizeBytes });
       continue;
@@ -288,7 +355,7 @@ export function runInstallCleanup(
       continue;
     }
     try {
-      removeDir(candidate.path);
+      await removeDir(candidate.path);
       reclaimedBytes += candidate.sizeBytes;
       results.push({ name: candidate.name, status: "removed", sizeBytes: candidate.sizeBytes });
     } catch (error) {

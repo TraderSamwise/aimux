@@ -3313,12 +3313,12 @@ doctorCmd
   .option("--retention-days <days>", "Keep installs newer than this many days")
   .option("--keep-recent <count>", "Always keep this many newest installs")
   .option("--json", "Emit JSON")
-  .action((opts: { fix?: boolean; retentionDays?: string; keepRecent?: string; json?: boolean }) => {
+  .action(async (opts: { fix?: boolean; retentionDays?: string; keepRecent?: string; json?: boolean }) => {
     const plan = planInstallCleanup({
       retentionDays: parseCount(opts.retentionDays, DEFAULT_INSTALL_RETENTION_DAYS),
       keepRecent: parseCount(opts.keepRecent, DEFAULT_INSTALL_KEEP_RECENT),
     });
-    const result = runInstallCleanup(plan, {}, { dryRun: isInstallCleanupDryRun(opts) });
+    const result = await runInstallCleanup(plan, {}, { dryRun: isInstallCleanupDryRun(opts) });
     if (opts.json) {
       console.log(JSON.stringify(result, null, 2));
       return;
