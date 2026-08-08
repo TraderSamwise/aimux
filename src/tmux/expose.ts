@@ -102,17 +102,38 @@ const RESET = "\x1b[0m";
 // code when the controlling client size changes so the launcher can relaunch it.
 const RELAUNCH_ON_RESIZE_EXIT = 75;
 
+/** Pick one client's `WxH` out of a `list-clients` listing, by tty. */
+export function matchClientSize(listing: string, clientTty: string): string {
+  const wanted = basename(clientTty);
+  for (const line of listing.split("\n")) {
+    const [tty, size] = line.trim().split(/\s+/);
+    if (!tty || !size) continue;
+    if (tty === clientTty || basename(tty) === wanted) return size;
+  }
+  return "";
+}
+
+/**
+ * The controlling client's size, by tty.
+ *
+ * `display-message -c <tty>` looks like the direct way to ask and is not: run outside
+ * a client (this is a socket server, so always), tmux ignores `-c` for format
+ * resolution and answers for whatever client its own heuristic picks. With several
+ * clients on one session it reports a sibling's size, which never changes when the
+ * client actually being resized does — resize detection silently never fires.
+ * `list-clients` evaluates the format once per client, so the tty match is real.
+ */
 function queryClientSize(clientTty?: string): string {
   if (!clientTty) return "";
   try {
     const result = spawnSync(
       "tmux",
-      ["display-message", "-c", clientTty, "-p", "-F", "#{client_width}x#{client_height}"],
+      ["list-clients", "-F", "#{client_tty} #{client_width}x#{client_height}"],
       // Bounded so a hung tmux server fails open (no resize check) instead of freezing
       // the popup's single-threaded refresh loop.
       { encoding: "utf8", timeout: 500 },
     );
-    if (result.status === 0) return (result.stdout ?? "").trim();
+    if (result.status === 0) return matchClientSize(result.stdout ?? "", clientTty);
   } catch {}
   return "";
 }
@@ -342,9 +363,40 @@ export function moveExposeIndexVertically(
   return fallback;
 }
 
-// Bands cycle a small palette so neighbouring projects never share a tint. These are
-// deliberately distinct from STATE_BORDER's meaning — a band groups, it does not report.
+// Bands cycle a small palette so neighbouring projects never share a tint, and tile
+// titles tint their worktree from the same palette. These are deliberately distinct
+// from STATE_BORDER's meaning — a tone groups, it does not report.
 const BAND_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
+
+/** Bold text in a grouping tone; `undefined` falls back to the plain strong tone. */
+function toned(text: string, tone: number | undefined): string {
+  if (tone === undefined) return style(text, "strong");
+  return `\x1b[1;${BAND_TONES[tone % BAND_TONES.length]}m${text}${RESET}`;
+}
+
+function worktreeToneKey(item: ExposeScopeItem, projectRoot: string): string {
+  return pathResolve(item.metadata.worktreePath || projectRoot);
+}
+
+/**
+ * A tint per worktree, assigned in render order.
+ *
+ * Order of first appearance rather than a hash of the path: it guarantees the first
+ * six worktrees on screen are mutually distinct, which is the whole point. A hash is
+ * stable across renders but lets two adjacent worktrees collide, and Exposé is a
+ * popup — nothing survives long enough for cross-render stability to be worth that.
+ *
+ * Keyed by resolved path, not by the displayed name, because every project's main
+ * checkout renders as "main" and the global scope puts several of them on one grid.
+ */
+export function assignWorktreeTones(items: ExposeScopeItem[], projectRoot: string): Map<string, number> {
+  const tones = new Map<string, number>();
+  for (const item of items) {
+    const key = worktreeToneKey(item, item.projectRoot ?? projectRoot);
+    if (!tones.has(key)) tones.set(key, tones.size % BAND_TONES.length);
+  }
+  return tones;
+}
 
 export function drawBand(band: ExposeSectionBand, top: number, left: number, width: number): string {
   const color = `\x1b[${BAND_TONES[band.tone % BAND_TONES.length]}m`;
@@ -374,8 +426,8 @@ const NEUTRAL_BORDER = { on: "38;5;39", off: "38;5;240" };
 // focus reads as one object. State stays legible on the pill, which is its primary carrier.
 const SELECTED_BORDER = "1;33";
 
-// Inline title in the top rule when the worktree/project context fits; otherwise drop
-// the context onto its own wrapped row(s). The status pill always gets its own row, so
+// Inline title in the top rule when the trailing context fits; otherwise drop the
+// context onto its own wrapped row(s). The status pill always gets its own row, so
 // the state signal stays legible no matter how narrow the tile is.
 export function buildTileHeader(
   textW: number,
@@ -392,7 +444,7 @@ export function buildTileHeader(
   const headerRows: string[] = [];
   let ruleTitle = titleLeft;
   if (context) {
-    const wide = `${titleLeft} ${style(`· ${context}`, "muted")}`;
+    const wide = `${titleLeft}  ${style(context, "muted")}`;
     if (visibleWidth(wide) <= titleMax) {
       ruleTitle = wide;
     } else {
@@ -418,6 +470,19 @@ export function fitHeaderRows(headerRows: string[], capacity: number, hasPill: b
   return [...contextRows.slice(0, Math.max(0, capacity - 1)), pillRow];
 }
 
+/**
+ * The grouping half of a tile title: which worktree (and, in the global scope, which
+ * project) this agent belongs to. `worktree` is empty in the worktree scope, where
+ * every tile shares one and naming it says nothing.
+ */
+export interface TileContext {
+  worktree: string;
+  /** Only in the global scope, and only when no band already names the project. */
+  project?: string;
+  /** Index into BAND_TONES; absent when there is no worktree to tint. */
+  tone?: number;
+}
+
 export function drawTile(
   item: ExposeScopeItem,
   preview: string[],
@@ -427,7 +492,7 @@ export function drawTile(
   left: number,
   width: number,
   layout: GridLayout,
-  sublabel: string,
+  context: TileContext,
   options: TmuxExposeOptions,
   dimInactive: boolean,
 ): string {
@@ -450,7 +515,13 @@ export function drawTile(
   // wide/narrow header breakpoint) doesn't shift as selection moves between tiles.
   const marker = selected ? `${style("▸", "accent")} ` : "  ";
   const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
-  const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
+  // The worktree leads the rule and carries the tint; the agent name trails muted.
+  // Selection keeps the badge on the accent so focus never reads as a group tone.
+  const badgeStr = selected ? style(badgeLabel, "accent") : toned(badgeLabel, context.tone);
+  const projectStr = context.project ? style(`${context.project} / `, "muted") : "";
+  const lead = context.worktree ? `${projectStr}${toned(context.worktree, context.tone)}` : style(item.label, "strong");
+  const trailing = context.worktree ? item.label : "";
+  const titleLeft = `${marker}${badgeStr} ${lead}${here}`;
   const pillStr = renderAgentStatusPill(item.metadata);
   const rel = formatRelativeRecency(item.metadata.recencyAt) ?? "";
   const recency = rel && item.metadata.recencyLabel ? `${item.metadata.recencyLabel} ${rel}` : rel;
@@ -458,7 +529,7 @@ export function drawTile(
   const detail = [recency, statusText].filter(Boolean).join(" · ");
   // Inset the header rows by the marker width so they line up under the title text.
   const inset = visibleWidth(marker);
-  const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr, detail, inset);
+  const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, trailing, pillStr, detail, inset);
 
   const bodyCapacity = Math.max(1, layout.tileHeight - 2);
   // The status row is the last header row; preserve it under capacity pressure when
@@ -572,15 +643,26 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return groups.map((group) => ({ label: group.label, count: group.items.length }));
   };
 
-  const tileSublabel = (item: ExposeScopeItem): string => {
-    if (sublabel === "worktree") return shortWorktree(item, options.projectRoot);
-    if (sublabel === "project-worktree") {
-      const worktree = shortWorktree(item, item.projectRoot ?? options.projectRoot);
-      // A band already names the project, so the tile only needs its worktree.
-      if (sectionGroups()) return worktree;
-      return item.projectName ? `${item.projectName} / ${worktree}` : worktree;
+  // Keyed on the items array itself: `items` is replaced wholesale on every reload and
+  // scope change, so identity is the reload signal without touching all three sites.
+  let toneCache: { items: ExposeScopeItem[]; tones: Map<string, number> } | null = null;
+  const worktreeTones = (): Map<string, number> => {
+    if (toneCache?.items !== items) toneCache = { items, tones: assignWorktreeTones(items, options.projectRoot) };
+    return toneCache.tones;
+  };
+
+  const tileContext = (item: ExposeScopeItem): TileContext => {
+    if (sublabel === "none") return { worktree: "" };
+    // `projectRoot` rides only on global-scope items, so this is the project root in
+    // every other scope — the same value the old per-scope branches resolved to.
+    const root = item.projectRoot ?? options.projectRoot;
+    const tone = worktreeTones().get(worktreeToneKey(item, root));
+    const worktree = shortWorktree(item, root);
+    // A band already names the project, so the tile only needs its worktree.
+    if (sublabel === "project-worktree" && !sectionGroups() && item.projectName) {
+      return { worktree, project: item.projectName, tone };
     }
-    return "";
+    return { worktree, tone };
   };
 
   // Read and delete the launcher's backdrop snapshot before terminal setup. Capturing
@@ -748,7 +830,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       left,
       layout.tileWidth,
       layout,
-      tileSublabel(item),
+      tileContext(item),
       options,
       false,
     );

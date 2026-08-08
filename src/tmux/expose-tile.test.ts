@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
-import { buildBackdrop, buildPanelFrame, buildTileHeader, drawTile, fitHeaderRows, panelGeometry } from "./expose.js";
+import {
+  assignWorktreeTones,
+  buildBackdrop,
+  buildPanelFrame,
+  buildTileHeader,
+  drawTile,
+  fitHeaderRows,
+  matchClientSize,
+  panelGeometry,
+  type TileContext,
+} from "./expose.js";
 
 const PILL = "[PILL]";
 
@@ -125,11 +135,13 @@ describe("fitHeaderRows", () => {
   });
 });
 
+const ctx = (project: string, worktree: string, tone = 0): TileContext => ({ project, worktree, tone });
+
 function renderTile(
   width: number,
   selected: boolean,
   meta: Record<string, unknown>,
-  sublabel: string,
+  context: TileContext,
   tileHeight = 6,
   preview: string[] = ["* Worked for 41s", "recap", "next"],
   dimInactive = false,
@@ -152,7 +164,7 @@ function renderTile(
     1,
     width,
     layout as never,
-    sublabel,
+    context,
     { currentWindowId: "@other" } as never,
     dimInactive,
   );
@@ -162,7 +174,7 @@ describe("drawTile", () => {
   const needs = { activity: "running", attention: "needs_input", worktreePath: "/x/beautify-tui" };
 
   it("draws a double accent frame for the selected tile and fills the tile height", () => {
-    const out = renderTile(56, true, needs, "aimux / beautify-tui");
+    const out = renderTile(56, true, needs, ctx("aimux", "beautify-tui"));
     expect(out).toContain("╔");
     expect(out).toContain("╚");
     expect(out).toContain("║");
@@ -176,7 +188,7 @@ describe("drawTile", () => {
   });
 
   it("uses a light frame at full state tone when not selected, without the marker", () => {
-    const out = renderTile(56, false, needs, "aimux / beautify-tui");
+    const out = renderTile(56, false, needs, ctx("aimux", "beautify-tui"));
     expect(out).toContain("╭");
     expect(out).toContain("│");
     expect(out).not.toContain("╔");
@@ -186,21 +198,26 @@ describe("drawTile", () => {
   });
 
   it("dims the inactive border only when dimInactive is enabled", () => {
-    const out = renderTile(56, false, needs, "aimux / beautify-tui", 6, undefined, true);
+    const out = renderTile(56, false, needs, ctx("aimux", "beautify-tui"), 6, undefined, true);
     expect(out).toContain("\x1b[38;5;94m"); // dim (off) state tone
     expect(out).not.toContain("\x1b[38;5;179m");
   });
 
   it("renders the dashboard-semantic user label (not the raw activity) as the pill", () => {
     // Raw activity "waiting" would read "WAITING"; the semantic label "working" wins.
-    const out = renderTile(56, true, { activity: "waiting", userLabel: "working", worktreePath: "/x/wt" }, "p / wt");
+    const out = renderTile(
+      56,
+      true,
+      { activity: "waiting", userLabel: "working", worktreePath: "/x/wt" },
+      ctx("p", "wt"),
+    );
     const plain = stripAnsi(out);
     expect(plain).toContain("WORKING");
     expect(plain).not.toContain("WAITING");
   });
 
   it("shows the agent status text (last message) on the pill row", () => {
-    const out = renderTile(56, true, { ...needs, statusText: "wrapping it up" }, "aimux / beautify-tui");
+    const out = renderTile(56, true, { ...needs, statusText: "wrapping it up" }, ctx("aimux", "beautify-tui"));
     expect(stripAnsi(out)).toContain("wrapping it up");
   });
 
@@ -234,13 +251,13 @@ describe("drawTile", () => {
   });
 
   it("inlines the worktree/project context in the top rule when wide", () => {
-    const out = renderTile(60, true, needs, "aimux / beautify-tui");
+    const out = renderTile(60, true, needs, ctx("aimux", "beautify-tui"));
     const topRule = out.split(/\x1b\[\d+;\d+H/).filter(Boolean)[0]!;
     expect(stripAnsi(topRule)).toContain("aimux / beautify-tui");
   });
 
   it("never exceeds the tile height even when the header would overflow a short tile", () => {
-    const out = renderTile(34, true, needs, "some-project / a-rather-long-worktree-name", 4);
+    const out = renderTile(34, true, needs, ctx("some-project", "a-rather-long-worktree-name"), 4);
     const lines = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
     expect(lines.length).toBe(4);
     // The status pill survives even when context rows are dropped for space.
@@ -251,14 +268,14 @@ describe("drawTile", () => {
     const colored = ["\x1b[31mRED error\x1b[0m here", "\x1b[32mgreen line\x1b[0m"];
     // Default: every tile keeps the captured pane's real colors, no gray flatten.
     for (const sel of [true, false]) {
-      const out = renderTile(56, sel, needs, "aimux / beautify-tui", 8, colored, false);
+      const out = renderTile(56, sel, needs, ctx("aimux", "beautify-tui"), 8, colored, false);
       expect(out).toContain("\x1b[31m");
       expect(out).toContain("\x1b[32m");
       expect(out).not.toContain("\x1b[38;5;240m");
     }
     // dimInactive on: the active tile stays colored; only the inactive tile flattens to gray.
-    const active = renderTile(56, true, needs, "aimux / beautify-tui", 8, colored, true);
-    const inactive = renderTile(56, false, needs, "aimux / beautify-tui", 8, colored, true);
+    const active = renderTile(56, true, needs, ctx("aimux", "beautify-tui"), 8, colored, true);
+    const inactive = renderTile(56, false, needs, ctx("aimux", "beautify-tui"), 8, colored, true);
     expect(active).toContain("\x1b[31m");
     expect(inactive).not.toContain("\x1b[31m");
     expect(inactive).toContain("\x1b[38;5;240m"); // deep gray flatten
@@ -266,12 +283,114 @@ describe("drawTile", () => {
   });
 
   it("keeps every rendered line the same visible width (aligned borders)", () => {
-    const out = renderTile(40, false, needs, "aimux / beautify-tui");
+    const out = renderTile(40, false, needs, ctx("aimux", "beautify-tui"));
     const widths = out
       .split(/\x1b\[\d+;\d+H/)
       .filter(Boolean)
       .map((line) => stripAnsi(line).length);
     expect(new Set(widths).size).toBe(1);
     expect(widths[0]).toBe(40);
+  });
+
+  it("leads the rule with the worktree and trails the agent name muted", () => {
+    const topRule = (out: string) => stripAnsi(out.split(/\x1b\[\d+;\d+H/).filter(Boolean)[0]!);
+    // The worktree comes first and the agent name after it — the reverse of the old
+    // `claude(coder) · beautify-tui` order.
+    expect(topRule(renderTile(60, true, needs, ctx("aimux", "beautify-tui")))).toContain("beautify-tui  claude(coder)");
+  });
+
+  it("tints the worktree by its group tone, leaving the project prefix muted", () => {
+    const out = renderTile(60, false, needs, { project: "aimux", worktree: "beautify-tui", tone: 1 });
+    // Bold in BAND_TONES[1]; the badge borrows the same tone when unselected.
+    expect(out).toContain("\x1b[1;38;5;71mbeautify-tui\x1b[0m");
+    expect(out).toContain("\x1b[1;38;5;71m3\x1b[0m");
+    expect(out).toContain("\x1b[2maimux / \x1b[0m");
+  });
+
+  it("keeps the badge on the accent when selected so focus never reads as a group tone", () => {
+    const out = renderTile(60, true, needs, { project: "aimux", worktree: "beautify-tui", tone: 1 });
+    expect(out).toContain("\x1b[1;33m3\x1b[0m");
+    expect(out).not.toContain("\x1b[1;38;5;71m3\x1b[0m");
+    // The worktree still carries the tone; only the badge is claimed by selection.
+    expect(out).toContain("\x1b[1;38;5;71mbeautify-tui\x1b[0m");
+  });
+
+  it("falls back to a bold agent name when the scope has no worktree to show", () => {
+    // The worktree scope: every tile shares one worktree, so naming it says nothing.
+    const out = renderTile(60, false, needs, { worktree: "" });
+    const topRule = stripAnsi(out.split(/\x1b\[\d+;\d+H/).filter(Boolean)[0]!);
+    expect(topRule).toContain("3 claude(coder)");
+    expect(out).toContain("\x1b[1mclaude(coder)\x1b[0m");
+  });
+
+  it("keeps the worktree in the rule under width pressure and drops the agent name below", () => {
+    // The reverse of the old priority: the worktree now holds the rule (truncating if
+    // it must) and the agent name is what gets a wrapped row.
+    const out = renderTile(34, true, needs, { worktree: "a-rather-long-worktree-name", tone: 0 }, 6);
+    const rows = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
+    expect(stripAnsi(rows[0]!)).toContain("a-rather-long-worktree-…");
+    expect(stripAnsi(rows[1]!)).toContain("claude(coder)");
+  });
+});
+
+describe("matchClientSize", () => {
+  // The shape `tmux list-clients -F '#{client_tty} #{client_width}x#{client_height}'` emits.
+  const listing = ["/dev/ttys031 114x50", "/dev/ttys052 114x50", "/dev/ttys079 90x30"].join("\n");
+
+  it("returns the size of the requested client, not the first one listed", () => {
+    // The bug this replaced: `display-message -c` answered for a sibling client, so a
+    // resize of the client actually running Exposé was invisible.
+    expect(matchClientSize(listing, "/dev/ttys079")).toBe("90x30");
+    expect(matchClientSize(listing, "/dev/ttys031")).toBe("114x50");
+  });
+
+  it("matches on the bare tty name as well as the full device path", () => {
+    expect(matchClientSize(listing, "ttys079")).toBe("90x30");
+  });
+
+  it("returns empty when the client is gone or the listing is unusable", () => {
+    expect(matchClientSize(listing, "/dev/ttys999")).toBe("");
+    expect(matchClientSize("", "/dev/ttys079")).toBe("");
+    expect(matchClientSize("garbage-with-no-size\n", "garbage-with-no-size")).toBe("");
+  });
+
+  it("ignores blank and short lines rather than mis-parsing them", () => {
+    expect(matchClientSize(`\n  \n${listing}\n\n`, "/dev/ttys079")).toBe("90x30");
+  });
+});
+
+describe("assignWorktreeTones", () => {
+  const item = (worktreePath: string, projectRoot?: string) =>
+    ({ metadata: { worktreePath }, ...(projectRoot ? { projectRoot } : {}) }) as never;
+
+  it("assigns tones in first-seen order so neighbouring worktrees differ", () => {
+    const tones = assignWorktreeTones([item("/p/a"), item("/p/b"), item("/p/a"), item("/p/c")], "/p");
+    expect([...tones.values()]).toEqual([0, 1, 2]);
+    expect(tones.get("/p/a")).toBe(0);
+    expect(tones.get("/p/b")).toBe(1);
+    expect(tones.get("/p/c")).toBe(2);
+  });
+
+  it("gives every agent in one worktree the same tone", () => {
+    const tones = assignWorktreeTones([item("/p/a"), item("/p/a"), item("/p/a")], "/p");
+    expect(tones.size).toBe(1);
+  });
+
+  it("keys by resolved path, so each project's main checkout is its own group", () => {
+    // Both render as "main"; keying by the displayed name would merge them.
+    const tones = assignWorktreeTones([item("", "/one"), item("", "/two")], "/fallback");
+    expect(tones.get("/one")).toBe(0);
+    expect(tones.get("/two")).toBe(1);
+  });
+
+  it("falls back to the project root when an item carries no worktree path", () => {
+    expect(assignWorktreeTones([item("")], "/p").get("/p")).toBe(0);
+  });
+
+  it("wraps around the palette rather than running out of tones", () => {
+    const many = Array.from({ length: 7 }, (_, i) => item(`/p/w${i}`));
+    const tones = assignWorktreeTones(many, "/p");
+    expect(tones.get("/p/w6")).toBe(0);
+    expect(tones.size).toBe(7);
   });
 });
