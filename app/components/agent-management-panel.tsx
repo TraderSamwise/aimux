@@ -83,6 +83,7 @@ export function AgentManagementPanel({
         "team",
         "worktrees",
       ]);
+      if (action === "migrate") setTargetWorktreePath(null);
       setStatus(actionStatus(action));
     } catch (e) {
       if (!isTransientRequestError(e)) {
@@ -143,6 +144,8 @@ export function AgentManagementPanel({
     : null;
   const currentWorktreePath =
     worktreeChoices.find((choice) => choice.current)?.path ?? session.worktreePath ?? null;
+  const selectedWorktreeLabel =
+    worktreeChoices.find((choice) => choice.path === selectedWorktreePath)?.label ?? null;
   const canRename = canAct && trimmedLabel !== (session.label || "");
   const canMigrate =
     canAct && Boolean(selectedWorktreePath) && selectedWorktreePath !== currentWorktreePath;
@@ -208,6 +211,7 @@ export function AgentManagementPanel({
                 <WorktreeChoice
                   key={choice.key}
                   label={choice.label}
+                  current={choice.current}
                   active={selectedWorktreePath === choice.path}
                   disabled={choice.current || !canAct}
                   onPress={() => setTargetWorktreePath(choice.path)}
@@ -244,7 +248,11 @@ export function AgentManagementPanel({
               }
             >
               <Text className="text-sm text-foreground">
-                {busyAction === "migrate" ? "Moving" : "Move"}
+                {busyAction === "migrate"
+                  ? "Moving"
+                  : selectedWorktreeLabel
+                    ? `Move to ${selectedWorktreeLabel}`
+                    : "Move"}
               </Text>
             </Button>
           </View>
@@ -355,13 +363,20 @@ function PanelLabel({ icon: Icon, label }: { icon: typeof Pencil; label: string 
   );
 }
 
+/**
+ * Tapping one of these picks a destination; the move itself is the button after
+ * them. Without saying which one the agent is already in, the row reads as
+ * several buttons that do nothing — one of them greyed for no stated reason.
+ */
 function WorktreeChoice({
   label,
+  current,
   active,
   disabled,
   onPress,
 }: {
   label: string;
+  current?: boolean;
   active: boolean;
   disabled?: boolean;
   onPress: () => void;
@@ -370,17 +385,23 @@ function WorktreeChoice({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      accessibilityRole="button"
-      accessibilityState={{ selected: active, disabled }}
+      accessibilityRole={current ? "text" : "button"}
+      accessibilityLabel={current ? `${label}, where this agent is now` : `Move to ${label}`}
+      accessibilityState={current ? undefined : { selected: active, disabled }}
       className={cn(
-        "rounded-md border px-2.5 py-1.5",
+        "flex-row items-center gap-1.5 rounded-md border px-2.5 py-1.5",
         active ? "border-primary bg-accent" : "border-border hover:bg-accent/60 active:bg-accent",
-        disabled && "opacity-50",
+        disabled && !current && "opacity-50",
+        current && "border-dashed",
       )}
     >
-      <Text className="text-xs text-foreground" numberOfLines={1}>
+      <Text
+        className={cn("text-xs", current ? "text-muted-foreground" : "text-foreground")}
+        numberOfLines={1}
+      >
         {label}
       </Text>
+      {current ? <Text className="text-[10px] text-muted-foreground">here</Text> : null}
     </Pressable>
   );
 }
