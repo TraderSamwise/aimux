@@ -790,9 +790,28 @@ aimux init
 
 This creates `.aimux/config.json`. You can also create a global config at `~/.aimux/config.json`. Project config overrides global, which overrides defaults.
 
-One exception: the `hosted` block is read from the **global** config only. Project config is
-committed in repos, so a `hosted` block there would let anyone who clones a repo open a network
-listener; it is stripped on load. See [hosted mode](hosted-mode.md).
+Two exceptions are read from the **global** config only, and are stripped from project config on
+load. The `hosted` block, because project config is committed in repos and a `hosted` block there
+would let anyone who clones a repo open a network listener — see [hosted mode](hosted-mode.md). And
+the `installs` block, because one install root serves every project on the machine, so no single
+repo should get a say in how it is swept.
+
+Installs:
+
+- `cleanupEnabled` — whether the daemon sweeps superseded installs on a cadence (default `true`)
+- `retentionDays` — installs younger than this are always kept (default `30`, accepted range `1`–`3650`)
+- `keepRecent` — how many of the newest installs to keep regardless of age (default `10`)
+- `cleanupIntervalMs` — how often the daemon sweeps (default daily, accepted range one hour to 30 days)
+
+A value outside its accepted range is ignored in favour of the default rather than clamped, so a
+typo cannot quietly produce a sweep that is far more aggressive than intended. A `retentionDays` of
+`0` is refused here for that reason; the explicit `aimux doctor installs --retention-days 0` still
+honours it, because someone typed it.
+
+The sweep only ever removes installs that are not current, not referenced by a live process or by
+tmux server state, not among the newest, and past retention. If it cannot finish reading those
+references it removes nothing. `aimux doctor installs` reports the same decision without acting,
+and `--fix` applies it immediately.
 
 ```json
 {

@@ -352,6 +352,9 @@ export function loadConfig(opts: { includeGlobal?: boolean; projectRoot?: string
       // that could otherwise open a listener for anyone who clones. Stripped
       // pre-merge so a legitimate global block still survives load→save.
       delete projectRaw?.hosted;
+      // `installs` is global for the same reason (see install-config.ts): one
+      // install root serves every project, so a repo must not get a say in it.
+      delete projectRaw?.installs;
       config = deepMerge(config, projectRaw) as AimuxConfig;
     } catch {
       quarantineCorruptFile(projectPath);
