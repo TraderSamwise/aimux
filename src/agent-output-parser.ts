@@ -83,6 +83,31 @@ const inferAgentOutputTool = (raw: string): string | null => {
   return null;
 };
 
+/**
+ * A rule with a caption sitting in it — `──── Some title ────`.
+ *
+ * Claude Code paints one of these as a footer and can leave it stale in the pane
+ * long after the work it names is over. It is chrome, but `isDivider` only
+ * recognises a line that is nothing but rule, so the captioned form used to
+ * reach the transcript as prose and wrap across the chat.
+ *
+ * A leading conversation marker disqualifies it: the collapsed approval header is
+ * `⏺` followed by a long rule and `Bash command`, and that line belongs to the
+ * status rule which runs later.
+ *
+ * Module scope because both the line scanner and the raw-block promotion check
+ * need it, and they live in different functions.
+ */
+function isTitledDivider(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || /^[⏺•⎿└╰■›>❯]/.test(trimmed)) return false;
+  // Rule on both ends is the structural signature, and unlike counting rule
+  // characters against the line length it does not move with the terminal
+  // width: the caption is a fixed size while the rules stretch to fill, so a
+  // ratio test catches this footer on a wide pane and misses it on a narrow one.
+  return /^[\u2500-\u257f]{4,}[^\u2500-\u257f]+[\u2500-\u257f]{4,}$/.test(trimmed);
+}
+
 export function parseAgentOutput(raw: string, options: { tool?: string } = {}): ParsedAgentOutput {
   const requestedTool = (options.tool || "").trim();
   const tool = requestedTool && requestedTool !== "unknown" ? requestedTool : (inferAgentOutputTool(raw) ?? "unknown");
@@ -167,7 +192,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const dotBulletText = trimmed.replace(/^•\s?/, "");
     const starBulletText = trimmed.replace(/^\*\s+/, "");
     const dashBulletText = trimmed.replace(/^-\s+/, "");
-    const spinnerText = trimmed.replace(/^[✻✽✶]\s+/, "");
+    const spinnerText = trimmed.replace(/^[✢✳✶✻✽·]\s+/, "");
     const conversationBulletText = trimmed.replace(/^(?:•|⏺)\s?/, "");
     return (
       /^■\s?/.test(trimmed) ||
@@ -189,7 +214,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^⏵⏵\s/.test(trimmed) ||
       (/^\*\s+/.test(trimmed) && looksLikeActivityProgressText(starBulletText)) ||
       (/^-\s+/.test(trimmed) && looksLikeActivityProgressText(dashBulletText)) ||
-      (/^[✻✽✶]\s+/.test(trimmed) && looksLikeActivityProgressText(spinnerText)) ||
+      (/^[✢✳✶✻✽·]\s+/.test(trimmed) && looksLikeActivityProgressText(spinnerText)) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
@@ -202,9 +227,18 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const trimmed = line.trimStart();
     return /^›\s?/.test(trimmed) || /^>\s?/.test(trimmed) || /^❯\s?/.test(trimmed);
   };
+  /**
+   * A tool result hanging off the line above it — the agent's own output, never
+   * the operator's typing. `⎿` (U+23BF) is what Claude Code actually prints;
+   * `└` (U+2514) shows up in box drawing and is accepted for older transcripts.
+   */
+  const isToolResultLine = (line: string) => /^[⎿└]\s/.test(line.trimStart());
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
-  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✻✽✶]\s+)\s?/, "");
+  // Frame set matches the collapse check below; a partial set left half the
+  // spinner frames unclassified, so the same line was status or response
+  // depending on which frame the pane happened to be showing.
+  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✢✳✶✻✽·]\s+)\s?/, "");
   const isCodexPickerSelectionPrompt = (promptText: string) => {
     if (tool !== "codex" || sawPrompt || (current?.type !== "response" && current?.type !== "raw")) return false;
     const activeText = current.lines.join("\n");
@@ -228,6 +262,14 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     }
     if (isDivider(trimmed)) {
       lastLineWasDivider = true;
+      continue;
+    }
+    // Clears the flag rather than merely not setting it. `lastLineWasDivider`
+    // demotes a following prompt to status, which is right beneath the composer's
+    // bare rule and wrong beneath a stale footer; leaving an earlier bare rule's
+    // flag armed across this line deletes the operator's next message.
+    if (isTitledDivider(trimmed)) {
+      lastLineWasDivider = false;
       continue;
     }
     if (isPromptLine(trimmed)) {
@@ -254,6 +296,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
         expectingResponse = false;
         continue;
       }
+      // Each marker line starts its own message. A prompt block still runs on
+      // across unmarked lines, which is what keeps a pasted multi-line message
+      // together — but two `❯` lines are two things the operator sent, and
+      // appending the second to the first merged the queue into one bubble.
+      flush();
       pushLine("prompt", promptText);
       sawPrompt = true;
       expectingResponse = false;
@@ -296,11 +343,16 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       continue;
     }
     const promptBlock = current as ActiveBlock | null;
-    if (promptBlock?.type === "prompt" && !expectingResponse) {
+    // A prompt runs on across lines so a pasted multi-line message stays one
+    // message. A tool result must not join it: it is the agent answering, and
+    // absorbing it swallows everything after — including the next prompt, which
+    // is how `/compact` and the question after it ended up in one bubble.
+    const continuesPrompt = promptBlock?.type === "prompt" && !isToolResultLine(trimmed);
+    if (continuesPrompt && !expectingResponse) {
       promptBlock.lines.push(trimmed);
       continue;
     }
-    if (promptBlock?.type === "prompt" && expectingResponse && /^\s+\S/.test(trimmed)) {
+    if (continuesPrompt && expectingResponse && /^\s+\S/.test(trimmed)) {
       promptBlock.lines.push(trimmed);
       expectingResponse = false;
       continue;
@@ -517,7 +569,10 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
   const merged: AgentOutputBlock[] = [];
   for (const block of next) {
     const previous = merged[merged.length - 1];
-    if (previous && previous.type === block.type) {
+    // Prompts are exempt: the agent's reply arrives in pieces and reads as one
+    // message, but two marker lines are two things the operator sent, and
+    // merging them collapsed a queued pair into a single bubble.
+    if (previous && previous.type === block.type && block.type !== "prompt") {
       previous.text = `${previous.text}\n\n${block.text}`.trim();
       continue;
     }
@@ -525,4 +580,39 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
   }
 
   return merged;
+}
+
+/**
+ * The tool's own progress line — `Jitterbugging… (2m 23s · ↓ 8.1k tokens)`.
+ *
+ * Worth surfacing because it is the one part of the status chrome a person
+ * actually reads: it names what the agent is doing and how long it has been at
+ * it, in the tool's own words, where a client can otherwise only say "running".
+ *
+ * Scans lines rather than whole blocks: status blocks get merged, so the newest
+ * progress line usually sits inside a block that also absorbed the footer, and
+ * taking the last block's text would hand back a shell prompt.
+ *
+ * Past-tense leads are rejected. `Worked for 20m 16s` satisfies the same
+ * progress shape but reports a finished turn, and rendering it live would put a
+ * frozen timer next to an idle agent.
+ */
+export function activityTextFromParsedAgentOutput(parsed?: { blocks?: AgentOutputBlock[] } | null): string {
+  const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
+  let newest = "";
+  for (const block of blocks) {
+    if (block?.type !== "status") continue;
+    for (const raw of String(block.text ?? "").split("\n")) {
+      const line = raw.trim().replace(/^(■|[-*•✢✳✶✻✽·]\s+)\s?/, "");
+      if (!line || !looksLikeActivityProgressText(line)) continue;
+      const lead = line.match(activityLeadRegex)?.[0] ?? "";
+      if (!/ing$/i.test(lead)) continue;
+      // Bounded because a status block absorbs neighbouring lines: a long piece
+      // of prose that happens to fit the progress shape would otherwise displace
+      // the real verb and render as a paragraph in a one-line slot.
+      if (line.length > 120) continue;
+      newest = line;
+    }
+  }
+  return newest;
 }

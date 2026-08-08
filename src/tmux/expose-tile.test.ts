@@ -161,14 +161,16 @@ function renderTile(
 describe("drawTile", () => {
   const needs = { activity: "running", attention: "needs_input", worktreePath: "/x/beautify-tui" };
 
-  it("draws a heavy state-tinted frame for the selected tile and fills the tile height", () => {
+  it("draws a double accent frame for the selected tile and fills the tile height", () => {
     const out = renderTile(56, true, needs, "aimux / beautify-tui");
-    expect(out).toContain("┏");
-    expect(out).toContain("┗");
-    expect(out).toContain("┃");
+    expect(out).toContain("╔");
+    expect(out).toContain("╚");
+    expect(out).toContain("║");
     expect(stripAnsi(out)).toContain("NEEDS INPUT");
-    // Needs-input selected border tone (state color, not a distinct selection color).
-    expect(out).toContain("\x1b[38;5;179m");
+    // Selection owns both channels now: the accent border, not the state tone. The
+    // state stays readable on the pill.
+    expect(out).toContain("\x1b[1;33m");
+    expect(out).not.toContain("\x1b[38;5;179m");
     const lines = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
     expect(lines.length).toBe(6);
   });
@@ -177,7 +179,7 @@ describe("drawTile", () => {
     const out = renderTile(56, false, needs, "aimux / beautify-tui");
     expect(out).toContain("╭");
     expect(out).toContain("│");
-    expect(out).not.toContain("┏");
+    expect(out).not.toContain("╔");
     expect(out).toContain("\x1b[38;5;179m"); // bright state tone by default — inactive tiles aren't dimmed
     expect(out).not.toContain("\x1b[38;5;94m");
     expect(stripAnsi(out)).not.toContain("▸");

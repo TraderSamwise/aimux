@@ -232,6 +232,130 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
+export interface ExposeSectionGroup {
+  label: string;
+  count: number;
+}
+
+export interface ExposeSectionBand {
+  row: number;
+  label: string;
+  count: number;
+  tone: number;
+}
+
+export interface ExposeSectionPlan {
+  /** Tile slots in item order; `row` is a text-row offset from the grid top. */
+  slots: Array<{ row: number; col: number }>;
+  bands: ExposeSectionBand[];
+  visibleCount: number;
+}
+
+/**
+ * Tiles must sit in project order for bands to bound contiguous runs. Only reorders when
+ * bands will actually be drawn, so single-project and narrower scopes keep server order.
+ */
+export function orderExposeItems(view: ExposeScopeView): ExposeScopeItem[] {
+  if (view.sublabel !== "project-worktree") return view.items;
+  const groups = groupItemsByProject(view.items);
+  return groups.length < 2 ? view.items : groups.flatMap((group) => group.items);
+}
+
+/** Ordered project groups, preserving first-seen project order and item order within one. */
+export function groupItemsByProject(items: ExposeScopeItem[]): Array<{ label: string; items: ExposeScopeItem[] }> {
+  const order: string[] = [];
+  const buckets = new Map<string, ExposeScopeItem[]>();
+  for (const item of items) {
+    const label = item.projectName?.trim() || "unknown project";
+    let bucket = buckets.get(label);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(label, bucket);
+      order.push(label);
+    }
+    bucket.push(item);
+  }
+  return order.map((label) => ({ label, items: buckets.get(label)! }));
+}
+
+/**
+ * Lay sections out down the grid: one band row per project, then that project's tiles
+ * packed `tileCols` wide. A section that cannot fit its band plus one row of tiles is
+ * dropped whole rather than orphaning a header, and tiles that run past the grid are
+ * left out — the caller reports them as "+N more".
+ */
+export function planExposeSections(
+  groups: ExposeSectionGroup[],
+  tileCols: number,
+  tileHeight: number,
+  gridHeight: number,
+): ExposeSectionPlan {
+  const slots: Array<{ row: number; col: number }> = [];
+  const bands: ExposeSectionBand[] = [];
+  let row = 0;
+  for (let g = 0; g < groups.length; g += 1) {
+    const group = groups[g]!;
+    if (row + 1 + tileHeight > gridHeight) break;
+    bands.push({ row, label: group.label, count: group.count, tone: g });
+    row += 1;
+    let placed = 0;
+    while (placed < group.count) {
+      if (row + tileHeight > gridHeight) return { slots, bands, visibleCount: slots.length };
+      const take = Math.min(tileCols, group.count - placed);
+      for (let c = 0; c < take; c += 1) slots.push({ row, col: c });
+      placed += take;
+      row += tileHeight;
+    }
+  }
+  return { slots, bands, visibleCount: slots.length };
+}
+
+/**
+ * Vertical move across a section plan. Section rows are ragged — a project's last row
+ * can be short and the next project restarts at column 0 — so stepping by `tileCols`
+ * would land on the wrong tile. Hold the column where the neighbouring row is wide
+ * enough, otherwise take that row's last tile.
+ */
+export function moveExposeIndexVertically(
+  slots: Array<{ row: number; col: number }>,
+  index: number,
+  delta: 1 | -1,
+  visibleCount: number,
+): number {
+  const current = slots[index];
+  if (!current) return index;
+  const rows: number[] = [];
+  for (let i = 0; i < visibleCount; i += 1) {
+    const row = slots[i]?.row;
+    if (row !== undefined && !rows.includes(row)) rows.push(row);
+  }
+  rows.sort((a, b) => a - b);
+  const targetRow = rows[rows.indexOf(current.row) + delta];
+  if (targetRow === undefined) return index;
+  let fallback = index;
+  for (let i = 0; i < visibleCount; i += 1) {
+    const slot = slots[i];
+    if (!slot || slot.row !== targetRow) continue;
+    if (slot.col === current.col) return i;
+    if (slot.col < current.col) fallback = i;
+  }
+  return fallback;
+}
+
+// Bands cycle a small palette so neighbouring projects never share a tint. These are
+// deliberately distinct from STATE_BORDER's meaning — a band groups, it does not report.
+const BAND_TONES = ["38;5;38", "38;5;71", "38;5;179", "38;5;176", "38;5;75", "38;5;209"];
+
+export function drawBand(band: ExposeSectionBand, top: number, left: number, width: number): string {
+  const color = `\x1b[${BAND_TONES[band.tone % BAND_TONES.length]}m`;
+  const right = `${band.count} ${band.count === 1 ? "agent" : "agents"}`;
+  const fill = Math.max(0, width - 4 - visibleWidth(band.label) - right.length);
+  const text =
+    `${color}▌ ${RESET}${style(band.label, "strong")} ` +
+    `${color}${"─".repeat(fill)}${RESET} ${style(right, "muted")}`;
+  return `\x1b[${top};${left}H${truncateAnsi(text, width)}${RESET}`;
+}
+
 // 256-color tile borders tinted to the agent's state, with a bright (selected) and
 // dimmed (unselected) variant. This is Exposé's selection model — distinct from the
 // chip/pill tone, which carries the label color via the shared status vocabulary.
@@ -246,6 +370,9 @@ const STATE_BORDER: Partial<Record<StatusKind, { on: string; off: string }>> = {
   blocked: { on: "38;5;176", off: "38;5;97" },
 };
 const NEUTRAL_BORDER = { on: "38;5;39", off: "38;5;240" };
+// The selected tile borrows the accent (the same gold as the `▸` marker and badge) so
+// focus reads as one object. State stays legible on the pill, which is its primary carrier.
+const SELECTED_BORDER = "1;33";
 
 // Inline title in the top rule when the worktree/project context fits; otherwise drop
 // the context onto its own wrapped row(s). The status pill always gets its own row, so
@@ -310,11 +437,12 @@ export function drawTile(
   const dimmed = dimInactive && !selected;
   const kind = agentStatusKind(item.metadata);
   const palette = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
-  const bd = `\x1b[${dimmed ? palette.off : palette.on}m`;
-  // Focus is shown by a bolder (heavy-line) outline, not a distinct color, so the
-  // border always reflects the agent's state.
+  const bd = `\x1b[${selected ? SELECTED_BORDER : dimmed ? palette.off : palette.on}m`;
+  // Focus changes both the glyph set and the color. Line weight alone was too fine a
+  // difference to spot at a glance, and it was the only channel left while the border
+  // color carried state on every tile.
   const box = selected
-    ? { tl: "┏", tr: "┓", bl: "┗", br: "┛", h: "━", v: "┃" }
+    ? { tl: "╔", tr: "╗", bl: "╚", br: "╝", h: "═", v: "║" }
     : { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" };
 
   const badgeLabel = badge <= 9 ? String(badge) : "·";
@@ -429,16 +557,27 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   });
   const initialHotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
   let view = initialHotView ?? defaultExposeScopeView(scope);
-  let items = view.items;
+  let items = orderExposeItems(view);
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
   let loading = !initialHotView;
   let viewStale = Boolean(initialHotView);
 
+  // Bands only earn their row when more than one project is on screen; below that the
+  // grid stays flat and every tile keeps naming its own project.
+  const sectionGroups = (): ExposeSectionGroup[] | null => {
+    if (sublabel !== "project-worktree") return null;
+    const groups = groupItemsByProject(items);
+    if (groups.length < 2) return null;
+    return groups.map((group) => ({ label: group.label, count: group.items.length }));
+  };
+
   const tileSublabel = (item: ExposeScopeItem): string => {
     if (sublabel === "worktree") return shortWorktree(item, options.projectRoot);
     if (sublabel === "project-worktree") {
       const worktree = shortWorktree(item, item.projectRoot ?? options.projectRoot);
+      // A band already names the project, so the tile only needs its worktree.
+      if (sectionGroups()) return worktree;
       return item.projectName ? `${item.projectName} / ${worktree}` : worktree;
     }
     return "";
@@ -536,6 +675,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const clientBaseline =
     options.columns && options.rows ? `${options.columns}x${options.rows}` : queryClientSize(options.clientTty);
   let tileCols = 1;
+  let sectionSlots: ExposeSectionPlan["slots"] | null = null;
   let visibleCount = items.length;
   let lastRenderSize = "";
   let staticSize = "";
@@ -577,10 +717,25 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     process.once("SIGTERM", onFatalSignal);
   }
 
-  const renderTileAt = (tileIndex: number, layout: GridLayout, geo: PanelGeometry): string => {
-    const r = Math.floor(tileIndex / layout.tileCols);
-    const c = tileIndex % layout.tileCols;
-    const top = geo.top + layout.gridTopRow + r * layout.tileHeight;
+  // Section rows come from the plan; without one the grid is a plain uniform pack.
+  const gridHeightFor = (innerH: number, layout: GridLayout): number => Math.max(1, innerH - layout.gridTopRow);
+
+  const sectionPlanFor = (layout: GridLayout, innerH: number): ExposeSectionPlan | null => {
+    const groups = sectionGroups();
+    if (!groups) return null;
+    return planExposeSections(groups, layout.tileCols, layout.tileHeight, gridHeightFor(innerH, layout));
+  };
+
+  const renderTileAt = (
+    tileIndex: number,
+    layout: GridLayout,
+    geo: PanelGeometry,
+    plan: ExposeSectionPlan | null,
+  ): string => {
+    const slot = plan?.slots[tileIndex];
+    const rowOffset = slot ? slot.row : Math.floor(tileIndex / layout.tileCols) * layout.tileHeight;
+    const c = slot ? slot.col : tileIndex % layout.tileCols;
+    const top = geo.top + layout.gridTopRow + rowOffset;
     const left = geo.left + 1 + c * (layout.tileWidth + GAP);
     const item = items[tileIndex]!;
     const preview = tilePreview(captures.get(item.target.windowId) ?? "", layout.bodyLines);
@@ -607,9 +762,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const innerW = geo.width - 2;
     const innerH = geo.height - 2;
     const layout = computeLayout(items.length, innerW, innerH);
-    const nextVisibleCount = layout.visibleCount;
+    const plan = sectionPlanFor(layout, innerH);
+    const nextVisibleCount = plan ? plan.visibleCount : layout.visibleCount;
     if (size !== staticSize || nextVisibleCount !== staticVisibleCount) return false;
     tileCols = layout.tileCols;
+    sectionSlots = plan?.slots ?? null;
     visibleCount = nextVisibleCount;
     if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
@@ -618,7 +775,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     for (const tileIndex of tileIndexes) {
       if (tileIndex < 0 || tileIndex >= visibleCount || seen.has(tileIndex)) continue;
       seen.add(tileIndex);
-      out += renderTileAt(tileIndex, layout, geo);
+      out += renderTileAt(tileIndex, layout, geo, plan);
     }
     output.write(`${out}\x1b[?2026l`);
     return true;
@@ -635,8 +792,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const innerW = geo.width - 2;
     const innerH = geo.height - 2;
     const layout = computeLayout(items.length, innerW, innerH);
+    const plan = sectionPlanFor(layout, innerH);
     tileCols = layout.tileCols;
-    visibleCount = layout.visibleCount;
+    sectionSlots = plan?.slots ?? null;
+    visibleCount = plan ? plan.visibleCount : layout.visibleCount;
     if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
     const hidden = items.length - visibleCount;
@@ -677,8 +836,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     }
 
     let out = `${base}${titleAt}`;
+    for (const band of plan?.bands ?? []) {
+      out += drawBand(band, geo.top + layout.gridTopRow + band.row, geo.left + 1, innerW);
+    }
     for (let i = 0; i < visibleCount; i += 1) {
-      out += renderTileAt(i, layout, geo);
+      out += renderTileAt(i, layout, geo, plan);
     }
     out += `${helpAt}\x1b[?2026l`;
     output.write(out);
@@ -721,7 +883,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectedWindowId =
       selectionVersionAtStart === selectionVersion ? selectedWindowIdAtStart : items[index]?.target.windowId;
     view = nextView;
-    items = view.items;
+    items = orderExposeItems(view);
     scopeLabel = view.scopeLabel;
     sublabel = view.sublabel;
     loading = false;
@@ -784,7 +946,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       scope = next;
       const hotView = readHotExposeScopeView(options.projectStateDir, hotSnapshotKeyForScope(scope));
       view = hotView ?? defaultExposeScopeView(scope);
-      items = view.items;
+      items = orderExposeItems(view);
       scopeLabel = view.scopeLabel;
       sublabel = view.sublabel;
       loading = !hotView;
@@ -804,7 +966,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           if (finished) return;
           scope = previousScope;
           view = previousView;
-          items = view.items;
+          items = orderExposeItems(view);
           scopeLabel = view.scopeLabel;
           sublabel = view.sublabel;
           viewStale = previousViewStale;
@@ -912,7 +1074,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (key === "down" || key === "j") {
         const previousIndex = index;
-        if (index + tileCols < visibleCount) index += tileCols;
+        if (sectionSlots) index = moveExposeIndexVertically(sectionSlots, index, 1, visibleCount);
+        else if (index + tileCols < visibleCount) index += tileCols;
         if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
@@ -920,7 +1083,8 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
       if (key === "up" || key === "k") {
         const previousIndex = index;
-        if (index - tileCols >= 0) index -= tileCols;
+        if (sectionSlots) index = moveExposeIndexVertically(sectionSlots, index, -1, visibleCount);
+        else if (index - tileCols >= 0) index -= tileCols;
         if (previousIndex !== index) selectionVersion += 1;
         if (deferRender) return true;
         renderSelectionMove(previousIndex);
