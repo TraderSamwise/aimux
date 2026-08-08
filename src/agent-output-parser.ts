@@ -264,11 +264,14 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       lastLineWasDivider = true;
       continue;
     }
-    // Skipped, but deliberately without setting `lastLineWasDivider`: that flag
-    // demotes a following prompt to status, which is right under the composer's
-    // bare rule and wrong under a stale captioned footer — there it would delete
-    // the user's next message.
-    if (isTitledDivider(trimmed)) continue;
+    // Clears the flag rather than merely not setting it. `lastLineWasDivider`
+    // demotes a following prompt to status, which is right beneath the composer's
+    // bare rule and wrong beneath a stale footer; leaving an earlier bare rule's
+    // flag armed across this line deletes the operator's next message.
+    if (isTitledDivider(trimmed)) {
+      lastLineWasDivider = false;
+      continue;
+    }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
       if (lastLineWasDivider) {
@@ -293,6 +296,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
         expectingResponse = false;
         continue;
       }
+      // Each marker line starts its own message. A prompt block still runs on
+      // across unmarked lines, which is what keeps a pasted multi-line message
+      // together — but two `❯` lines are two things the operator sent, and
+      // appending the second to the first merged the queue into one bubble.
+      flush();
       pushLine("prompt", promptText);
       sawPrompt = true;
       expectingResponse = false;
@@ -561,7 +569,10 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
   const merged: AgentOutputBlock[] = [];
   for (const block of next) {
     const previous = merged[merged.length - 1];
-    if (previous && previous.type === block.type) {
+    // Prompts are exempt: the agent's reply arrives in pieces and reads as one
+    // message, but two marker lines are two things the operator sent, and
+    // merging them collapsed a queued pair into a single bubble.
+    if (previous && previous.type === block.type && block.type !== "prompt") {
       previous.text = `${previous.text}\n\n${block.text}`.trim();
       continue;
     }
@@ -596,6 +607,10 @@ export function activityTextFromParsedAgentOutput(parsed?: { blocks?: AgentOutpu
       if (!line || !looksLikeActivityProgressText(line)) continue;
       const lead = line.match(activityLeadRegex)?.[0] ?? "";
       if (!/ing$/i.test(lead)) continue;
+      // Bounded because a status block absorbs neighbouring lines: a long piece
+      // of prose that happens to fit the progress shape would otherwise displace
+      // the real verb and render as a paragraph in a one-line slot.
+      if (line.length > 120) continue;
       newest = line;
     }
   }

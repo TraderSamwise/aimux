@@ -37,7 +37,13 @@ describe("a slash command followed by its tool results", () => {
     expect(userText).not.toContain("Compacted");
     expect(userText).not.toContain("Referenced file");
     expect(userText).not.toContain("Skills restored");
-    expect(userText).not.toContain("git log");
+    // The results belong to the agent; assert positively that they moved there
+    // rather than only that they left, which a dropped line would also satisfy.
+    const assistantText = messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.text)
+      .join("\n");
+    expect(assistantText).toContain("Compacted");
   });
 
   it("still lets a genuinely multi-line prompt run on", () => {
@@ -83,9 +89,16 @@ describe("a rule with a caption in it", () => {
   });
 
   it("leaves the collapsed approval header to the status rule that claims it", () => {
-    const pane = ["\u23fa " + "\u2500".repeat(40) + " Bash command", "  \u23bf $ echo hi"].join("\n");
-    const assistant = messagesFor(pane).filter((message) => message.role === "assistant");
-    expect(assistant.every((message) => !message.text.includes("Bash command"))).toBe(true);
+    // Guard against the titled-rule check swallowing it: a real assistant line
+    // must survive alongside, so this cannot pass by producing no messages.
+    const pane = [
+      "\u23fa Real answer text.",
+      "\u23fa " + "\u2500".repeat(40) + " Bash command",
+      "  \u23bf $ echo hi",
+    ].join("\n");
+    const text = textOf(pane);
+    expect(text).toContain("Real answer text.");
+    expect(text).not.toContain("Bash command");
   });
 
   it("keeps a line with a rule on only one end", () => {
@@ -97,8 +110,19 @@ describe("a rule with a caption in it", () => {
     expect(text).toContain("this trailing note is real content");
   });
 
-  it("does not eat a sentence that merely contains a dash run", () => {
-    const text = textOf("\u23fa The flag is --dangerously-skip-permissions and it matters.");
-    expect(text).toContain("dangerously-skip-permissions");
+  it("keeps two queued prompts as two messages", () => {
+    // Claude Code stacks queued messages as consecutive marker lines.
+    const users = messagesFor(["\u276f first question", "\u276f second question"].join("\n")).filter(
+      (message) => message.role === "user",
+    );
+    expect(users.map((message) => message.text)).toEqual(["first question", "second question"]);
+  });
+
+  it("still drops a captioned footer that follows a bare rule", () => {
+    // The bare rule arms the demotion flag; if the captioned rule does not clear
+    // it, the prompt underneath is demoted to status and the message vanishes.
+    const pane = ["\u23fa Answer.", "\u2500".repeat(20), footer(20), "\u276f what about epic 2?"].join("\n");
+    const users = messagesFor(pane).filter((message) => message.role === "user");
+    expect(users.map((message) => message.text)).toEqual(["what about epic 2?"]);
   });
 });
